@@ -1,0 +1,5 @@
+mlx-lm[train]
+pyyaml
+httpx
+beautifulsoup4
+huggingface_hub[cli]

@@ -1,0 +1,37 @@
+# mlx_lm.lora -c configs/lora.yaml
+# Check option names against `mlx_lm.lora --help` for your installed mlx-lm version.
+
+# Base model. A 4-bit MLX model means QLoRA (lower memory, slightly lower quality);
+# a bf16 model means plain LoRA. On 512 GB you can afford bf16 for 14B-32B.
+model: "Qwen/Qwen3-14B"
+
+train: true
+fine_tune_type: lora        # lora | dora | full
+optimizer: adamw
+data: "data"                # expects train.jsonl / valid.jsonl (test.jsonl for --test)
+seed: 42
+
+num_layers: -1              # apply adapters to all layers (better for domain knowledge)
+batch_size: 4
+iters: 3000                 # set from build_dataset.py hint (~2 epochs)
+max_seq_length: 4096
+grad_checkpoint: true
+mask_prompt: true           # loss only on the assistant answer
+
+learning_rate: 1.0e-5       # sweep 1e-5 .. 5e-5; watch val loss for overfitting
+lr_schedule:
+  name: cosine_decay
+  warmup: 100
+  warmup_init: 1.0e-7
+  arguments: [1.0e-5, 3000, 1.0e-7]
+
+lora_parameters:
+  rank: 16
+  scale: 20.0
+  dropout: 0.05
+
+steps_per_report: 10
+steps_per_eval: 200
+val_batches: 50
+save_every: 200
+adapter_path: "adapters/kafka-sre-v1"

@@ -1,0 +1,42 @@
+# Documentation sources for the Kafka SRE dataset.
+# Verify each license before publishing a model trained on it, and credit
+# the sources in the model card (CC BY requires attribution).
+
+sources:
+  - name: apache-kafka
+    repo: https://github.com/apache/kafka.git
+    paths: [docs]
+    globs: ["**/*.html", "**/*.md"]
+    license: Apache-2.0
+
+  - name: strimzi
+    repo: https://github.com/strimzi/strimzi-kafka-operator.git
+    paths: [documentation]
+    globs: ["**/*.adoc"]
+    license: Apache-2.0
+
+  - name: kubernetes
+    repo: https://github.com/kubernetes/website.git
+    paths: [content/en/docs]
+    globs: ["**/*.md"]
+    license: CC-BY-4.0
+
+  - name: argo-cd
+    repo: https://github.com/argoproj/argo-cd.git
+    paths: [docs]
+    globs: ["**/*.md"]
+    license: Apache-2.0
+
+  - name: flux
+    repo: https://github.com/fluxcd/website.git
+    paths: [content/en/flux]
+    globs: ["**/*.md"]
+    license: verify
+
+  # Your own material is usually the most valuable data:
+  # runbooks, postmortems, internal wiki exports. Scrub secrets,
+  # hostnames and customer data first.
+  - name: own-runbooks
+    local: ./private/runbooks
+    globs: ["**/*.md", "**/*.adoc", "**/*.txt"]
+    license: private
