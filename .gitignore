@@ -1,0 +1,17 @@
+# cloned docs, generated data, training outputs
+raw/
+work/
+data/*.jsonl
+adapters/
+out/
+models/
+eval/results.jsonl
+
+# never commit private runbooks or secrets
+private/
+.env
+
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
