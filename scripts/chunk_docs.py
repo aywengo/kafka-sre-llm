@@ -121,9 +121,23 @@ def split_sections(text: str):
 def split_long(body: str):
     if len(body) <= MAX_CHARS:
         return [body]
-    parts, cur = [], ""
+    # A single paragraph (table, list, generated metrics dump) can exceed
+    # MAX_CHARS, so break oversized paragraphs at line/sentence boundaries first.
+    paras = []
     for para in re.split(r"\n\s*\n", body):
-        if cur and len(cur) + len(para) > MAX_CHARS:
+        while len(para) > MAX_CHARS:
+            cut = para.rfind("\n", 0, MAX_CHARS)
+            if cut < MAX_CHARS // 2:
+                cut = para.rfind(". ", 0, MAX_CHARS)
+            if cut < MAX_CHARS // 2:
+                cut = MAX_CHARS
+            paras.append(para[:cut].strip())
+            para = para[cut:].strip()
+        if para:
+            paras.append(para)
+    parts, cur = [], ""
+    for para in paras:
+        if cur and len(cur) + len(para) + 2 > MAX_CHARS:
             parts.append(cur)
             cur = ""
         cur = (cur + "\n\n" + para).strip()
