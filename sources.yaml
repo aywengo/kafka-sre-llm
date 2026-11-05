@@ -9,6 +9,14 @@ sources:
     globs: ["**/*.html", "**/*.md"]
     license: Apache-2.0
 
+  # Generated configuration reference (actual keys, defaults and descriptions)
+  # from the latest published Kafka docs (4.4 = kafka-site content/en/44).
+  - name: apache-kafka-config
+    repo: https://github.com/apache/kafka-site.git
+    paths: [content/en/44/generated]
+    globs: ["**/*.html"]
+    license: Apache-2.0
+
   - name: strimzi
     repo: https://github.com/strimzi/strimzi-kafka-operator.git
     paths: [documentation]
