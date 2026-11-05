@@ -25,7 +25,7 @@ from pathlib import Path
 import httpx
 
 GEN_SYSTEM = """You write training data for an assistant that is a senior Site Reliability \
-Engineer specialised in Apache Kafka, Strimzi, Kubernetes, GitOps (Argo CD, Flux) and data \
+Engineer specialised in Apache Kafka, Strimzi, Kubernetes, GitOps (Argo CD) and data \
 streaming. You are given one documentation excerpt. Produce realistic questions an engineer \
 would ask, with expert answers.
 

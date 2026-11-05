@@ -9,7 +9,7 @@ language: [en]
 # kafka-sre-14b-v1
 
 A LoRA fine-tune of **Qwen/Qwen3-14B** for operating Apache Kafka on Kubernetes:
-Strimzi, cluster operations and troubleshooting, GitOps with Argo CD / Flux, and
+Strimzi, cluster operations and troubleshooting, GitOps with Argo CD, and
 data streaming patterns.
 
 ## Intended use
@@ -32,7 +32,6 @@ Synthetic question/answer pairs generated from, and checked against, these sourc
 | Strimzi documentation | Apache-2.0 | `<commit>` |
 | Kubernetes documentation (© The Kubernetes Authors) | CC BY 4.0 | `<commit>` |
 | Argo CD documentation | Apache-2.0 | `<commit>` |
-| Flux documentation | `<verify>` | `<commit>` |
 
 Kubernetes documentation is used under CC BY 4.0; derived training data was modified
 (rewritten into question/answer form).

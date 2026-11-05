@@ -34,13 +34,17 @@ sources:
     repo: https://github.com/argoproj/argo-cd.git
     paths: [docs]
     globs: ["**/*.md"]
+    exclude:
+      - "*/proposals/*"
+      - "*/developer-guide/*"
+      - "*/commands/*"
+      - "*/server-commands/*"
+      - "*/snyk/*"
+      - "*/assets/*"
+      - "*/roadmap.md"
+      - "*/bug_triage.md"
+      - "*/SUPPORT.md"
     license: Apache-2.0
-
-  - name: flux
-    repo: https://github.com/fluxcd/website.git
-    paths: [content/en/flux]
-    globs: ["**/*.md"]
-    license: verify
 
   # Your own material is usually the most valuable data:
   # runbooks, postmortems, internal wiki exports. Scrub secrets,
