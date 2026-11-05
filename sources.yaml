@@ -15,10 +15,19 @@ sources:
     globs: ["**/*.adoc"]
     license: Apache-2.0
 
+  # Only the parts an SRE running Kafka on Kubernetes needs. Generated API and
+  # kubectl reference pages, tutorials and contributor docs are skipped.
+  # `exclude` patterns match paths relative to each entry in `paths`.
   - name: kubernetes
     repo: https://github.com/kubernetes/website.git
-    paths: [content/en/docs]
+    paths: [content/en/docs/concepts, content/en/docs/tasks]
     globs: ["**/*.md"]
+    exclude:
+      - "*/windows/*"
+      - "*/extend-kubernetes/*"
+      - "*/extend-kubectl/*"
+      - "*/tools/*"
+      - "*/manage-gpus/*"
     license: CC-BY-4.0
 
   - name: argo-cd

@@ -4,6 +4,7 @@
 Output: one JSON object per line with id, source, license, path, title, text.
 """
 import argparse
+import fnmatch
 import hashlib
 import json
 import re
@@ -155,12 +156,17 @@ def iter_files(src, raw_dir: Path):
         roots = [Path(src["local"])]
     else:
         roots = [raw_dir / src["name"] / p for p in src["paths"]]
+    excludes = src.get("exclude", [])
     for root in roots:
         if not root.exists():
             print(f"  skip missing {root}")
             continue
         for g in src["globs"]:
-            yield from root.glob(g)
+            for p in root.glob(g):
+                rel = "/" + p.relative_to(root).as_posix()
+                if any(fnmatch.fnmatch(rel, pat) for pat in excludes):
+                    continue
+                yield p
 
 
 def main():
