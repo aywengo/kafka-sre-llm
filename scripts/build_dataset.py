@@ -54,14 +54,36 @@ def main():
     ap.add_argument("--general-ratio", type=float, default=0.15)
     ap.add_argument("--no-system", action="store_true")
     ap.add_argument("--skip-sources", nargs="*", default=[], help="drop records from these sources")
+    ap.add_argument("--drop-pattern", action="append", default=[],
+                    help="regex (case-insensitive); drop items whose question or answer matches")
+    ap.add_argument("--cap-path", action="append", default=[], metavar="PATTERN=N",
+                    help="keep at most N random items from chunks whose path matches PATTERN")
     ap.add_argument("--seed", type=int, default=42)
     args = ap.parse_args()
+    drop_res = [re.compile(p, re.I) for p in args.drop_pattern]
+    caps = []
+    for c in args.cap_path:
+        pat, _, n = c.rpartition("=")
+        caps.append((re.compile(pat), int(n)))
 
     rnd = random.Random(args.seed)
     seen_exact, seen_sh = set(), []
     drop = Counter()
     splits = {"train": [], "valid": [], "test": []}
     by_source = Counter()
+
+    def dropped(it):
+        return any(r.search(it["question"]) or r.search(it["answer"]) for r in drop_res)
+
+    skip_cap = set()  # (chunk_id, item index) removed by --cap-path
+    for pat, n in caps:
+        cand = [(rec["chunk_id"], i)
+                for raw in args.raw for rec in map(json.loads, Path(raw).open())
+                if pat.search(rec.get("path", "")) and rec.get("source") not in args.skip_sources
+                for i, it in enumerate(rec["items"]) if not dropped(it)]
+        keep = set(random.Random(args.seed).sample(cand, min(n, len(cand))))
+        skip_cap |= set(cand) - keep
+        drop["cap_path"] += len(cand) - len(keep)
 
     for raw in args.raw:
         for line in Path(raw).open():
@@ -71,7 +93,12 @@ def main():
                 continue
             b = bucket(rec["chunk_id"], "split")
             split = "test" if b < args.test_frac else "valid" if b < args.test_frac + args.valid_frac else "train"
-            for it in rec["items"]:
+            for idx, it in enumerate(rec["items"]):
+                if dropped(it):
+                    drop["drop_pattern"] += 1
+                    continue
+                if (rec["chunk_id"], idx) in skip_cap:
+                    continue
                 q, a = it["question"].strip(), it["answer"].strip()
                 if not (args.min_answer <= len(a) <= args.max_answer) or len(q) < 15:
                     drop["length"] += 1
