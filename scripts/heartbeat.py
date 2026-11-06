@@ -12,6 +12,7 @@ Run once (no --every) to print a single heartbeat.
 """
 import argparse
 import json
+import math
 import re
 import shutil
 import subprocess
@@ -81,6 +82,9 @@ def generation_state(args):
         c = json.loads(line)
         ids[c["id"]] = c["source"]
         totals[c["source"]] += 1
+    regen = {json.loads(l)["id"] for l in Path(args.regen_chunks).open()} if args.regen_chunks else None
+    group = {i: ("generate" if regen is None or i in regen else "reverify") for i in ids}
+    gtotal, gdone = Counter(group.values()), Counter()
     done, items = Counter(), 0
     raw = Path(args.raw_qa)
     if raw.exists():
@@ -91,44 +95,76 @@ def generation_state(args):
             src = ids.get(r["chunk_id"])
             if src:
                 done[src] += 1
+                gdone[group[r["chunk_id"]]] += 1
                 items += len(r.get("items", []))
     targets = {s: min(n, args.caps.get(s, n)) for s, n in totals.items()
                if s not in args.skip}
     remaining = sum(max(0, targets[s] - done[s]) for s in targets)
     total_done = sum(min(done[s], targets[s]) for s in targets)
 
-    last = None
+    last = reject_by_source = None
     log = Path(args.gen_log)
     if log.exists():
         for line in log.read_text(errors="ignore").splitlines()[-200:]:
             if line.strip().startswith("done="):
                 last = line.strip()
+            elif line.strip().startswith("reject by source:"):
+                reject_by_source = line.strip().removeprefix("reject by source:").strip()
     return {
         "per_source": {s: f"{min(done[s], targets[s])}/{targets[s]}" for s in sorted(targets)},
         "done": total_done, "target": sum(targets.values()), "remaining": remaining,
         "items": items, "last_log": last,
+        "groups": {k: f"{gdone[k]}/{gtotal[k]}" for k in gtotal},
+        "reject_by_source": reject_by_source,
     }
 
 
 # ---------- training -----------------------------------------------------------
 
+ANSI = re.compile(r"\x1b\[[0-9;]*m")
+TRAIN = re.compile(r"^\s*(\d+)\s+([\d.]+|nan|inf)\s*[▲▼]?\s+([\d.]+)\s+([\d.]+)([kMG]?)\s*$", re.I)
+VAL = re.compile(r"^\s*(\d+)\s+val\s+([\d.]+|nan|inf)\s+([\d.]+)s\s*$", re.I)
 TRAIN_RE = re.compile(r"Iter (\d+): Train loss ([\d.]+).*?It/sec ([\d.]+).*?Tokens/sec ([\d.]+)"
                       r"(?:.*?Peak mem ([\d.]+) GB)?")
 VAL_RE = re.compile(r"Iter (\d+): Val loss ([\d.]+)")
+SUFFIX = {"": 1, "k": 1e3, "M": 1e6, "G": 1e9}
+
+
+def parse_train_table(text):
+    """mlx-lm 0.32 prints a table: rows of (iter, train_loss, tok/s, tokens) and (iter, val, loss, s)."""
+    trains, vals = [], []
+    for line in ANSI.sub("", text).splitlines():
+        if m := VAL.match(line):
+            vals.append((int(m[1]), float(m[2]), float(m[3])))
+        elif m := TRAIN.match(line):
+            trains.append((int(m[1]), float(m[2]), float(m[3]), float(m[4]) * SUFFIX[m[5]]))
+    return trains, vals
 
 
 def training_state(args):
     text = Path(args.train_log).read_text(errors="ignore") if Path(args.train_log).exists() else ""
-    trains, vals = TRAIN_RE.findall(text), VAL_RE.findall(text)
     total = None
     if Path(args.train_config).exists():
         total = (yaml.safe_load(Path(args.train_config).read_text()) or {}).get("iters")
-    st = {"iters_total": total, "vals": [(int(i), float(l)) for i, l in vals]}
+    trains, vals = parse_train_table(text)
+    st = {"iters_total": total, "vals": [(i, l) for i, l, _ in vals]}
     if trains:
-        it, loss, its, tps, mem = trains[-1]
-        st.update(iter=int(it), train_loss=float(loss), it_per_sec=float(its),
-                  tokens_per_sec=float(tps), peak_mem_gb=float(mem) if mem else None)
-    if "nan" in text.lower().split("iter")[-1]:
+        it, loss, tps, tokens = trains[-1]
+        st.update(iter=it, train_loss=loss, tokens_per_sec=tps)
+        if len(trains) > 1 and trains[-1][0] > trains[-2][0] and tokens > trains[-2][3]:
+            tok_per_iter = (tokens - trains[-2][3]) / (it - trains[-2][0])
+            st["it_per_sec"] = round(tps / tok_per_iter, 4)
+        nan = any(math.isnan(l) or math.isinf(l) for _, l, _, _ in trains) or \
+            any(math.isnan(l) or math.isinf(l) for _, l, _ in vals)
+    else:  # older mlx-lm: "Iter N: Train loss ..."
+        old_trains, old_vals = TRAIN_RE.findall(text), VAL_RE.findall(text)
+        st["vals"] = [(int(i), float(l)) for i, l in old_vals]
+        if old_trains:
+            it, loss, its, tps, mem = old_trains[-1]
+            st.update(iter=int(it), train_loss=float(loss), it_per_sec=float(its),
+                      tokens_per_sec=float(tps), peak_mem_gb=float(mem) if mem else None)
+        nan = "nan" in text.lower().split("iter")[-1]
+    if nan:
         st["nan"] = True
     return st
 
@@ -179,13 +215,23 @@ def beat(args):
         g = generation_state(args)
         status.update(phase="1 Data", kind="generate", gen=g)
         rate = None
-        if prev.get("kind") == "generate" and prev.get("epoch"):
+        rates = dict((prev.get("gen") or {}).get("rates") or {})
+        if prev.get("kind") == "generate" and prev.get("epoch") and "groups" in prev.get("gen", {}):
             dmin = (now - prev["epoch"]) / 60
-            ddone = g["done"] - prev["gen"]["done"]
-            if dmin > 1 and ddone >= 0:
-                rate = ddone / dmin
+            if dmin > 1:
+                for kind, v in g["groups"].items():
+                    d = int(v.split("/")[0]) - int(prev["gen"]["groups"].get(kind, "0/0").split("/")[0])
+                    if d > 0:
+                        rates[kind] = round(d / dmin, 2)
+                rate = (g["done"] - prev["gen"]["done"]) / dmin
         status["gen"]["chunks_per_min"] = round(rate, 2) if rate is not None else None
-        eta = g["remaining"] / rate if rate else None
+        status["gen"]["rates"] = rates
+        rem = {k: int(v.split("/")[1]) - int(v.split("/")[0]) for k, v in g["groups"].items()}
+        eta = None
+        if rates.get("generate") or rates.get("reverify"):
+            gen_r = rates.get("generate") or rates["reverify"] / 2
+            rev_r = rates.get("reverify") or gen_r * 2  # until measured, assume 2x the generation rate
+            eta = rem.get("generate", 0) / gen_r + rem.get("reverify", 0) / rev_r
         pct = 100 * g["done"] / max(1, g["target"])
         progress = f"{g['done']:,} / {g['target']:,} chunks ({pct:.1f}%); {g['items']:,} items"
         per = ", ".join(f"{s} {v}" for s, v in g["per_source"].items())
@@ -194,6 +240,8 @@ def beat(args):
             m = re.search(r"rejected=(\d+).*?verify_parse_fail=(\d+).*?per chunk: (.*?) \|", g["last_log"])
             if m:
                 metrics += f" | rejected {m.group(1)}, parse fails {m.group(2)}, {m.group(3)}"
+        if g["reject_by_source"]:
+            metrics += f" | rejects/checked by source {g['reject_by_source']}"
         if gen_on:
             state, nxt = "RUNNING", "keep generating"
             if rate == 0:
@@ -227,6 +275,9 @@ def main():
     ap.add_argument("--gen-log", default="runs/v1/logs/generate.log")
     ap.add_argument("--train-log", default="runs/v1/logs/train.log")
     ap.add_argument("--train-config", default="runs/v1/lora.yaml")
+    ap.add_argument("--regen-chunks",
+                    help="chunk file of the generation stage; other chunks are re-verify only and "
+                         "are counted at the (separately measured) reverify rate")
     ap.add_argument("--cap", action="append", default=[], metavar="SOURCE=N",
                     help="count at most N chunks of a source toward the target")
     ap.add_argument("--skip", nargs="*", default=["flux"], help="sources not counted")
