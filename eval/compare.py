@@ -51,14 +51,16 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", required=True)
     ap.add_argument("--adapter", required=True)
-    ap.add_argument("--questions", default="eval/questions.jsonl")
+    ap.add_argument("--questions", nargs="+", default=["eval/questions.jsonl"],
+                    help="one or more question files; each is reported separately")
     ap.add_argument("--out", default="eval/results.jsonl")
     ap.add_argument("--max-tokens", type=int, default=1024)
     ap.add_argument("--judge-url")
     ap.add_argument("--judge-model", default="default")
     args = ap.parse_args()
 
-    qs = [json.loads(l) for l in Path(args.questions).open() if l.strip()]
+    qs = [dict(json.loads(l), set=Path(p).stem) for p in args.questions
+          for l in Path(p).open() if l.strip()]
 
     rows = []
     for label, adapter in (("base", None), ("tuned", args.adapter)):
@@ -70,7 +72,7 @@ def main():
             print(f"[{label}] {i + 1}/{len(qs)}")
         del model
 
-    scores = defaultdict(lambda: {"base": [], "tuned": []})
+    scores = defaultdict(lambda: {"base": [], "tuned": []})  # keyed by (set, category)
     for r in rows:
         if args.judge_url:
             # randomise which answer is shown first to reduce position bias
@@ -80,7 +82,7 @@ def main():
             if j:
                 r["score_base"], r["score_tuned"] = (j["b"], j["a"]) if swap else (j["a"], j["b"])
                 r["judge_notes"] = j.get("notes")
-                cat = r.get("category", "all")
+                cat = (r["set"], r.get("category", "all"))
                 scores[cat]["base"].append(r["score_base"])
                 scores[cat]["tuned"].append(r["score_tuned"])
 
@@ -88,8 +90,15 @@ def main():
         for r in rows:
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
     print(f"wrote {args.out}")
-    for cat, s in sorted(scores.items()):
-        print(f"{cat:20s} base {statistics.mean(s['base']):.2f}  tuned {statistics.mean(s['tuned']):.2f}  (n={len(s['base'])})")
+    for qset in dict.fromkeys(r["set"] for r in rows):
+        cats = {c: s for (st, c), s in sorted(scores.items()) if st == qset}
+        allb = [x for s in cats.values() for x in s["base"]]
+        allt = [x for s in cats.values() for x in s["tuned"]]
+        print(f"== {qset} ==")
+        for cat, s in cats.items():
+            print(f"{cat:20s} base {statistics.mean(s['base']):.2f}  tuned {statistics.mean(s['tuned']):.2f}  (n={len(s['base'])})")
+        if allb:
+            print(f"{'OVERALL':20s} base {statistics.mean(allb):.2f}  tuned {statistics.mean(allt):.2f}  (n={len(allb)})")
 
 
 if __name__ == "__main__":
