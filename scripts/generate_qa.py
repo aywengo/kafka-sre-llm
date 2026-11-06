@@ -134,15 +134,18 @@ class LLM:
 
 async def process(chunk, llm, args, sem, out_f, lock, stats):
     async with sem:
-        n = max(1, min(args.max_per_chunk, len(chunk["text"]) // 700))
-        try:
-            raw = await llm.chat(GEN_SYSTEM, GEN_USER.format(n=n, **chunk))
-        except Exception as e:  # keep going on single failures
-            print(f"  gen failed {chunk['id']}: {e!r}")
-            stats["failed"] += 1
-            return
-        items = [it for it in (extract_json(raw) or [])
-                 if isinstance(it, dict) and it.get("question") and it.get("answer")]
+        if args.existing is not None:
+            items = args.existing[chunk["id"]]
+        else:
+            n = max(1, min(args.max_per_chunk, len(chunk["text"]) // 700))
+            try:
+                raw = await llm.chat(GEN_SYSTEM, GEN_USER.format(n=n, **chunk))
+            except Exception as e:  # keep going on single failures
+                print(f"  gen failed {chunk['id']}: {e!r}")
+                stats["failed"] += 1
+                return
+            items = [it for it in (extract_json(raw) or [])
+                     if isinstance(it, dict) and it.get("question") and it.get("answer")]
         if args.verify == "batch" and items:
             kept = await verify_batch(chunk, items, llm, args, stats)
         elif args.verify == "each":
@@ -239,8 +242,16 @@ async def main():
                          '\'{"chat_template_kwargs": {"thinking": false}}\'')
     ap.add_argument("--verify-extra-body", type=json.loads, default=None,
                     help="JSON for verify requests only (defaults to --extra-body)")
+    ap.add_argument("--reverify", metavar="RAW_QA",
+                    help="skip generation: run the verifier over the items in this JSONL and "
+                         "write survivors to --out. Only chunks whose id is in --chunks are "
+                         "checked, i.e. chunks whose text did not change.")
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
+    args.existing = None
+    if args.reverify:
+        args.existing = {r["chunk_id"]: r["items"] for r in map(json.loads, Path(args.reverify).open())
+                         if r["items"] and (not args.sources or r["source"] in args.sources)}
     if args.verify_extra_body is None:
         args.verify_extra_body = args.extra_body
 
@@ -252,7 +263,8 @@ async def main():
 
     chunks = [json.loads(l) for l in Path(args.chunks).open() if l.strip()]
     chunks = [c for c in chunks if c["id"] not in done
-              and (not args.sources or c["source"] in args.sources)]
+              and (not args.sources or c["source"] in args.sources)
+              and (args.existing is None or c["id"] in args.existing)]
     random.Random(args.seed).shuffle(chunks)  # spread sources across a partial run
     if args.limit:
         chunks = chunks[: args.limit]
