@@ -38,6 +38,15 @@ CRD fields, CLI flags, metrics or defaults.
 blocks where useful, then caveats (version differences, risks, what to check next).
 - Never refer to "the excerpt", "the document", "the text" or "the passage". The answer must \
 stand on its own.
+- Use only API versions (apiVersion), kinds and field paths that appear in the excerpt. Never \
+fill them in from memory, even if you know another version.
+- Say where each setting lives: broker, topic, client (producer/consumer/admin), Connect worker \
+or connector, or the exact custom resource field path. Never move a setting to another scope.
+- If the question's premise is wrong (wrong component, wrong version, wrong scope), the answer \
+must correct it first instead of going along with it.
+- Label early-access, preview or deprecated features as such, using the excerpt's wording.
+- Never output unresolved placeholders such as {SomeAttribute}; if the excerpt has one, leave \
+that detail out.
 - If the excerpt is navigation, a changelog, a list of links or has no technical substance, \
 return [].
 
