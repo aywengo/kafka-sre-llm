@@ -28,6 +28,10 @@ LEAK_PATTERNS = re.compile(
 )
 
 
+PLACEHOLDER = re.compile(r"(?<![${\w])\{[A-Z]\w*\}")
+STRIMZI_API = re.compile(r"kafka\.strimzi\.io/v\w+")
+
+
 def norm(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", s.lower()).strip()
 
@@ -58,6 +62,8 @@ def main():
                     help="regex (case-insensitive); drop items whose question or answer matches")
     ap.add_argument("--cap-path", action="append", default=[], metavar="PATTERN=N",
                     help="keep at most N random items from chunks whose path matches PATTERN")
+    ap.add_argument("--strimzi-api-group-version", default="kafka.strimzi.io/v1",
+                    help="drop items that use any other kafka.strimzi.io/<version>")
     ap.add_argument("--seed", type=int, default=42)
     args = ap.parse_args()
     drop_res = [re.compile(p, re.I) for p in args.drop_pattern]
@@ -98,6 +104,13 @@ def main():
                     drop["drop_pattern"] += 1
                     continue
                 if (rec["chunk_id"], idx) in skip_cap:
+                    continue
+                text = it["question"] + "\n" + it["answer"]
+                if PLACEHOLDER.search(text):
+                    drop["placeholder"] += 1
+                    continue
+                if any(v != args.strimzi_api_group_version for v in STRIMZI_API.findall(text)):
+                    drop["strimzi_api_version"] += 1
                     continue
                 q, a = it["question"].strip(), it["answer"].strip()
                 if not (args.min_answer <= len(a) <= args.max_answer) or len(q) < 15:
