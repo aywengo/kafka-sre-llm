@@ -18,6 +18,10 @@ Trained on the mlx-community/Qwen3.8-27B-bf16 conversion, revision 6f26571.
 - Answering operational questions and walking through troubleshooting
 - Drafting Strimzi custom resources and GitOps manifests for human review
 
+## Usage
+Fine-tuned for direct answers (non-thinking mode). The bundled chat template disables the
+reasoning block; the upstream Qwen template is not recommended with this model.
+
 ## Limitations
 - Knowledge is frozen at the documentation snapshots listed below; CRD fields, config
   keys and defaults change between releases. Verify against current docs before

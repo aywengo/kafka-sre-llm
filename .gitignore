@@ -5,6 +5,7 @@ data/*.jsonl
 adapters/
 out/
 models/
+runs/v1/base27b/
 eval/results.jsonl
 
 # never commit private runbooks or secrets

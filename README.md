@@ -69,14 +69,18 @@ mlx_lm.lora -c configs/lora.yaml --train false --test   # test-set loss
 Watch validation loss. If it bottoms out and climbs, stop and use the best checkpoint
 (`adapters/kafka-sre-v1/<step>_adapters.safetensors`).
 
-`BASE_PATH` is the snapshot directory of the base model. v1 uses
-mlx-community/Qwen3.8-27B-bf16 at revision 6f265714824f3c38d4452baa1628aef3d9b9aae9:
+`BASE_PATH` is the base model directory. v1 uses mlx-community/Qwen3.8-27B-bf16 at
+revision 6f265714824f3c38d4452baa1628aef3d9b9aae9, wrapped so that the chat template is
+always non-thinking (weights are symlinked, only `chat_template.jinja` is patched):
 
 ```bash
-export BASE_PATH=~/.cache/huggingface/hub/models--mlx-community--Qwen3.8-27B-bf16/snapshots/6f265714824f3c38d4452baa1628aef3d9b9aae9
+SNAP=~/.cache/huggingface/hub/models--mlx-community--Qwen3.8-27B-bf16/snapshots/6f265714824f3c38d4452baa1628aef3d9b9aae9
+python scripts/make_nothink_base.py "$SNAP" runs/v1/base27b
+export BASE_PATH=$PWD/runs/v1/base27b
 ```
 
-`scripts/publish.sh` reads it as `BASE=$BASE_PATH`.
+Training (`runs/v1/lora.yaml`), `eval/compare.py --model` and `scripts/publish.sh`
+(`BASE=$BASE_PATH`) all use this directory.
 
 Quick manual check:
 
