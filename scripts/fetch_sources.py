@@ -29,14 +29,19 @@ def main():
         if args.only and src["name"] not in args.only:
             continue
         target = dest / src["name"]
-        if target.exists():
+        ref = src.get("ref")
+        if not target.exists():
+            run(["git", "clone", "--depth", "1", "--filter=blob:none", "--sparse",
+                 src["repo"], str(target)])
+            run(["git", "sparse-checkout", "set", *src["paths"]], cwd=target)
+        if ref:
+            run(["git", "fetch", "--depth", "1", "origin", "tag", ref], cwd=target)
+            run(["git", "checkout", "--quiet", ref], cwd=target)
+        else:
             run(["git", "pull", "--depth", "1"], cwd=target)
-            continue
-        run(["git", "clone", "--depth", "1", "--filter=blob:none", "--sparse",
-             src["repo"], str(target)])
-        run(["git", "sparse-checkout", "set", *src["paths"]], cwd=target)
         commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=target, text=True).strip()
         (target / ".source-commit").write_text(commit + "\n")
+        (target / ".source-ref").write_text((ref or "default branch") + "\n")
 
 
 if __name__ == "__main__":

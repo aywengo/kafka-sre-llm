@@ -1,10 +1,12 @@
 # Documentation sources for the Kafka SRE dataset.
+# `ref` pins a release tag. Sources without it follow the default branch.
 # Verify each license before publishing a model trained on it, and credit
 # the sources in the model card (CC BY requires attribution).
 
 sources:
   - name: apache-kafka
     repo: https://github.com/apache/kafka.git
+    ref: 4.4.0
     paths: [docs]
     globs: ["**/*.html", "**/*.md"]
     license: Apache-2.0
@@ -19,6 +21,7 @@ sources:
 
   - name: strimzi
     repo: https://github.com/strimzi/strimzi-kafka-operator.git
+    ref: 1.3.1
     paths: [documentation]
     globs: ["**/*.adoc"]
     license: Apache-2.0
@@ -40,6 +43,7 @@ sources:
 
   - name: argo-cd
     repo: https://github.com/argoproj/argo-cd.git
+    ref: v3.6.1
     paths: [docs]
     globs: ["**/*.md"]
     exclude:
