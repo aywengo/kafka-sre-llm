@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Fuse the adapter, build MLX and GGUF variants, and upload to Hugging Face.
-# Usage: HF_USER=yourname NAME=kafka-sre-14b-v1 bash scripts/publish.sh
+# Usage: HF_USER=yourname BASE=<BASE_PATH> NAME=kafka-sre-27b-v1 bash scripts/publish.sh
 # Check flags against `mlx_lm.fuse --help` / `mlx_lm.convert --help` for your version.
 set -euo pipefail
 
-BASE="${BASE:-Qwen/Qwen3-14B}"          # full-precision base the adapter was trained on
+BASE="${BASE:?set BASE to the base model snapshot path (see README)}"  # full-precision base the adapter was trained on
 ADAPTER="${ADAPTER:-adapters/kafka-sre-v1}"
-NAME="${NAME:-kafka-sre-14b-v1}"
+NAME="${NAME:-kafka-sre-27b-v1}"
 HF_USER="${HF_USER:?set HF_USER}"
 LLAMA_CPP="${LLAMA_CPP:-$HOME/src/llama.cpp}"
 OUT="out/$NAME"

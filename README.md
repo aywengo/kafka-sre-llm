@@ -69,10 +69,19 @@ mlx_lm.lora -c configs/lora.yaml --train false --test   # test-set loss
 Watch validation loss. If it bottoms out and climbs, stop and use the best checkpoint
 (`adapters/kafka-sre-v1/<step>_adapters.safetensors`).
 
+`BASE_PATH` is the snapshot directory of the base model. v1 uses
+mlx-community/Qwen3.8-27B-bf16 at revision 6f265714824f3c38d4452baa1628aef3d9b9aae9:
+
+```bash
+export BASE_PATH=~/.cache/huggingface/hub/models--mlx-community--Qwen3.8-27B-bf16/snapshots/6f265714824f3c38d4452baa1628aef3d9b9aae9
+```
+
+`scripts/publish.sh` reads it as `BASE=$BASE_PATH`.
+
 Quick manual check:
 
 ```bash
-mlx_lm.generate --model Qwen/Qwen3-14B --adapter-path adapters/kafka-sre-v1 \
+mlx_lm.generate --model "$BASE_PATH" --adapter-path adapters/kafka-sre-v1 \
   --prompt "Strimzi rolling update is stuck because of under-replicated partitions. What now?"
 ```
 
@@ -82,7 +91,7 @@ Extend `eval/questions.jsonl` to ~200 questions written by you (not generated fr
 same docs), then:
 
 ```bash
-python eval/compare.py --model Qwen/Qwen3-14B --adapter adapters/kafka-sre-v1 \
+python eval/compare.py --model "$BASE_PATH" --adapter adapters/kafka-sre-v1 \
   --judge-url http://localhost:8080/v1
 ```
 

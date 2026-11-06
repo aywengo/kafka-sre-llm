@@ -1,16 +1,18 @@
 ---
 license: apache-2.0          # must be compatible with the base model's license
-base_model: Qwen/Qwen3-14B
+base_model: Qwen/Qwen3.8-27B
 library_name: mlx
 tags: [kafka, strimzi, kubernetes, gitops, sre, devops, lora]
 language: [en]
 ---
 
-# kafka-sre-14b-v1
+# kafka-sre-27b-v1
 
-A LoRA fine-tune of **Qwen/Qwen3-14B** for operating Apache Kafka on Kubernetes:
+A LoRA fine-tune of **Qwen/Qwen3.8-27B** for operating Apache Kafka on Kubernetes:
 Strimzi, cluster operations and troubleshooting, GitOps with Argo CD, and
 data streaming patterns.
+
+Trained on the mlx-community/Qwen3.8-27B-bf16 conversion, revision 6f26571.
 
 ## Intended use
 - Answering operational questions and walking through troubleshooting
