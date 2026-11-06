@@ -17,6 +17,7 @@ whether reasoning tokens per chunk actually dropped).
 import argparse
 import asyncio
 import json
+import os
 import random
 import re
 import time
@@ -146,8 +147,9 @@ async def process(chunk, llm, args, sem, out_f, lock, stats):
                 return
             items = [it for it in (extract_json(raw) or [])
                      if isinstance(it, dict) and it.get("question") and it.get("answer")]
+        rejected = []
         if args.verify == "batch" and items:
-            kept = await verify_batch(chunk, items, llm, args, stats)
+            kept = await verify_batch(chunk, items, llm, args, stats, rejected)
         elif args.verify == "each":
             kept = [it for it in items if await verify_one(chunk, it, llm, args, stats)]
         else:
@@ -159,8 +161,22 @@ async def process(chunk, llm, args, sem, out_f, lock, stats):
                 "path": chunk["path"], "title": chunk["title"], "items": kept,
             }) + "\n")
             out_f.flush()
+            src = stats["by_source"].setdefault(chunk["source"], {"checked": 0, "rejected": 0})
+            src["checked"] += len(items)
+            src["rejected"] += len(items) - len(kept)
+            if rejected:
+                with open(str(out_f.name) + ".rejects.jsonl", "a") as rf:
+                    for it in rejected:
+                        rf.write(json.dumps({"chunk_id": chunk["id"], "source": chunk["source"],
+                                             **it}, ensure_ascii=False) + "\n")
             stats["done"] += 1
             stats["items"] += len(kept)
+            if args.existing is not None and src["checked"] >= args.guard_min_items \
+                    and src["rejected"] / src["checked"] > args.max_reject_rate:
+                print(f"GUARD: {chunk['source']} reject rate {src['rejected']}/{src['checked']} "
+                      f"exceeds {args.max_reject_rate:.0%}; stopping", flush=True)
+                report(stats, llm.usage)
+                os._exit(3)
             if stats["done"] % 20 == 0:
                 report(stats, llm.usage)
 
@@ -180,7 +196,7 @@ async def verify_one(chunk, it, llm, args, stats):
     return True
 
 
-async def verify_batch(chunk, items, llm, args, stats):
+async def verify_batch(chunk, items, llm, args, stats, rejected=None):
     """One call checks every item of a chunk, so the excerpt is sent once."""
     pairs = "\n\n".join(f"[{i}]\nQ: {it['question']}\nA: {it['answer']}"
                         for i, it in enumerate(items, 1))
@@ -192,16 +208,23 @@ async def verify_batch(chunk, items, llm, args, stats):
             extra_body=args.verify_extra_body))
     except Exception:
         v = None
-    ok = set()
+    ok, reasons = set(), {}
     for r in v or []:
-        if isinstance(r, dict) and r.get("grounded") is True:
+        if isinstance(r, dict):
             try:
-                ok.add(int(r.get("id")))
+                i = int(r.get("id"))
             except (TypeError, ValueError):
-                pass
+                continue
+            if r.get("grounded") is True:
+                ok.add(i)
+            else:
+                reasons[i] = r.get("reason")
     if v is None:
         stats["verify_parse_fail"] += 1
     kept = [it for i, it in enumerate(items, 1) if i in ok]  # unparsed verdict = reject
+    if rejected is not None:
+        rejected += [{**it, "reason": reasons.get(i, "no verdict")}
+                     for i, it in enumerate(items, 1) if i not in ok]
     stats["rejected"] += len(items) - len(kept)
     return kept
 
@@ -210,6 +233,8 @@ def report(stats, usage):
     mins = (time.monotonic() - stats["_t0"]) / 60
     calls = max(1, usage["calls"])
     done = max(1, stats["done"])
+    rates = {s: f"{v['rejected']}/{v['checked']}" for s, v in stats["by_source"].items()}
+    print(f"  reject by source: {rates}", flush=True)
     print(f"  done={stats['done']} items={stats['items']} rejected={stats['rejected']} "
           f"failed={stats['failed']} verify_parse_fail={stats['verify_parse_fail']} | "
           f"{stats['done'] / max(mins, 1e-9):.2f} chunks/min | "
@@ -246,6 +271,9 @@ async def main():
                     help="skip generation: run the verifier over the items in this JSONL and "
                          "write survivors to --out. Only chunks whose id is in --chunks are "
                          "checked, i.e. chunks whose text did not change.")
+    ap.add_argument("--max-reject-rate", type=float, default=0.25,
+                    help="--reverify only: stop when a source's reject rate exceeds this")
+    ap.add_argument("--guard-min-items", type=int, default=100)
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
     args.existing = None
@@ -275,7 +303,7 @@ async def main():
               args.extra_body, usage)
     sem, lock = asyncio.Semaphore(args.concurrency), asyncio.Lock()
     stats = {"done": 0, "items": 0, "rejected": 0, "failed": 0, "verify_parse_fail": 0,
-             "_t0": time.monotonic()}
+             "_t0": time.monotonic(), "by_source": {}}
     with out.open("a") as f:
         await asyncio.gather(*(process(c, llm, args, sem, f, lock, stats) for c in chunks))
     print("finished:")
