@@ -20,13 +20,32 @@ except ImportError:  # HTML sources need beautifulsoup4
 MIN_CHARS = 400
 MAX_CHARS = 4000
 
-# Strimzi AsciiDoc attributes worth resolving; unknown ones are left as-is.
-ADOC_ATTRS = {
-    "ProductName": "Strimzi",
-    "ProductLongName": "Strimzi",
-    "ProductVersion": "<strimzi-version>",
-    "DefaultKafkaVersion": "<kafka-version>",
-}
+ADOC_ATTR_DEF = re.compile(r"^:([\w-]+):\s*(.*)$")
+ADOC_PLACEHOLDER = re.compile(r"(?<![$\w])\{[A-Za-z]\w*\}")
+
+
+def parse_adoc_text(text: str) -> dict:
+    return {m.group(1): m.group(2) for line in text.splitlines()
+            if (m := ADOC_ATTR_DEF.match(line.strip()))}
+
+
+def parse_adoc_attributes(path: Path, attrs=None) -> dict:
+    """Read `:name: value` definitions from an AsciiDoc file, following include:: lines."""
+    attrs = {} if attrs is None else attrs
+    attrs.update(parse_adoc_text(path.read_text(errors="ignore")))
+    for line in path.read_text(errors="ignore").splitlines():
+        m = re.match(r"^include::([^\[]+)\[", line.strip())
+        if m and (path.parent / m.group(1)).is_file():
+            parse_adoc_attributes(path.parent / m.group(1), attrs)
+    return attrs
+
+
+def resolve_attributes(attrs: dict) -> dict:
+    """Expand attributes that refer to other attributes."""
+    sub = lambda v: re.sub(r"\{(\w+)\}", lambda m: attrs.get(m.group(1), m.group(0)), v)
+    for _ in range(5):
+        attrs = {k: sub(v) for k, v in attrs.items()}
+    return attrs
 
 
 # ---------- format cleaners ---------------------------------------------------
@@ -41,7 +60,8 @@ def clean_markdown(text: str) -> str:
     return text
 
 
-def clean_adoc(text: str) -> str:
+def clean_adoc(text: str, attrs: dict) -> str:
+    attrs = resolve_attributes({**attrs, **parse_adoc_text(text)})
     out, in_listing, in_comment = [], False, False
     for line in text.splitlines():
         s = line.strip()
@@ -66,7 +86,7 @@ def clean_adoc(text: str) -> str:
                 line = "#" * len(m.group(1)) + " " + m.group(2)
             line = re.sub(r"xref:[^\[]+\[([^\]]*)\]", r"\1", line)
             line = re.sub(r"link:[^\[]+\[([^\]]*)\]", r"\1", line)
-        line = re.sub(r"\{(\w+)\}", lambda m: ADOC_ATTRS.get(m.group(1), m.group(0)), line)
+        line = re.sub(r"\{(\w+)\}", lambda m: attrs.get(m.group(1), m.group(0)), line)
         out.append(line)
     return "\n".join(out)
 
@@ -90,7 +110,7 @@ def clean_html(text: str) -> str:
     return txt
 
 
-CLEANERS = {".md": clean_markdown, ".adoc": clean_adoc, ".html": clean_html, ".txt": lambda t: t}
+CLEANERS = {".md": clean_markdown, ".html": clean_html, ".txt": lambda t: t}
 
 
 # ---------- chunking ----------------------------------------------------------
@@ -196,20 +216,29 @@ def main():
     n = 0
     with out.open("w") as f:
         for src in cfg["sources"]:
-            count = 0
+            count = dropped = 0
+            attrs = {}
+            for rel in src.get("attribute_files", []):
+                parse_adoc_attributes(Path(args.raw) / src["name"] / rel, attrs)
             for path in sorted(set(iter_files(src, Path(args.raw)))):
-                cleaner = CLEANERS.get(path.suffix)
-                if not cleaner:
+                raw_text = path.read_text(errors="ignore")
+                if path.suffix == ".adoc":
+                    text = clean_adoc(raw_text, attrs)
+                elif path.suffix in CLEANERS:
+                    text = CLEANERS[path.suffix](raw_text)
+                else:
                     continue
-                text = cleaner(path.read_text(errors="ignore"))
                 for i, (title, body) in enumerate(chunk_text(text)):
+                    if path.suffix == ".adoc" and ADOC_PLACEHOLDER.search(body):
+                        dropped += 1
+                        continue
                     cid = hashlib.sha1(f"{path}:{i}:{title}:{body}".encode()).hexdigest()[:16]
                     f.write(json.dumps({
                         "id": cid, "source": src["name"], "license": src.get("license"),
                         "path": str(path), "title": title, "text": body,
                     }) + "\n")
                     count += 1
-            print(f"{src['name']}: {count} chunks")
+            print(f"{src['name']}: {count} chunks" + (f", dropped {dropped} with unresolved placeholders" if dropped else ""))
             n += count
     print(f"total {n} chunks -> {out}")
 
