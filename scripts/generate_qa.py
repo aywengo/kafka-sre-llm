@@ -62,15 +62,20 @@ GEN_USER = """Source: {source} — {title}
 Write {n} diverse items. Mix types; include at least one troubleshooting or config item if the \
 excerpt allows it."""
 
+STRICT_RULES = """grounded=false if the answer states anything not supported by the excerpt, \
+contains a wrong config key/flag/default, would mislead an operator, contains an unresolved \
+placeholder such as {SomeAttribute}, uses an apiVersion that is not in the excerpt, places a \
+setting at the wrong scope (broker vs topic vs client vs Connect worker vs connector vs a \
+specific custom resource field), or accepts a false premise in the question instead of \
+correcting it."""
+
 VERIFY_SYSTEM = """You check training data for factual grounding. Given an excerpt and a \
 question/answer pair, reply with ONLY a JSON object: {"grounded": true|false, "reason": "..."}. \
-grounded=false if the answer states anything not supported by the excerpt, contains a wrong \
-config key/flag/default, or would mislead an operator."""
+""" + STRICT_RULES
 
 VERIFY_BATCH_SYSTEM = """You check training data for factual grounding. You get one excerpt \
 and several numbered question/answer pairs generated from it. For each pair decide whether it \
-is grounded. grounded=false if the answer states anything not supported by the excerpt, \
-contains a wrong config key/flag/default, or would mislead an operator. Reply with ONLY a JSON \
+is grounded. """ + STRICT_RULES + """ Reply with ONLY a JSON \
 array, one object per pair: [{"id": 1, "grounded": true|false, "reason": "<few words>"}, ...]"""
 
 
