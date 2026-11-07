@@ -5,6 +5,7 @@ data/*.jsonl
 adapters/
 out/
 models/
+data_resume/
 runs/v1/base27b/
 eval/results.jsonl
 
