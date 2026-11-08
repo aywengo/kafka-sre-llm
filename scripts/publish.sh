@@ -37,13 +37,13 @@ mlx_lm.generate --model "$OUT/mlx-4bit" --max-tokens 300 \
 
 echo "== READMEs (one card, title and library_name per repo)"
 sed 's/^library_name: .*/library_name: transformers/' MODEL_CARD.md > "$OUT/bf16/README.md"
-sed "s/^# $NAME\$/# $NAME-MLX-4bit/" MODEL_CARD.md > "$OUT/mlx-4bit/README.md"
-sed -e "s/^# $NAME\$/# $NAME-GGUF/" -e 's/^library_name: .*/library_name: gguf/' MODEL_CARD.md > "$OUT/gguf/README.md"
+sed -e "s/^# $NAME\$/# $NAME-MLX-4bit/" -e "s|^base_model: .*|base_model: $HF_USER/$NAME\nbase_model_relation: quantized|" MODEL_CARD.md > "$OUT/mlx-4bit/README.md"
+sed -e "s/^# $NAME\$/# $NAME-GGUF/" -e 's/^library_name: .*/library_name: gguf/' -e "s|^base_model: .*|base_model: $HF_USER/$NAME\nbase_model_relation: quantized|" MODEL_CARD.md > "$OUT/gguf/README.md"
 
 [ "${UPLOAD:-0}" = 1 ] || { echo "== steps 1-4 done; not uploading (set UPLOAD=1 to run step 5)"; exit 0; }
 
 echo "== 5. upload (requires: hf auth login)"
-hf upload "$HF_USER/$NAME"          "$OUT/bf16"     . --repo-type model
-hf upload "$HF_USER/$NAME-MLX-4bit" "$OUT/mlx-4bit" . --repo-type model
-hf upload "$HF_USER/$NAME-GGUF"     "$OUT/gguf"     . --repo-type model
+hf upload "$HF_USER/$NAME"          "$OUT/bf16"     . --repo-type model --private
+hf upload "$HF_USER/$NAME-MLX-4bit" "$OUT/mlx-4bit" . --repo-type model --private
+hf upload "$HF_USER/$NAME-GGUF"     "$OUT/gguf"     . --repo-type model --private
 echo "done: https://huggingface.co/$HF_USER/$NAME"

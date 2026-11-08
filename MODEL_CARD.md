@@ -51,12 +51,13 @@ without a person checking it against the current docs.
   the last checkpoint was step 600). Training resumed from the step-600 checkpoint. mlx-lm
   visits batches in a fixed seeded order, so we reproduced that order exactly (checked against
   the logged trained-token counts of the first 770 steps) and resumed on the 1,114 batches not yet seen. The optimizer
-  state was not restored, which is why the resume has a short warmup. A later stall of about 85
-  minutes (memory exhaustion by another process) did not affect results.
+  state was not restored, which is why the resume has a short warmup. Later in the resume, training stalled for about 85
+  minutes (from 23:14 to 00:42, between steps 310 and 320 of the resume) because another process had filled
+  the machine's memory; it then continued unchanged.
 
 ## Training data
-Synthetic question/answer pairs, 7,201 items (6,858 train / 198 validation / 145 test), written by
-**DeepSeek-V4.1-Flash** (thinking off) from pinned documentation, one excerpt at a time.
+Synthetic question/answer pairs, 7,201 items (6,858 train / 198 validation / 145 test), generated with
+**DeepSeek-V4.1-Flash** (MIT licence; thinking off) from pinned documentation, one excerpt at a time.
 Each item was then checked by the same model against its excerpt (grounding verifier; v2 rules
 reject unresolved placeholders, API versions not in the excerpt, settings at the wrong scope and
 accepted false premises). The build step drops items mentioning "the excerpt", items with
@@ -195,8 +196,8 @@ Losses:
 
 | Reviewer | Tuned better | Base better | Tie | Major errors base / tuned |
 |---|---|---|---|---|
-| Roman | 8 | 1 | 1 | 9 / 4 |
-| Fable | 5 | 4 | 1 | 7 / 3 |
+| The author | 8 | 1 | 1 | 9 / 4 |
+| A second LLM reviewer | 5 | 4 | 1 | 7 / 3 |
 | DeepSeek judge (same 10) | 4 | 5 | 1 | |
 
 ## Known failure modes
@@ -207,6 +208,7 @@ Found in the evaluation and in manual review of answers. Check these especially:
 - **Broker recovery after a crash:** vague; misses `num.recovery.threads.per.data.dir` and the effect of unclean shutdown.
 - **Kafka Streams exactly-once:** gives wrong internals (for example, claims EOS only works with internal topics).
 - **Schema Registry:** weak on the wire format and the "Unknown magic byte" error.
+- **Invents CRD fields:** for example `kafkaVersion` instead of `spec.kafka.version` (seen in a Q4_K_M smoke test).
 - **Invented details:** settings, endpoints and examples added in caveats that the source did not
   contain, and wrong placement of a setting (broker vs topic vs client vs Connect worker).
 - **No system prompt:** without the recommended system prompt the model can invent tools and
