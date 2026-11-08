@@ -25,7 +25,9 @@ mlx_lm.convert --hf-path "$OUT/fused" --mlx-path "$OUT/mlx-4bit" -q --q-bits 4
 cp MODEL_CARD.md "$OUT/mlx-4bit/README.md"
 
 echo "== 3. GGUF variants (for Ollama / LM Studio / llama.cpp)"
-"$PYTHON" "$LLAMA_CPP/convert_hf_to_gguf.py" "$OUT/fused" --outtype f16 --outfile "$OUT/$NAME-f16.gguf"
+# llama.cpp expects the Hugging Face weight layout, not the mlx-lm layout of the fused model.
+"$PYTHON" scripts/mlx_to_hf_layout.py "$OUT/fused" "$OUT/fused-hf"
+"$PYTHON" "$LLAMA_CPP/convert_hf_to_gguf.py" "$OUT/fused-hf" --outtype f16 --outfile "$OUT/$NAME-f16.gguf"
 for q in Q4_K_M Q5_K_M Q8_0; do
   "$LLAMA_CPP/build/bin/llama-quantize" "$OUT/$NAME-f16.gguf" "$OUT/$NAME-$q.gguf" "$q"
 done
