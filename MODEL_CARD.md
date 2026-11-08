@@ -14,8 +14,8 @@ language: [en]
 > **Automatic eval gate: FAILED.**
 > DeepSeek judge on 40 real-world questions: tuned 3.05 vs base 3.15 (gate needed +0.3).
 > Better on Strimzi (+1.2), Kafka config (+0.8), Argo CD (+0.4); worse on Kafka
-> operations (-1.8), streaming and Kubernetes. Blind human review on 10 of those
-> questions favoured the tuned model (8-1 and 5-4), mainly because the base model
+> operations (-1.8), streaming and Kubernetes. Blind review by the author and a second
+> LLM reviewer on 10 of those questions favoured the tuned model (8-1 and 5-4), mainly because the base model
 > invents CRD fields, endpoints and defaults. The tuned model gives short answers
 > (~230 tokens) that are more accurate but less complete for troubleshooting.
 
@@ -87,7 +87,7 @@ weak filter: it rejected only 1-3% of items it re-checked.
 
 ## Evaluation
 
-**The judge is the same model that generated the training data** (DeepSeek-V4.1-Flash, local 4-bit build `DeepSeek-V4.1-Flash-1017-oQ4e-mtp`), so its scores can favour the style and the mistakes of the training data; read them together with the blind human review below. Judge settings: thinking off, scores 1-5 per answer with the reference notes; answer order randomised; the judge was told to score content only and not to penalise answers cut off by the length limit (1024 new tokens). Base and tuned answers use the same non-thinking prompt.
+**The judge is the same model that generated the training data** (DeepSeek-V4.1-Flash, local 4-bit build `DeepSeek-V4.1-Flash-1017-oQ4e-mtp`), so its scores can favour the style and the mistakes of the training data; read them together with the blind review below. Judge settings: thinking off, scores 1-5 per answer with the reference notes; answer order randomised; the judge was told to score content only and not to penalise answers cut off by the length limit (1024 new tokens). Base and tuned answers use the same non-thinking prompt.
 
 ### questions.jsonl (12 hand-written, first set)
 
@@ -192,7 +192,7 @@ Losses:
 | streaming | How do we enable exactly-once processing in Kafka Streams and what does it require? | 5 | 2 | tuned has a dangerous factual error: claims EOS is only supported when input and output topics are internal topics, which is false (EOS works with external source/sink topics; only repartition/changelog topics are internal). Also misattributes transaction.stat… |
 | kafka-ops | After deploying a new version of our consumer service, the consumer group keeps rebalancing every few minutes … | 4 | 2 | tuned misdiagnoses the issue: it attributes rebalances to unclean shutdown/session.timeout.ms rather than max.poll.interval.ms exceeded due to slow processing, which is the likely cause per reference. It also incorrectly states session.timeout.ms is a consumer… |
 
-### Blind human review (10 of the real questions)
+### Blind review by the author and a second LLM reviewer (10 of the real questions)
 
 | Reviewer | Tuned better | Base better | Tie | Major errors base / tuned |
 |---|---|---|---|---|
