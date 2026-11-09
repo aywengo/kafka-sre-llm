@@ -3,6 +3,18 @@
 Fine-tune an open-weight model into a Kafka / Strimzi / Kubernetes / GitOps SRE
 assistant on Apple Silicon with mlx-lm, then publish it to Hugging Face.
 
+## Published model (experimental preview)
+
+v1 is out as an experimental preview. Its automatic eval gate failed; read the model card
+before using it, and verify every config and command before applying it to a cluster.
+
+- Article: [Kafka SRE agent, part 1](https://huggingface.co/blog/aywengo/kafka-sre-agent-part-1)
+- MLX 4-bit: [aywengo/kafka-sre-27b-v1-preview-MLX-4bit](https://huggingface.co/aywengo/kafka-sre-27b-v1-preview-MLX-4bit)
+- GGUF (Q4_K_M now; Q5_K_M and Q8_0 to follow): [aywengo/kafka-sre-27b-v1-preview-GGUF](https://huggingface.co/aywengo/kafka-sre-27b-v1-preview-GGUF)
+- bf16, Hugging Face layout (upload in progress): [aywengo/kafka-sre-27b-v1-preview](https://huggingface.co/aywengo/kafka-sre-27b-v1-preview)
+
+Feedback and review are welcome, v2 is planned.
+
 ```
 sources.yaml ─► fetch_sources.py ─► chunk_docs.py ─► generate_qa.py ─► build_dataset.py
                   raw/                work/chunks.jsonl  work/raw_qa.jsonl   data/*.jsonl
