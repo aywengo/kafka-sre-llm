@@ -237,7 +237,7 @@ Use the bundled chat template (non-thinking). Prompts end with an empty think bl
 |---|---|---|
 | `kafka-sre-27b-v1-preview` | bf16 safetensors, Hugging Face layout | loads with `transformers` (`Qwen3_5ForConditionalGeneration`); vision tower is the unchanged upstream one; the MTP head is not included (not fine-tuned) |
 | `kafka-sre-27b-v1-preview-MLX-4bit` | MLX 4-bit (group size 64) | text only; for `mlx-lm` on Apple silicon |
-| `kafka-sre-27b-v1-preview-GGUF` | Q4_K_M, Q5_K_M, Q8_0 | text only (no `mmproj`); for llama.cpp and Ollama |
+| `kafka-sre-27b-v1-preview-GGUF` | Q4_K_M (Q5_K_M and Q8_0 to follow) | text only (no `mmproj`); for llama.cpp and Ollama |
 
 mlx-lm stores Qwen3.5-family weights in its own layout (RMSNorm weights shifted by +1, conv1d
 weight transposed). The bf16 and GGUF files were made from a copy converted back to the
@@ -256,7 +256,7 @@ mlx_lm.generate --model aywengo/kafka-sre-27b-v1-preview-MLX-4bit --max-tokens 6
   --prompt "Strimzi rolling update is stuck because of under-replicated partitions. What now?"
 ```
 
-**llama.cpp** (GGUF files in the `-GGUF` repo: Q4_K_M, Q5_K_M, Q8_0):
+**llama.cpp** (the `-GGUF` repo has Q4_K_M now; Q5_K_M and Q8_0 to follow):
 ```bash
 llama-cli -m kafka-sre-27b-v1-preview-Q4_K_M.gguf --jinja -sys "<system prompt above>" -p "..."
 ```
