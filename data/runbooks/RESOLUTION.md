@@ -77,8 +77,8 @@ Status values: **APPLIED** (fixed as described), **REJECTED** (the source refute
 
 From `python3 -I tools/check_runbooks.py --sources <cache>` on the branch head; see FINDINGS.md, "Verification", for the full table.
 
-- Code items found in a pinned source: 906 of 979. The other 73: 43 repo paths (all exist) and 30 items listed with a reason in `tools/allowed_unmatched.txt` (26 placeholders, elisions or composed spans, 3 names from the Kafka 4.3.2 tools source, and 1 abridged block); unlisted misses and unused entries fail. Commands: 0 of 138 differ from a complete source command (131 exact; 7 inline prose mentions allowlisted with a reason in `tools/abbreviated_commands.txt`). Blocks found line for line inside one source code element: 128 of 129. Unterminated fences: 0.
-- Citations failing: 0 of 78 Strimzi anchors, 0 of 35 Kafka anchors, 0 of 11 GitHub paths, 0 of 2 index pages, 0 of 53 backtick repo paths (distinct URLs; 812 occurrences).
+- Code items found in a pinned source: 922 of 995. The other 73: 43 repo paths (all exist) and 30 items listed with a reason in `tools/allowed_unmatched.txt` (26 placeholders, elisions or composed spans, 3 names from the Kafka 4.3.2 tools source, and 1 abridged block); unlisted misses and unused entries fail. Commands: 0 of 139 differ from a complete source command (132 exact; 7 inline prose mentions allowlisted with a reason in `tools/abbreviated_commands.txt`). Blocks found line for line inside one source code element: 128 of 129. Unterminated fences: 0.
+- Citations failing: 0 of 79 Strimzi anchors, 0 of 36 Kafka anchors, 0 of 11 GitHub paths, 0 of 2 index pages, 0 of 53 backtick repo paths (distinct URLs; 825 occurrences).
 - Steps: 293; 282 with a Source line, 11 with only a NO OFFICIAL SOURCE marker, 0 with neither.
 - Coverage: 37 rows, 16 covered, 20 partial, 1 no official source; Totals table matches.
 - Eval: 189 items; 0 failing.

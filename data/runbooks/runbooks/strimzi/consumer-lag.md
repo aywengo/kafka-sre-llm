@@ -4,7 +4,7 @@
 |---|---|
 | Product | Strimzi Kafka Exporter, KRaft |
 | Doc version | Strimzi 1.3.1, "Deploying and Managing Strimzi" (§11.2.6, §25.5, §25.5.1); example rules at repo tag 1.3.1 |
-| Sources | https://strimzi.io/docs/operators/1.3.1/deploying#con-kafka-exporter-str ; https://strimzi.io/docs/operators/1.3.1/deploying#con-metrics-kafka-exporter-lag-str ; https://strimzi.io/docs/operators/1.3.1/deploying#proc-kafka-exporter-deploy-str ; https://github.com/strimzi/strimzi-kafka-operator/blob/1.3.1/packaging/examples/metrics/prometheus-install/prometheus-rules/prometheus-kafka-exporter-topic-rules-group.yaml |
+| Sources | https://strimzi.io/docs/operators/1.3.1/deploying#con-kafka-exporter-str ; https://strimzi.io/docs/operators/1.3.1/deploying#con-metrics-kafka-exporter-lag-str ; https://strimzi.io/docs/operators/1.3.1/deploying#proc-kafka-exporter-deploy-str ; https://strimzi.io/docs/operators/1.3.1/deploying#ref-list-of-kafka-cluster-resources-str ; https://github.com/strimzi/strimzi-kafka-operator/blob/1.3.1/packaging/examples/metrics/prometheus-install/prometheus-rules/prometheus-kafka-exporter-topic-rules-group.yaml |
 | License | Strimzi documentation, part of strimzi/strimzi-kafka-operator, licensed under the Apache License 2.0 (repository LICENSE and README at tag 1.3.1). © Strimzi a Series of LF Projects, LLC. Also derived from: Strimzi repo example files (strimzi-kafka-operator tag 1.3.1), Apache License 2.0 (https://www.apache.org/licenses/LICENSE-2.0). Prose reworded; commands quoted verbatim. YAML examples may be abridged: the Kafka Exporter example in Diagnosis step 1 is (see the note there). |
 | Retrieved | 2026-11-10 |
 
@@ -38,8 +38,8 @@ Definition: consumer lag for a group is the distance between the last message in
        # Metrics for all consumers (optional)
        showAllOffsets: false # (5)
    ```
-   Apply the change. Strimzi then creates a Service and a Pod named `<kafka_cluster_name>-kafka-exporter`.
-   — *Source:* https://strimzi.io/docs/operators/1.3.1/deploying#proc-kafka-exporter-deploy-str ; https://strimzi.io/docs/operators/1.3.1/deploying#con-kafka-exporter-str (Strimzi 1.3.1, retrieved 2026-11-10)
+   Apply the change. The procedure says that resources, including a `Service` and `Pod`, are created with the naming convention `<kafka_cluster_name>-kafka-exporter`. The list of Kafka cluster resources is exact: `<kafka_cluster_name>-kafka-exporter` is the name of the Deployment, the Service, the service account and the network policy, and the Pod created by the Deployment is `<kafka_cluster_name>-kafka-exporter-<random_string>`. Look the Pod up by its generated name, not by the fixed one (FINDINGS F25).
+   — *Source:* https://strimzi.io/docs/operators/1.3.1/deploying#proc-kafka-exporter-deploy-str ; https://strimzi.io/docs/operators/1.3.1/deploying#con-kafka-exporter-str ; https://strimzi.io/docs/operators/1.3.1/deploying#ref-list-of-kafka-cluster-resources-str (Strimzi 1.3.1, retrieved 2026-11-10)
 2. Make sure Prometheus scrapes the exporter. The example Prometheus deployment already does: its PodMonitor `kafka-resources-metrics` matches the `strimzi.io/kind: Kafka` label that identifies the Kafka Exporter.
    — *Source:* https://strimzi.io/docs/operators/1.3.1/deploying#proc-kafka-exporter-deploy-str (Strimzi 1.3.1, retrieved 2026-11-10)
 3. Import the Kafka Exporter Grafana dashboard. Use the **Lag by consumer group** panel and the messages-consumed panel to analyse lag.
