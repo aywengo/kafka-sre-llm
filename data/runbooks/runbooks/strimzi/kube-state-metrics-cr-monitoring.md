@@ -33,7 +33,7 @@ All of them are severity `warning` with `for: 15m`, except the two rebalance-pro
 | `*Warnings` (Kafka, KafkaTopic, KafkaUser, KafkaNodePool, KafkaRebalance, KafkaConnect, KafkaConnector, KafkaMirrorMaker2, KafkaAccess) | `strimzi_<resource>_resource_info{warnings="Warning"}` | 15m / warning | [cr-status-and-conditions.md](cr-status-and-conditions.md) |
 | `*Deprecated` (same resources) | `strimzi_<resource>_resource_info{deprecated="Warning"}` | 15m / warning | [cr-status-and-conditions.md](cr-status-and-conditions.md) |
 
-The rules use a `message` annotation and have no `runbook_url`. The "Related runbook" column is this compilation's own cross-link.
+The rules use a `message` annotation and have no `runbook_url`. For example, the `KafkaRebalanceProposalPending` message says the KafkaRebalance "is in proposal pending state and waits for approval for more than 1h." The "Related runbook" column is this compilation's own cross-link.
 — *Source:* https://github.com/strimzi/strimzi-kafka-operator/blob/1.3.1/packaging/examples/metrics/kube-state-metrics/prometheus-rules.yaml (repo tag 1.3.1, retrieved 2026-11-10)
 
 ## Remediation steps: deploying KSM for Strimzi resources

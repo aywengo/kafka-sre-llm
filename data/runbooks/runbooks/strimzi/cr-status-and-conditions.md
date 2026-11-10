@@ -32,7 +32,7 @@ Resources that publish status: `Kafka`, `KafkaNodePool`, `KafkaTopic`, `KafkaUse
    — *Source:* https://strimzi.io/docs/operators/1.3.1/deploying#con-custom-resources-status-str (Strimzi 1.3.1, retrieved 2026-11-10)
 
 4. For a `Kafka` resource, check these fields:
-   - `kafkaMetadataState`: `KRaft` means KRaft manages the metadata.
+   - `kafkaMetadataState`: `KRaft` means KRaft manages the Kafka metadata and coordinates operations.
    - `kafkaVersion`: the Kafka version the cluster uses.
    - `operatorLastSuccessfulVersion`: the operator version that last completed a reconciliation.
    - `kafkaNodePools`, `listeners`, `clusterId`.

@@ -54,7 +54,7 @@ A Kafka pod was restarted (rolled) and you need to know why. The Cluster Operato
    | `CaCertRemoved` | Expired CA certificates were removed; pod restarted to run with the current certificates |
    | `CaCertRenewed` | CA certificates were renewed; pod restarted to use them |
    | `ClusterCaCertKeyReplaced` | Key that signs the cluster CA certificates was replaced; restart is part of CA renewal |
-   | `ConfigChangeRequiresRestart` | Kafka configuration changed and some of the changed properties need a broker restart |
+   | `ConfigChangeRequiresRestart` | Some Kafka configuration properties are changed dynamically, but others require that the broker be restarted |
    | `FileSystemResizeNeeded` | File system size increased; restart needed to apply it |
    | `KafkaCertificatesChanged` | One or more broker TLS certificates updated; restart needed to use them |
    | `ManualRollingUpdate` | User annotated the pod or its StrimziPodSet to trigger a restart |
