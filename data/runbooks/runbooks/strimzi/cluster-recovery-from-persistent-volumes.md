@@ -4,7 +4,7 @@
 |---|---|
 | Product | Strimzi, KRaft |
 | Doc version | Strimzi 1.3.1, "Deploying and Managing Strimzi" (chapter 33) |
-| Sources | https://strimzi.io/docs/operators/1.3.1/deploying#con-cluster-recovery-scenarios-str ; https://strimzi.io/docs/operators/1.3.1/deploying#recovering_from_namespace_deletion ; https://strimzi.io/docs/operators/1.3.1/deploying#recovering_from_cluster_loss ; https://strimzi.io/docs/operators/1.3.1/deploying#proc-cluster-recovery-volume-str ; repo `documentation/modules/managing/con-cluster-recovery-scenarios.adoc`, `documentation/modules/managing/proc-cluster-recovery-volume.adoc` @ tag 1.3.1 (commit 555c3e0f07c203911bc3cb7d13ac085bfaa81b50) |
+| Sources | https://strimzi.io/docs/operators/1.3.1/deploying#con-cluster-recovery-scenarios-str ; https://strimzi.io/docs/operators/1.3.1/deploying#recovering_from_namespace_deletion ; https://strimzi.io/docs/operators/1.3.1/deploying#recovering_from_cluster_loss ; https://strimzi.io/docs/operators/1.3.1/deploying#proc-cluster-recovery-volume-str ; https://strimzi.io/docs/operators/1.3.1/deploying#recovery_approach ; https://strimzi.io/docs/operators/1.3.1/deploying#con-custom-resources-status-str ; repo `documentation/modules/managing/con-cluster-recovery-scenarios.adoc`, `documentation/modules/managing/proc-cluster-recovery-volume.adoc` @ tag 1.3.1 (commit 555c3e0f07c203911bc3cb7d13ac085bfaa81b50) |
 | License | Derived from Strimzi documentation, © the Strimzi authors, CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Prose reworded; commands quoted verbatim. |
 | Retrieved | 2026-11-10 |
 

@@ -4,7 +4,7 @@
 |---|---|
 | Product | Strimzi, KRaft |
 | Doc version | Strimzi 1.3.1, "Deploying and Managing Strimzi" (§11.2.9) |
-| Sources | https://strimzi.io/docs/operators/1.3.1/deploying#con-kafka-recovering-brokers-str ; https://strimzi.io/docs/operators/1.3.1/deploying#recovery_approach ; repo `documentation/modules/configuring/con-kafka-recovering-brokers.adoc` @ tag 1.3.1 (commit 555c3e0f07c203911bc3cb7d13ac085bfaa81b50) |
+| Sources | https://strimzi.io/docs/operators/1.3.1/deploying#con-kafka-recovering-brokers-str ; https://strimzi.io/docs/operators/1.3.1/deploying#recovery_approach ; https://strimzi.io/docs/operators/1.3.1/deploying#proc-resizing-persistent-volumes-str ; https://strimzi.io/docs/operators/1.3.1/deploying#proc-setting-broker-limits-str ; https://strimzi.io/docs/operators/1.3.1/deploying#con-choosing-a-quota-plugin-str ; https://kafka.apache.org/44/operations/basic-kafka-operations/#setting-quotas ; https://kafka.apache.org/44/operations/basic-kafka-operations/#decommissioning-log-directories ; https://strimzi.io/docs/operators/1.3.1/deploying#con-cluster-recovery-scenarios-str ; https://strimzi.io/docs/operators/1.3.1/deploying#proc-cluster-recovery-volume-str ; repo `documentation/modules/configuring/con-kafka-recovering-brokers.adoc`, `documentation/modules/configuring/con-config-storage-kraft.adoc`, `documentation/modules/managing/proc-setting-broker-limits.adoc`, `documentation/modules/managing/con-choosing-a-quota-plugin.adoc` @ tag 1.3.1 (commit 555c3e0f07c203911bc3cb7d13ac085bfaa81b50) |
 | License | Derived from Strimzi documentation, © the Strimzi authors, CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Prose reworded. |
 | Retrieved | 2026-11-10 |
 
@@ -28,10 +28,19 @@ The source orders the options to keep broker data and lower the risk of data los
 
 1. Free disk space or increase the available storage capacity.
    — *Source:* https://strimzi.io/docs/operators/1.3.1/deploying#recovery_approach (Strimzi 1.3.1, retrieved 2026-11-10)
+
+   **[ROLLING RESTART]** To increase capacity of persistent-claim volumes, raise the `size` storage property in the `KafkaNodePool` (for JBOD, on each volume under `storage.volumes`). The source's example sets `size: 2000Gi`. Resizing has no risk of data loss as long as the storage infrastructure supports it. Decreasing the size is not supported in Kubernetes. When the resizing is complete, the Cluster Operator restarts all pods that use the resized volumes, automatically. Check the new capacity with:
+   ```
+   kubectl get pv
+   ```
+   — *Source:* https://strimzi.io/docs/operators/1.3.1/deploying#proc-resizing-persistent-volumes-str (Strimzi 1.3.1, retrieved 2026-11-10)
 2. Review topic retention and compaction settings to reduce disk usage.
    — *Source:* https://strimzi.io/docs/operators/1.3.1/deploying#recovery_approach (Strimzi 1.3.1, retrieved 2026-11-10)
-3. Review quota settings that limit producer throughput, so disks do not fill as quickly.
-   — *Source:* https://strimzi.io/docs/operators/1.3.1/deploying#recovery_approach (Strimzi 1.3.1, retrieved 2026-11-10)
+3. Review quota settings that limit producer throughput, so disks do not fill as quickly. The source's additional resources for this are "Choosing a quota plugin" and "Setting throughput and storage limits on brokers".
+   — *Source:* https://strimzi.io/docs/operators/1.3.1/deploying#recovery_approach ; https://strimzi.io/docs/operators/1.3.1/deploying#con-choosing-a-quota-plugin-str ; https://strimzi.io/docs/operators/1.3.1/deploying#proc-setting-broker-limits-str (Strimzi 1.3.1, retrieved 2026-11-10)
+
+   Apache Kafka reference (Kafka 4.4 docs; on Strimzi, use the Strimzi sections above): client quotas with `kafka-configs.sh` (`producer_byte_rate`, `consumer_byte_rate`, `request_percentage`), and moving data off a log directory by cordoning it and reassigning its partitions.
+   — *Source:* https://kafka.apache.org/44/operations/basic-kafka-operations/#setting-quotas ; https://kafka.apache.org/44/operations/basic-kafka-operations/#decommissioning-log-directories (Kafka 4.4, retrieved 2026-11-10)
 4. If the problem involves persistent volumes or PVCs (failed mounts, unavailable volumes), the source points to the cluster recovery from persistent volumes information: [cluster-recovery-from-persistent-volumes.md](cluster-recovery-from-persistent-volumes.md).
    — *Source:* https://strimzi.io/docs/operators/1.3.1/deploying#recovery_approach (Strimzi 1.3.1, retrieved 2026-11-10)
 

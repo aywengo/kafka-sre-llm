@@ -4,7 +4,7 @@
 |---|---|
 | Product | Strimzi Kafka Connect, KRaft |
 | Doc version | Strimzi 1.3.1, "Deploying and Managing Strimzi" (§11.8.2, §11.8.3); example rules at repo tag 1.3.1 |
-| Sources | https://strimzi.io/docs/operators/1.3.1/deploying#proc-manual-restart-connector-str ; https://strimzi.io/docs/operators/1.3.1/deploying#proc-manual-restart-connector-task-str ; https://github.com/strimzi/strimzi-kafka-operator/blob/1.3.1/packaging/examples/metrics/prometheus-install/prometheus-rules/prometheus-kafka-connect-rules.yaml |
+| Sources | https://strimzi.io/docs/operators/1.3.1/deploying#proc-manual-restart-connector-str ; https://strimzi.io/docs/operators/1.3.1/deploying#proc-manual-restart-connector-task-str ; https://github.com/strimzi/strimzi-kafka-operator/blob/1.3.1/packaging/examples/metrics/prometheus-install/prometheus-rules/prometheus-kafka-connect-rules.yaml ; https://strimzi.io/docs/operators/1.3.1/deploying#proc-manual-rolling-update-pods-str |
 | License | Derived from Strimzi documentation (CC BY 4.0, https://creativecommons.org/licenses/by/4.0/) and Strimzi example files (Apache-2.0), © the Strimzi authors. Prose reworded; commands quoted verbatim. |
 | Retrieved | 2026-11-10 |
 

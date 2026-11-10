@@ -4,7 +4,7 @@
 |---|---|
 | Product | Strimzi example metrics configuration, KRaft |
 | Doc version | Strimzi 1.3.1: "Deploying and Managing Strimzi" §25.1.3, §25.2.3; repo files at tag 1.3.1 (commit 555c3e0f07c203911bc3cb7d13ac085bfaa81b50) |
-| Sources | https://strimzi.io/docs/operators/1.3.1/deploying#ref-metrics-alertmanager-examples-str ; https://strimzi.io/docs/operators/1.3.1/deploying#proc-metrics-deploying-prometheus-str ; https://github.com/strimzi/strimzi-kafka-operator/tree/1.3.1/packaging/examples/metrics/prometheus-install/prometheus-rules ; https://github.com/strimzi/strimzi-kafka-operator/blob/1.3.1/documentation/modules/metrics/proc_metrics-deploying-prometheus.adoc |
+| Sources | https://strimzi.io/docs/operators/1.3.1/deploying#ref-metrics-alertmanager-examples-str ; https://strimzi.io/docs/operators/1.3.1/deploying#proc-metrics-deploying-prometheus-str ; https://github.com/strimzi/strimzi-kafka-operator/tree/1.3.1/packaging/examples/metrics/prometheus-install/prometheus-rules ; https://github.com/strimzi/strimzi-kafka-operator/blob/1.3.1/documentation/modules/metrics/proc_metrics-deploying-prometheus.adoc ; https://github.com/strimzi/strimzi-kafka-operator/blob/1.3.1/packaging/examples/metrics/prometheus-install/prometheus-rules/prometheus-kafka-rules.yaml ; https://github.com/strimzi/strimzi-kafka-operator/blob/1.3.1/packaging/examples/metrics/prometheus-install/prometheus-rules/prometheus-kafka-exporter-topic-rules-group.yaml ; https://github.com/strimzi/strimzi-kafka-operator/blob/1.3.1/packaging/examples/metrics/prometheus-install/prometheus-rules/prometheus-kafka-certificate-rules.yaml ; https://github.com/strimzi/strimzi-kafka-operator/blob/1.3.1/packaging/examples/metrics/prometheus-install/prometheus-rules/prometheus-kafka-connect-rules.yaml |
 | License | Derived from Strimzi documentation (CC BY 4.0, https://creativecommons.org/licenses/by/4.0/) and Strimzi example files (Apache-2.0), © the Strimzi authors. Rule names, expressions and annotation text quoted verbatim. |
 | Retrieved | 2026-11-10 |
 
@@ -26,7 +26,7 @@ All rule files are `PrometheusRule` resources with labels `role: alert-rules` an
 | Alert | Expression (abridged where marked) | for | severity | summary | Related runbook |
 |---|---|---|---|---|---|
 | `KafkaRunningOutOfSpace` | `kubelet_volume_stats_available_bytes * 100 / kubelet_volume_stats_capacity_bytes` joined to Kafka pods, `< 15` (abridged) | 10s | warning | Kafka is running out of free disk space | [broker-storage-issues.md](broker-storage-issues.md) |
-| `UnderReplicatedPartitions` | `kafka_server_replicamanager_underreplicatedpartitions > 0` | 10s | warning | Kafka under replicated partitions | [broker-storage-issues.md](broker-storage-issues.md), [../kafka/monitoring-key-metrics.md](../kafka/monitoring-key-metrics.md) |
+| `UnderReplicatedPartitions` | `kafka_server_replicamanager_underreplicatedpartitions > 0` | 10s | warning | Kafka under replicated partitions | [../kafka/monitoring-key-metrics.md](../kafka/monitoring-key-metrics.md); [broker-storage-issues.md](broker-storage-issues.md) only when brokers are unavailable because of storage, which that section lists as one symptom (own cross-link, not in the rule file) |
 | `AbnormalControllerState` | `sum(kafka_controller_kafkacontroller_activecontrollercount) by (strimzi_io_name, namespace) != 1` | 10s | warning | Kafka abnormal controller state | [../kafka/kraft-quorum-debugging.md](../kafka/kraft-quorum-debugging.md) |
 | `OfflinePartitions` | `sum(kafka_controller_kafkacontroller_offlinepartitionscount) by (namespace, pod) > 0` | 10s | warning | Kafka offline partitions | [../kafka/monitoring-key-metrics.md](../kafka/monitoring-key-metrics.md) |
 | `UnderMinIsrPartitionCount` | `kafka_server_replicamanager_underminisrpartitioncount > 0` | 10s | warning | Kafka under min ISR partitions | [../kafka/monitoring-key-metrics.md](../kafka/monitoring-key-metrics.md) |
@@ -40,7 +40,7 @@ All rule files are `PrometheusRule` resources with labels `role: alert-rules` an
 
 | Alert | Expression | for | severity | summary | Related runbook |
 |---|---|---|---|---|---|
-| `UnderReplicatedPartition` | `kafka_topic_partition_under_replicated_partition > 0` | 10s | warning | Topic has under-replicated partitions | [broker-storage-issues.md](broker-storage-issues.md) |
+| `UnderReplicatedPartition` | `kafka_topic_partition_under_replicated_partition > 0` | 10s | warning | Topic has under-replicated partitions | [../kafka/monitoring-key-metrics.md](../kafka/monitoring-key-metrics.md); [broker-storage-issues.md](broker-storage-issues.md) only when brokers are unavailable because of storage (own cross-link, not in the rule file) |
 | `TooLargeConsumerGroupLag` | `kafka_consumergroup_lag > 1000` | 10s | warning | Consumer group lag is too big | [consumer-lag.md](consumer-lag.md) |
 | `NoMessageForTooLong` | `changes(kafka_topic_partition_current_offset[10m]) == 0` | 10s | warning | No message for 10 minutes | NO OFFICIAL SOURCE FOUND |
 

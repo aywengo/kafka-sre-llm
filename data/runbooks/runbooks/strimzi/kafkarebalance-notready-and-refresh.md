@@ -4,7 +4,7 @@
 |---|---|
 | Product | Strimzi with Cruise Control, KRaft |
 | Doc version | Strimzi 1.3.1, "Deploying and Managing Strimzi" (chapter 21) |
-| Sources | https://strimzi.io/docs/operators/1.3.1/deploying#proc-fixing-problems-with-kafkarebalance-str ; https://strimzi.io/docs/operators/1.3.1/deploying#proc-approving-optimization-proposal-str ; https://strimzi.io/docs/operators/1.3.1/deploying#proc-generating-optimization-proposals-str ; https://strimzi.io/docs/operators/1.3.1/deploying#con-optimization-proposals-modes-str ; repo `documentation/modules/cruise-control/*.adoc` @ tag 1.3.1 (commit 555c3e0f07c203911bc3cb7d13ac085bfaa81b50) |
+| Sources | https://strimzi.io/docs/operators/1.3.1/deploying#proc-fixing-problems-with-kafkarebalance-str ; https://strimzi.io/docs/operators/1.3.1/deploying#proc-approving-optimization-proposal-str ; https://strimzi.io/docs/operators/1.3.1/deploying#proc-generating-optimization-proposals-str ; https://strimzi.io/docs/operators/1.3.1/deploying#con-optimization-proposals-modes-str ; https://strimzi.io/docs/operators/1.3.1/deploying#proc-stopping-cluster-rebalance-str ; repo `documentation/modules/cruise-control/*.adoc` @ tag 1.3.1 (commit 555c3e0f07c203911bc3cb7d13ac085bfaa81b50) |
 | License | Derived from Strimzi documentation, © the Strimzi authors, CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Prose reworded; commands and error text quoted verbatim. |
 | Retrieved | 2026-11-10 |
 

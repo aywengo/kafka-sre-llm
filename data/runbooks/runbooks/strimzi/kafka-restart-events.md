@@ -67,10 +67,10 @@ A Kafka pod was restarted (rolled) and you need to know why. The Cluster Operato
 
 ## Remediation steps
 
-NO OFFICIAL SOURCE FOUND for remediation in this chapter. The restart events are informational. Follow the runbook that matches the reason:
-- CA reasons: [expired-ca-certificates.md](expired-ca-certificates.md)
-- `ManualRollingUpdate`: [manual-rolling-update.md](manual-rolling-update.md)
-- `PodStuck`, `PodUnresponsive`, storage-related reasons: [broker-storage-issues.md](broker-storage-issues.md)
+NO OFFICIAL SOURCE FOUND for remediation in this chapter. The restart events are informational. The routes below are this compilation's own cross-links; NO OFFICIAL SOURCE FOUND for any of them.
+- Own cross-link, NO OFFICIAL SOURCE FOUND for the route. CA reasons (`CaCertRenewed`, `CaCertHasOldGeneration`, `CaCertRemoved`, `ClusterCaCertKeyReplaced`): these describe restarts during normal CA renewal. For example, `CaCertRenewed` means the CA certificates have been renewed and the pod is restarted to run with the updated certificates (source: https://strimzi.io/docs/operators/1.3.1/deploying#ref-operator-restart-events-reasons-str, Strimzi 1.3.1, retrieved 2026-11-10). First check the validity of the CA certificates with the `openssl x509 -noout -dates` commands in [expired-ca-certificates.md](expired-ca-certificates.md), Diagnosis step 3. Go on to that runbook's **destructive** remediation only if a CA has actually expired.
+- Own cross-link, NO OFFICIAL SOURCE FOUND for the route. `ManualRollingUpdate`: [manual-rolling-update.md](manual-rolling-update.md)
+- Own cross-link, NO OFFICIAL SOURCE FOUND for the route. `PodStuck`, `PodUnresponsive`: start with [cr-status-and-conditions.md](cr-status-and-conditions.md) and [operator-logs.md](operator-logs.md). Use [broker-storage-issues.md](broker-storage-issues.md) only if the storage symptoms listed there are present; its last step is destructive.
 
 ## Verification
 

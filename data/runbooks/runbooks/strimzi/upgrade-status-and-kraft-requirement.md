@@ -4,7 +4,7 @@
 |---|---|
 | Product | Strimzi, KRaft |
 | Doc version | Strimzi 1.3.1, "Deploying and Managing Strimzi" (§30.1, §30.3, §30.4, §30.7) |
-| Sources | https://strimzi.io/docs/operators/1.3.1/deploying#con-upgrade-sequence-str ; https://strimzi.io/docs/operators/1.3.1/deploying#con-migrate-kraft-pre-0.39-str ; https://strimzi.io/docs/operators/1.3.1/deploying#con-api-conversion-v1-str ; https://strimzi.io/docs/operators/1.3.1/deploying#con-upgrade-status-str |
+| Sources | https://strimzi.io/docs/operators/1.3.1/deploying#con-upgrade-sequence-str ; https://strimzi.io/docs/operators/1.3.1/deploying#con-migrate-kraft-pre-0.39-str ; https://strimzi.io/docs/operators/1.3.1/deploying#con-api-conversion-v1-str ; https://strimzi.io/docs/operators/1.3.1/deploying#con-upgrade-status-str ; https://strimzi.io/docs/operators/1.3.1/deploying#proc-accessing-resource-status-str |
 | License | Derived from Strimzi documentation, © the Strimzi authors, CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Prose reworded. ZooKeeper content is included only where the source marks it as a migration path. |
 | Retrieved | 2026-11-10 |
 
@@ -71,7 +71,7 @@ Get the status with `kubectl get kafka <kafka_resource_name> -o jsonpath='{.stat
 
 - ZooKeeper-based clusters cannot be upgraded to 1.3.1. They must first be migrated to KRaft on a Strimzi version between 0.39 and 0.45.
   — *Source:* https://strimzi.io/docs/operators/1.3.1/deploying#con-migrate-kraft-pre-0.39-str (Strimzi 1.3.1, retrieved 2026-11-10)
-- For downgrade limits see [upgrade-kafka-version-error.md](upgrade-kafka-version-error.md).
+- Cross-link, NO OFFICIAL SOURCE FOUND for this step itself: for downgrade limits see [upgrade-kafka-version-error.md](upgrade-kafka-version-error.md), which carries its own sources.
 
 ## Related runbooks
 

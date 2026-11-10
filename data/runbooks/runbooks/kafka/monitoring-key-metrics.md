@@ -41,9 +41,9 @@ KRaft controller metrics with no "normal value" column in the source: `ActiveCon
 ## Remediation steps
 
 NO OFFICIAL SOURCE FOUND in the Kafka monitoring page. It lists metrics and normal values but no remediation. For related procedures see:
-- Under-replicated partitions or offline log directories on Strimzi: [../strimzi/broker-storage-issues.md](../strimzi/broker-storage-issues.md)
-- Leadership imbalance (`LeaderCount` not even): [graceful-shutdown-and-leadership.md](graceful-shutdown-and-leadership.md)
-- Controller state: [kraft-quorum-debugging.md](kraft-quorum-debugging.md)
+- Cross-link, NO OFFICIAL SOURCE FOUND for this route: under-replicated partitions or offline log directories on Strimzi, when brokers are unavailable because of storage: [../strimzi/broker-storage-issues.md](../strimzi/broker-storage-issues.md) (its last step is destructive)
+- Cross-link, NO OFFICIAL SOURCE FOUND for this route: leadership imbalance (`LeaderCount` not even): [graceful-shutdown-and-leadership.md](graceful-shutdown-and-leadership.md)
+- Cross-link, NO OFFICIAL SOURCE FOUND for this route: controller state: [kraft-quorum-debugging.md](kraft-quorum-debugging.md)
 
 ## Verification
 

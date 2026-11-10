@@ -4,7 +4,7 @@
 |---|---|
 | Product | Apache Kafka (KRaft) |
 | Doc version | Apache Kafka 4.4 documentation, Operations > Basic Kafka Operations (docs source: apache/kafka tag 4.4.0, commit 1156b2752aaa28eafc0b4c4d387e63356793268d, `docs/operations/basic-kafka-operations.md`) |
-| Sources | https://kafka.apache.org/44/operations/basic-kafka-operations/#graceful-shutdown ; https://kafka.apache.org/44/operations/basic-kafka-operations/#balancing-leadership |
+| Sources | https://kafka.apache.org/44/operations/basic-kafka-operations/#graceful-shutdown ; https://kafka.apache.org/44/operations/basic-kafka-operations/#balancing-leadership ; https://kafka.apache.org/44/operations/basic-kafka-operations/#increasing-replication-factor |
 | License | Derived from the Apache Kafka documentation, © The Apache Software Foundation, licensed under the Apache License 2.0 (https://www.apache.org/licenses/LICENSE-2.0). Prose reworded; commands and config quoted verbatim. |
 | Retrieved | 2026-11-10 |
 

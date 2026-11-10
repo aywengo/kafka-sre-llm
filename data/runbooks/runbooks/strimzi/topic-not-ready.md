@@ -4,7 +4,7 @@
 |---|---|
 | Product | Strimzi Topic Operator, KRaft |
 | Doc version | Strimzi 1.3.1, "Deploying and Managing Strimzi" (chapter 12) |
-| Sources | https://strimzi.io/docs/operators/1.3.1/deploying#proc-configuring-kafka-topic-str ; https://strimzi.io/docs/operators/1.3.1/deploying#con-operator-topic-names-str ; https://strimzi.io/docs/operators/1.3.1/deploying#con-application-topic-handling-str ; https://strimzi.io/docs/operators/1.3.1/deploying#ref-topic-replication-str ; https://strimzi.io/docs/operators/1.3.1/deploying#con-deleting-managed-topics-str ; https://strimzi.io/docs/operators/1.3.1/deploying#con-removing-topic-finalizers-str ; https://strimzi.io/docs/operators/1.3.1/deploying#con-disabling-topic-deletion-str ; repo `documentation/modules/topic-operator/*.adoc` @ tag 1.3.1 (commit 555c3e0f07c203911bc3cb7d13ac085bfaa81b50) |
+| Sources | https://strimzi.io/docs/operators/1.3.1/deploying#proc-configuring-kafka-topic-str ; https://strimzi.io/docs/operators/1.3.1/deploying#con-operator-topic-names-str ; https://strimzi.io/docs/operators/1.3.1/deploying#con-application-topic-handling-str ; https://strimzi.io/docs/operators/1.3.1/deploying#ref-topic-replication-str ; https://strimzi.io/docs/operators/1.3.1/deploying#con-deleting-managed-topics-str ; https://strimzi.io/docs/operators/1.3.1/deploying#con-removing-topic-finalizers-str ; https://strimzi.io/docs/operators/1.3.1/deploying#con-disabling-topic-deletion-str ; https://strimzi.io/docs/operators/1.3.1/deploying#con-using-loggers_str ; repo `documentation/modules/operators/proc-configuring-kafka-topic.adoc`, `documentation/modules/operators/con-operator-topic-names.adoc`, `documentation/modules/operators/con-application-topic-handling.adoc`, `documentation/modules/operators/con-topic-replication.adoc`, `documentation/modules/operators/con-deleting-managed-topics.adoc`, `documentation/modules/operators/con-removing-topic-finalizers.adoc`, `documentation/modules/operators/con-disabling-topic-deletion.adoc` @ tag 1.3.1 (commit 555c3e0f07c203911bc3cb7d13ac085bfaa81b50) |
 | License | Derived from Strimzi documentation, © the Strimzi authors, CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Prose reworded; commands quoted verbatim. |
 | Retrieved | 2026-11-10 |
 
@@ -37,7 +37,7 @@ After `kubectl apply` of a `KafkaTopic`, the `READY` column in `kubectl get kafk
    | Two `KafkaTopic` resources for one Kafka topic | The resource created first manages the topic. The newer resources get a conflict in their status and `Ready` set to `False`. |
 
    — *Source:* https://strimzi.io/docs/operators/1.3.1/deploying#proc-configuring-kafka-topic-str ; https://strimzi.io/docs/operators/1.3.1/deploying#con-operator-topic-names-str ; https://strimzi.io/docs/operators/1.3.1/deploying#ref-topic-replication-str (Strimzi 1.3.1, retrieved 2026-11-10)
-4. Check the prerequisites: a running Kafka cluster with a broker listener that uses mTLS authentication and TLS encryption, and a running Topic Operator (usually deployed with the Entity Operator).
+4. Check that a Topic Operator is running (usually deployed with the Entity Operator). This is a prerequisite of the topic procedure. The procedure's other prerequisite, a broker listener with mTLS authentication and TLS encryption, belongs to its example and is not a documented cause of `NotReady`.
    — *Source:* https://strimzi.io/docs/operators/1.3.1/deploying#proc-configuring-kafka-topic-str (Strimzi 1.3.1, retrieved 2026-11-10)
 
 ## Remediation steps
@@ -58,7 +58,9 @@ After `kubectl apply` of a `KafkaTopic`, the `READY` column in `kubectl get kafk
 
 5. The Topic Operator uses finalizers by default (`STRIMZI_USE_FINALIZERS=true`, finalizer `strimzi.io/topic-operator`). If the operator is not running, it cannot remove the finalizer. Deleting `KafkaTopic` resources or their namespace then fails or times out, and the namespace can get stuck terminating.
    — *Source:* https://strimzi.io/docs/operators/1.3.1/deploying#con-deleting-managed-topics-str (Strimzi 1.3.1, retrieved 2026-11-10)
-6. **[DESTRUCTIVE: skips cleanup]** Remove the finalizers on all topics:
+6. **[DESTRUCTIVE: skips cleanup]** Only if the Topic Operator is not running and you want to bypass the finalization process when deleting managed topics, remove the finalizers. Cleanup is then not performed: if you remove the finalizer from a `KafkaTopic` and then delete it, the Kafka topic is not deleted. Compiler's note, not from the source: the all-topics command has no `-n`, so it acts on every `KafkaTopic` in the current namespace of your `kubectl` context; check that context first.
+
+   Remove the finalizers on all topics:
    ```
    kubectl get kt -o=json | jq '.items[].metadata.finalizers = null' | kubectl apply -f -
    ```
@@ -66,7 +68,7 @@ After `kubectl apply` of a `KafkaTopic`, the `READY` column in `kubectl get kafk
    ```
    kubectl get kt <topic_name> -o=json | jq '.metadata.finalizers = null' | kubectl apply -f -
    ```
-   Topics that were already being deleted then finish deleting.
+   You can then delete the topics. Topics that were already being deleted then finish deleting.
    — *Source:* https://strimzi.io/docs/operators/1.3.1/deploying#con-removing-topic-finalizers-str (Strimzi 1.3.1, retrieved 2026-11-10)
 
 ## Verification

@@ -4,7 +4,7 @@
 |---|---|
 | Product | Strimzi KafkaMirrorMaker2, KRaft |
 | Doc version | Strimzi 1.3.1, "Deploying and Managing Strimzi" (§11.10.1, §11.10.3, §11.10.4) |
-| Sources | https://strimzi.io/docs/operators/1.3.1/deploying#proc-manual-restart-mirrormaker2-connector-str ; https://strimzi.io/docs/operators/1.3.1/deploying#proc-manual-restart-mirrormaker2-connector-task-str ; https://strimzi.io/docs/operators/1.3.1/deploying#checking_connector_task_operations |
+| Sources | https://strimzi.io/docs/operators/1.3.1/deploying#proc-manual-restart-mirrormaker2-connector-str ; https://strimzi.io/docs/operators/1.3.1/deploying#proc-manual-restart-mirrormaker2-connector-task-str ; https://strimzi.io/docs/operators/1.3.1/deploying#checking_connector_task_operations ; https://strimzi.io/docs/operators/1.3.1/deploying#proc-manual-restart-connector-str ; https://strimzi.io/docs/operators/1.3.1/deploying#proc-manual-restart-connector-task-str ; https://strimzi.io/docs/operators/1.3.1/deploying#proc-manual-rolling-update-pods-str |
 | License | Derived from Strimzi documentation, © the Strimzi authors, CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Prose reworded; commands quoted verbatim. |
 | Retrieved | 2026-11-10 |
 
@@ -73,7 +73,7 @@ The restart happens if the reconciliation detected the annotation. When MirrorMa
 ## Rollback or caveats
 
 - MirrorMaker 2 annotations differ from Kafka Connect ones: MM2 uses `strimzi.io/restart-connector` and `strimzi.io/restart-connector-task` on the `KafkaMirrorMaker2` resource. Kafka Connect uses `strimzi.io/restart` and `strimzi.io/restart-task` on the `KafkaConnector` resource.
-  — *Source:* https://strimzi.io/docs/operators/1.3.1/deploying#proc-manual-restart-mirrormaker2-connector-str ; https://strimzi.io/docs/operators/1.3.1/deploying#proc-manual-restart-connector-str (Strimzi 1.3.1, retrieved 2026-11-10)
+  — *Source:* https://strimzi.io/docs/operators/1.3.1/deploying#proc-manual-restart-mirrormaker2-connector-str ; https://strimzi.io/docs/operators/1.3.1/deploying#proc-manual-restart-mirrormaker2-connector-task-str ; https://strimzi.io/docs/operators/1.3.1/deploying#proc-manual-restart-connector-str ; https://strimzi.io/docs/operators/1.3.1/deploying#proc-manual-restart-connector-task-str (Strimzi 1.3.1, retrieved 2026-11-10)
 - To roll MirrorMaker 2 **pods**, see [manual-rolling-update.md](manual-rolling-update.md) (`<cluster_name>-mirrormaker2-<index_number>`).
   — *Source:* https://strimzi.io/docs/operators/1.3.1/deploying#proc-manual-rolling-update-pods-str (Strimzi 1.3.1, retrieved 2026-11-10)
 

@@ -10,7 +10,7 @@
 
 ## Symptoms / trigger
 
-Prometheus alerts are not being delivered, or there are no dashboards for the Strimzi components. The source does not give a symptom; this is a setup procedure.
+Prometheus alerts are not being delivered, or there are no dashboards for the Strimzi components. NO OFFICIAL SOURCE FOUND for a symptom: the source gives a setup procedure, and this trigger is the compiler's wording.
 
 ## Diagnosis steps (prerequisites)
 

@@ -4,7 +4,7 @@
 |---|---|
 | Product | Strimzi, KRaft |
 | Doc version | Strimzi 1.3.1, "Deploying and Managing Strimzi" (§11.2.10) |
-| Sources | https://strimzi.io/docs/operators/1.3.1/deploying#proc-manual-delete-pod-pvc-kafka-str ; https://strimzi.io/docs/operators/1.3.1/deploying#ref-list-of-kafka-cluster-resources-str ; repo `documentation/modules/configuring/proc-manual-delete-pod-pvc-kafka.adoc`, `documentation/modules/configuring/ref-list-of-kafka-cluster-resources.adoc` @ tag 1.3.1 (commit 555c3e0f07c203911bc3cb7d13ac085bfaa81b50) |
+| Sources | https://strimzi.io/docs/operators/1.3.1/deploying#proc-manual-delete-pod-pvc-kafka-str ; https://strimzi.io/docs/operators/1.3.1/deploying#ref-list-of-kafka-cluster-resources-str ; https://strimzi.io/docs/operators/1.3.1/deploying#limitations_with_static_controller_quorums ; https://strimzi.io/docs/operators/1.3.1/deploying#recovery_approach ; repo `documentation/modules/configuring/proc-manual-delete-pod-pvc-kafka.adoc`, `documentation/modules/configuring/ref-list-of-kafka-cluster-resources.adoc` @ tag 1.3.1 (commit 555c3e0f07c203911bc3cb7d13ac085bfaa81b50) |
 | License | Derived from Strimzi documentation, © the Strimzi authors, CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Prose reworded; commands quoted verbatim. |
 | Retrieved | 2026-11-10 |
 
