@@ -19,26 +19,26 @@ I worked in a fresh clone under `/tmp`, not in the producer's working tree. I di
 ## Summary
 
 - No command, flag, annotation name, default value or number in the runbooks contradicts its cited source. All 126 `kubectl`/`bin/`/`openssl`-style commands match verbatim.
-- I found no blocker. I found 11 major and 12 minor findings (table below). The majors are mostly safety framing (A-01 to A-06), one stale state-changing example (A-07), unsourced routes to destructive runbooks (A-14), a wrong "no source" claim (A-15), missed official material (A-12) and an unverified licence claim (A-23).
+- I found no blocker. I found 11 major and 9 minor findings (table below). The majors are mostly safety framing (A-01 to A-06), one stale state-changing example (A-07), unsourced routes to destructive runbooks (A-14), a wrong "no source" claim (A-15), missed official material (A-12) and an unverified licence claim (A-23).
 - Producer claims I could not reproduce are listed in their own section. The main ones: "0 steps without citation", "0 missing repo paths", and the "10 of 10 + 3" hand check (no script or record in the repo).
-- Verdicts: 5 pass, 27 pass-with-fixes, 0 fail. "Pass" means no finding from A, B, the sampled C steps and D. It is not proof for the steps I did not sample.
+- Verdicts: 8 pass, 24 pass-with-fixes, 0 fail. "Pass" means no finding from A, B, the sampled C steps and D. It is not proof for the steps I did not sample.
 
 ### Verdict per runbook
 
 | Runbook | Verdict | Why |
 |---|---|---|
-| kafka/consumer-group-position | pass-with-fixes | Source note on out-of-range offsets dropped (minor, A-21). |
+| kafka/consumer-group-position | pass | The out-of-range offset note is in Rollback (lines 75-76). No finding. |
 | kafka/geo-replication-mirrormaker2 | pass-with-fixes | No verification source; "covered" label (A-18). |
-| kafka/graceful-shutdown-and-leadership | pass-with-fixes | Controlled-shutdown precondition (RF>1, all partitions) weakened (A-09). |
-| kafka/kraft-controller-membership | pass-with-fixes | Stale `--release-version 4.1` shown as "latest" (A-07); "or missing" unsupported (A-08). |
+| kafka/graceful-shutdown-and-leadership | pass | The full controlled-shutdown condition is in Diagnosis step 2. No finding. |
+| kafka/kraft-controller-membership | pass-with-fixes | Stale `--release-version 4.1` shown as "latest" (A-07). With the other audit's AUD-01 it is a fail (see addendum). |
 | kafka/kraft-quorum-debugging | pass | No finding from A, B, the sampled C steps or D. |
-| kafka/monitoring-key-metrics | pass-with-fixes | Runbook faithful; eval items 0 and 4 have a bare "0." as the reference answer (A-22). |
+| kafka/monitoring-key-metrics | pass | A bare "0." is a complete, supported answer to both eval questions. No finding. |
 | kafka/partition-reassignment-and-throttling | pass-with-fixes | Unregister step comes before the only completion check; no uncordon on abort (A-06). |
 | strimzi/alertmanager-and-grafana | pass-with-fixes | Symptom paragraph has no Source line (minor, A-13). |
 | strimzi/broker-storage-issues | pass-with-fixes | Routes failed mounts to deleted-cluster recovery (A-01); omits the PV resize procedure the guide has (A-12). |
 | strimzi/cluster-recovery-from-persistent-volumes | pass-with-fixes | Faithful to source, but no "deleted cluster only" precondition (A-01) and the user-deletion warning sits at the end (A-02). |
 | strimzi/connect-restart-connector-and-task | pass-with-fixes | Runbook faithful; eval item 1 is ambiguous (A-22). |
-| strimzi/consumer-lag | pass-with-fixes | Abridged config block, `showAllOffsets` meaning dropped, one step with no Source line (A-13). |
+| strimzi/consumer-lag | pass-with-fixes | Abridged config block, one step with no Source line (A-13). |
 | strimzi/cr-status-and-conditions | pass-with-fixes | No generic remediation; "covered" label (A-18). |
 | strimzi/cruise-control-anomaly-alerts | pass-with-fixes | "No official source" for metric names is wrong: the allowed repo names them (A-15). |
 | strimzi/delete-kafka-node-annotation | pass-with-fixes | Pod-name pattern does not fit node pools; no controller-node warning (A-05). |
@@ -47,7 +47,7 @@ I worked in a fresh clone under `/tmp`, not in the producer's working tree. I di
 | strimzi/kafka-restart-events | pass-with-fixes | Routes CA/PodStuck reasons to destructive runbooks with no source; "covered" but remediation and verification have no source (A-14, A-18). |
 | strimzi/kafkarebalance-notready-and-refresh | pass | No finding from A, B, the sampled C steps or D. |
 | strimzi/kafkarebalance-tracking-and-stopping | pass | No finding from A, B, the sampled C steps or D. |
-| strimzi/kube-state-metrics-cr-monitoring | pass-with-fixes | Runbook text matches the rules; eval item 2 adds "waiting for approval", which neither runbook nor rule file says (A-22). |
+| strimzi/kube-state-metrics-cr-monitoring | pass-with-fixes | Runbook text matches the rules; eval item 2 adds "waiting for approval", which the rule annotation says but the runbook omits (A-22). |
 | strimzi/lock-acquisition-warnings | pass | No finding from A, B, the sampled C steps or D. |
 | strimzi/manual-rolling-update | pass-with-fixes | Pod-name pattern vs node pools (producer F4); pool-a-1 example cited to another section (A-17). |
 | strimzi/mirrormaker2-restart-connector-and-task | pass-with-fixes | Annotation names cited to the wrong section (A-17). |
@@ -69,7 +69,7 @@ I worked in a fresh clone under `/tmp`, not in the producer's working tree. I di
 | A. Not found | 47: 25 file paths (24 exist, 1 missing, see B), 21 spans that are placeholders, elisions or runbook-built text (listed below), and 1 block (consumer-lag.md:24, abridged) |
 | A. Commands (126 starting `kubectl`, `bin/`, `$ bin/`, `openssl`, `jq`, `sed`, `curl`, `oc`) | 126 checked, 0 non-matching |
 | A. Block lines, one by one | all lines found; 124 of 125 blocks found as one contiguous piece |
-| A. Spans or blocks not in the cited section but on the cited page | 9 tokens (see A-17) |
+| A. Spans or blocks not in the cited section but on the cited page | 8 tokens (see A-17) |
 | B. Distinct URLs cited (runbooks and eval) | 105; 0 anchors missing; 7 GitHub paths, all exist |
 | B. Repo paths cited in backticks | 38; 1 missing (A-16) |
 | B. Top-level list items in Diagnosis/Remediation/Verification/Rollback | 289 (reproduces the producer's count) |
@@ -77,8 +77,8 @@ I worked in a fresh clone under `/tmp`, not in the producer's working tree. I di
 | B. Numbers and identifiers in 346 cited units vs the cited section | 0 missing (22 flags were runbook file names or its own words) |
 | C. Steps in population (cited list items) | 276 (212 Strimzi, 64 Kafka) |
 | C. Sampled | 12 Strimzi + 12 Kafka at random, plus 31 marked steps ([ROLLING RESTART], [RESTART], [DESTRUCTIVE], [POSSIBLY IRREVERSIBLE], [DATA MOVEMENT], [Changes ...]); 49 unique after overlap |
-| C. Confirmed without gap | 38 |
-| C. Confirmed with a gap (dropped condition, misplaced warning, unsupported detail) | 11 (5 of them in the random 24) |
+| C. Confirmed without gap | 41 |
+| C. Confirmed with a gap (dropped condition, misplaced warning, unsupported detail) | 8 (4 of them in the random 24) |
 | C. Wrong (contradicts source) | 0 |
 | D. Eval items blind-answered and compared | 180 of 180 |
 | D. Substantive disagreements with the reference | 0 |
@@ -86,7 +86,7 @@ I worked in a fresh clone under `/tmp`, not in the producer's working tree. I di
 | D. Reference not fully supported by the runbook | 3 (kube-state-metrics:2, cr-status-and-conditions:5, kafka-restart-events:2) |
 | D. source_url does not fully support the reference | 1 (drain-cleaner:0); lexical check on the rest, see limits |
 | D. Ambiguous question | 1 (connect-restart-connector-and-task:1) |
-| D. Other flags | broker-storage-issues:3 bakes in A-01; monitoring-key-metrics:0 and :4 have the bare answer "0."; no duplicate questions; 1 near-pair (cruise-control-anomaly-alerts:2 and prometheus-alert-rules:0) is distinct |
+| D. Other flags | broker-storage-issues:3 bakes in A-01; no duplicate questions; 1 near-pair (cruise-control-anomaly-alerts:2 and prometheus-alert-rules:0) is distinct |
 
 Elisions and placeholders behind the 21 span non-matches: `--describe --group <group>`; two MBean names ending in `,...`; three output messages with `...`; three PVC fields rebuilt from the example (cluster-recovery:43); `<cluster>-<pool>-<id>`; `spec.kafka.template.podDisruptionBudget.maxUnavailable: 0`; two `strimzi_<resource>_resource_info{...}` forms; `*Warnings`; `<connector_name>:<task_id>`; two `runbook_url` mentions (the runbooks say it is absent); an abridged `absent(...)`; `prometheus-kafka-exporter-topic-rules-group.yaml` (a file name); `STRIMZI_USE_FINALIZERS=true` (the source says the variable defaults to true). None is a command change.
 
@@ -105,21 +105,18 @@ Severity: blocker = data loss or outage if followed blindly and not marked; majo
 | A-05 | major | strimzi/delete-kafka-node-annotation.md:22-27 | The command uses `<cluster_name>-kafka-<index_number>`. KRaft needs node pools, whose pods are `<cluster>-<pool>-<id>`. Nothing says the annotation also works on controller pods, whose PVC loss touches the quorum. Nothing says to check that other replicas are in sync first. | https://strimzi.io/docs/operators/1.3.1/deploying#proc-manual-delete-pod-pvc-kafka-str: "Kafka broker pods are named <cluster_name>-kafka-<index_number>" | Show the node-pool pod name in the command. Add: controller pods; check ISR before deleting (mark as outside the source). |
 | A-06 | major | kafka/partition-reassignment-and-throttling.md:59,89,109 | Step 5 shuts down and unregisters the broker "when all reassignments are done". The only completion check (`--verify`) is in Verification, after the step. Rollback has no uncordon after step 3. | https://kafka.apache.org/44/operations/basic-kafka-operations/#decommissioning-brokers: "Once all the reassignment is done, shutdown the broker and unregister it" | Put `--verify` before step 5. Add the uncordon command (`--delete-config cordoned.log.dirs`, shown for log dirs) or flag it as unsourced for brokers. |
 | A-07 | major | kafka/kraft-controller-membership.md:37-44 | "Upgrade all feature versions to the latest" is shown with `--release-version 4.1`. In the 4.4 docs this is a stale example; it is not the latest. The command changes cluster state, and the runbook carries the mismatch over. | https://kafka.apache.org/44/operations/kraft/#upgrade-kraft-version: "upgrade all of the feature versions to the latest version" | Flag `4.1` as a docs example, or use `--feature kraft.version=1` only. On Strimzi, metadataVersion is set in the `Kafka` resource. |
-| A-08 | minor | kafka/kraft-controller-membership.md:24 | "level 0 or missing" means static: the source only says level 0 needs an upgrade. "or missing" has no support. | https://kafka.apache.org/44/operations/kraft/#describe-kraft-version: "is 0, the version needs to be upgraded to at least 1" | Delete "or missing". |
-| A-09 | minor | kafka/graceful-shutdown-and-leadership.md:31-40,58 | Caveat is weaker than the source: the source requires every partition on the broker to have replicas (RF > 1, one alive). The runbook only says the last replica becomes unavailable. | https://kafka.apache.org/44/operations/basic-kafka-operations/#graceful-shutdown: "controlled shutdown will only succeed if all the partitions hosted on the broker have replicas" | Quote the source condition. |
 | A-10 | minor | strimzi/upgrade-kafka-cluster.md:49 | Step 4 drops the warning about custom images. | https://strimzi.io/docs/operators/1.3.1/deploying#con-versions-and-images-str: "The Cluster Operator cannot validate that an image actually contains a Kafka broker" | Add the warning to step 4. |
 | A-11 | minor | strimzi/topic-not-ready.md:40,61-70 | Step 4 lists the prerequisites of the create-topic example (mTLS listener) as a NotReady diagnosis. Step 6 removes finalizers on all topics in the current namespace; the source condition "Topic Operator is not running" is only implied by step 5. | https://strimzi.io/docs/operators/1.3.1/deploying#con-removing-topic-finalizers-str: "If the Topic Operator is not running, and you want to bypass the finalization process" | Drop the listener prerequisite from the diagnosis. State the precondition and the namespace scope inside step 6. |
 | A-12 | major | strimzi/broker-storage-issues.md:23-40; coverage.md "partial" | The guide has a procedure the runbook does not use: resizing persistent volumes by raising `size` (the Cluster Operator then restarts the pods). Also not used: Kafka 4.4 "decommissioning-log-directories" and "setting-quotas". The remediation "free disk space or increase capacity" stays high level. | https://strimzi.io/docs/operators/1.3.1/deploying#proc-resizing-persistent-volumes-str: "Persistent volumes can be resized by changing the size storage property" | Add the resize procedure to Remediation. Link the Kafka log-directory and quota sections. |
-| A-13 | minor | strimzi/consumer-lag.md:23-42,49; strimzi/upgrade-status-and-kraft-requirement.md:74; strimzi/alertmanager-and-grafana.md:13 | (a) The config block is abridged, so it is not verbatim, and the `showAllOffsets` meaning is dropped. (b) Two list items and one symptom paragraph have no Source line. | https://strimzi.io/docs/operators/1.3.1/deploying#proc-kafka-exporter-deploy-str: "Setting showAllOffsets to false stops collecting metrics for disconnected consumers." | Add the callout text. Add Source lines, or mark them as cross-references. |
+| A-13 | minor | strimzi/consumer-lag.md:23-42,49; strimzi/upgrade-status-and-kraft-requirement.md:74; strimzi/alertmanager-and-grafana.md:13 | (a) The config block is abridged, so it is not verbatim (lines cut, callouts rewritten). (b) Two list items and one symptom paragraph have no Source line. | The source example also sets `resources`, `logging`, `template` and `image`; the runbook block omits them | Quote the block in full or say in the header that YAML may be abridged. Add Source lines, or mark them as cross-references. |
 | A-14 | major | strimzi/kafka-restart-events.md:71-73; strimzi/prometheus-alert-rules.md:29 | No source supports these routes: CA restart reasons to expired-ca-certificates (a destructive recovery runbook), PodStuck/PodUnresponsive to broker-storage-issues, UnderReplicatedPartitions to broker-storage-issues. CaCertRenewed is a normal renewal. | https://strimzi.io/docs/operators/1.3.1/deploying#ref-operator-restart-events-reasons-str: "CA certificates have been renewed, and the pod is restarted" | Route CA reasons to a renewal check first; mark all own cross-links as unsourced. |
 | A-15 | major | strimzi/cruise-control-anomaly-alerts.md:27-37 | "NO OFFICIAL SOURCE FOUND" for anomaly-detector metric names is wrong. The allowed repo (tag 1.3.1) names them in `packaging/examples/metrics/grafana-dashboards/strimzi-cruise-control.json`. The runbook never cites that file. Producer F14 lists dashboards but misses this. | kafka_cruisecontrol_anomalydetector_balancedness_score_value (also ..._disk_failure_rate_count, ..._goal_violation_rate_count) | Cite the dashboard file. Re-label the metric names as sourced from the repo. |
 | A-16 | minor | strimzi/topic-not-ready.md:7 | Cited path `documentation/modules/topic-operator/*.adoc` does not exist at 1.3.1. Topic Operator modules are in `operators/` and `deploying/`. Producer says 0 missing paths. | `ls documentation/modules` at 1.3.1: no topic-operator directory | Cite the real files. |
-| A-17 | minor | strimzi/mirrormaker2-restart-connector-and-task.md:75-76; kafka-restart-events.md:35; manual-rolling-update.md:29; user-not-ready.md:57; kraft-controller-membership.md:26-31 | Tokens appear on the cited page but not in the cited section: `strimzi.io/restart-task` (in 11.8.3, cited 11.8.2), `--field-selector`, `my-cluster-pool-a-1`, `metadata.labels.strimzi.io/cluster`, `--standalone`. Seven anchors lack their .adoc in the Sources row. | strimzi.io/restart-task is in #proc-manual-restart-connector-task-str, not #proc-manual-restart-connector-str | Cite the section that holds the text. |
+| A-17 | minor | strimzi/mirrormaker2-restart-connector-and-task.md:75-76; kafka-restart-events.md:35; manual-rolling-update.md:29; user-not-ready.md:57 | Tokens appear on the cited page but not in the cited section: `strimzi.io/restart-task` (in 11.8.3, cited 11.8.2), `--field-selector`, `my-cluster-pool-a-1`, `metadata.labels.strimzi.io/cluster`. Seven anchors lack their .adoc in the Sources row. | strimzi.io/restart-task is in #proc-manual-restart-connector-task-str, not #proc-manual-restart-connector-str | Cite the section that holds the text. |
 | A-18 | minor | coverage.md (Status column) | Legend: "covered" needs diagnosis, remediation and verification from official text. Seven "covered" rows state NO OFFICIAL SOURCE for one of these: kafka-restart-events (remediation, verification), operator-logs, prometheus-alert-rules, graceful-shutdown (verification), cr-status (remediation), topic-not-ready (one step), geo-replication (verification). Real partial count is about 12, not 5. | coverage.md: "diagnosis, remediation and verification all come from official text" | Re-label as partial. |
 | A-19 | minor | strimzi/node-maintenance-kubernetes-upgrade.md:27,58-62 | The "Verification" is the source expectation "no downtime", not a check. Method B sets the PDB to 0 and the runbook has no way back. | https://strimzi.io/docs/operators/1.3.1/deploying#con-upgrade-cluster-str: "so that there is no downtime" | Mark as expectation. Add a PDB-restore note as unsourced. |
 | A-20 | minor | strimzi/user-not-ready.md:43 | Changing `authorization` on the `Kafka` resource is a broker config change. The runbook says the source is silent but has no [ROLLING RESTART] caution. | (source silent; could not verify) | Add a caution that a roll is possible. |
-| A-21 | minor | kafka/consumer-group-position.md:55 | Source note dropped: out-of-range offsets are adjusted to the available end. | https://kafka.apache.org/44/operations/basic-kafka-operations/#managing-consumer-groups: "out of range offsets will be adjusted to available offset end" | Add the note. |
-| A-22 | minor | eval/kube-state-metrics-cr-monitoring.jsonl:2; eval/cr-status-and-conditions.jsonl:5; eval/kafka-restart-events.jsonl:2; eval/drain-cleaner.jsonl:0; eval/connect-restart-connector-and-task.jsonl:1; eval/monitoring-key-metrics.jsonl:0,4 | See D section. Reference adds facts not in the runbook (approval wait; "coordinating operations"; "others applied dynamically"). drain-cleaner:0 source_url lacks the webhook/deny detail. connect:1 is ambiguous. Two references are a bare "0." | n/a | Align reference answers with runbook text; split or reword the ambiguous question. |
+| A-22 | minor | eval/kube-state-metrics-cr-monitoring.jsonl:2; eval/cr-status-and-conditions.jsonl:5; eval/kafka-restart-events.jsonl:2; eval/drain-cleaner.jsonl:0; eval/connect-restart-connector-and-task.jsonl:1 | Three references hold facts that the runbook text lacks: "waiting for approval" (the rule annotation says "waits for approval for more than 1h", so the source_url supports it and only the runbook omits it), "coordinating operations" (in the guide, not the runbook), "others applied dynamically" (same). drain-cleaner:0 source_url lacks the webhook/deny detail. connect:1 is ambiguous. | KafkaRebalanceProposalPending message: "waits for approval for more than 1h" | Add the missing facts to the runbooks (or trim the references); widen drain-cleaner:0 source_url; reword the ambiguous question. |
 | A-23 | major | all 25 strimzi runbooks, line 8; eval/*.jsonl | All Strimzi runbooks say "CC BY 4.0". I found no CC BY statement in the 1.3.1 guide, in the repo at 1.3.1, or in strimzi.github.io. The repo README says Apache-2.0. Could not verify the licence claim. Eval files carry no attribution. (The audit brief itself states CC BY 4.0.) | strimzi-kafka-operator@1.3.1 README: "Strimzi is licensed under the Apache License, Version 2.0" | Owner to confirm the docs licence in writing. Add attribution to the eval files or a data/runbooks LICENSE note. |
 
 ## E. Re-derived findings and gaps
@@ -201,7 +198,7 @@ I missed these. Each is confirmed against the pinned sources:
 
 | Item | My check |
 |---|---|
-| Strimzi uses static controller quorums only (their AUD-01, blocker) | Confirmed. Guide §2.1.2: "Strimzi uses static controller quorums for all deployments". The runbook kraft-controller-membership.md gives dynamic-quorum commands and says Strimzi handling has "NO OFFICIAL SOURCE FOUND". I listed the headings `kraft_limitations` and `controller_scaling` but did not read them. This makes my A-07 and A-08 secondary: the runbook should be rated **fail** (blocker) until it says these commands do not apply on Strimzi. |
+| Strimzi uses static controller quorums only (their AUD-01, blocker) | Confirmed. Guide §2.1.2: "Strimzi uses static controller quorums for all deployments". The runbook kraft-controller-membership.md gives dynamic-quorum commands and says Strimzi handling has "NO OFFICIAL SOURCE FOUND". I listed the headings `kraft_limitations` and `controller_scaling` but did not read them. This makes my A-07 secondary: the runbook should be rated **fail** (blocker) until it says these commands do not apply on Strimzi. |
 | Static-to-dynamic migration is on the cited KRaft page (their AUD-02) | Confirmed. `#upgrade` and `#update-kraft-config` exist on the 4.4 page; the runbook and sources.md say that section is not covered. Note the conflict: Strimzi says Kafka does not support the migration, Kafka 4.4 says 4.1 added it. |
 | Drain Cleaner README: the drain "eventually fails" in default mode (their AUD-04) | Confirmed, README line 208. The runbook step 3 omits it. |
 | Node-pool pod name is defined in the guide (their AUD-07) | Confirmed: `<kafka_cluster_name>-<pool_name>-<pod_id>` in §7.2.4. Producer F4 is wrong to say it is not stated. |
@@ -209,3 +206,17 @@ I missed these. Each is confirmed against the pinned sources:
 | `documentation/shared/attributes.adoc` has `ProductVersion: 1.3.0` at tag 1.3.1 | Confirmed. |
 
 Not re-checked: their findings on licence rows of mixed-source runbooks (AUD-15) and eval items (AUD-16, AUD-17).
+
+## Withdrawn after review (PR #3)
+
+Copilot's review of PR #3 found errors in this audit. I checked each against the pinned sources. All were valid and are fixed above:
+
+- A-08 withdrawn. Kafka `docs/operations/kraft.md` says "level 0 or absent" under `#static-versus-dynamic-kraft-quorums`. The runbook's "or missing" is supported.
+- A-09 withdrawn. `graceful-shutdown-and-leadership.md:24` (Diagnosis step 2) already states the full condition.
+- A-21 withdrawn. The out-of-range note is in `consumer-group-position.md:75-76`.
+- A-13: the `showAllOffsets` sub-finding is removed. It is in `consumer-lag.md:73-74`.
+- A-17: the `--standalone` entry is removed. The flag is in the cited section; my text extraction of the published page hid it because of en-dash rendering.
+- A-22: the monitoring-key-metrics items are removed (`0.` is a complete answer). For kube-state-metrics:2 the rule annotation does say "waits for approval", so only the runbook omits it.
+
+Cause: I checked step units but not the Rollback bullets, and I matched flags on extracted HTML text. Totals now: 11 major, 9 minor; 8 pass, 24 pass-with-fixes; 8 steps with a gap.
+
