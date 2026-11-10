@@ -5,7 +5,7 @@
 | Product | Strimzi, KRaft |
 | Doc version | Strimzi 1.3.1, "Deploying and Managing Strimzi" |
 | Sources | https://strimzi.io/docs/operators/1.3.1/deploying#con-using-loggers_str ; https://strimzi.io/docs/operators/1.3.1/deploying#ref-operator-cluster-logging-configmap-str ; repo `documentation/modules/configuring/con-using-loggers.adoc`, `documentation/modules/operators/ref-operator-cluster-logging-configmap.adoc` @ tag 1.3.1 (commit 555c3e0f07c203911bc3cb7d13ac085bfaa81b50) |
-| License | Derived from Strimzi documentation, © the Strimzi authors, CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Prose reworded; commands quoted verbatim. |
+| License | Derived from: Strimzi documentation, © Strimzi a Series of LF Projects, LLC; licence unconfirmed. Prose reworded; commands quoted verbatim. |
 | Retrieved | 2026-11-10 |
 
 ## Symptoms / trigger

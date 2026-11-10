@@ -1,5 +1,7 @@
 # Sources
 
+Attribution and licences of the sources used here: [ATTRIBUTION.md](ATTRIBUTION.md).
+
 Retrieval date for everything below: **2026-11-10**. All fetches were plain HTTP GETs, and every request returned HTTP 200. The SHA-256 prefix identifies the exact bytes used.
 
 ## Web pages fetched (primary)
@@ -16,6 +18,7 @@ Retrieval date for everything below: **2026-11-10**. All fetches were plain HTTP
 | https://kafka.apache.org/44/operations/geo-replication-cross-cluster-data-mirroring/ | Apache Kafka 4.4 | 113,827 | e7bfc284a96658c7 | Geo-replication runbook |
 | https://kafka.apache.org/44/operations/datacenters/ | Apache Kafka 4.4 | 63,092 | 4f92734413fbd920 | Not cited (short page with no operational procedure) |
 | https://kafka.apache.org/44/getting-started/zk2kraft/ | Apache Kafka 4.4 | 80,239 | 256b31647bb85209 | FINDINGS F3 only (`reserved.broker.max.id` removed in KRaft) |
+| https://strimzi.io/documentation/ | Strimzi documentation index | 13,492 | 431ca56a891c78e0 | Licence check only ([ATTRIBUTION.md](ATTRIBUTION.md)): the page has a copyright line and no licence statement |
 
 ## Repositories cloned (primary)
 
@@ -24,6 +27,7 @@ Retrieval date for everything below: **2026-11-10**. All fetches were plain HTTP
 | https://github.com/strimzi/strimzi-kafka-operator | tag `1.3.1` (shallow clone) | 555c3e0f07c203911bc3cb7d13ac085bfaa81b50 | `documentation/**/*.adoc` (anchor→file mapping, AsciiDoc source for the `pod-monitors/*.yaml` command, version attributes); `packaging/examples/metrics/**` (Prometheus rules, kube-state-metrics rules, Grafana dashboards); repo-wide search for `runbook` |
 | https://github.com/strimzi/drain-cleaner | default branch `main` (shallow clone) | 70f1bc25bc14aacd15eb478768db6566bde783e3 | `README.md` (operational notes); repo-wide search for `runbook`. The latest release tag at retrieval was `1.8.0` (eec41dc5825ccc128fe930829355d48118bec4db). The README was read at `main`, not at the tag. |
 | https://github.com/apache/kafka (existing pinned copy in `raw/apache-kafka`) | tag `4.4.0` | 1156b2752aaa28eafc0b4c4d387e63356793268d | `docs/operations/*.md`, to check the published text against the docs source (FINDINGS F18) |
+| https://github.com/apache/kafka | tag `4.3.2` | 0a6c96d3b61167f1141df2032f25f10fd6e118fe | `ServerLogConfigs.java`, `DynamicBrokerConfig.scala`, `docs/operations/basic-kafka-operations.md`: whether `cordoned.log.dirs` exists in Kafka 4.3.2 (FINDINGS F2). Not used as a runbook citation. |
 
 The local `raw/strimzi` copy (also 555c3e0, from `sources.yaml`) is a sparse clone of `documentation/` only. A fresh clone at tag 1.3.1 was made so the example metrics files could be read as well.
 
@@ -39,6 +43,8 @@ These are outside the allowed source list or outside the pinned versions. Runboo
 | Strimzi "Supported versions" table on strimzi.io | Strimzi 1.3.1 §30.8.1 | Not fetched; the runbooks only state that it should be checked |
 | Kubernetes documentation (upgrade path, PDB) | Strimzi 1.3.1 §30.2 | Not in the allowed source list |
 | Strimzi in-development docs | Task brief ("only for comparison") | Not fetched; no comparison was made |
+
+The checks in `tools/check_runbooks.py` run against a cache made by `tools/fetch_sources.sh`, which clones the three repositories at the commits above and fetches the six primary pages, failing on a commit mismatch and warning on a page hash mismatch.
 
 ## Sources that could not be reached
 

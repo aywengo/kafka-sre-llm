@@ -5,7 +5,7 @@
 | Product | Strimzi, KRaft |
 | Doc version | Strimzi 1.3.1, "Deploying and Managing Strimzi" (§30.6) |
 | Sources | https://strimzi.io/docs/operators/1.3.1/deploying#proc-upgrade-kafka-kraft-str ; https://strimzi.io/docs/operators/1.3.1/deploying#con-versions-and-images-str ; https://strimzi.io/docs/operators/1.3.1/deploying#con-upgrade-status-str |
-| License | Derived from Strimzi documentation, © the Strimzi authors, CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Prose reworded; commands and YAML quoted verbatim. |
+| License | Derived from: Strimzi documentation, © Strimzi a Series of LF Projects, LLC; licence unconfirmed. Prose reworded; commands and YAML quoted verbatim. |
 | Retrieved | 2026-11-10 |
 
 > **[ROLLING RESTART]** Changing `spec.kafka.version` rolls every Kafka node. **[POSSIBLY IRREVERSIBLE]** Raising `metadataVersion` can make a Kafka downgrade impossible.

@@ -5,7 +5,7 @@
 | Product | Strimzi, KRaft |
 | Doc version | Strimzi 1.3.1, "Deploying and Managing Strimzi" (§30.1, §30.3, §30.4, §30.7) |
 | Sources | https://strimzi.io/docs/operators/1.3.1/deploying#con-upgrade-sequence-str ; https://strimzi.io/docs/operators/1.3.1/deploying#con-migrate-kraft-pre-0.39-str ; https://strimzi.io/docs/operators/1.3.1/deploying#con-api-conversion-v1-str ; https://strimzi.io/docs/operators/1.3.1/deploying#con-upgrade-status-str ; https://strimzi.io/docs/operators/1.3.1/deploying#proc-accessing-resource-status-str |
-| License | Derived from Strimzi documentation, © the Strimzi authors, CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Prose reworded. ZooKeeper content is included only where the source marks it as a migration path. |
+| License | Derived from: Strimzi documentation, © Strimzi a Series of LF Projects, LLC; licence unconfirmed. Prose reworded. ZooKeeper content is included only where the source marks it as a migration path. |
 | Retrieved | 2026-11-10 |
 
 ## Symptoms / trigger

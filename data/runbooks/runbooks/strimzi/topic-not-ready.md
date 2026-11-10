@@ -5,7 +5,7 @@
 | Product | Strimzi Topic Operator, KRaft |
 | Doc version | Strimzi 1.3.1, "Deploying and Managing Strimzi" (chapter 12) |
 | Sources | https://strimzi.io/docs/operators/1.3.1/deploying#proc-configuring-kafka-topic-str ; https://strimzi.io/docs/operators/1.3.1/deploying#con-operator-topic-names-str ; https://strimzi.io/docs/operators/1.3.1/deploying#con-application-topic-handling-str ; https://strimzi.io/docs/operators/1.3.1/deploying#ref-topic-replication-str ; https://strimzi.io/docs/operators/1.3.1/deploying#con-deleting-managed-topics-str ; https://strimzi.io/docs/operators/1.3.1/deploying#con-removing-topic-finalizers-str ; https://strimzi.io/docs/operators/1.3.1/deploying#con-disabling-topic-deletion-str ; https://strimzi.io/docs/operators/1.3.1/deploying#con-using-loggers_str ; repo `documentation/modules/operators/proc-configuring-kafka-topic.adoc`, `documentation/modules/operators/con-operator-topic-names.adoc`, `documentation/modules/operators/con-application-topic-handling.adoc`, `documentation/modules/operators/con-topic-replication.adoc`, `documentation/modules/operators/con-deleting-managed-topics.adoc`, `documentation/modules/operators/con-removing-topic-finalizers.adoc`, `documentation/modules/operators/con-disabling-topic-deletion.adoc` @ tag 1.3.1 (commit 555c3e0f07c203911bc3cb7d13ac085bfaa81b50) |
-| License | Derived from Strimzi documentation, © the Strimzi authors, CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Prose reworded; commands quoted verbatim. |
+| License | Derived from: Strimzi documentation, © Strimzi a Series of LF Projects, LLC; licence unconfirmed. Prose reworded; commands quoted verbatim. |
 | Retrieved | 2026-11-10 |
 
 ## Symptoms / trigger

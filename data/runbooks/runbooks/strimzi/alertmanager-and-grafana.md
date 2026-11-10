@@ -5,7 +5,7 @@
 | Product | Strimzi example metrics configuration, KRaft |
 | Doc version | Strimzi 1.3.1, "Deploying and Managing Strimzi" (§25.1.4, §25.2.4, §25.3) |
 | Sources | https://strimzi.io/docs/operators/1.3.1/deploying#proc-metrics-deploying-prometheus-alertmanager-str ; https://strimzi.io/docs/operators/1.3.1/deploying#ref-metrics-dashboards-str ; https://strimzi.io/docs/operators/1.3.1/deploying#proc-metrics-grafana-dashboard-str ; https://github.com/strimzi/strimzi-kafka-operator/tree/1.3.1/packaging/examples/metrics/grafana-dashboards |
-| License | Derived from Strimzi documentation, © the Strimzi authors, CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Prose reworded; commands quoted verbatim. |
+| License | Derived from: Strimzi documentation, © Strimzi a Series of LF Projects, LLC; licence unconfirmed; Strimzi repo example files (strimzi-kafka-operator tag 1.3.1), Apache License 2.0 (https://www.apache.org/licenses/LICENSE-2.0). Prose reworded; commands quoted verbatim. |
 | Retrieved | 2026-11-10 |
 
 ## Symptoms / trigger

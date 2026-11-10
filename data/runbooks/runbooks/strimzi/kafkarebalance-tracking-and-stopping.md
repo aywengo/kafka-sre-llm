@@ -5,7 +5,7 @@
 | Product | Strimzi with Cruise Control, KRaft |
 | Doc version | Strimzi 1.3.1, "Deploying and Managing Strimzi" (§21.5, §21.6) |
 | Sources | https://strimzi.io/docs/operators/1.3.1/deploying#proc-tracking-cluster-rebalance-str ; https://strimzi.io/docs/operators/1.3.1/deploying#proc-stopping-cluster-rebalance-str ; repo `documentation/modules/cruise-control/proc-tracking-cluster-rebalance.adoc`, `proc-stopping-cluster-rebalance.adoc` @ tag 1.3.1 (commit 555c3e0f07c203911bc3cb7d13ac085bfaa81b50) |
-| License | Derived from Strimzi documentation, © the Strimzi authors, CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Prose reworded; commands quoted verbatim. |
+| License | Derived from: Strimzi documentation, © Strimzi a Series of LF Projects, LLC; licence unconfirmed. Prose reworded; commands quoted verbatim. |
 | Retrieved | 2026-11-10 |
 
 ## Symptoms / trigger

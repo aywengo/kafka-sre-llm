@@ -5,7 +5,7 @@
 | Product | Strimzi Drain Cleaner with Strimzi Cluster Operator, KRaft |
 | Doc version | Strimzi 1.3.1, "Deploying and Managing Strimzi" (chapter 27); drain-cleaner repo README at main commit 70f1bc25bc14aacd15eb478768db6566bde783e3 (latest tag at retrieval: 1.8.0) |
 | Sources | https://strimzi.io/docs/operators/1.3.1/deploying#default_webhook_configuration ; https://strimzi.io/docs/operators/1.3.1/deploying#proc-drain-cleaner-deploying-str ; https://strimzi.io/docs/operators/1.3.1/deploying#proc-drain-cleaner-using-str ; https://strimzi.io/docs/operators/1.3.1/deploying#proc-drain-cleaner-certs-renewing-str ; https://github.com/strimzi/drain-cleaner/blob/70f1bc25bc14aacd15eb478768db6566bde783e3/README.md ; repo `documentation/modules/drain-cleaner/*.adoc` @ strimzi-kafka-operator tag 1.3.1 (commit 555c3e0f07c203911bc3cb7d13ac085bfaa81b50) |
-| License | Derived from Strimzi documentation and the strimzi/drain-cleaner README, © the Strimzi authors. Docs CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/); drain-cleaner repo Apache-2.0. Prose reworded; commands quoted verbatim. |
+| License | Derived from: Strimzi documentation, © Strimzi a Series of LF Projects, LLC; licence unconfirmed; strimzi/drain-cleaner README, Apache License 2.0 (https://www.apache.org/licenses/LICENSE-2.0). Prose reworded; commands quoted verbatim. |
 | Retrieved | 2026-11-10 |
 
 > **[ROLLING RESTART]** Draining a node with Drain Cleaner makes the Cluster Operator roll the affected Kafka pods.

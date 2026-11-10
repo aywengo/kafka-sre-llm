@@ -5,7 +5,7 @@
 | Product | Apache Kafka (KRaft) |
 | Doc version | Apache Kafka 4.4 documentation, Operations > Basic Kafka Operations (docs source: apache/kafka tag 4.4.0, commit 1156b2752aaa28eafc0b4c4d387e63356793268d) |
 | Sources | https://kafka.apache.org/44/operations/basic-kafka-operations/#checking-consumer-position ; https://kafka.apache.org/44/operations/basic-kafka-operations/#managing-consumer-groups |
-| License | Derived from the Apache Kafka documentation, © The Apache Software Foundation, Apache License 2.0 (https://www.apache.org/licenses/LICENSE-2.0). Prose reworded; commands quoted verbatim. |
+| License | Derived from: Apache Kafka documentation, © The Apache Software Foundation, Apache License 2.0 (https://www.apache.org/licenses/LICENSE-2.0). Prose reworded; commands quoted verbatim. |
 | Retrieved | 2026-11-10 |
 
 > **Version note.** These are Kafka 4.4 docs; Strimzi 1.3.1 supports Kafka up to 4.3.2 (see FINDINGS.md). The rendered page prints some long options with en dashes in prose (for example "–verbose"). The real options use two hyphens, as in the code blocks.

@@ -5,7 +5,7 @@
 | Product | Apache Kafka (KRaft) |
 | Doc version | Apache Kafka 4.4 documentation, Operations > Monitoring (docs source: apache/kafka tag 4.4.0, commit 1156b2752aaa28eafc0b4c4d387e63356793268d, `docs/operations/monitoring.md`) |
 | Sources | https://kafka.apache.org/44/operations/monitoring/#security-considerations-for-remote-monitoring-using-jmx (the broker metrics table has no anchor of its own and sits under this heading); https://kafka.apache.org/44/operations/monitoring/#kraft-controller-monitoring-metrics |
-| License | Derived from the Apache Kafka documentation, © The Apache Software Foundation, Apache License 2.0 (https://www.apache.org/licenses/LICENSE-2.0). MBean names and normal values quoted verbatim. |
+| License | Derived from: Apache Kafka documentation, © The Apache Software Foundation, Apache License 2.0 (https://www.apache.org/licenses/LICENSE-2.0). Prose reworded. |
 | Retrieved | 2026-11-10 |
 
 > **Version note.** These are Kafka 4.4 docs; Strimzi 1.3.1 supports Kafka up to 4.3.2 (see FINDINGS.md). In Strimzi's example Prometheus rules, these MBeans appear under Prometheus names such as `kafka_server_replicamanager_underreplicatedpartitions`; see [../strimzi/prometheus-alert-rules.md](../strimzi/prometheus-alert-rules.md).

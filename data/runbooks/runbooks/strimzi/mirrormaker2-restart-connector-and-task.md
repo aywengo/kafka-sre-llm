@@ -5,7 +5,7 @@
 | Product | Strimzi KafkaMirrorMaker2, KRaft |
 | Doc version | Strimzi 1.3.1, "Deploying and Managing Strimzi" (§11.10.1, §11.10.3, §11.10.4) |
 | Sources | https://strimzi.io/docs/operators/1.3.1/deploying#proc-manual-restart-mirrormaker2-connector-str ; https://strimzi.io/docs/operators/1.3.1/deploying#proc-manual-restart-mirrormaker2-connector-task-str ; https://strimzi.io/docs/operators/1.3.1/deploying#checking_connector_task_operations ; https://strimzi.io/docs/operators/1.3.1/deploying#proc-manual-restart-connector-str ; https://strimzi.io/docs/operators/1.3.1/deploying#proc-manual-restart-connector-task-str ; https://strimzi.io/docs/operators/1.3.1/deploying#proc-manual-rolling-update-pods-str |
-| License | Derived from Strimzi documentation, © the Strimzi authors, CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Prose reworded; commands quoted verbatim. |
+| License | Derived from: Strimzi documentation, © Strimzi a Series of LF Projects, LLC; licence unconfirmed. Prose reworded; commands quoted verbatim. |
 | Retrieved | 2026-11-10 |
 
 > **[RESTART]** These steps restart MirrorMaker 2 connector and/or task instances. They do not roll the MirrorMaker 2 pods.
