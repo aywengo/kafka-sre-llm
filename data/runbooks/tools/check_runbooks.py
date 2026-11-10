@@ -7,7 +7,11 @@ Usage:
 <cache_dir> is the directory filled by tools/fetch_sources.sh. Checks:
 
     code       extract fenced code blocks and inline code spans from the
-               runbooks and match them against the pinned sources
+               runbooks and match them against the pinned sources: a block
+               must appear line for line inside one source code element,
+               commands must equal a complete source command, and anything
+               else must be listed in tools/allowed_unmatched.txt; an
+               unterminated fence fails
     citations  check every cited anchor, GitHub path and backtick repo path
     steps      check every top-level list step in the Diagnosis, Remediation,
                Verification and Rollback sections for a Source line or a
@@ -147,6 +151,41 @@ def cmd_key(cmd):
     return s
 
 
+CALLOUT = re.compile(r"\s*(#\s*)?(<\d+>|\(\d+\))\s*$")
+
+
+def block_lines(s):
+    """Lines of a code block for exact comparison: whitespace collapsed (not
+    removed), callout markers and blank lines dropped."""
+    out = []
+    for line in s.split("\n"):
+        line = CALLOUT.sub("", spaced(line))
+        if line:
+            out.append(re.sub(r"^\$ ", "", line))
+    return out
+
+
+def load_unmatched():
+    """Code items that are knowingly not verbatim (abridged blocks,
+    placeholders, composed identifiers). One per line:
+    runbook path, TAB, key, TAB, reason. The key of a span is its text; the
+    key of a block is 'block:' plus the first 12 hex chars of the SHA-256 of
+    its normalised lines, so any edit to the block invalidates the entry."""
+    out = {}
+    path = os.path.join(HERE, "allowed_unmatched.txt")
+    if os.path.exists(path):
+        for line in open(path, encoding="utf-8"):
+            if line.strip() and not line.startswith("#"):
+                parts = line.rstrip("\n").split("\t")
+                if len(parts) >= 3:
+                    out[(parts[0], parts[1])] = parts[2]
+    return out
+
+
+def block_key(content):
+    return "block:" + hashlib.sha256("\n".join(block_lines(content)).encode()).hexdigest()[:12]
+
+
 def _open_quote(s):
     """True if s ends inside a double- or single-quoted string."""
     q = None
@@ -270,6 +309,18 @@ class Sources:
         the .adoc and .md files."""
         if getattr(self, "_cmds", None) is not None:
             return self._cmds
+        cmds = set()
+        for e in self.code_elements():
+            for cmd in logical_commands(e):
+                cmds.add(cmd_key(cmd))
+        self._cmds = cmds
+        return cmds
+
+    def code_elements(self):
+        """Raw text of every code element in the sources, plus each example
+        file under packaging/examples as one element."""
+        if getattr(self, "_elems", None) is not None:
+            return self._elems
         elems = list(self.page_code)
         for c in self._raw_chunks()[len(self.pages):]:
             # AsciiDoc ---- / .... blocks and Markdown ``` fences
@@ -279,12 +330,34 @@ class Sources:
             # (an undelimited block runs to the next blank line)
             elems += re.findall(r"(?m)^\[source[^\]]*\]\n((?!----)(?:[^\n]+\n?)+)", c)
             elems += re.findall(r"`([^`\n]+)`", c)
-        cmds = set()
-        for e in elems:
-            for cmd in logical_commands(e):
-                cmds.add(cmd_key(cmd))
-        self._cmds = cmds
-        return cmds
+        for pat in ("packaging/examples/**/*.yaml", "packaging/examples/**/*.json"):
+            for f in glob.glob(os.path.join(self.strimzi, pat), recursive=True):
+                elems.append(open(f, encoding="utf-8", errors="replace").read())
+        self._elems = elems
+        return elems
+
+    def block_index(self):
+        """Normalised line lists of all code elements, indexed by line."""
+        if getattr(self, "_bidx", None) is None:
+            seqs = [block_lines(e) for e in self.code_elements()]
+            idx = defaultdict(list)
+            for si, s in enumerate(seqs):
+                for li, line in enumerate(s):
+                    idx[line].append((si, li))
+            self._bidx = (seqs, idx)
+        return self._bidx
+
+    def block_in_one_element(self, content):
+        """True if the block's lines appear, in order and contiguous, inside a
+        single source code element."""
+        want = block_lines(content)
+        if not want:
+            return True
+        seqs, idx = self.block_index()
+        for si, li in idx.get(want[0], ()):
+            if seqs[si][li:li + len(want)] == want:
+                return True
+        return False
 
     def spaced_corpus(self):
         """Like corpus(), but whitespace is collapsed, not removed, so that
@@ -356,6 +429,10 @@ def code_items(text):
             continue
         for m in re.finditer(r"`([^`\n]+)`", line):
             yield ("span", i, m.group(1))
+    if in_block:
+        # an unclosed fence: report it, and still check what it contains
+        yield ("unterminated", start, "")
+        yield ("block", start, "\n".join(buf))
 
 
 def strip_fences(text):
@@ -443,9 +520,16 @@ def check_code(src, verbose):
     abbreviated = load_abbreviated()
     abbreviated_used = set()
     blocks_contig = 0
+    unmatched = load_unmatched()
+    allowed_used = set()
+    allowed_n = 0
+    unterminated = []
     for p in runbook_files():
         text = open(p, encoding="utf-8").read()
         for kind, ln, content in code_items(text):
+            if kind == "unterminated":
+                unterminated.append((rel(p), ln))
+                continue
             total[kind] += 1
             sq = squash(content)
             if not sq:
@@ -465,16 +549,20 @@ def check_code(src, verbose):
                 cmd_bad += 1
                 cmd_bad_items.append((rel(p), ln, key[:140]))
             if kind == "block":
-                if sq in corpus:
+                # a block must sit, line for line, inside one source element
+                if src.block_in_one_element(content):
                     found[kind] += 1
                     blocks_contig += 1
                     continue
-                # line by line
-                bad = [l for l in content.split("\n") if squash(l) and squash(l) not in corpus]
-                if not bad:
-                    found[kind] += 1
+                key = block_key(content)
+                if (rel(p), key) in unmatched:
+                    allowed_used.add((rel(p), key))
+                    allowed_n += 1
                     continue
-                notfound.append((rel(p), ln, kind, "%d line(s) not found, e.g. %r" % (len(bad), bad[0].strip()[:80])))
+                first = next((l for l in block_lines(content) if not src.block_in_one_element(l)), None)
+                why = ("first line not in any source element: %r" % first[:80]) if first is not None \
+                    else "every line exists, but not as one contiguous run in one source element"
+                notfound.append((rel(p), ln, kind, "%s; %s" % (key, why)))
                 continue
             if sq in corpus:
                 found[kind] += 1
@@ -482,13 +570,17 @@ def check_code(src, verbose):
             if REPOPATH.match(content.strip()):
                 (paths_ok if src.repo_path_exists(content) else paths_bad).append((rel(p), ln, content))
                 continue
+            if (rel(p), content) in unmatched:
+                allowed_used.add((rel(p), content))
+                allowed_n += 1
+                continue
             notfound.append((rel(p), ln, kind, content[:100]))
     n_all = sum(total.values())
     n_found = sum(found.values())
     print("== code")
     print("code items: %d (%d blocks, %d spans)" % (n_all, total["block"], total["span"]))
     print("found in a pinned source: %d of %d" % (n_found, n_all))
-    print("  blocks found as one contiguous piece: %d of %d" % (blocks_contig, total["block"]))
+    print("  blocks found line for line inside one source code element: %d of %d" % (blocks_contig, total["block"]))
     print("repo-path spans: %d, exist in the pinned repos: %d, missing: %d" % (len(paths_ok) + len(paths_bad), len(paths_ok), len(paths_bad)))
     print("commands (kubectl/bin//oc/openssl/helm, anywhere in a block, with continuations): %d" % cmd_total)
     print("  equal to a complete command in a source code element: %d" % (cmd_total - cmd_abbrev - cmd_bad))
@@ -500,13 +592,19 @@ def check_code(src, verbose):
     cmd_bad += len(stale)
     for f, ln, c in cmd_bad_items:
         print("  COMMAND NOT VERBATIM %s:%d %s" % (f, ln, c))
-    print("other items not found: %d (placeholders, elisions, composed text; listed with -v)" % len(notfound))
+    print("items not verbatim but listed with a reason in tools/allowed_unmatched.txt: %d" % allowed_n)
+    print("items not found and not listed: %d" % len(notfound))
+    print("unterminated code fences: %d" % len(unterminated))
+    stale_u = sorted(set(unmatched) - allowed_used)
     for f, ln, c in paths_bad:
         print("  MISSING PATH %s:%d %s" % (f, ln, c))
-    if verbose:
-        for f, ln, kind, c in notfound:
-            print("  not found %s:%d [%s] %s" % (f, ln, kind, c))
-    return not paths_bad and cmd_bad == 0
+    for f, ln, kind, c in notfound:
+        print("  NOT FOUND %s:%d [%s] %s" % (f, ln, kind, c))
+    for f, ln in unterminated:
+        print("  UNTERMINATED FENCE %s:%d" % (f, ln))
+    for f, k in stale_u:
+        print("  UNUSED ALLOWLIST ENTRY %s %s" % (f, k))
+    return not paths_bad and cmd_bad == 0 and not notfound and not unterminated and not stale_u
 
 
 def cited_urls(text):
