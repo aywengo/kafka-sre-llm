@@ -112,15 +112,17 @@ def parse_html(path, with_code=False):
 
 
 def _unify(s, code=False):
-    """Unescape HTML entities and unify dashes and quotes. In prose, markdown
-    backslash escapes are dropped. In code (code=True) backslashes are kept:
-    they are literal there, as in the JSONPath {.data.ca\\.crt}."""
+    """Unescape HTML entities. In prose, also unify typographic dashes and
+    quotes and drop markdown backslash escapes. In code (code=True) nothing
+    else is changed: an en dash for '--', a curly quote or a missing
+    backslash (as in the JSONPath {.data.ca\\.crt}) breaks a command, so
+    it must not match the source."""
     s = html.unescape(s)
+    if code:
+        return s
     s = s.replace("\u2013", "--").replace("\u2014", "--")
     s = s.replace("\u2018", "'").replace("\u2019", "'")
     s = s.replace("\u201c", '"').replace("\u201d", '"')
-    if code:
-        return s
     return re.sub(r"\\([-_*.#])", r"\1", s)
 
 
