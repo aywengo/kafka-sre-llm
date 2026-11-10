@@ -107,6 +107,13 @@ The text says "task 0 for connector … MirrorSourceConnector … is restarted",
 - The broker metrics table on the monitoring page has no heading or anchor of its own. It sits under `#security-considerations-for-remote-monitoring-using-jmx`, which is what the runbooks cite.
 - Typo "Kafka’sintra-cluster" on the geo-replication overview.
 
+## F20. Conflict: static-to-dynamic controller quorum migration
+
+- Strimzi 1.3.1 §2.1.2 (https://strimzi.io/docs/operators/1.3.1/deploying#limitations_with_static_controller_quorums, `documentation/assemblies/deploying/assembly-kraft-mode.adoc:78-79`): "Migration between static and dynamic controller quorums is not currently supported by Apache Kafka". As a result, "Strimzi uses static controller quorums for all deployments, including new installations."
+- Apache Kafka 4.4 KRaft page (https://kafka.apache.org/44/operations/kraft/#upgrade, `docs/operations/kraft.md:69` at 4.4.0): "Apache Kafka 4.1 added support for upgrading a cluster from a static controller configuration to a dynamic controller configuration."
+- These sources disagree on whether Kafka supports the migration. For a Strimzi 1.3.1 cluster the Strimzi statement governs what the operator does: the quorum is static, and controller node pools cannot be added, removed, scaled or renamed. [kraft-controller-membership.md](runbooks/kafka/kraft-controller-membership.md) now states this first and marks every dynamic-quorum command as Apache Kafka reference, not for Strimzi-managed clusters.
+- The earlier version of that runbook said NO OFFICIAL SOURCE FOUND for how Strimzi handles controller membership, and `sources.md` said the Kafka "Upgrade" section was outside the fetched pages. Both were wrong: the Strimzi section exists (§2.1.1, §2.1.2) and the Upgrade section is on the cited KRaft page.
+
 ## F19. Out of scope or not covered
 
 - **Argo CD / GitOps:** the brief's scope allows Argo CD, but the allowed source list has no Argo CD or GitOps source, and the Strimzi 1.3.1 deploying guide has no Argo CD procedure. Marked "no official source" in coverage.md.

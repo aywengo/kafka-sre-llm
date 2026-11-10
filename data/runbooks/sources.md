@@ -11,7 +11,7 @@ Retrieval date for everything below: **2026-11-10**. All fetches were plain HTTP
 | https://strimzi.io/docs/operators/latest/full/deploying.html | Strimzi latest (1.3.1), single-page variant | 1,676,002 | 5c20cc9e374f4b8e | Not cited; fetched while locating the guide |
 | https://kafka.apache.org/44/operations/ | Apache Kafka 4.4 | 62,069 | 2b35d2d807277120 | Index of the operations pages |
 | https://kafka.apache.org/44/operations/basic-kafka-operations/ | Apache Kafka 4.4 | 165,374 | 554551ef7d388cd4 | Kafka basic-ops runbooks |
-| https://kafka.apache.org/44/operations/kraft/ | Apache Kafka 4.4 | 96,642 | 6ec83b8f87fd0b8c | KRaft runbooks |
+| https://kafka.apache.org/44/operations/kraft/ | Apache Kafka 4.4 | 96,642 | 6ec83b8f87fd0b8c | KRaft runbooks, including the Upgrade section (`#upgrade`, `#update-kraft-config`) on the same page |
 | https://kafka.apache.org/44/operations/monitoring/ | Apache Kafka 4.4 | 242,785 | 9b4ce983f19d132b | Metrics runbooks |
 | https://kafka.apache.org/44/operations/geo-replication-cross-cluster-data-mirroring/ | Apache Kafka 4.4 | 113,827 | e7bfc284a96658c7 | Geo-replication runbook |
 | https://kafka.apache.org/44/operations/datacenters/ | Apache Kafka 4.4 | 63,092 | 4f92734413fbd920 | Not cited (short page with no operational procedure) |
@@ -38,7 +38,6 @@ These are outside the allowed source list or outside the pinned versions. Runboo
 | Cruise Control project documentation (AnomalyDetector metrics, anomaly notifier, sensors) | Strimzi 1.3.1 §25.6, §25.6.2 | Not in the allowed source list |
 | Strimzi "Supported versions" table on strimzi.io | Strimzi 1.3.1 §30.8.1 | Not fetched; the runbooks only state that it should be checked |
 | Kubernetes documentation (upgrade path, PDB) | Strimzi 1.3.1 §30.2 | Not in the allowed source list |
-| Apache Kafka "Upgrade" section (static→dynamic voter migration) | Kafka 4.4 KRaft page | Outside the four requested Kafka operations pages |
 | Strimzi in-development docs | Task brief ("only for comparison") | Not fetched; no comparison was made |
 
 ## Sources that could not be reached
