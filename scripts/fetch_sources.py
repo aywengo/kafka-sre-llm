@@ -2,6 +2,7 @@
 """Shallow, sparse clone of every git source listed in sources.yaml."""
 import argparse
 import subprocess
+import sys
 from pathlib import Path
 
 import yaml
@@ -33,12 +34,17 @@ def main():
         if not target.exists():
             run(["git", "clone", "--depth", "1", "--filter=blob:none", "--sparse",
                  src["repo"], str(target)])
-            run(["git", "sparse-checkout", "set", *src["paths"]], cwd=target)
+        # set on every run, not only on clone: an existing clone must pick up
+        # changed paths (e.g. a version switch from content/en/44 to 43)
+        run(["git", "sparse-checkout", "set", *src["paths"]], cwd=target)
         if ref:
             run(["git", "fetch", "--depth", "1", "origin", "tag", ref], cwd=target)
             run(["git", "checkout", "--quiet", ref], cwd=target)
         else:
             run(["git", "pull", "--depth", "1"], cwd=target)
+        missing = [p for p in src["paths"] if not (target / p).exists()]
+        if missing:
+            sys.exit(f"{src['name']}: configured paths missing after checkout: {', '.join(missing)}")
         commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=target, text=True).strip()
         (target / ".source-commit").write_text(commit + "\n")
         (target / ".source-ref").write_text((ref or "default branch") + "\n")

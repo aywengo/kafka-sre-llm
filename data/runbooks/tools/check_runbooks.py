@@ -111,29 +111,29 @@ def parse_html(path, with_code=False):
     return "".join(p.parts), p.ids
 
 
-def squash(s):
-    """Normalise for matching: unescape, unify dashes and quotes, drop
-    markdown backslash escapes and all whitespace."""
-    s = html.unescape(s)
-    s = s.replace("–", "--").replace("—", "--")
-    s = s.replace("‘", "'").replace("’", "'")
-    s = s.replace("“", '"').replace("”", '"')
-    s = re.sub(r"\\([-_*.#])", r"\1", s)
-    return re.sub(r"\s+", "", s)
-
-
-def _unify(s):
+def _unify(s, code=False):
+    """Unescape HTML entities and unify dashes and quotes. In prose, markdown
+    backslash escapes are dropped. In code (code=True) backslashes are kept:
+    they are literal there, as in the JSONPath {.data.ca\\.crt}."""
     s = html.unescape(s)
     s = s.replace("\u2013", "--").replace("\u2014", "--")
     s = s.replace("\u2018", "'").replace("\u2019", "'")
     s = s.replace("\u201c", '"').replace("\u201d", '"')
+    if code:
+        return s
     return re.sub(r"\\([-_*.#])", r"\1", s)
 
 
+def squash(s, code=False):
+    """Normalise for matching: _unify(), then drop all whitespace."""
+    return re.sub(r"\s+", "", _unify(s, code))
+
+
 def spaced(s):
-    """Normalise for command matching: like squash(), but runs of whitespace
-    become one space instead of nothing, so 'secret my-x' != 'secretmy-x'."""
-    return re.sub(r"\s+", " ", _unify(s)).strip()
+    """Normalise for command and code-block matching: backslashes kept, runs
+    of whitespace become one space instead of nothing, so 'secret my-x' !=
+    'secretmy-x'."""
+    return re.sub(r"\s+", " ", _unify(s, code=True)).strip()
 
 
 CMD_RE = re.compile(r"^\s*(\$ )?(kubectl|bin/|oc |openssl|helm )")
@@ -390,6 +390,12 @@ class Sources:
             self._corpus = "\x00".join(squash(c) for c in self._raw_chunks())
         return self._corpus
 
+    def code_corpus(self):
+        """Like corpus(), but backslashes are kept, for code spans."""
+        if getattr(self, "_code_corpus", None) is None:
+            self._code_corpus = "\x00".join(squash(c, code=True) for c in self._raw_chunks())
+        return self._code_corpus
+
     def repo_path_exists(self, path):
         """A repo-relative path or glob in strimzi-kafka-operator 1.3.1.
         Bare file names are searched for under documentation/."""
@@ -509,7 +515,7 @@ REPOPATH = re.compile(r"^(\./)?(documentation|packaging|install|examples|docs)/[
 
 
 def check_code(src, verbose):
-    corpus = src.corpus()
+    code_corpus = src.code_corpus()
     total = Counter()
     found = Counter()
     paths_ok, paths_bad, notfound = [], [], []
@@ -531,7 +537,7 @@ def check_code(src, verbose):
                 unterminated.append((rel(p), ln))
                 continue
             total[kind] += 1
-            sq = squash(content)
+            sq = squash(content, code=True)
             if not sq:
                 found[kind] += 1
                 continue
@@ -564,7 +570,7 @@ def check_code(src, verbose):
                     else "every line exists, but not as one contiguous run in one source element"
                 notfound.append((rel(p), ln, kind, "%s; %s" % (key, why)))
                 continue
-            if sq in corpus:
+            if sq in code_corpus:
                 found[kind] += 1
                 continue
             if REPOPATH.match(content.strip()):
