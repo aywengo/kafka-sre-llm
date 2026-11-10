@@ -63,4 +63,6 @@ k-kraft.html https://kafka.apache.org/44/operations/kraft/ 6ec83b8f87fd0b8c
 k-monitoring.html https://kafka.apache.org/44/operations/monitoring/ 9b4ce983f19d132b
 k-geo.html https://kafka.apache.org/44/operations/geo-replication-cross-cluster-data-mirroring/ e7bfc284a96658c7
 k-zk2kraft.html https://kafka.apache.org/44/getting-started/zk2kraft/ 256b31647bb85209
+strimzi-documentation.html https://strimzi.io/documentation/ 431ca56a891c78e0
+k-operations.html https://kafka.apache.org/44/operations/ 2b35d2d807277120
 EOF

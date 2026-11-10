@@ -332,6 +332,11 @@ def check_url(src, url):
             if not frag:
                 return ("kafka-anchor", True, "")
             return ("kafka-anchor", frag in src.pages[page][1], frag)
+    # index pages, fetched but not cited for content (sources.md, ATTRIBUTION.md)
+    index_pages = {"https://strimzi.io/documentation/": "strimzi-documentation.html",
+                   "https://kafka.apache.org/44/operations/": "k-operations.html"}
+    if base in index_pages and not frag:
+        return ("index-page", os.path.exists(os.path.join(src.cache, "web", index_pages[base])), "")
     if base.startswith("https://kafka.apache.org/") or base.startswith("https://strimzi.io/"):
         return ("other-doc-page", False, "not a pinned page")
     m = re.match(re.escape(STRIMZI_REPO) + r"(?:blob|tree)/1\.3\.1/(.+)$", base)
@@ -353,7 +358,7 @@ def check_citations(src, verbose):
     bad = []
     # sources.md lists fetched pages that are not cited, and the audit files
     # are records, so only the runbooks and the derived files are checked.
-    files = runbook_files() + [os.path.join(ROOT, f) for f in ("FINDINGS.md", "coverage.md", "RESOLUTION.md")
+    files = runbook_files() + [os.path.join(ROOT, f) for f in ("FINDINGS.md", "coverage.md", "RESOLUTION.md", "ATTRIBUTION.md")
                                if os.path.exists(os.path.join(ROOT, f))]
     for p in files:
         text = open(p, encoding="utf-8").read()
