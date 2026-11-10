@@ -40,7 +40,7 @@ After `kubectl apply` of a `KafkaUser`, the `READY` column in `kubectl get kafka
 
 ## Remediation steps
 
-1. **Simple authorization missing:** enable it in the `Kafka` resource:
+1. **[POSSIBLE ROLLING RESTART: cluster-wide authorization change on the `Kafka` resource]** **Simple authorization missing:** enable it in the `Kafka` resource:
    ```
      apiVersion: kafka.strimzi.io/v1
      kind: Kafka
@@ -52,8 +52,8 @@ After `kubectl apply` of a `KafkaUser`, the `READY` column in `kubectl get kafka
          authorization:
            type: simple
    ```
-   The source does not say whether this change triggers a rolling update.
-   — *Source:* https://strimzi.io/docs/operators/1.3.1/deploying#proc-configuring-kafka-user-str (Strimzi 1.3.1, retrieved 2026-11-10)
+   The source does not say whether this change triggers a rolling update. Treat it as one that may roll every broker: the restart reasons table says some Kafka configuration changes are applied dynamically, while others require that the broker be restarted (`ConfigChangeRequiresRestart`). Compiler's note, not from the source: enabling authorization also changes which clients are allowed, so plan it as a cluster-wide change.
+   — *Source:* https://strimzi.io/docs/operators/1.3.1/deploying#proc-configuring-kafka-user-str ; https://strimzi.io/docs/operators/1.3.1/deploying#ref-operator-restart-events-reasons-str (Strimzi 1.3.1, retrieved 2026-11-10)
 2. **Wrong label:** set `metadata.labels.strimzi.io/cluster` to the name of the `Kafka` resource:
    ```
    apiVersion: kafka.strimzi.io/v1

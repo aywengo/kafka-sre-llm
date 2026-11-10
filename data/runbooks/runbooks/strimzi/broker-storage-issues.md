@@ -32,8 +32,11 @@ The source orders the options to keep broker data and lower the risk of data los
    — *Source:* https://strimzi.io/docs/operators/1.3.1/deploying#recovery_approach (Strimzi 1.3.1, retrieved 2026-11-10)
 3. Review quota settings that limit producer throughput, so disks do not fill as quickly.
    — *Source:* https://strimzi.io/docs/operators/1.3.1/deploying#recovery_approach (Strimzi 1.3.1, retrieved 2026-11-10)
-4. If the problem involves persistent volumes or PVCs (failed mounts, unavailable volumes), follow the cluster recovery from persistent volumes procedure: [cluster-recovery-from-persistent-volumes.md](cluster-recovery-from-persistent-volumes.md).
+4. If the problem involves persistent volumes or PVCs (failed mounts, unavailable volumes), the source points to the cluster recovery from persistent volumes information: [cluster-recovery-from-persistent-volumes.md](cluster-recovery-from-persistent-volumes.md).
    — *Source:* https://strimzi.io/docs/operators/1.3.1/deploying#recovery_approach (Strimzi 1.3.1, retrieved 2026-11-10)
+
+   That procedure applies only after the PVCs are lost: it recovers "a deleted Kafka cluster", after a namespace was deleted or the Kubernetes cluster was lost. Do not run it on a live cluster whose PVCs still exist.
+   — *Source:* https://strimzi.io/docs/operators/1.3.1/deploying#con-cluster-recovery-scenarios-str ; https://strimzi.io/docs/operators/1.3.1/deploying#proc-cluster-recovery-volume-str (Strimzi 1.3.1, retrieved 2026-11-10)
 5. **[DESTRUCTIVE: possible permanent data loss]** If a broker cannot be recovered and its storage must be reset, replace it by deleting its pod and its PVC. Do this only when no non-destructive option works. See [delete-kafka-node-annotation.md](delete-kafka-node-annotation.md).
    — *Source:* https://strimzi.io/docs/operators/1.3.1/deploying#recovery_approach (Strimzi 1.3.1, retrieved 2026-11-10)
 

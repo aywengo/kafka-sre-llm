@@ -33,7 +33,7 @@ Compiled from the sources in [sources.md](sources.md), all retrieved 2026-11-10.
 
 - §28.1 (manual rolling update) and §11.2.10 (delete pod and PVC) name Kafka pods `<cluster_name>-kafka-<index_number>`. §28.2 names the StrimziPodSet `<cluster_name>-kafka`.
 - §30.2.2 (same guide) uses the node-pool pod name `my-cluster-pool-a-1`. §18.3.3 names per-node secrets `<cluster_name>-<pool_name>-<node_id>`. §33.2 uses PVCs such as `data-0-my-cluster-broker-0`.
-- The two patterns are inconsistent within the same guide, and the fetched sections do not state the node-pool pod or StrimziPodSet name explicitly. The runbooks quote the documented patterns and flag the difference.
+- The two patterns are inconsistent within the same guide. **Correction:** the guide does state the node-pool names explicitly, in its list of Kafka cluster resources (https://strimzi.io/docs/operators/1.3.1/deploying#ref-list-of-kafka-cluster-resources-str, `documentation/modules/configuring/ref-list-of-kafka-cluster-resources.adoc:48`): pods are `<kafka_cluster_name>-<pool_name>-<pod_id>`, the StrimziPodSet is `<kafka_cluster_name>-<pool_name>`, and the PVC is `data-<kafka_cluster_name>-<pool_name>-<pod_id>`. An earlier version of this finding said the node-pool names were not stated; that was wrong. The procedures in §28.1 and §11.2.10 still show only the non-node-pool form. The runbooks quote the procedure commands and show the node-pool form next to them, citing that list.
 
 ## F5. Restart reasons table (§29.1, §29.2)
 

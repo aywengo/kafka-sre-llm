@@ -49,18 +49,25 @@
 
 ### B. Decommission a broker
 
-3. Cordon the broker through the Admin API, for example broker 1:
+3. **[Broker configuration change]** Cordon the broker through the Admin API, for example broker 1:
    ```
    $ bin/kafka-configs.sh --bootstrap-server localhost:9092 --alter --add-config cordoned.log.dirs="*" --entity-type brokers --entity-name 1
    ```
    — *Source:* https://kafka.apache.org/44/operations/basic-kafka-operations/#decommissioning-brokers (Kafka 4.4, retrieved 2026-11-10)
 4. **[DATA MOVEMENT]** Reassign all partitions from that broker to other brokers. The tool cannot generate a decommissioning plan yet, so write the plan by hand.
    — *Source:* https://kafka.apache.org/44/operations/basic-kafka-operations/#decommissioning-brokers (Kafka 4.4, retrieved 2026-11-10)
-5. **[DESTRUCTIVE]** When all reassignments are done, shut down the broker and unregister it:
-   ```
-   $ bin/kafka-cluster.sh unregister --bootstrap-server localhost:9092 --id 1
-   ```
-   — *Source:* https://kafka.apache.org/44/operations/basic-kafka-operations/#decommissioning-brokers (Kafka 4.4, retrieved 2026-11-10)
+5. **[DESTRUCTIVE]** Only when all reassignments are done, shut down the broker and unregister it.
+   1. First check that the reassignment from step 4 has completed. Run `--verify` with the **same** JSON file you used with `--execute` in step 4. The docs show it for their custom plan `custom-reassignment.json`:
+      ```
+      $ bin/kafka-reassign-partitions.sh --bootstrap-server localhost:9092 --reassignment-json-file custom-reassignment.json --verify
+      ```
+      The status of each partition is successfully completed, failed or in progress. Do not continue until every partition shows `Reassignment of partition [...] is completed`.
+      — *Source:* https://kafka.apache.org/44/operations/basic-kafka-operations/#custom-partition-assignment-and-migration ; https://kafka.apache.org/44/operations/basic-kafka-operations/#expanding-your-cluster (Kafka 4.4, retrieved 2026-11-10)
+   2. Then shut down the broker and unregister it:
+      ```
+      $ bin/kafka-cluster.sh unregister --bootstrap-server localhost:9092 --id 1
+      ```
+      — *Source:* https://kafka.apache.org/44/operations/basic-kafka-operations/#decommissioning-brokers (Kafka 4.4, retrieved 2026-11-10)
 
 ### C. Increase the replication factor
 
@@ -112,6 +119,12 @@
   — *Source:* https://kafka.apache.org/44/operations/basic-kafka-operations/#automatically-migrating-data-to-new-machines ; https://kafka.apache.org/44/operations/basic-kafka-operations/#increasing-replication-factor (Kafka 4.4, retrieved 2026-11-10)
 - Remove throttles promptly after the reassignment by running `--verify`. Throttles left in place can throttle normal replication traffic.
   — *Source:* https://kafka.apache.org/44/operations/basic-kafka-operations/#limiting-bandwidth-usage-during-data-migration ; https://kafka.apache.org/44/operations/basic-kafka-operations/#safe-usage-of-throttled-replication (Kafka 4.4, retrieved 2026-11-10)
+- **Abandoning a decommission after step 3:** NO OFFICIAL SOURCE FOUND for uncordoning a broker. The docs show uncordoning only for a log directory, after the broker is shut down, with `--bootstrap-controller`:
+  ```
+  $ bin/kafka-configs.sh --bootstrap-controller localhost:9093 --alter --delete-config cordoned.log.dirs --entity-type brokers --entity-name 1
+  ```
+  Compiler's note, not from the source: the same `--delete-config cordoned.log.dirs` form would be the way to remove the broker-level cordon set in step 3, but the docs do not describe it for brokers.
+  — *Source:* https://kafka.apache.org/44/operations/basic-kafka-operations/#decommissioning-log-directories (Kafka 4.4, retrieved 2026-11-10)
 - By default, the leader throttle applies to all replicas that existed before the rebalance, and the follower throttle to all move destinations.
   — *Source:* https://kafka.apache.org/44/operations/basic-kafka-operations/#limiting-bandwidth-usage-during-data-migration (Kafka 4.4, retrieved 2026-11-10)
 
