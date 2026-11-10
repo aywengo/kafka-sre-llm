@@ -26,6 +26,7 @@ Only the Python standard library is used.
 
 import argparse
 import glob
+import hashlib
 import html
 import html.parser
 import json
@@ -100,6 +101,27 @@ def squash(s):
     return re.sub(r"\s+", "", s)
 
 
+def _unify(s):
+    s = html.unescape(s)
+    s = s.replace("\u2013", "--").replace("\u2014", "--")
+    s = s.replace("\u2018", "'").replace("\u2019", "'")
+    s = s.replace("\u201c", '"').replace("\u201d", '"')
+    return re.sub(r"\\([-_*.#])", r"\1", s)
+
+
+def spaced(s):
+    """Normalise for command matching: like squash(), but runs of whitespace
+    become one space instead of nothing, so 'secret my-x' != 'secretmy-x'."""
+    return re.sub(r"\s+", " ", _unify(s)).strip()
+
+
+CMD_RE = re.compile(r"^\s*(\$ )?(kubectl|bin/|oc |openssl|helm )")
+
+
+def is_cmd(line):
+    return bool(CMD_RE.match(line))
+
+
 def runbook_files():
     return sorted(glob.glob(os.path.join(ROOT, "runbooks", "*", "*.md")))
 
@@ -118,15 +140,43 @@ class Sources:
         self.strimzi = os.path.join(cache, "strimzi")
         self.drain = os.path.join(cache, "drain-cleaner")
         self.kafka = os.path.join(cache, "kafka44")
+        self.verify_page_hashes()
         self.pages = {}
         for url, f in list(KAFKA_PAGES.items()) + [(STRIMZI_GUIDE, "strimzi.html")]:
             text, ids = parse_html(os.path.join(cache, "web", f))
             self.pages[url] = (text, ids)
         self._corpus = None
 
-    def corpus(self):
-        if self._corpus is None:
-            chunks = [squash(t) for t, _ in self.pages.values()]
+    def verify_page_hashes(self):
+        """Refuse to run against cached pages whose bytes differ from the pins."""
+        bad = []
+        with open(os.path.join(HERE, "pinned_pages.txt"), encoding="utf-8") as f:
+            for line in f:
+                parts = line.split()
+                if len(parts) != 3 or parts[0].startswith("#"):
+                    continue
+                name, _, want = parts
+                path = os.path.join(self.cache, "web", name)
+                if not os.path.isfile(path):
+                    bad.append("%s missing" % name)
+                    continue
+                with open(path, "rb") as pf:
+                    got = hashlib.sha256(pf.read()).hexdigest()[:16]
+                if got != want:
+                    bad.append("%s sha256 prefix %s, pinned %s" % (name, got, want))
+        if bad:
+            sys.exit("cached pages do not match tools/pinned_pages.txt:\n  " + "\n  ".join(bad))
+
+    def spaced_corpus(self):
+        """Like corpus(), but whitespace is collapsed, not removed, so that
+        argument boundaries in commands are kept."""
+        if getattr(self, "_spaced", None) is None:
+            self._spaced = "\x00".join(spaced(c) for c in self._raw_chunks())
+        return self._spaced
+
+    def _raw_chunks(self):
+        if getattr(self, "_raw", None) is None:
+            chunks = [t for t, _ in self.pages.values()]
             pats = [
                 (self.strimzi, "documentation/**/*.adoc"),
                 (self.strimzi, "packaging/examples/**/*.yaml"),
@@ -139,8 +189,13 @@ class Sources:
             for base, pat in pats:
                 for p in glob.glob(os.path.join(base, pat), recursive=True):
                     with open(p, encoding="utf-8", errors="replace") as f:
-                        chunks.append(squash(f.read()))
-            self._corpus = "\x00".join(chunks)
+                        chunks.append(f.read())
+            self._raw = chunks
+        return self._raw
+
+    def corpus(self):
+        if self._corpus is None:
+            self._corpus = "\x00".join(squash(c) for c in self._raw_chunks())
         return self._corpus
 
     def repo_path_exists(self, path):
@@ -263,6 +318,8 @@ def check_code(src, verbose):
     found = Counter()
     paths_ok, paths_bad, notfound = [], [], []
     cmd_total = cmd_bad = 0
+    cmd_bad_items = []
+    spaced_corpus = src.spaced_corpus()
     blocks_contig = 0
     for p in runbook_files():
         text = open(p, encoding="utf-8").read()
@@ -272,9 +329,13 @@ def check_code(src, verbose):
             if not sq:
                 found[kind] += 1
                 continue
-            is_cmd = bool(re.match(r"\s*(\$ )?(kubectl|bin/|oc |openssl|helm )", content))
-            if is_cmd:
-                cmd_total += 1
+            # commands are checked line by line, with whitespace kept
+            for line in content.split("\n"):
+                if is_cmd(line):
+                    cmd_total += 1
+                    if spaced(line) not in spaced_corpus:
+                        cmd_bad += 1
+                        cmd_bad_items.append((rel(p), ln, line.strip()[:100]))
             if kind == "block":
                 if sq in corpus:
                     found[kind] += 1
@@ -286,8 +347,6 @@ def check_code(src, verbose):
                     found[kind] += 1
                     continue
                 notfound.append((rel(p), ln, kind, "%d line(s) not found, e.g. %r" % (len(bad), bad[0].strip()[:80])))
-                if is_cmd:
-                    cmd_bad += 1
                 continue
             if sq in corpus:
                 found[kind] += 1
@@ -295,8 +354,6 @@ def check_code(src, verbose):
             if REPOPATH.match(content.strip()):
                 (paths_ok if src.repo_path_exists(content) else paths_bad).append((rel(p), ln, content))
                 continue
-            if is_cmd:
-                cmd_bad += 1
             notfound.append((rel(p), ln, kind, content[:100]))
     n_all = sum(total.values())
     n_found = sum(found.values())
@@ -305,7 +362,9 @@ def check_code(src, verbose):
     print("found in a pinned source: %d of %d" % (n_found, n_all))
     print("  blocks found as one contiguous piece: %d of %d" % (blocks_contig, total["block"]))
     print("repo-path spans: %d, exist in the pinned repos: %d, missing: %d" % (len(paths_ok) + len(paths_bad), len(paths_ok), len(paths_bad)))
-    print("commands (kubectl/bin//oc/openssl/helm): %d, not verbatim: %d" % (cmd_total, cmd_bad))
+    print("command lines (kubectl/bin//oc/openssl/helm, any line of a block): %d, not verbatim with spacing kept: %d" % (cmd_total, cmd_bad))
+    for f, ln, c in cmd_bad_items:
+        print("  COMMAND NOT VERBATIM %s:%d %s" % (f, ln, c))
     print("other items not found: %d (placeholders, elisions, composed text; listed with -v)" % len(notfound))
     for f, ln, c in paths_bad:
         print("  MISSING PATH %s:%d %s" % (f, ln, c))

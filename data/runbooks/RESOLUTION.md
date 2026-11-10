@@ -15,7 +15,7 @@ Status values: **APPLIED** (fixed as described), **REJECTED** (the source refute
 | AUD-05 | APPLIED | runbooks/strimzi/topic-not-ready.md | 757b301 | Real paths under `documentation/modules/operators/` |
 | AUD-06 | APPLIED | runbooks/strimzi/consumer-lag.md | 757b301 | License row and step say the YAML example is abridged, how, and the full source range |
 | AUD-07 | APPLIED | runbooks/strimzi/delete-kafka-node-annotation.md, FINDINGS.md (F4) | 89c9333 | `#ref-list-of-kafka-cluster-resources-str` cited; node-pool form beside the command; F4 corrected |
-| AUD-08 | APPLIED | runbooks/strimzi/cluster-recovery-from-persistent-volumes.md | 89c9333 | Warning at the top and in step 8; condition restored on steps 7-8; steps 4, 5, 11 tagged |
+| AUD-08 | APPLIED | runbooks/strimzi/cluster-recovery-from-persistent-volumes.md | 89c9333 | Warning at the top and in step 8; steps 4, 5, 11 tagged. The "Topic Operator and User Operator" condition is restored per operator: step 7 is gated on the Topic Operator and step 8 on the User Operator, because the Entity Operator can deploy "one or both operators" (`ref-kafka-entity-operator.adoc:17`) and the procedure steps are unconditional (review follow-up) |
 | AUD-09 | APPLIED | runbooks/strimzi/expired-ca-certificates.md | 89c9333 | Availability sentence marked as compiler's inference; restart-event bullet reworded |
 | AUD-10 | APPLIED | runbooks/strimzi/upgrade-kafka-cluster.md | 757b301 | Last sentence of the `metadataVersion` warning restored |
 | AUD-11 | APPLIED | runbooks/strimzi/broker-storage-issues.md, FINDINGS.md (F22) | 757b301, 171bd41 | PV resize, broker limits and quota plugin linked |
@@ -72,8 +72,8 @@ Status values: **APPLIED** (fixed as described), **REJECTED** (the source refute
 
 From `python3 -I tools/check_runbooks.py --sources <cache>` on the branch head; see FINDINGS.md, "Verification", for the full table.
 
-- Code items found in a pinned source: 902 of 968. The other 66: 40 repo paths (all exist) and 26 placeholders or elisions. Commands not verbatim: 0 of 131. Contiguous blocks: 130 of 131.
-- Citations failing: 0 of 76 Strimzi anchors, 0 of 36 Kafka anchors, 0 of 11 GitHub paths, 0 of 2 index pages, 0 of 50 backtick repo paths (distinct URLs; 806 occurrences).
+- Code items found in a pinned source: 902 of 968. The other 66: 40 repo paths (all exist) and 26 placeholders or elisions. Command lines not verbatim (whitespace kept): 0 of 140. Contiguous blocks: 130 of 131.
+- Citations failing: 0 of 77 Strimzi anchors, 0 of 36 Kafka anchors, 0 of 11 GitHub paths, 0 of 2 index pages, 0 of 50 backtick repo paths (distinct URLs; 808 occurrences).
 - Steps: 294; 284 with a Source line, 10 with only a NO OFFICIAL SOURCE marker, 0 with neither.
 - Coverage: 37 rows, 16 covered, 20 partial, 1 no official source; Totals table matches.
 - Eval: 189 items; 0 failing.

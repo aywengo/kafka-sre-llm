@@ -4,7 +4,7 @@
 |---|---|
 | Product | Strimzi, KRaft |
 | Doc version | Strimzi 1.3.1, "Deploying and Managing Strimzi" (chapter 33) |
-| Sources | https://strimzi.io/docs/operators/1.3.1/deploying#con-cluster-recovery-scenarios-str ; https://strimzi.io/docs/operators/1.3.1/deploying#recovering_from_namespace_deletion ; https://strimzi.io/docs/operators/1.3.1/deploying#recovering_from_cluster_loss ; https://strimzi.io/docs/operators/1.3.1/deploying#proc-cluster-recovery-volume-str ; https://strimzi.io/docs/operators/1.3.1/deploying#recovery_approach ; https://strimzi.io/docs/operators/1.3.1/deploying#con-custom-resources-status-str ; repo `documentation/modules/managing/con-cluster-recovery-scenarios.adoc`, `documentation/modules/managing/proc-cluster-recovery-volume.adoc` @ tag 1.3.1 (commit 555c3e0f07c203911bc3cb7d13ac085bfaa81b50) |
+| Sources | https://strimzi.io/docs/operators/1.3.1/deploying#con-cluster-recovery-scenarios-str ; https://strimzi.io/docs/operators/1.3.1/deploying#recovering_from_namespace_deletion ; https://strimzi.io/docs/operators/1.3.1/deploying#recovering_from_cluster_loss ; https://strimzi.io/docs/operators/1.3.1/deploying#proc-cluster-recovery-volume-str ; https://strimzi.io/docs/operators/1.3.1/deploying#recovery_approach ; https://strimzi.io/docs/operators/1.3.1/deploying#con-custom-resources-status-str ; https://strimzi.io/docs/operators/1.3.1/deploying#ref-kafka-entity-operator-str ; repo `documentation/modules/managing/con-cluster-recovery-scenarios.adoc`, `documentation/modules/managing/proc-cluster-recovery-volume.adoc` @ tag 1.3.1 (commit 555c3e0f07c203911bc3cb7d13ac085bfaa81b50) |
 | License | Derived from: Strimzi documentation, © Strimzi a Series of LF Projects, LLC; licence unconfirmed. Prose reworded; commands quoted verbatim. |
 | Retrieved | 2026-11-10 |
 
@@ -58,12 +58,13 @@ Recovery from namespace deletion is possible only if the PV has `persistentVolum
    kubectl create -f install/cluster-operator -n myproject
    ```
    — *Source:* https://strimzi.io/docs/operators/1.3.1/deploying#proc-cluster-recovery-volume-str (Strimzi 1.3.1, retrieved 2026-11-10)
-7. If the Topic Operator and User Operator are deployed, recreate all `KafkaTopic` resources **with the same configuration as before**. Otherwise the Topic Operator tries to update the topics in Kafka.
+7. If the Topic Operator is deployed, recreate all `KafkaTopic` resources **with the same configuration as before**. Otherwise the Topic Operator tries to update the topics in Kafka.
    ```
    kubectl apply -f <topic_configuration_file> -n myproject
    ```
-   — *Source:* https://strimzi.io/docs/operators/1.3.1/deploying#proc-cluster-recovery-volume-str (Strimzi 1.3.1, retrieved 2026-11-10)
-8. **[DESTRUCTIVE if skipped]** If the Topic Operator and User Operator are deployed, recreate all `KafkaUser` resources. If the User Operator is enabled and the users are not recreated, the users are deleted from the Kafka cluster immediately after recovery.
+   Gate this step on the Topic Operator alone. The procedure's introduction says "If the Topic Operator and User Operator are deployed", but its steps are unconditional, and the Entity Operator can be deployed with one or both operators.
+   — *Source:* https://strimzi.io/docs/operators/1.3.1/deploying#proc-cluster-recovery-volume-str ; https://strimzi.io/docs/operators/1.3.1/deploying#ref-kafka-entity-operator-str (Strimzi 1.3.1, retrieved 2026-11-10)
+8. **[DESTRUCTIVE if skipped]** If the User Operator is deployed, recreate all `KafkaUser` resources, whether or not the Topic Operator is deployed. If the User Operator is enabled and the users are not recreated, the users are deleted from the Kafka cluster immediately after recovery.
    1. To keep existing passwords and certificates, recreate the user secrets first, with exactly the same name, labels and fields as the originals. If you skip this, the User Operator generates new credentials.
    2. Apply the users:
       ```

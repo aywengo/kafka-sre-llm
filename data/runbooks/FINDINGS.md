@@ -152,8 +152,8 @@ Run 2026-11-10 against strimzi-kafka-operator 1.3.1 (555c3e0), drain-cleaner 70f
 |---|---|
 | Code items (fenced blocks and inline spans) found in a pinned source | **902 of 968** (131 blocks, 837 spans). The other 66: 40 repo-path spans, all of which exist; 26 placeholders, elisions or composed text (list with `-v`) |
 | Code blocks found as one contiguous piece | **130 of 131** (the abridged Kafka Exporter example in consumer-lag.md, labelled as abridged) |
-| Commands (`kubectl`, `bin/`, `oc`, `openssl`, `helm`) not verbatim | **0 of 131** |
-| Cited Strimzi anchors / Kafka anchors / GitHub paths / index pages that fail | **0 of 76 / 0 of 36 / 0 of 11 / 0 of 2** (distinct URLs in the runbooks, FINDINGS.md, coverage.md, RESOLUTION.md, ATTRIBUTION.md and eval `source_url`) |
+| Command lines (`kubectl`, `bin/`, `oc`, `openssl`, `helm`; every line of a block) not verbatim, with whitespace collapsed but kept | **0 of 140** |
+| Cited Strimzi anchors / Kafka anchors / GitHub paths / index pages that fail | **0 of 77 / 0 of 36 / 0 of 11 / 0 of 2** (distinct URLs in the runbooks, FINDINGS.md, coverage.md, RESOLUTION.md, ATTRIBUTION.md and eval `source_url`) |
 | Backtick repo paths missing in the pinned repos | **0 of 50** |
 | Pinned-source URLs cited in a runbook body but missing from its Sources row | **0** |
 | Top-level list steps in Diagnosis / Remediation / Verification / Rollback | **294** (93 / 122 / 15 / 64) |

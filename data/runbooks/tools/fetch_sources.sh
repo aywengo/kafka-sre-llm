@@ -10,9 +10,11 @@
 #   web/            the published pages listed in sources.md
 #
 # The script fails if a commit or a page hash differs from the pinned value.
+# Page hashes are in tools/pinned_pages.txt, which check_runbooks.py also reads.
 set -euo pipefail
 
 CACHE="${1:?usage: fetch_sources.sh <cache_dir>}"
+PAGES="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/pinned_pages.txt"
 mkdir -p "$CACHE"
 cd "$CACHE"
 
@@ -46,23 +48,17 @@ fi
 check_sha kafka44 "$KAFKA_SHA"
 
 mkdir -p web
-# file  url  sha256-prefix (from sources.md)
+# file  url  sha256-prefix, shared with check_runbooks.py
+fail=0
 while read -r f url want; do
-  [ -n "$f" ] || continue
+  case "$f" in ''|'#'*) continue ;; esac
   [ -s "web/$f" ] || curl -sSfL -A "Mozilla/5.0" -o "web/$f" "$url"
   got="$(shasum -a 256 "web/$f" | cut -c1-16)"
   if [ "$got" != "$want" ]; then
-    echo "WARN: web/$f sha256 prefix $got, sources.md has $want (page changed since retrieval)" >&2
+    echo "FAIL: web/$f sha256 prefix $got, pinned $want (page changed since retrieval, or a bad cached copy)" >&2
+    fail=1
   else
     echo "ok   web/$f $got"
   fi
-done <<'EOF'
-strimzi.html https://strimzi.io/docs/operators/1.3.1/deploying c43b40792bbb362e
-k-basic.html https://kafka.apache.org/44/operations/basic-kafka-operations/ 554551ef7d388cd4
-k-kraft.html https://kafka.apache.org/44/operations/kraft/ 6ec83b8f87fd0b8c
-k-monitoring.html https://kafka.apache.org/44/operations/monitoring/ 9b4ce983f19d132b
-k-geo.html https://kafka.apache.org/44/operations/geo-replication-cross-cluster-data-mirroring/ e7bfc284a96658c7
-k-zk2kraft.html https://kafka.apache.org/44/getting-started/zk2kraft/ 256b31647bb85209
-strimzi-documentation.html https://strimzi.io/documentation/ 431ca56a891c78e0
-k-operations.html https://kafka.apache.org/44/operations/ 2b35d2d807277120
-EOF
+done < "$PAGES"
+exit "$fail"
