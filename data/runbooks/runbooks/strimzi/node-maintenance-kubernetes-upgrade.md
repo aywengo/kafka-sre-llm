@@ -5,7 +5,7 @@
 | Product | Strimzi, KRaft |
 | Doc version | Strimzi 1.3.1, "Deploying and Managing Strimzi" (§30.2) |
 | Sources | https://strimzi.io/docs/operators/1.3.1/deploying#con-upgrade-cluster-str ; https://strimzi.io/docs/operators/1.3.1/deploying#rolling_pods_using_drain_cleaner ; https://strimzi.io/docs/operators/1.3.1/deploying#rolling_pods_manually_alternative_to_drain_cleaner ; repo `documentation/modules/upgrading/con-upgrade-cluster.adoc` @ tag 1.3.1 (commit 555c3e0f07c203911bc3cb7d13ac085bfaa81b50) |
-| License | Derived from: Strimzi documentation, © Strimzi a Series of LF Projects, LLC; licence unconfirmed. Prose reworded; commands quoted verbatim. |
+| License | Strimzi documentation, part of strimzi/strimzi-kafka-operator, licensed under the Apache License 2.0 (repository LICENSE and README at tag 1.3.1). © Strimzi a Series of LF Projects, LLC. Prose reworded; commands quoted verbatim. |
 | Retrieved | 2026-11-10 |
 
 > **[ROLLING RESTART]** Both methods below roll Kafka pods.

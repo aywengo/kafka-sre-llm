@@ -5,7 +5,7 @@
 | Product | Apache Kafka (KRaft); Strimzi 1.3.1 limitation |
 | Doc version | Apache Kafka 4.3 documentation, Operations > KRaft (docs source: apache/kafka tag 4.3.2, commit 0a6c96d3b61167f1141df2032f25f10fd6e118fe, `docs/operations/kraft.md`). Strimzi 1.3.1 "Deploying and Managing Strimzi", §2.1 KRaft limitations (repo tag 1.3.1, commit 555c3e0f07c203911bc3cb7d13ac085bfaa81b50, `documentation/assemblies/deploying/assembly-kraft-mode.adoc`) |
 | Sources | https://strimzi.io/docs/operators/1.3.1/deploying#limitations_with_static_controller_quorums ; https://strimzi.io/docs/operators/1.3.1/deploying#controller_scaling ; https://kafka.apache.org/43/operations/kraft/#static-versus-dynamic-kraft-quorums ; https://kafka.apache.org/43/operations/kraft/#upgrade ; https://kafka.apache.org/43/operations/kraft/#describe-kraft-version ; https://kafka.apache.org/43/operations/kraft/#upgrade-kraft-version ; https://kafka.apache.org/43/operations/kraft/#update-kraft-config ; https://kafka.apache.org/43/operations/kraft/#add-new-controller ; https://kafka.apache.org/43/operations/kraft/#remove-controller ; https://strimzi.io/docs/operators/1.3.1/deploying#con-custom-resources-status-str ; https://kafka.apache.org/43/operations/kraft/#metadata-quorum-tool |
-| License | Derived from: Strimzi documentation, © Strimzi a Series of LF Projects, LLC; licence unconfirmed; Apache Kafka documentation, © The Apache Software Foundation, Apache License 2.0 (https://www.apache.org/licenses/LICENSE-2.0). Prose reworded; commands quoted verbatim. |
+| License | Strimzi documentation, part of strimzi/strimzi-kafka-operator, licensed under the Apache License 2.0 (repository LICENSE and README at tag 1.3.1). © Strimzi a Series of LF Projects, LLC. Also derived from: Apache Kafka documentation, © The Apache Software Foundation, Apache License 2.0 (https://www.apache.org/licenses/LICENSE-2.0). Prose reworded; commands quoted verbatim. |
 | Retrieved | 2026-11-10 |
 
 > **Strimzi limitation: read this first.** Strimzi uses static controller quorums for all deployments, including new installations. Existing KRaft clusters with static quorums must keep using them, and Strimzi does the same for compatibility. Because of this, dynamic scaling of the controller quorum cannot be used on Strimzi for:
@@ -93,7 +93,7 @@ Kafka 4.1 added the upgrade from a static to a dynamic controller configuration.
    ```
    or with `--bootstrap-controller localhost:9093` in place of `--bootstrap-server localhost:9092`.
    — *Source:* https://kafka.apache.org/43/operations/kraft/#remove-controller (Kafka 4.3, retrieved 2026-11-10)
-7. **[Apache Kafka reference]** NO OFFICIAL SOURCE FOUND in the Kafka 4.3 docs for unregistering a controller after it was removed from the voter set. The 4.3 "Remove Controller" section ends with the `remove-controller` command.
+7. **[4.4 only, not valid on Strimzi 1.3.1]** Unregistering a controller after it was removed from the voter set is described only in the Kafka 4.4 docs. NO OFFICIAL SOURCE FOUND in the Kafka 4.3 docs: the 4.3 "Remove Controller" section ends with the `remove-controller` command. Compiler's note, not from the source: the apache/kafka 4.3.2 tools have no such command either. In `ClusterTool.java` the subcommands are `cluster-id`, `unregister` and `list-endpoints`, and `MetadataQuorumCommand.java` defines `remove-controller` with no unregister option.
 
 ## Verification
 

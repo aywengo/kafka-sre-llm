@@ -5,7 +5,7 @@
 | Product | Strimzi Kafka Connect, KRaft |
 | Doc version | Strimzi 1.3.1, "Deploying and Managing Strimzi" (§11.8.2, §11.8.3); example rules at repo tag 1.3.1 |
 | Sources | https://strimzi.io/docs/operators/1.3.1/deploying#proc-manual-restart-connector-str ; https://strimzi.io/docs/operators/1.3.1/deploying#proc-manual-restart-connector-task-str ; https://github.com/strimzi/strimzi-kafka-operator/blob/1.3.1/packaging/examples/metrics/prometheus-install/prometheus-rules/prometheus-kafka-connect-rules.yaml ; https://strimzi.io/docs/operators/1.3.1/deploying#proc-manual-rolling-update-pods-str |
-| License | Derived from: Strimzi documentation, © Strimzi a Series of LF Projects, LLC; licence unconfirmed; Strimzi repo example files (strimzi-kafka-operator tag 1.3.1), Apache License 2.0 (https://www.apache.org/licenses/LICENSE-2.0). Prose reworded; commands quoted verbatim. |
+| License | Strimzi documentation, part of strimzi/strimzi-kafka-operator, licensed under the Apache License 2.0 (repository LICENSE and README at tag 1.3.1). © Strimzi a Series of LF Projects, LLC. Also derived from: Strimzi repo example files (strimzi-kafka-operator tag 1.3.1), Apache License 2.0 (https://www.apache.org/licenses/LICENSE-2.0). Prose reworded; commands quoted verbatim. |
 | Retrieved | 2026-11-10 |
 
 > **[RESTART]** These steps restart connector and/or task instances. They do not roll Kafka Connect pods.

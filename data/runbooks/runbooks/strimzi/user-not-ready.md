@@ -5,7 +5,7 @@
 | Product | Strimzi User Operator, KRaft |
 | Doc version | Strimzi 1.3.1, "Deploying and Managing Strimzi" (§13.1, §16.3.1) |
 | Sources | https://strimzi.io/docs/operators/1.3.1/deploying#proc-configuring-kafka-user-str ; https://strimzi.io/docs/operators/1.3.1/deploying#con-securing-client-labels-str ; https://strimzi.io/docs/operators/1.3.1/deploying#ref-operator-restart-events-reasons-str ; repo `documentation/modules/operators/proc-configuring-kafka-user.adoc`, `documentation/modules/security/con-securing-client-labels.adoc` @ tag 1.3.1 (commit 555c3e0f07c203911bc3cb7d13ac085bfaa81b50) |
-| License | Derived from: Strimzi documentation, © Strimzi a Series of LF Projects, LLC; licence unconfirmed. Prose reworded; commands quoted verbatim. |
+| License | Strimzi documentation, part of strimzi/strimzi-kafka-operator, licensed under the Apache License 2.0 (repository LICENSE and README at tag 1.3.1). © Strimzi a Series of LF Projects, LLC. Prose reworded; commands quoted verbatim. |
 | Retrieved | 2026-11-10 |
 
 ## Symptoms / trigger

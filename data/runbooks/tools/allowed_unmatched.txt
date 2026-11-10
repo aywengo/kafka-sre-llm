@@ -28,3 +28,6 @@ runbooks/strimzi/prometheus-alert-rules.md	runbook_url	names an annotation the s
 runbooks/strimzi/prometheus-alert-rules.md	absent(container_last_seen{container="kafka"} and on(namespace,pod) …)	alert expression marked abridged in the runbook
 runbooks/strimzi/topic-not-ready.md	STRIMZI_USE_FINALIZERS=true	environment variable and default written as one assignment
 runbooks/strimzi/consumer-lag.md	block:d42e4613e1b7	Kafka Exporter example marked abridged in the runbook: lines cut, callouts renumbered
+runbooks/kafka/kraft-controller-membership.md	ClusterTool.java	name from the apache/kafka 4.3.2 tools source (tools/src/main/java/org/apache/kafka/tools/), which the docs-only checkout does not contain; cited in a compiler's note
+runbooks/kafka/kraft-controller-membership.md	list-endpoints	name from the apache/kafka 4.3.2 tools source (tools/src/main/java/org/apache/kafka/tools/), which the docs-only checkout does not contain; cited in a compiler's note
+runbooks/kafka/kraft-controller-membership.md	MetadataQuorumCommand.java	name from the apache/kafka 4.3.2 tools source (tools/src/main/java/org/apache/kafka/tools/), which the docs-only checkout does not contain; cited in a compiler's note

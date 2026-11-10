@@ -5,7 +5,7 @@
 | Product | Strimzi Kafka Exporter, KRaft |
 | Doc version | Strimzi 1.3.1, "Deploying and Managing Strimzi" (§11.2.6, §25.5, §25.5.1); example rules at repo tag 1.3.1 |
 | Sources | https://strimzi.io/docs/operators/1.3.1/deploying#con-kafka-exporter-str ; https://strimzi.io/docs/operators/1.3.1/deploying#con-metrics-kafka-exporter-lag-str ; https://strimzi.io/docs/operators/1.3.1/deploying#proc-kafka-exporter-deploy-str ; https://github.com/strimzi/strimzi-kafka-operator/blob/1.3.1/packaging/examples/metrics/prometheus-install/prometheus-rules/prometheus-kafka-exporter-topic-rules-group.yaml |
-| License | Derived from: Strimzi documentation, © Strimzi a Series of LF Projects, LLC; licence unconfirmed; Strimzi repo example files (strimzi-kafka-operator tag 1.3.1), Apache License 2.0 (https://www.apache.org/licenses/LICENSE-2.0). Prose reworded; commands quoted verbatim. YAML examples may be abridged: the Kafka Exporter example in Diagnosis step 1 is (see the note there). |
+| License | Strimzi documentation, part of strimzi/strimzi-kafka-operator, licensed under the Apache License 2.0 (repository LICENSE and README at tag 1.3.1). © Strimzi a Series of LF Projects, LLC. Also derived from: Strimzi repo example files (strimzi-kafka-operator tag 1.3.1), Apache License 2.0 (https://www.apache.org/licenses/LICENSE-2.0). Prose reworded; commands quoted verbatim. YAML examples may be abridged: the Kafka Exporter example in Diagnosis step 1 is (see the note there). |
 | Retrieved | 2026-11-10 |
 
 ## Symptoms / trigger

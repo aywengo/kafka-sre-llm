@@ -6,7 +6,7 @@ These files are derived from the same sources as the runbooks (see [sources.md](
 
 | Source | Copyright | Licence |
 |---|---|---|
-| Strimzi 1.3.1 "Deploying and Managing Strimzi" (https://strimzi.io/docs/operators/1.3.1/deploying) | © Strimzi a Series of LF Projects, LLC | **Unconfirmed.** No CC BY or other licence statement was found in the published guide, in https://strimzi.io/documentation/ or in the strimzi-kafka-operator repo at tag 1.3.1. The page footer gives only the copyright line and points to lfprojects.org/policies/. The AsciiDoc source of the guide lives in that repo, whose `LICENSE` file is Apache License 2.0. The final wording is open for a human decision. |
+| Strimzi 1.3.1 "Deploying and Managing Strimzi" (https://strimzi.io/docs/operators/1.3.1/deploying) | © Strimzi a Series of LF Projects, LLC | Apache License 2.0: the guide is part of strimzi/strimzi-kafka-operator (source under `documentation/`), whose `LICENSE` and `README.md` at tag 1.3.1 give Apache License 2.0. No CC BY statement was found. The site terms at lfprojects.org/policies, linked from the page footer, were not checked (FINDINGS F24). |
 | strimzi/strimzi-kafka-operator, tag 1.3.1, example files under `packaging/examples/` | The Strimzi authors | Apache License 2.0 (repo `LICENSE`) |
 | strimzi/drain-cleaner README, commit 70f1bc25bc14aacd15eb478768db6566bde783e3 | The Strimzi authors | Apache License 2.0 (repo `LICENSE`) |
 | Apache Kafka 4.3 documentation (https://kafka.apache.org/43/operations/), source at apache/kafka tag 4.3.2 | © The Apache Software Foundation | Apache License 2.0 (header of the docs source files) |
