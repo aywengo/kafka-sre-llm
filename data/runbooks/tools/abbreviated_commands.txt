@@ -1,0 +1,10 @@
+# Inline command mentions that are deliberately shorter than any complete
+# command in the sources. check_runbooks.py accepts an inline span (never a
+# fenced block) only if it equals a complete source command or is listed here.
+# Format: normalised command, a TAB, the reason. Unused entries fail the check.
+openssl x509 -noout -dates	Prose reference to the tail of the full validity-check command given verbatim in expired-ca-certificates.md Diagnosis step 3
+kubectl get kafkatopics -o wide	Prose name of the READY-column view; the full command (with -w -n <namespace>) is quoted in the Verification section
+kubectl get kafkausers -o wide	Prose name of the READY-column view; the full command (with -w -n <namespace>) is quoted in the Verification section
+oc get	Names the CLI used in one source example (FINDINGS F10); not a command to run
+kubectl get	Names the CLI used in the other source examples (FINDINGS F10); not a command to run
+kubectl edit kafka	Prose explaining the placeholder problem in the source command (FINDINGS F17); the full command is quoted in the step

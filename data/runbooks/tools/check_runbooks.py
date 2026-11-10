@@ -49,6 +49,8 @@ KAFKA_PAGES = {
 STRIMZI_REPO = "https://github.com/strimzi/strimzi-kafka-operator/"
 DRAIN_REPO = "https://github.com/strimzi/drain-cleaner/"
 DRAIN_SHA = "70f1bc25bc14aacd15eb478768db6566bde783e3"
+STRIMZI_SHA = "555c3e0f07c203911bc3cb7d13ac085bfaa81b50"
+KAFKA_SHA = "1156b2752aaa28eafc0b4c4d387e63356793268d"
 
 STEP_SECTIONS = ("diagnosis", "remediation", "verification", "rollback")
 NOSRC = re.compile(r"NO OFFICIAL SOURCE", re.I)
@@ -65,11 +67,18 @@ class _Text(html.parser.HTMLParser):
         super().__init__(convert_charrefs=True)
         self.parts = []
         self.ids = set()
+        self.code = []  # text of each <pre> or <code> element
         self._skip = 0
+        self._code_depth = 0
+        self._buf = []
 
     def handle_starttag(self, tag, attrs):
         if tag in ("script", "style"):
             self._skip += 1
+        if tag in ("pre", "code"):
+            if self._code_depth == 0:
+                self._buf = []
+            self._code_depth += 1
         for k, v in attrs:
             if k in ("id", "name") and v:
                 self.ids.add(v)
@@ -77,16 +86,24 @@ class _Text(html.parser.HTMLParser):
     def handle_endtag(self, tag):
         if tag in ("script", "style") and self._skip:
             self._skip -= 1
+        if tag in ("pre", "code") and self._code_depth:
+            self._code_depth -= 1
+            if self._code_depth == 0:
+                self.code.append("".join(self._buf))
 
     def handle_data(self, data):
         if not self._skip:
             self.parts.append(data)
+            if self._code_depth:
+                self._buf.append(data)
 
 
-def parse_html(path):
+def parse_html(path, with_code=False):
     p = _Text()
     with open(path, encoding="utf-8", errors="replace") as f:
         p.feed(f.read())
+    if with_code:
+        return "".join(p.parts), p.ids, p.code
     return "".join(p.parts), p.ids
 
 
@@ -120,6 +137,14 @@ CMD_RE = re.compile(r"^\s*(\$ )?(kubectl|bin/|oc |openssl|helm )")
 
 def is_cmd(line):
     return bool(CMD_RE.match(line))
+
+
+def cmd_key(cmd):
+    """Normalised form used to compare complete commands."""
+    s = spaced(cmd)
+    s = re.sub(r"^\$ ", "", s)
+    s = re.sub(r"\s*(<\d+>|\(\d+\))$", "", s)  # trailing callout
+    return s
 
 
 def _open_quote(s):
@@ -156,6 +181,19 @@ def logical_commands(content):
         i += 1
 
 
+def load_abbreviated():
+    """Inline command mentions that are deliberately shortened in prose.
+    One per line: the normalised command, a tab, the reason."""
+    out = {}
+    path = os.path.join(HERE, "abbreviated_commands.txt")
+    if os.path.exists(path):
+        for line in open(path, encoding="utf-8"):
+            if line.strip() and not line.startswith("#"):
+                cmd, _, why = line.rstrip("\n").partition("\t")
+                out[cmd.strip()] = why.strip()
+    return out
+
+
 def runbook_files():
     return sorted(glob.glob(os.path.join(ROOT, "runbooks", "*", "*.md")))
 
@@ -175,10 +213,13 @@ class Sources:
         self.drain = os.path.join(cache, "drain-cleaner")
         self.kafka = os.path.join(cache, "kafka44")
         self.verify_page_hashes()
+        self.verify_repos()
         self.pages = {}
+        self.page_code = []
         for url, f in list(KAFKA_PAGES.items()) + [(STRIMZI_GUIDE, "strimzi.html")]:
-            text, ids = parse_html(os.path.join(cache, "web", f))
+            text, ids, code = parse_html(os.path.join(cache, "web", f), with_code=True)
             self.pages[url] = (text, ids)
+            self.page_code.extend(code)
         self._corpus = None
 
     def verify_page_hashes(self):
@@ -200,6 +241,50 @@ class Sources:
                     bad.append("%s sha256 prefix %s, pinned %s" % (name, got, want))
         if bad:
             sys.exit("cached pages do not match tools/pinned_pages.txt:\n  " + "\n  ".join(bad))
+
+    def verify_repos(self):
+        """Refuse to run against a repo cache that is not exactly the pinned
+        commit: wrong HEAD, modified tracked files or untracked files."""
+        import subprocess
+        bad = []
+        for d, want in ((self.strimzi, STRIMZI_SHA), (self.drain, DRAIN_SHA), (self.kafka, KAFKA_SHA)):
+            def git(*a):
+                return subprocess.run(["git", "-C", d] + list(a), capture_output=True, text=True, check=True).stdout
+            try:
+                head = git("rev-parse", "HEAD").strip()
+                dirty = git("status", "--porcelain", "--untracked-files=all", "--ignored=matching")
+            except (OSError, subprocess.CalledProcessError) as e:
+                bad.append("%s: git failed (%s)" % (d, e))
+                continue
+            if head != want:
+                bad.append("%s: HEAD %s, pinned %s" % (d, head, want))
+            if dirty.strip():
+                bad.append("%s: working tree differs from the pinned commit:\n    %s" % (
+                    d, "\n    ".join(dirty.strip().split("\n")[:10])))
+        if bad:
+            sys.exit("source cache is not the pinned commits:\n  " + "\n  ".join(bad))
+
+    def source_commands(self):
+        """Complete logical commands found in code elements of the sources:
+        <pre>/<code> on the pages, fenced/delimited blocks and inline code in
+        the .adoc and .md files."""
+        if getattr(self, "_cmds", None) is not None:
+            return self._cmds
+        elems = list(self.page_code)
+        for c in self._raw_chunks()[len(self.pages):]:
+            # AsciiDoc ---- / .... blocks and Markdown ``` fences
+            elems += re.findall(r"(?ms)^(?:----|\.\.\.\.)\s*\n(.*?)^(?:----|\.\.\.\.)\s*$", c)
+            elems += re.findall(r"(?ms)^\s*```[^\n]*\n(.*?)^\s*```", c)
+            # AsciiDoc one-line literal after [source,...] with no delimiter
+            # (an undelimited block runs to the next blank line)
+            elems += re.findall(r"(?m)^\[source[^\]]*\]\n((?!----)(?:[^\n]+\n?)+)", c)
+            elems += re.findall(r"`([^`\n]+)`", c)
+        cmds = set()
+        for e in elems:
+            for cmd in logical_commands(e):
+                cmds.add(cmd_key(cmd))
+        self._cmds = cmds
+        return cmds
 
     def spaced_corpus(self):
         """Like corpus(), but whitespace is collapsed, not removed, so that
@@ -353,7 +438,10 @@ def check_code(src, verbose):
     paths_ok, paths_bad, notfound = [], [], []
     cmd_total = cmd_bad = 0
     cmd_bad_items = []
-    spaced_corpus = src.spaced_corpus()
+    cmd_abbrev = 0
+    source_cmds = src.source_commands()
+    abbreviated = load_abbreviated()
+    abbreviated_used = set()
     blocks_contig = 0
     for p in runbook_files():
         text = open(p, encoding="utf-8").read()
@@ -367,9 +455,15 @@ def check_code(src, verbose):
             # continuation lines and multi-line quoted arguments), whitespace kept
             for cmd in logical_commands(content):
                 cmd_total += 1
-                if spaced(cmd) not in spaced_corpus:
-                    cmd_bad += 1
-                    cmd_bad_items.append((rel(p), ln, spaced(cmd)[:120]))
+                key = cmd_key(cmd)
+                if key in source_cmds:
+                    continue
+                if kind == "span" and key in abbreviated:
+                    cmd_abbrev += 1
+                    abbreviated_used.add(key)
+                    continue
+                cmd_bad += 1
+                cmd_bad_items.append((rel(p), ln, key[:140]))
             if kind == "block":
                 if sq in corpus:
                     found[kind] += 1
@@ -396,7 +490,14 @@ def check_code(src, verbose):
     print("found in a pinned source: %d of %d" % (n_found, n_all))
     print("  blocks found as one contiguous piece: %d of %d" % (blocks_contig, total["block"]))
     print("repo-path spans: %d, exist in the pinned repos: %d, missing: %d" % (len(paths_ok) + len(paths_bad), len(paths_ok), len(paths_bad)))
-    print("commands (kubectl/bin//oc/openssl/helm, anywhere in a block, with continuations): %d, not verbatim with spacing kept: %d" % (cmd_total, cmd_bad))
+    print("commands (kubectl/bin//oc/openssl/helm, anywhere in a block, with continuations): %d" % cmd_total)
+    print("  equal to a complete command in a source code element: %d" % (cmd_total - cmd_abbrev - cmd_bad))
+    print("  inline mentions listed in tools/abbreviated_commands.txt: %d" % cmd_abbrev)
+    print("  not verbatim: %d" % cmd_bad)
+    stale = sorted(set(abbreviated) - abbreviated_used)
+    for s in stale:
+        print("  UNUSED ABBREVIATION ENTRY %s" % s)
+    cmd_bad += len(stale)
     for f, ln, c in cmd_bad_items:
         print("  COMMAND NOT VERBATIM %s:%d %s" % (f, ln, c))
     print("other items not found: %d (placeholders, elisions, composed text; listed with -v)" % len(notfound))

@@ -29,7 +29,15 @@ check_sha() {
     echo "FAIL: $dir is at $got, expected $want" >&2
     exit 1
   fi
-  echo "ok   $dir $got"
+  # HEAD alone does not prove the bytes: refuse modified or untracked files
+  local dirty
+  dirty="$(git -C "$dir" status --porcelain --untracked-files=all --ignored=matching)"
+  if [ -n "$dirty" ]; then
+    echo "FAIL: $dir working tree differs from $want:" >&2
+    echo "$dirty" | head -10 >&2
+    exit 1
+  fi
+  echo "ok   $dir $got (clean)"
 }
 
 [ -d strimzi ] || git clone -q --depth 1 --branch 1.3.1 https://github.com/strimzi/strimzi-kafka-operator.git strimzi

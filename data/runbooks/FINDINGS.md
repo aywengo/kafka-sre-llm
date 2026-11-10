@@ -146,13 +146,13 @@ tools/fetch_sources.sh <cache_dir>
 python3 -I tools/check_runbooks.py --sources <cache_dir>
 ```
 
-Run 2026-11-10 against strimzi-kafka-operator 1.3.1 (555c3e0), drain-cleaner 70f1bc2, apache/kafka 4.4.0 (1156b27) and the pages in sources.md fetched by the script (hashes matched):
+Run 2026-11-10 against clean checkouts (no modified or untracked files) of strimzi-kafka-operator 1.3.1 (555c3e0), drain-cleaner 70f1bc2, apache/kafka 4.4.0 (1156b27) and the pages in sources.md fetched by the script (hashes matched):
 
 | Check | Result |
 |---|---|
-| Code items (fenced blocks and inline spans) found in a pinned source | **902 of 968** (131 blocks, 837 spans). The other 66: 40 repo-path spans, all of which exist; 26 placeholders, elisions or composed text (list with `-v`) |
+| Code items (fenced blocks and inline spans) found in a pinned source | **905 of 971** (131 blocks, 840 spans). The other 66: 40 repo-path spans, all of which exist; 26 placeholders, elisions or composed text (list with `-v`) |
 | Code blocks found as one contiguous piece | **130 of 131** (the abridged Kafka Exporter example in consumer-lag.md, labelled as abridged) |
-| Commands (`kubectl`, `bin/`, `oc`, `openssl`, `helm`; anywhere in a block, matched as complete logical commands with continuation lines and multi-line quoted arguments) not verbatim, with whitespace collapsed but kept | **0 of 140** |
+| Commands (`kubectl`, `bin/`, `oc`, `openssl`, `helm`; anywhere in a block, as complete logical commands with continuation lines and multi-line quoted arguments) that are not equal to a complete command in a source code element | **0 of 140**: 133 equal a source command exactly; 7 are inline prose mentions listed with a reason in `tools/abbreviated_commands.txt` (fenced blocks are never allowlisted) |
 | Cited Strimzi anchors / Kafka anchors / GitHub paths / index pages that fail | **0 of 77 / 0 of 36 / 0 of 11 / 0 of 2** (distinct URLs in the runbooks, FINDINGS.md, coverage.md, RESOLUTION.md, ATTRIBUTION.md and eval `source_url`) |
 | Backtick repo paths missing in the pinned repos | **0 of 50** |
 | Pinned-source URLs cited in a runbook body but missing from its Sources row | **0** |

@@ -44,7 +44,7 @@ These are outside the allowed source list or outside the pinned versions. Runboo
 | Kubernetes documentation (upgrade path, PDB) | Strimzi 1.3.1 §30.2 | Not in the allowed source list |
 | Strimzi in-development docs | Task brief ("only for comparison") | Not fetched; no comparison was made |
 
-The checks in `tools/check_runbooks.py` run against a cache made by `tools/fetch_sources.sh`, which clones the three repositories at the commits above and fetches the six primary pages plus the two index pages, failing on a commit or page hash mismatch. The pinned page hashes are in `tools/pinned_pages.txt`, and `check_runbooks.py` refuses to run against cached pages that do not match them.
+The checks in `tools/check_runbooks.py` run against a cache made by `tools/fetch_sources.sh`, which clones the three repositories at the commits above and fetches the six primary pages plus the two index pages, failing on a commit mismatch, on modified or untracked files in a checkout, or on a page hash mismatch. The pinned page hashes are in `tools/pinned_pages.txt`, and `check_runbooks.py` refuses to run against cached pages that do not match them.
 
 ## Sources that could not be reached
 
