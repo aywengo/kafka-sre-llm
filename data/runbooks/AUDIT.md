@@ -5,11 +5,11 @@ Audit date: 2026-11-10. Nothing under `runbooks/`, `eval/`, `coverage.md`, `sour
 ## Verdict
 
 - **1 runbook fails**: `kafka/kraft-controller-membership.md`. It tells a Strimzi operator how to switch to a dynamic controller quorum and add or remove controllers, while the Strimzi 1.3.1 guide says Strimzi uses static quorums for every deployment. The producer reported "no official source" for this.
-- **14 runbooks pass with fixes**, 17 pass.
+- **13 runbooks pass with fixes**, 18 pass.
 - **Commands are sound**: every `kubectl` / `bin/` command and all but one code block match a source verbatim.
 - **All 403 citations resolve**, on the live pages as well as in the source repos.
 - **The eval set is internally consistent** (0 disagreements in 180), but it inherits the runbooks' gaps and cannot detect them.
-- **Four producer verification claims did not reproduce**, and FINDINGS.md missed two things that matter: the Strimzi static-quorum statement and the Cruise Control anomaly metric names in the Strimzi repo.
+- **Three producer verification claims did not reproduce**, and FINDINGS.md missed two things that matter: the Strimzi static-quorum statement and the Cruise Control anomaly metric names in the Strimzi repo.
 
 ## What was audited, and from where
 
@@ -34,13 +34,13 @@ Comparison with the producer's `sources.md`, done only at the end: the SHA-256 p
 | A. Code blocks and code spans | 878 (125 blocks, 753 spans) | 48 not found in any source: 22 are repo-path references (21 exist, **1 does not**), 1 abridged block, 25 abridged or self-composed spans. `kubectl` / `bin/` commands not verbatim: **0**. |
 | A. Code items inside the section the step cites | 878 | 34 are not in the cited section: 19 found nowhere (the abridged/composed ones above), 15 found only in a different section or file |
 | B. Citation URLs | 403 occurrences, 108 distinct | 0 missing anchors or paths, in the repos and on the live pages (68 Strimzi anchors, 30 Kafka anchors) |
-| B. Steps with a source line | 359 source lines | 2 list steps have neither a citation nor a NO OFFICIAL SOURCE marker |
+| B. Steps with a source line | 289 top-level list items in Diagnosis / Remediation / Verification / Rollback sections (91 / 121 / 15 / 62), which reproduces the producer's count; 359 source lines in total | 2 list steps have neither a citation nor a NO OFFICIAL SOURCE marker |
 | C. Random sample | 24 steps (12 Strimzi, 12 Kafka) | 23 confirmed, **1 wrong** |
 | C. Marked steps not already in the sample | 21 units (all `[ROLLING RESTART]`, `[RESTART]`, `[DESTRUCTIVE]`, `[DATA MOVEMENT]`, `[POSSIBLY IRREVERSIBLE]`) | 20 confirmed, 1 drops a source caveat |
 | D. Eval items | 180 | **0 disagreements** between my blind answer and the reference; 9 items flagged for other reasons; 3 items were not blind |
 | Alert tables vs rule YAML | 54 alerts (26 `prometheus-install`, 28 kube-state-metrics) | 0 mismatches in name, expression, `for` or severity |
 | Metrics table vs Kafka monitoring page | 13 rows | 0 mismatches |
-| G. License row present and of the right type | 32 runbooks | 32 present; 9 incomplete for mixed sources; 0 of 35 other files carry attribution |
+| G. License row present and of the right type | 32 runbooks | 32 present; 4 incomplete for mixed sources; 0 of 35 other files carry attribution |
 
 Limits of check D: three `drain-cleaner` references (items 1 to 3) were on screen before I answered, so they are not blind. The eval was written from the runbooks, so agreement shows the runbook supports the answer; it does not show the answer is right. Item 2 of `kraft-controller-membership` agrees with the runbook and is incomplete against the source.
 
@@ -56,18 +56,18 @@ Limits of check D: three `drain-cleaner` references (items 1 to 3) were on scree
 | kafka/geo-replication-mirrormaker2 | pass | Faithful |
 | kafka/monitoring-key-metrics | pass | Table matches source row for row |
 | strimzi/cruise-control-anomaly-alerts | pass-with-fixes | AUD-03 |
-| strimzi/drain-cleaner | pass-with-fixes | AUD-04, AUD-15 |
+| strimzi/drain-cleaner | pass-with-fixes | AUD-04 |
 | strimzi/cluster-recovery-from-persistent-volumes | pass-with-fixes | AUD-08 |
 | strimzi/expired-ca-certificates | pass-with-fixes | AUD-09 |
 | strimzi/delete-kafka-node-annotation | pass-with-fixes | AUD-07 |
 | strimzi/broker-storage-issues | pass-with-fixes | AUD-11 |
 | strimzi/topic-not-ready | pass-with-fixes | AUD-05 |
-| strimzi/consumer-lag | pass-with-fixes | AUD-06, AUD-12, AUD-15 |
+| strimzi/consumer-lag | pass-with-fixes | AUD-06, AUD-12 |
 | strimzi/upgrade-status-and-kraft-requirement | pass-with-fixes | AUD-12 |
 | strimzi/upgrade-kafka-cluster | pass-with-fixes | AUD-10 |
 | strimzi/user-not-ready | pass-with-fixes | AUD-13 |
 | strimzi/mirrormaker2-restart-connector-and-task | pass-with-fixes | AUD-14 |
-| strimzi/prometheus-alert-rules, kube-state-metrics-cr-monitoring, alertmanager-and-grafana, connect-restart-connector-and-task | pass | Content matches; only the license row is incomplete (AUD-15) |
+| strimzi/prometheus-alert-rules, kube-state-metrics-cr-monitoring, alertmanager-and-grafana, connect-restart-connector-and-task | pass | Content matches the rule files and cited sections. `alertmanager-and-grafana` has an incomplete license row (AUD-15) |
 | strimzi/manual-rolling-update, node-maintenance-kubernetes-upgrade, upgrade-kafka-version-error, kafka-restart-events, cr-status-and-conditions, operator-logs, lock-acquisition-warnings, kafkarebalance-notready-and-refresh, kafkarebalance-tracking-and-stopping | pass | Faithful to the cited sections |
 
 ## Findings
@@ -82,7 +82,7 @@ Quotes are exact and at most 15 words. Paths without a host are in the repos at 
 | AUD-04 | major | `runbooks/strimzi/drain-cleaner.md:63-68` | The drain step implies the command completes. The README, cited elsewhere in the same runbook, says that in the default mode the drain evicts what it can and then fails, because the Kafka evictions are denied. The step also uses `--force` with only a `[ROLLING RESTART]` tag. | `README.md` (drain-cleaner 70f1bc2), line 208: "eventually fail because Drain Cleaner denied the eviction" | Add the expected failure and what to do next, as the README describes, and tag `--force`. |
 | AUD-05 | minor | `runbooks/strimzi/topic-not-ready.md:7` | Cited repo path `documentation/modules/topic-operator/*.adoc` matches no file at tag 1.3.1. The Topic Operator modules are under `documentation/modules/operators/`. | `ls documentation/modules` at 555c3e0: no `topic-operator` directory | Replace with the real paths, for example `modules/operators/proc-configuring-kafka-topic.adoc`. |
 | AUD-06 | minor | `runbooks/strimzi/consumer-lag.md:24-40` | The only code block that is not verbatim: lines are cut, `# ...` is inserted and callouts `<1>` are rewritten as `(1)`. The header says commands are quoted verbatim. It is labelled "abridged", so nothing is hidden. | `documentation/modules/metrics/proc-kafka-exporter-deploy.adoc:39-58` | Quote the block in full, or state in the header that YAML examples may be abridged. |
-| AUD-07 | minor | `runbooks/strimzi/delete-kafka-node-annotation.md:22` | The pattern `<cluster>-<pool>-<id>` is presented as something "other sections of the same guide" use for pods. No source contains it, and FINDINGS F4 itself says the guide does not state the node-pool pod name. The only documented command pattern (`<cluster_name>-kafka-<index_number>`) therefore stays unverified for node pools in a destructive runbook. | Not found in the guide, the `.adoc` sources or the examples | Remove the invented pattern. Tell the reader to take the pod name from `kubectl get pods`, and say the source does not give the node-pool form. |
+| AUD-07 | minor | `runbooks/strimzi/delete-kafka-node-annotation.md:22`; `FINDINGS.md` F4 | The runbook says other sections of the guide name node-pool pods `<cluster>-<pool>-<id>`, but cites no section for it and shortens the placeholders. The guide does define the pattern, so the claim is supported; only the citation is missing. F4 is wrong to say the guide does not state the node-pool pod name. The destructive command still uses the non-node-pool pattern only. | https://strimzi.io/docs/operators/1.3.1/deploying#ref-list-of-kafka-cluster-resources-str (`documentation/modules/configuring/ref-list-of-kafka-cluster-resources.adoc:48`): "`<kafka_cluster_name>-<pool_name>-<pod_id>`" | Cite that section, use its placeholder names, show the node-pool form next to the command, and correct F4. |
 | AUD-08 | minor | `runbooks/strimzi/cluster-recovery-from-persistent-volumes.md:52`, `:57`, `:80-83`, `:109` | Three small departures. The source's opening WARNING about user deletion sits last, under caveats. The condition "if the Topic Operator and User Operator are deployed" is dropped from steps 7 and 8. Step 11 (editing `.status.clusterId`) and step 5 (deleting `claimRef`) carry no risk tag. | `documentation/modules/managing/proc-cluster-recovery-volume.adoc` (WARNING): "users are deleted from the Kafka cluster immediately after recovery" | Move the warning next to the banner, restore the condition, tag steps 5 and 11. |
 | AUD-09 | minor | `runbooks/strimzi/expired-ca-certificates.md:11`, `:73` | The banner says Kafka is unavailable until pods are recreated; the cited section does not say this (it is a fair inference, but unsupported). The verification bullet about `CaCertRenewed` restart events concerns operator-initiated restarts, while this procedure deletes pods by hand. | `documentation/modules/security/proc-recovering-expired-ca-certs.adoc`: no availability statement | Mark the banner sentence as the compiler's inference, and drop or reword the restart-event bullet. |
 | AUD-10 | minor | `runbooks/strimzi/upgrade-kafka-cluster.md:86` | The last sentence of the source WARNING on `metadataVersion` is dropped. | `documentation/modules/upgrading/proc-upgrade-kafka-kraft.adoc`: "understand the potential implications on support and compatibility when maintaining an older version" | Add it. |
@@ -90,7 +90,7 @@ Quotes are exact and at most 15 words. Paths without a host are in the repos at 
 | AUD-12 | minor | `runbooks/strimzi/consumer-lag.md:49`; `runbooks/strimzi/upgrade-status-and-kraft-requirement.md:74` | Two list steps have neither a source line nor a NO OFFICIAL SOURCE marker (both are cross-links). | n/a | Mark them as cross-links outside the numbered steps, or cite them. |
 | AUD-13 | minor | `runbooks/strimzi/user-not-ready.md:43-56` | Enabling `authorization.type: simple` on a running cluster is given with no risk tag. The runbook does note that the source is silent on a rolling update. | `documentation/modules/operators/proc-configuring-kafka-user.adoc` gives the YAML only | Tag the step as a cluster-wide authorization change. |
 | AUD-14 | minor | `runbooks/strimzi/mirrormaker2-restart-connector-and-task.md:75-76` | The caveat names `strimzi.io/restart-connector-task` and `strimzi.io/restart-task`, but the two sections that define them are not in its source line. | Annotations appear only under `#proc-manual-restart-mirrormaker2-connector-task-str` and `#proc-manual-restart-connector-task-str` | Add both anchors. |
-| AUD-15 | minor | License rows: `strimzi/drain-cleaner.md`, `strimzi/prometheus-alert-rules.md`, `strimzi/kube-state-metrics-cr-monitoring.md`, `strimzi/alertmanager-and-grafana.md`, `strimzi/consumer-lag.md`, `strimzi/connect-restart-connector-and-task.md`, `strimzi/cruise-control-anomaly-alerts.md`, `kafka/kraft-quorum-debugging.md`, `kafka/kraft-controller-membership.md`; all of `eval/*.jsonl`, `FINDINGS.md`, `coverage.md`, `sources.md` | These runbooks also use material from the Strimzi and drain-cleaner repos (Apache-2.0 code and README) or mix Strimzi and Kafka material, but name one license. The 180 eval items and three top-level files are derived from the same docs and carry no attribution. | `LICENSE` in both Strimzi repos is Apache-2.0 | Name every source license per file, and add a `NOTICE` or `eval/README` covering the JSONL files. |
+| AUD-15 | minor | License rows: `strimzi/alertmanager-and-grafana.md`, `strimzi/cruise-control-anomaly-alerts.md`, `kafka/kraft-quorum-debugging.md`, `kafka/kraft-controller-membership.md`; all of `eval/*.jsonl`, `FINDINGS.md`, `coverage.md`, `sources.md` | The two Strimzi runbooks cite files from the Strimzi repo examples (Apache-2.0) but name only CC BY 4.0. The two Kafka runbooks also cite Strimzi material (a rule file, a guide section) but name only the Kafka license. The 180 eval items and three top-level files are derived from the same docs and carry no attribution. Five other runbooks that use example files or the drain-cleaner README already name both licenses. | `LICENSE` in both Strimzi repos is Apache-2.0 | Name every source license in these four files, and add a `NOTICE` or `eval/README` covering the JSONL files. |
 | AUD-16 | minor | `eval/cr-status-and-conditions.jsonl` item 3 vs `eval/upgrade-status-and-kraft-requirement.jsonl` item 4 | Near-duplicate questions with different answers (two status fields vs three). | Both references are supported by their own runbook | Merge, or make each question name its section. |
 | AUD-17 | minor | `eval/cr-status-and-conditions.jsonl` item 6; `eval/kafka-restart-events.jsonl` item 3; `eval/expired-ca-certificates.jsonl` item 6; `eval/prometheus-alert-rules.jsonl` item 1 | Items 6 and 3 include a clause that is in the source but not in the runbook. In the other two, the second sentence is supported by a different URL than `source_url` (`#cluster_ca_secrets`, and the kube-state-metrics rules file). | Runbook text and `source_url` sections compared | Trim the clause or add it to the runbook; widen `source_url` or split the item. |
 
@@ -101,6 +101,7 @@ Quotes are exact and at most 15 words. Paths without a host are in the repos at 
 | F1 `runbook` search | **Confirmed.** 0 matches in all files of strimzi-kafka-operator 1.3.1 and drain-cleaner main, and no file or folder named `*runbook*`. Nine rule files under `packaging/examples/metrics/` (the same nine are duplicated under top-level `examples/metrics/`). Annotation keys: `summary` and `description` in 26 alerts, `message` in 28 kube-state-metrics alerts; the only label is `severity`. |
 | F2 supported Kafka versions | **Confirmed** from `kafka-versions.yaml`: 4.2.0, 4.2.1, 4.2.2, 4.3.0, 4.3.1, 4.3.2 (default). 4.4 is not supported. |
 | F3 `reserved.broker.max.id` | **Confirmed.** Strimzi prose spells it `reserved.broker-max.id`, the YAML has `reserved.broker.max.id: 10000`, and the Kafka 4.4.0 `zk2kraft.md` lists it among removed configurations. |
+| F4 pod naming with node pools | **Partly refuted.** The inconsistency between sections is real, but the guide does state the node-pool pod name, in its list of Kafka cluster resources (AUD-07). |
 | F9 PV/PVC names | **Confirmed.** PVC `data-0-my-cluster-broker-0` has `volumeName: pvc-7e1f67f9-…`, which the `kubectl get pv` output assigns to `controller-3`; the example PV is `pvc-5ead43d1-…` with a `selfLink` ending `pvc-7e226978-…`. |
 | F11 three vs four modes | **Confirmed.** Four modes are defined, then the text says "three different modes" (`con-cruise-control-overview.adoc:269`). |
 | F13 lost `*` | **Confirmed** on the live page: the command block reads `pod-monitors/.yaml`. The `.adoc` has `pod-monitors/*.yaml`. |
@@ -113,7 +114,7 @@ Quotes are exact and at most 15 words. Paths without a host are in the repos at 
 
 | Runbook: step | Risk | Marked clearly? |
 |---|---|---|
-| delete-kafka-node-annotation: remediation 1 | Deletes a PVC; permanent data loss | Yes (banner and step). Pod-name pattern is unverified for node pools (AUD-07) |
+| delete-kafka-node-annotation: remediation 1 | Deletes a PVC; permanent data loss | Yes (banner and step). The command shows only the non-node-pool pod name; the node-pool form is documented but not cited (AUD-07) |
 | broker-storage-issues: step 5 | Same, by reference | Yes |
 | expired-ca-certificates: steps 1 and 4 | Deletes CA secrets, the Kafka secret and all Kafka pods | Yes. Which "Kafka secret" is meant stays ambiguous, as the producer reported (F8) |
 | cluster-recovery: steps 4 and 5 | Wrong PV-to-PVC mapping corrupts data | Banner only; steps untagged (AUD-08) |
@@ -134,7 +135,6 @@ Quotes are exact and at most 15 words. Paths without a host are in the repos at 
 
 | Claim (where) | What I found |
 |---|---|
-| "Steps … 289", "Steps with a citation: 289 of 289" (FINDINGS "Verification", coverage.md) | Not reproduced. The counting rule is not given precisely enough. I count 359 source lines and 354 cited units. |
 | "Steps without a citation (or an explicit NO OFFICIAL SOURCE FOUND): 0" | 2 found (AUD-12). |
 | "Cited Strimzi repo paths missing at tag 1.3.1: 0" | 1 found (AUD-05). |
 | "Code-block lines not found verbatim …: 0" | 1 block is altered (AUD-06). |
