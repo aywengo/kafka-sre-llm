@@ -1,0 +1,64 @@
+# Key broker metrics and their normal values
+
+| Field | Value |
+|---|---|
+| Product | Apache Kafka (KRaft) |
+| Doc version | Apache Kafka 4.3 documentation, Operations > Monitoring (docs source: apache/kafka tag 4.3.2, commit 0a6c96d3b61167f1141df2032f25f10fd6e118fe, `docs/operations/monitoring.md`) |
+| Sources | https://kafka.apache.org/43/operations/monitoring/#security-considerations-for-remote-monitoring-using-jmx (the broker metrics table has no anchor of its own and sits under this heading); https://kafka.apache.org/43/operations/monitoring/#kraft-controller-monitoring-metrics ; https://kafka.apache.org/43/operations/kraft/#controllers |
+| License | Derived from: Apache Kafka documentation, © The Apache Software Foundation, Apache License 2.0 (https://www.apache.org/licenses/LICENSE-2.0). Prose reworded. |
+| Retrieved | 2026-11-10 |
+
+> **Version note.** These are the Kafka 4.3 docs (source at tag 4.3.2); Strimzi 1.3.1 supports Kafka 4.2.0 to 4.3.2 (see FINDINGS.md). In Strimzi's example Prometheus rules, these MBeans appear under Prometheus names such as `kafka_server_replicamanager_underreplicatedpartitions`; see [../strimzi/prometheus-alert-rules.md](../strimzi/prometheus-alert-rules.md).
+
+## Symptoms / trigger
+
+A broker metric is outside the normal value that the Kafka docs list, or a Strimzi example alert built on it fires. The Kafka docs say they graph and alert on these metrics.
+— *Source:* https://kafka.apache.org/43/operations/monitoring/#security-considerations-for-remote-monitoring-using-jmx (Kafka 4.3, retrieved 2026-11-10)
+
+## Diagnosis steps: compare with the documented normal values
+
+| Description | MBean | Normal value (from the source) |
+|---|---|---|
+| # of under replicated partitions (\|ISR\| < \|all replicas\|) | `kafka.server:type=ReplicaManager,name=UnderReplicatedPartitions` | 0 |
+| # of under minIsr partitions (\|ISR\| < min.insync.replicas) | `kafka.server:type=ReplicaManager,name=UnderMinIsrPartitionCount` | 0 |
+| # of at minIsr partitions (\|ISR\| = min.insync.replicas) | `kafka.server:type=ReplicaManager,name=AtMinIsrPartitionCount` | 0 |
+| # of offline log directories | `kafka.log:type=LogManager,name=OfflineLogDirectoryCount` | 0 |
+| Is controller active on broker | `kafka.controller:type=KafkaController,name=ActiveControllerCount` | only one broker in the cluster should have 1 (source wording; in KRaft, see the note below the table) |
+| Leader election rate | `kafka.controller:type=ControllerStats,name=LeaderElectionRateAndTimeMs` | non-zero when there are broker failures |
+| Unclean leader election rate | `kafka.controller:type=ControllerStats,name=UncleanLeaderElectionsPerSec` | 0 |
+| Leader replica counts | `kafka.server:type=ReplicaManager,name=LeaderCount` | mostly even across brokers |
+| ISR shrink rate | `kafka.server:type=ReplicaManager,name=IsrShrinksPerSec` | If a broker goes down, ISR for some partitions shrinks; it expands again once the replicas are fully caught up. Otherwise the expected value is 0. |
+| ISR expansion rate | `kafka.server:type=ReplicaManager,name=IsrExpandsPerSec` | see ISR shrink rate |
+| Max lag in messages btw follower and leader replicas | `kafka.server:type=ReplicaFetcherManager,name=MaxLag,clientId=Replica` | lag should be proportional to the maximum batch size of a produce request |
+| Average fraction of time the network processors are idle | `kafka.network:type=SocketServer,name=NetworkProcessorAvgIdlePercent` | between 0 and 1, ideally > 0.3 |
+| Average fraction of time the request handler threads are idle | `kafka.server:type=KafkaRequestHandlerPool,name=RequestHandlerAvgIdlePercent` | between 0 and 1, ideally > 0.3 |
+
+— *Source:* https://kafka.apache.org/43/operations/monitoring/#security-considerations-for-remote-monitoring-using-jmx (Kafka 4.3, retrieved 2026-11-10)
+
+**KRaft and `ActiveControllerCount`.** In KRaft, specific servers are selected to be controllers, and each controller is either the active controller or a hot standby for it. The KRaft controller metrics list `ActiveControllerCount` as the number of active controllers on the node, `0` or `1`. So check this metric on the controller-role nodes, not on the brokers. Compiler's note, not from the source: with separate controller and broker roles, the active controller is a controller-role node, so the table row's "only one broker" wording does not fit those clusters. NO OFFICIAL SOURCE FOUND that states the cluster-wide expected count for KRaft.
+— *Source:* https://kafka.apache.org/43/operations/kraft/#controllers ; https://kafka.apache.org/43/operations/monitoring/#kraft-controller-monitoring-metrics (Kafka 4.3, retrieved 2026-11-10)
+
+KRaft controller metrics with no "normal value" column in the source: `ActiveControllerCount` per node is `0` or `1`; `FencedBrokerCount` is the number of fenced brokers this controller sees; `ActiveBrokerCount` is the number of active brokers; `OfflinePartitionsCount` is the number of offline non-internal partitions; `MetadataErrorCount` counts errors while processing the metadata log.
+— *Source:* https://kafka.apache.org/43/operations/monitoring/#kraft-controller-monitoring-metrics (Kafka 4.3, retrieved 2026-11-10)
+
+## Remediation steps
+
+NO OFFICIAL SOURCE FOUND in the Kafka monitoring page. It lists metrics and normal values but no remediation. For related procedures see:
+- Cross-link, NO OFFICIAL SOURCE FOUND for this route: under-replicated partitions or offline log directories on Strimzi, when brokers are unavailable because of storage: [../strimzi/broker-storage-issues.md](../strimzi/broker-storage-issues.md) (its last step is destructive)
+- Cross-link, NO OFFICIAL SOURCE FOUND for this route: leadership imbalance (`LeaderCount` not even): [graceful-shutdown-and-leadership.md](graceful-shutdown-and-leadership.md)
+- Cross-link, NO OFFICIAL SOURCE FOUND for this route: controller state: [kraft-quorum-debugging.md](kraft-quorum-debugging.md)
+
+## Verification
+
+NO OFFICIAL SOURCE FOUND for a verification step. The normal values to compare against are in the table above.
+
+## Rollback or caveats
+
+- Apache Kafka disables remote JMX by default. You can enable it with the `JMX_PORT` environment variable for processes started from the CLI, or with standard Java system properties. In production, enable security when you enable remote JMX.
+  — *Source:* https://kafka.apache.org/43/operations/monitoring/#security-considerations-for-remote-monitoring-using-jmx (Kafka 4.3, retrieved 2026-11-10)
+
+## Related runbooks
+
+- [../strimzi/prometheus-alert-rules.md](../strimzi/prometheus-alert-rules.md)
+- [kraft-quorum-debugging.md](kraft-quorum-debugging.md)
+- [partition-reassignment-and-throttling.md](partition-reassignment-and-throttling.md)

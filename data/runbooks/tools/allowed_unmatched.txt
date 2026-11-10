@@ -1,0 +1,50 @@
+# Code items in runbooks that are knowingly not verbatim in a pinned source.
+# check_runbooks.py fails on any item that is neither found nor listed here,
+# and on any entry here that no longer matches an item.
+# Format: runbook path TAB key TAB reason. A span's key is its text; a block's
+# key is block: plus a hash of its normalised lines (see block_key()).
+runbooks/kafka/consumer-group-position.md	--describe --group <group>	short form of the kafka-consumer-groups.sh --describe command quoted in full (with my-group) earlier in the runbook
+runbooks/kafka/geo-replication-mirrormaker2.md	kafka.connect.mirror:type=MirrorSourceConnector,...	MBean name with its key properties elided
+runbooks/kafka/geo-replication-mirrormaker2.md	kafka.connect.mirror:type=MirrorCheckpointConnector,...	MBean name with its key properties elided
+runbooks/kafka/partition-reassignment-and-throttling.md	Reassignment of partition [...] is completed	tool output line with the partition elided
+runbooks/kafka/partition-reassignment-and-throttling.md	Clearing broker-level throttles on brokers ...	tool output line with the broker list elided
+runbooks/kafka/partition-reassignment-and-throttling.md	Clearing topic-level throttles on topic ...	tool output line with the topic elided
+runbooks/strimzi/broker-storage-issues.md	storage.volumes	dotted path composed from the nested YAML keys of the source example
+runbooks/strimzi/cluster-recovery-from-persistent-volumes.md	spec.volumeName	dotted path composed from the nested YAML keys of the source example
+runbooks/strimzi/cluster-recovery-from-persistent-volumes.md	accessModes: [ReadWriteOnce]	flow-style rendering of the source's block-style list
+runbooks/strimzi/cluster-recovery-from-persistent-volumes.md	volumeName: <PV name>	source value replaced by a placeholder
+runbooks/strimzi/cruise-control-anomaly-alerts.md	round(max_over_time(increase(...[10m])[10m:]))	dashboard expression with the metric selector elided
+runbooks/strimzi/cruise-control-anomaly-alerts.md	sum(irate(...[5m]))	dashboard expression with the metric selector elided
+runbooks/strimzi/cruise-control-anomaly-alerts.md	kubernetes_pod_name=~"$strimzi_cluster_name-cruise-control-.*"	one label matcher taken out of a longer dashboard selector
+runbooks/strimzi/drain-cleaner.md	spec.kafka.template.podDisruptionBudget.maxUnavailable: 0	dotted path composed from the nested YAML keys of the source example
+runbooks/strimzi/drain-cleaner.md	STRIMZI_DENY_EVICTION=false	environment variable and value written as one assignment; the source sets them as name and value fields
+runbooks/strimzi/kube-state-metrics-cr-monitoring.md	*Warnings	wildcard standing for the per-resource rule names
+runbooks/strimzi/kube-state-metrics-cr-monitoring.md	strimzi_<resource>_resource_info{warnings="Warning"}	metric name generalised over resources with a placeholder
+runbooks/strimzi/kube-state-metrics-cr-monitoring.md	strimzi_<resource>_resource_info{deprecated="Warning"}	metric name generalised over resources with a placeholder
+runbooks/strimzi/kube-state-metrics-cr-monitoring.md	runbook_url	names an annotation the source does not contain (the runbook says it is absent)
+runbooks/strimzi/mirrormaker2-restart-connector-and-task.md	<connector_name>:<task_id>	placeholder form of the annotation value
+runbooks/strimzi/node-maintenance-kubernetes-upgrade.md	spec.kafka.template.podDisruptionBudget	dotted path composed from the nested YAML keys of the source example
+runbooks/strimzi/prometheus-alert-rules.md	runbook_url	names an annotation the source does not contain (the runbook says it is absent)
+runbooks/strimzi/prometheus-alert-rules.md	absent(container_last_seen{container="kafka"} and on(namespace,pod) …)	alert expression marked abridged in the runbook
+runbooks/strimzi/topic-not-ready.md	STRIMZI_USE_FINALIZERS=true	environment variable and default written as one assignment
+runbooks/strimzi/consumer-lag.md	block:d42e4613e1b7	Kafka Exporter example marked abridged in the runbook: lines cut, callouts renumbered
+runbooks/kafka/kraft-controller-membership.md	ClusterTool.java	name from the apache/kafka 4.3.2 tools source (tools/src/main/java/org/apache/kafka/tools/), which the docs-only checkout does not contain; cited in a compiler's note
+runbooks/kafka/kraft-controller-membership.md	list-endpoints	name from the apache/kafka 4.3.2 tools source (tools/src/main/java/org/apache/kafka/tools/), which the docs-only checkout does not contain; cited in a compiler's note
+runbooks/kafka/kraft-controller-membership.md	MetadataQuorumCommand.java	name from the apache/kafka 4.3.2 tools source (tools/src/main/java/org/apache/kafka/tools/), which the docs-only checkout does not contain; cited in a compiler's note
+runbooks/strimzi/kafka-restart-events.md	block:d074a7e88367	Corrected event query (events.events.k8s.io); FINDINGS F26
+runbooks/strimzi/kafka-restart-events.md	block:c4bf2d05c9a4	Corrected event query (events.events.k8s.io); FINDINGS F26
+runbooks/strimzi/kafka-restart-events.md	block:a25cdf1c5ec6	Corrected event query (events.events.k8s.io); FINDINGS F26
+runbooks/strimzi/kafka-restart-events.md	events.events.k8s.io	Kubernetes API group name, from the Kubernetes v1.34.0 source; FINDINGS F26
+runbooks/strimzi/kafka-restart-events.md	events.k8s.io/v1	Kubernetes API group/version, from the Kubernetes v1.34.0 source; FINDINGS F26
+runbooks/strimzi/kafka-restart-events.md	regarding.kind	events.k8s.io/v1 field selector, Kubernetes v1.34.0 pkg/apis/events/v1/conversion.go; FINDINGS F26
+runbooks/strimzi/kafka-restart-events.md	regarding.uid	events.k8s.io/v1 field selector, Kubernetes v1.34.0 pkg/apis/events/v1/conversion.go; FINDINGS F26
+runbooks/strimzi/kafka-restart-events.md	regarding.*	events.k8s.io/v1 field selectors, Kubernetes v1.34.0 pkg/apis/events/v1/conversion.go; FINDINGS F26
+runbooks/strimzi/kafka-restart-events.md	involvedObject.kind	core/v1 field selector, Kubernetes v1.34.0 pkg/apis/core/v1/conversion.go; FINDINGS F26
+runbooks/strimzi/kafka-restart-events.md	involvedObject.namespace	core/v1 field selector, Kubernetes v1.34.0 pkg/apis/core/v1/conversion.go; FINDINGS F26
+runbooks/strimzi/kafka-restart-events.md	involvedObject.name	core/v1 field selector, Kubernetes v1.34.0 pkg/apis/core/v1/conversion.go; FINDINGS F26
+runbooks/strimzi/kafka-restart-events.md	involvedObject.uid	core/v1 field selector, Kubernetes v1.34.0 pkg/apis/core/v1/conversion.go; FINDINGS F26
+runbooks/strimzi/kafka-restart-events.md	involvedObject.*	core/v1 field selectors, Kubernetes v1.34.0 pkg/apis/core/v1/conversion.go; FINDINGS F26
+runbooks/strimzi/kafka-restart-events.md	regardingObject.*	Wildcard for the source's regardingObject.kind/name/uid, which neither Event API accepts; FINDINGS F26
+runbooks/strimzi/kafkarebalance-tracking-and-stopping.md	block:f5f088e23ce1	Corrected JSONPath with the dot escaped; FINDINGS F26
+runbooks/strimzi/prometheus-alert-rules.md	block:449d1e1478fd	Corrected apply commands with directory arguments; the third line is verbatim; FINDINGS F26
+runbooks/strimzi/prometheus-alert-rules.md	error: Unexpected args	kubectl 1.37.1 error text from the test in FINDINGS F26
