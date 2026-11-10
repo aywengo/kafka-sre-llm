@@ -2,7 +2,7 @@
 
 Attribution and licences of the sources used here: [ATTRIBUTION.md](ATTRIBUTION.md).
 
-Scope: KRaft-based Strimzi on Kubernetes, plus Apache Kafka operations. Sources: Strimzi 1.3.1 "Deploying and Managing Strimzi", the Strimzi repo at tag 1.3.1, the strimzi/drain-cleaner README, and Apache Kafka 4.4 operations docs. All retrieved 2026-11-10. See [sources.md](sources.md).
+Scope: KRaft-based Strimzi on Kubernetes, plus Apache Kafka operations. Sources: Strimzi 1.3.1 "Deploying and Managing Strimzi", the Strimzi repo at tag 1.3.1, the strimzi/drain-cleaner README, and Apache Kafka 4.3 operations docs (source at tag 4.3.2). All retrieved 2026-11-10. See [sources.md](sources.md).
 
 Legend:
 - **covered**: diagnosis, remediation and verification all come from official text, and none of those sections says NO OFFICIAL SOURCE FOUND (checked by `tools/check_runbooks.py coverage`).
@@ -42,8 +42,8 @@ Legend:
 | Monitoring | kube-state-metrics | partial | [kube-state-metrics-cr-monitoring](runbooks/strimzi/kube-state-metrics-cr-monitoring.md) | [5](eval/kube-state-metrics-cr-monitoring.jsonl) | NO OFFICIAL SOURCE FOUND in part of: diagnosis |
 | Core Kafka | Basic operations: graceful shutdown, leadership | partial | [graceful-shutdown-and-leadership](runbooks/kafka/graceful-shutdown-and-leadership.md) | [5](eval/graceful-shutdown-and-leadership.jsonl) | NO OFFICIAL SOURCE FOUND in part of: verification |
 | Core Kafka | Basic operations: consumer groups | covered | [consumer-group-position](runbooks/kafka/consumer-group-position.md) | [6](eval/consumer-group-position.jsonl) | |
-| Core Kafka | Basic operations: reassignment, decommission, RF, throttling | covered | [partition-reassignment-and-throttling](runbooks/kafka/partition-reassignment-and-throttling.md) | [6](eval/partition-reassignment-and-throttling.jsonl) | `cordoned.log.dirs` is from the 4.4 docs (FINDINGS F2) |
-| Core Kafka | KRaft management: controller membership | partial | [kraft-controller-membership](runbooks/kafka/kraft-controller-membership.md) | [11](eval/kraft-controller-membership.jsonl) | Remediation is Apache Kafka reference only: Strimzi 1.3.1 uses static controller quorums for all deployments, so it does not apply on Strimzi. Verification is not named by the add/remove sections. Sources conflict on migration (FINDINGS F20) |
+| Core Kafka | Basic operations: reassignment, decommission, RF, throttling | covered | [partition-reassignment-and-throttling](runbooks/kafka/partition-reassignment-and-throttling.md) | [6](eval/partition-reassignment-and-throttling.jsonl) | `cordoned.log.dirs` is in the 4.3 docs and defined in Kafka 4.3.2 (FINDINGS F2) |
+| Core Kafka | KRaft management: controller membership | partial | [kraft-controller-membership](runbooks/kafka/kraft-controller-membership.md) | [11](eval/kraft-controller-membership.jsonl) | Remediation is Apache Kafka reference only: Strimzi 1.3.1 uses static controller quorums for all deployments, so it does not apply on Strimzi. Verification is not named by the add/remove sections. Sources conflict on migration (FINDINGS F20). No Kafka 4.3 source for unregistering a removed controller |
 | Core Kafka | KRaft management: quorum debugging | partial | [kraft-quorum-debugging](runbooks/kafka/kraft-quorum-debugging.md) | [5](eval/kraft-quorum-debugging.jsonl) | Inspection tools only; no remediation or verification |
 | Core Kafka | Monitoring metrics | partial | [monitoring-key-metrics](runbooks/kafka/monitoring-key-metrics.md) | [6](eval/monitoring-key-metrics.jsonl) | Metrics and normal values only; no remediation |
 | Core Kafka | Geo-replication (MirrorMaker 2) | partial | [geo-replication-mirrormaker2](runbooks/kafka/geo-replication-mirrormaker2.md) | [6](eval/geo-replication-mirrormaker2.jsonl) | No explicit verification step; NO OFFICIAL SOURCE FOUND in part of: verification |

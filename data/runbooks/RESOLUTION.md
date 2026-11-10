@@ -2,7 +2,7 @@
 
 Resolves the findings in [AUDIT.md](AUDIT.md) (AUD-01 to AUD-17) and [AUDIT-2.md](AUDIT-2.md) (A-01 to A-23; A-08, A-09 and A-21 were withdrawn by that audit). Neither audit file was edited.
 
-Every finding was checked again against the pinned sources before any change: Strimzi 1.3.1 guide and strimzi-kafka-operator tag 1.3.1 (555c3e0f07c203911bc3cb7d13ac085bfaa81b50), strimzi/drain-cleaner 70f1bc25bc14aacd15eb478768db6566bde783e3, Apache Kafka 4.4 operations docs and apache/kafka tag 4.4.0 (1156b2752aaa28eafc0b4c4d387e63356793268d). Kafka tag 4.3.2 (0a6c96d3b61167f1141df2032f25f10fd6e118fe) was read only to answer the `cordoned.log.dirs` question. All retrieved 2026-11-10. Page hashes matched sources.md.
+Every finding was checked again against the pinned sources before any change: Strimzi 1.3.1 guide and strimzi-kafka-operator tag 1.3.1 (555c3e0f07c203911bc3cb7d13ac085bfaa81b50), strimzi/drain-cleaner 70f1bc25bc14aacd15eb478768db6566bde783e3, Apache Kafka 4.4 operations docs and apache/kafka tag 4.4.0 (1156b2752aaa28eafc0b4c4d387e63356793268d). After the owner's decision (below), the Kafka pin moved to the 4.3 docs and apache/kafka tag 4.3.2 (0a6c96d3b61167f1141df2032f25f10fd6e118fe), and every Kafka runbook was checked again against 4.3.2. All retrieved 2026-11-10. Page hashes matched sources.md.
 
 Status values: **APPLIED** (fixed as described), **REJECTED** (the source refutes the finding; quote given, 15 words or fewer), **DEFERRED** (needs a human decision). Commits are on branch `runbooks-audit-fixes`.
 
@@ -62,18 +62,21 @@ Status values: **APPLIED** (fixed as described), **REJECTED** (the source refute
 | Eval: 6-10 "does not apply on Strimzi" items | APPLIED: 8 items (static quorum, controller pool scaling, quorum commands, controller pool storage change, migration conflict, direct ZooKeeper upgrade, own-CA expiry, PV recovery on a live cluster) | eval/kraft-controller-membership.jsonl, eval/upgrade-status-and-kraft-requirement.jsonl, eval/expired-ca-certificates.jsonl, eval/cluster-recovery-from-persistent-volumes.jsonl | 46f4617 |
 | Reproducible checks | APPLIED | tools/fetch_sources.sh, tools/check_runbooks.py | 39c8ab1 |
 
+## Decided by the owner
+
+- **Kafka docs pin: 4.3** (decided 2026-11-10). The Kafka citations now point to the 4.3 pages under https://kafka.apache.org/43/operations/ (retrieved 2026-11-10; page hashes in sources.md and `tools/pinned_pages.txt`), and the docs source to apache/kafka tag 4.3.2 (0a6c96d3b61167f1141df2032f25f10fd6e118fe), the newest Kafka version Strimzi 1.3.1 supports. A diff of the cited docs files between 4.4.0 and 4.3.2 found three things the runbooks used that are only in 4.4: the `--unregister` flag and the "Unregister Controller" section, the `--command-config` file note for `add-controller`, and the name `--dry-run` for the default reset-offsets option. They were removed or marked NO OFFICIAL SOURCE FOUND, and two eval items were changed (FINDINGS F2). The cordon step stays: `cordoned.log.dirs` is in the 4.3 docs (`docs/operations/basic-kafka-operations.md:471-476`) and is defined in Kafka 4.3.2 (`ServerLogConfigs.java:54`, validated in `DynamicBrokerConfig.scala:590`). AUDIT.md and AUDIT-2.md still cite the 4.4 URLs; they were not edited.
+
 ## Open for a human decision
 
-1. **Kafka docs pin (4.3 vs 4.4).** Not decided. The pin stays at 4.4 and each Kafka runbook keeps its version note. Relevant fact: `cordoned.log.dirs` exists in Kafka 4.3.2 (`ServerLogConfigs.java:54`, validated in `DynamicBrokerConfig.scala:590`), and the 4.3.2 docs source has the same cordon step (`docs/operations/basic-kafka-operations.md:471-476`). So the cordon step is valid for Strimzi 1.3.1 clusters.
-2. **Strimzi docs licence wording.** No CC BY or other licence statement was found in the published 1.3.1 guide, on https://strimzi.io/documentation/ or in strimzi-kafka-operator at tag 1.3.1. The page footer gives only "Copyright © Strimzi a Series of LF Projects, LLC" and points to lfprojects.org/policies/. The AsciiDoc source of the guide lives in that repo, whose `LICENSE` file is Apache License 2.0. The rows say "licence unconfirmed" until the owner decides.
-3. **The unnamed "Kafka secret" in the expired-CA procedure** (`proc-recovering-expired-ca-certs.adoc:71-76`). No section of the guide names it. Step 4.1 is marked as not completable from official docs; the name has to come from the Strimzi maintainers.
+1. **Strimzi docs licence wording.** No CC BY or other licence statement was found in the published 1.3.1 guide, on https://strimzi.io/documentation/ or in strimzi-kafka-operator at tag 1.3.1. The page footer gives only "Copyright © Strimzi a Series of LF Projects, LLC" and points to lfprojects.org/policies/. The AsciiDoc source of the guide lives in that repo, whose `LICENSE` file is Apache License 2.0. The rows say "licence unconfirmed" until the owner decides.
+2. **The unnamed "Kafka secret" in the expired-CA procedure** (`proc-recovering-expired-ca-certs.adoc:71-76`). No section of the guide names it. Step 4.1 is marked as not completable from official docs; the name has to come from the Strimzi maintainers.
 
 ## Final check numbers
 
 From `python3 -I tools/check_runbooks.py --sources <cache>` on the branch head; see FINDINGS.md, "Verification", for the full table.
 
-- Code items found in a pinned source: 904 of 971. The other 67: 40 repo paths (all exist) and 27 items listed with a reason in `tools/allowed_unmatched.txt` (26 placeholders, elisions or composed spans and 1 abridged block); unlisted misses and unused entries fail. Commands: 0 of 140 differ from a complete source command (133 exact; 7 inline prose mentions allowlisted with a reason in `tools/abbreviated_commands.txt`). Blocks found line for line inside one source code element: 130 of 131. Unterminated fences: 0.
-- Citations failing: 0 of 77 Strimzi anchors, 0 of 36 Kafka anchors, 0 of 11 GitHub paths, 0 of 2 index pages, 0 of 50 backtick repo paths (distinct URLs; 808 occurrences).
-- Steps: 294; 284 with a Source line, 10 with only a NO OFFICIAL SOURCE marker, 0 with neither.
+- Code items found in a pinned source: 901 of 968. The other 67: 40 repo paths (all exist) and 27 items listed with a reason in `tools/allowed_unmatched.txt` (26 placeholders, elisions or composed spans and 1 abridged block); unlisted misses and unused entries fail. Commands: 0 of 138 differ from a complete source command (131 exact; 7 inline prose mentions allowlisted with a reason in `tools/abbreviated_commands.txt`). Blocks found line for line inside one source code element: 128 of 129. Unterminated fences: 0.
+- Citations failing: 0 of 77 Strimzi anchors, 0 of 35 Kafka anchors, 0 of 11 GitHub paths, 0 of 2 index pages, 0 of 50 backtick repo paths (distinct URLs; 807 occurrences).
+- Steps: 293; 282 with a Source line, 11 with only a NO OFFICIAL SOURCE marker, 0 with neither.
 - Coverage: 37 rows, 16 covered, 20 partial, 1 no official source; Totals table matches.
 - Eval: 189 items; 0 failing.

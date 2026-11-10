@@ -3,17 +3,17 @@
 | Field | Value |
 |---|---|
 | Product | Apache Kafka (KRaft) |
-| Doc version | Apache Kafka 4.4 documentation, Operations > Monitoring (docs source: apache/kafka tag 4.4.0, commit 1156b2752aaa28eafc0b4c4d387e63356793268d, `docs/operations/monitoring.md`) |
-| Sources | https://kafka.apache.org/44/operations/monitoring/#security-considerations-for-remote-monitoring-using-jmx (the broker metrics table has no anchor of its own and sits under this heading); https://kafka.apache.org/44/operations/monitoring/#kraft-controller-monitoring-metrics |
+| Doc version | Apache Kafka 4.3 documentation, Operations > Monitoring (docs source: apache/kafka tag 4.3.2, commit 0a6c96d3b61167f1141df2032f25f10fd6e118fe, `docs/operations/monitoring.md`) |
+| Sources | https://kafka.apache.org/43/operations/monitoring/#security-considerations-for-remote-monitoring-using-jmx (the broker metrics table has no anchor of its own and sits under this heading); https://kafka.apache.org/43/operations/monitoring/#kraft-controller-monitoring-metrics |
 | License | Derived from: Apache Kafka documentation, © The Apache Software Foundation, Apache License 2.0 (https://www.apache.org/licenses/LICENSE-2.0). Prose reworded. |
 | Retrieved | 2026-11-10 |
 
-> **Version note.** These are Kafka 4.4 docs; Strimzi 1.3.1 supports Kafka up to 4.3.2 (see FINDINGS.md). In Strimzi's example Prometheus rules, these MBeans appear under Prometheus names such as `kafka_server_replicamanager_underreplicatedpartitions`; see [../strimzi/prometheus-alert-rules.md](../strimzi/prometheus-alert-rules.md).
+> **Version note.** These are the Kafka 4.3 docs (source at tag 4.3.2); Strimzi 1.3.1 supports Kafka 4.2.0 to 4.3.2 (see FINDINGS.md). In Strimzi's example Prometheus rules, these MBeans appear under Prometheus names such as `kafka_server_replicamanager_underreplicatedpartitions`; see [../strimzi/prometheus-alert-rules.md](../strimzi/prometheus-alert-rules.md).
 
 ## Symptoms / trigger
 
 A broker metric is outside the normal value that the Kafka docs list, or a Strimzi example alert built on it fires. The Kafka docs say they graph and alert on these metrics.
-— *Source:* https://kafka.apache.org/44/operations/monitoring/#security-considerations-for-remote-monitoring-using-jmx (Kafka 4.4, retrieved 2026-11-10)
+— *Source:* https://kafka.apache.org/43/operations/monitoring/#security-considerations-for-remote-monitoring-using-jmx (Kafka 4.3, retrieved 2026-11-10)
 
 ## Diagnosis steps: compare with the documented normal values
 
@@ -33,10 +33,10 @@ A broker metric is outside the normal value that the Kafka docs list, or a Strim
 | Average fraction of time the network processors are idle | `kafka.network:type=SocketServer,name=NetworkProcessorAvgIdlePercent` | between 0 and 1, ideally > 0.3 |
 | Average fraction of time the request handler threads are idle | `kafka.server:type=KafkaRequestHandlerPool,name=RequestHandlerAvgIdlePercent` | between 0 and 1, ideally > 0.3 |
 
-— *Source:* https://kafka.apache.org/44/operations/monitoring/#security-considerations-for-remote-monitoring-using-jmx (Kafka 4.4, retrieved 2026-11-10)
+— *Source:* https://kafka.apache.org/43/operations/monitoring/#security-considerations-for-remote-monitoring-using-jmx (Kafka 4.3, retrieved 2026-11-10)
 
 KRaft controller metrics with no "normal value" column in the source: `ActiveControllerCount` per node is `0` or `1`; `FencedBrokerCount` is the number of fenced brokers this controller sees; `ActiveBrokerCount` is the number of active brokers; `OfflinePartitionsCount` is the number of offline non-internal partitions; `MetadataErrorCount` counts errors while processing the metadata log.
-— *Source:* https://kafka.apache.org/44/operations/monitoring/#kraft-controller-monitoring-metrics (Kafka 4.4, retrieved 2026-11-10)
+— *Source:* https://kafka.apache.org/43/operations/monitoring/#kraft-controller-monitoring-metrics (Kafka 4.3, retrieved 2026-11-10)
 
 ## Remediation steps
 
@@ -52,7 +52,7 @@ NO OFFICIAL SOURCE FOUND for a verification step. The normal values to compare a
 ## Rollback or caveats
 
 - Apache Kafka disables remote JMX by default. You can enable it with the `JMX_PORT` environment variable for processes started from the CLI, or with standard Java system properties. In production, enable security when you enable remote JMX.
-  — *Source:* https://kafka.apache.org/44/operations/monitoring/#security-considerations-for-remote-monitoring-using-jmx (Kafka 4.4, retrieved 2026-11-10)
+  — *Source:* https://kafka.apache.org/43/operations/monitoring/#security-considerations-for-remote-monitoring-using-jmx (Kafka 4.3, retrieved 2026-11-10)
 
 ## Related runbooks
 

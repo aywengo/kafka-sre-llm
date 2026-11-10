@@ -6,7 +6,7 @@
 # Layout created under <cache_dir>:
 #   strimzi/        strimzi/strimzi-kafka-operator at tag 1.3.1
 #   drain-cleaner/  strimzi/drain-cleaner at 70f1bc25bc14aacd15eb478768db6566bde783e3
-#   kafka44/        apache/kafka tag 4.4.0, docs/ only (sparse)
+#   kafka43/        apache/kafka tag 4.3.2, docs/ only (sparse)
 #   web/            the published pages listed in sources.md
 #
 # The script fails if a commit or a page hash differs from the pinned value.
@@ -20,7 +20,7 @@ cd "$CACHE"
 
 STRIMZI_SHA=555c3e0f07c203911bc3cb7d13ac085bfaa81b50
 DRAIN_SHA=70f1bc25bc14aacd15eb478768db6566bde783e3
-KAFKA_SHA=1156b2752aaa28eafc0b4c4d387e63356793268d
+KAFKA_SHA=0a6c96d3b61167f1141df2032f25f10fd6e118fe
 
 check_sha() {
   local dir="$1" want="$2" got
@@ -49,11 +49,11 @@ if [ ! -d drain-cleaner ]; then
 fi
 check_sha drain-cleaner "$DRAIN_SHA"
 
-if [ ! -d kafka44 ]; then
-  git clone -q --depth 1 --branch 4.4.0 --filter=blob:none --sparse https://github.com/apache/kafka.git kafka44
-  git -C kafka44 sparse-checkout set docs
+if [ ! -d kafka43 ]; then
+  git clone -q --depth 1 --branch 4.3.2 --filter=blob:none --sparse https://github.com/apache/kafka.git kafka43
+  git -C kafka43 sparse-checkout set docs
 fi
-check_sha kafka44 "$KAFKA_SHA"
+check_sha kafka43 "$KAFKA_SHA"
 
 mkdir -p web
 # file  url  sha256-prefix, shared with check_runbooks.py

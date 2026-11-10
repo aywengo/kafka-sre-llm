@@ -2,7 +2,7 @@
 
 Attribution and licences of the sources used here: [ATTRIBUTION.md](ATTRIBUTION.md).
 
-Compiled from the sources in [sources.md](sources.md), all retrieved 2026-11-10. Strimzi docs: 1.3.1 (repo commit 555c3e0f07c203911bc3cb7d13ac085bfaa81b50). Apache Kafka docs: 4.4 (docs source at tag 4.4.0, commit 1156b2752aaa28eafc0b4c4d387e63356793268d).
+Compiled from the sources in [sources.md](sources.md), all retrieved 2026-11-10. Strimzi docs: 1.3.1 (repo commit 555c3e0f07c203911bc3cb7d13ac085bfaa81b50). Apache Kafka docs: 4.3 (docs source at tag 4.3.2, commit 0a6c96d3b61167f1141df2032f25f10fd6e118fe). Earlier commits on this branch used the 4.4 docs; see F2.
 
 ## F1. Strimzi repo check: `runbook_url` and runbook folders
 
@@ -21,15 +21,20 @@ Compiled from the sources in [sources.md](sources.md), all retrieved 2026-11-10.
 ## F2. Version mismatch between the pinned Strimzi and Kafka docs
 
 - Strimzi 1.3.1 supports Kafka 4.2.0 to 4.3.2. The default and latest supported version is 4.3.2 (attributes `KafkaVersionLower`, `KafkaVersionHigher`, `DefaultKafkaVersion` in `documentation/shared/`, and §30.8.2).
-- The Apache Kafka docs pinned for this task are **4.4**. A Strimzi 1.3.1 cluster cannot run Kafka 4.4, so 4.4-only behaviour in the Kafka runbooks may not apply to it. Each Kafka runbook has a version note.
-- One concrete case: decommissioning starts with cordoning (`cordoned.log.dirs="*"`) in the 4.4 docs. **Resolved:** `cordoned.log.dirs` exists in Kafka 4.3.2 (apache/kafka tag 4.3.2, commit 0a6c96d3b61167f1141df2032f25f10fd6e118fe): `server-common/src/main/java/org/apache/kafka/server/config/ServerLogConfigs.java:54` defines `CORDONED_LOG_DIRS_CONFIG = "cordoned.log.dirs"`, `core/src/main/scala/kafka/server/DynamicBrokerConfig.scala:590` validates it, and `docs/operations/basic-kafka-operations.md:471-476` at that tag has the same cordon step. So the cordon step is valid for Strimzi 1.3.1 clusters (Kafka up to 4.3.2).
-- The repo's own `sources.yaml` also pins Kafka 4.4.0 next to Strimzi 1.3.1, so the training data has the same mismatch. **Open decision for v2 (not taken here):** whether to pin the Kafka docs at 4.3 to match Strimzi 1.3.1. The pin stays at 4.4 and each Kafka runbook keeps its version note.
+- The brief pinned the Apache Kafka docs at **4.4**, which a Strimzi 1.3.1 cluster cannot run. **Decided by the owner on 2026-11-10: the Kafka docs are now pinned at 4.3** (published pages under https://kafka.apache.org/43/operations/ , docs source at tag 4.3.2, commit 0a6c96d3b61167f1141df2032f25f10fd6e118fe). Each Kafka runbook has a version note.
+- Content that is only in the 4.4 docs was removed when the pin moved. Each case was found by diffing the cited docs files between tags 4.4.0 and 4.3.2:
+  - `kafka-metadata-quorum.sh remove-controller ... --unregister`, and the whole "Unregister Controller" section (`kafka-cluster.sh unregister-controller`): neither is in the 4.3 KRaft page. kraft-controller-membership.md step 7 now says NO OFFICIAL SOURCE FOUND, and its eval item was replaced.
+  - The note that `--command-config` must point to the configuration of the controller being added, and that its `controller.quorum.bootstrap.servers` must include a current quorum member. The 4.3 page says only that Admin Client settings such as authentication go in `controller.properties`. The runbook now says that and marks the rest NO OFFICIAL SOURCE FOUND.
+  - The 4.3 reset-offsets list names no flag for the default execution option ("(default) to display which offsets to reset"), whereas 4.4 says `--dry-run`. consumer-group-position.md and its eval item no longer call the default `--dry-run`.
+  - The other differences in the cited files are not used by any runbook: front-matter descriptions, whitespace, the 4.4 `by_duration` recommendation, share-group reset options and DLQ, streams-group tool text, the controller formatting sections, and group-coordinator and consumer metrics.
+- Decommissioning starts with cordoning (`cordoned.log.dirs="*"`). **Resolved:** `cordoned.log.dirs` exists in Kafka 4.3.2 (apache/kafka tag 4.3.2, commit 0a6c96d3b61167f1141df2032f25f10fd6e118fe): `server-common/src/main/java/org/apache/kafka/server/config/ServerLogConfigs.java:54` defines `CORDONED_LOG_DIRS_CONFIG = "cordoned.log.dirs"`, `core/src/main/scala/kafka/server/DynamicBrokerConfig.scala:590` validates it, and `docs/operations/basic-kafka-operations.md:471-476` at that tag has the same cordon step. So the cordon step is valid for Strimzi 1.3.1 clusters (Kafka up to 4.3.2).
+- The repo's own `sources.yaml` (outside `data/runbooks/`, not changed here) still pins Kafka 4.4.0 next to Strimzi 1.3.1, so other training data built from it has the mismatch that this folder no longer has.
 - `documentation/shared/attributes.adoc` at tag 1.3.1 sets `ProductVersion: 1.3.0` (line 17), while the published page says 1.3.1 throughout. Take version strings from the published page, not from that attribute.
 
 ## F3. Conflict: `reserved.broker.max.id`
 
 - Strimzi 1.3.1 §11.3.1 (https://strimzi.io/docs/operators/1.3.1/deploying#proc-managing-node-pools-ids-str) says to add `reserved.broker.max.id` to the Kafka resource to allow node IDs above 999. The prose spells it `reserved.broker-max.id`, and the YAML example spells it `reserved.broker.max.id: 10000`.
-- The Kafka 4.4 ZooKeeper→KRaft page (https://kafka.apache.org/44/getting-started/zk2kraft/#configurations) lists `reserved.broker.max.id` under "Removed the broker id generation-related configurations… used in ZooKeeper mode".
+- The Kafka 4.3 ZooKeeper→KRaft page (https://kafka.apache.org/43/getting-started/zk2kraft/#configurations) lists `reserved.broker.max.id` under "Removed the broker id generation-related configurations… used in ZooKeeper mode".
 - These sources disagree. The property was not put in any runbook.
 
 ## F4. Pod and StrimziPodSet naming with node pools
@@ -105,10 +110,10 @@ The text says "task 0 for connector … MirrorSourceConnector … is restarted",
 - `kubectl edit kafka <kafka_configuration_file>` uses a file placeholder where `kubectl edit` takes a resource name.
 - The procedure says "Otherwise, go to step 9", but the rendered procedure (`<ol class="arabic">`) has only **8** top-level steps.
 
-## F18. Apache Kafka 4.4 docs: rendering and source issues
+## F18. Apache Kafka 4.3 docs: rendering and source issues
 
 - In prose, long options appear with an en dash ("–execute", "–verify", "–members –verbose", "–bootstrap-controller"). Code blocks use the correct `--`. The runbooks use `--`.
-- The MirrorMaker MBean patterns read `([-.w]+)`, while the other Kafka MBean patterns use `([-.\w]+)`. The backslash is missing in the published page **and** in the docs source (`docs/operations/geo-replication-(cross-cluster-data-mirroring).md` at 4.4.0).
+- The MirrorMaker MBean patterns read `([-.w]+)`, while the other Kafka MBean patterns use `([-.\w]+)`. The backslash is missing in the published page **and** in the docs source (`docs/operations/geo-replication-(cross-cluster-data-mirroring).md` at 4.3.2; also at 4.4.0).
 - The broker metrics table on the monitoring page has no heading or anchor of its own. It sits under `#security-considerations-for-remote-monitoring-using-jmx`, which is what the runbooks cite.
 - Typo "Kafka’sintra-cluster" on the geo-replication overview.
 
@@ -121,7 +126,7 @@ The text says "task 0 for connector … MirrorSourceConnector … is restarted",
 ## F20. Conflict: static-to-dynamic controller quorum migration
 
 - Strimzi 1.3.1 §2.1.2 (https://strimzi.io/docs/operators/1.3.1/deploying#limitations_with_static_controller_quorums, `documentation/assemblies/deploying/assembly-kraft-mode.adoc:78-79`): "Migration between static and dynamic controller quorums is not currently supported by Apache Kafka". As a result, "Strimzi uses static controller quorums for all deployments, including new installations."
-- Apache Kafka 4.4 KRaft page (https://kafka.apache.org/44/operations/kraft/#upgrade, `docs/operations/kraft.md:69` at 4.4.0): "Apache Kafka 4.1 added support for upgrading a cluster from a static controller configuration to a dynamic controller configuration."
+- Apache Kafka 4.3 KRaft page (https://kafka.apache.org/43/operations/kraft/#upgrade, `docs/operations/kraft.md:69` at 4.3.2; the same line at 4.4.0): "Apache Kafka 4.1 added support for upgrading a cluster from a static controller configuration to a dynamic controller configuration."
 - These sources disagree on whether Kafka supports the migration. For a Strimzi 1.3.1 cluster the Strimzi statement governs what the operator does: the quorum is static, and controller node pools cannot be added, removed, scaled or renamed. [kraft-controller-membership.md](runbooks/kafka/kraft-controller-membership.md) now states this first and marks every dynamic-quorum command as Apache Kafka reference, not for Strimzi-managed clusters.
 - The earlier version of that runbook said NO OFFICIAL SOURCE FOUND for how Strimzi handles controller membership, and `sources.md` said the Kafka "Upgrade" section was outside the fetched pages. Both were wrong: the Strimzi section exists (§2.1.1, §2.1.2) and the Upgrade section is on the cited KRaft page.
 
@@ -146,22 +151,22 @@ tools/fetch_sources.sh <cache_dir>
 python3 -I tools/check_runbooks.py --sources <cache_dir>
 ```
 
-Run 2026-11-10 against clean checkouts (no modified or untracked files) of strimzi-kafka-operator 1.3.1 (555c3e0), drain-cleaner 70f1bc2, apache/kafka 4.4.0 (1156b27) and the pages in sources.md fetched by the script (hashes matched):
+Run 2026-11-10 against clean checkouts (no modified or untracked files) of strimzi-kafka-operator 1.3.1 (555c3e0), drain-cleaner 70f1bc2, apache/kafka 4.3.2 (0a6c96d) and the pages in sources.md fetched by the script (hashes matched):
 
 | Check | Result |
 |---|---|
-| Code items (fenced blocks and inline spans) found in a pinned source | **904 of 971** (131 blocks, 840 spans). The other 67: 40 repo-path spans, all of which exist; 27 items that are knowingly not verbatim (26 placeholders, elisions or composed spans and the abridged block below), each listed with a reason in `tools/allowed_unmatched.txt`. An item that is neither found nor listed fails the check, and so does a list entry that matches no item |
-| Code blocks whose lines (whitespace collapsed, callout markers and blank lines dropped) appear in order and contiguous inside one source code element | **130 of 131** (the abridged Kafka Exporter example in consumer-lag.md, labelled as abridged; its list entry is keyed by a hash of the block, so any edit to it fails the check) |
+| Code items (fenced blocks and inline spans) found in a pinned source | **901 of 968** (129 blocks, 839 spans). The other 67: 40 repo-path spans, all of which exist; 27 items that are knowingly not verbatim (26 placeholders, elisions or composed spans and the abridged block below), each listed with a reason in `tools/allowed_unmatched.txt`. An item that is neither found nor listed fails the check, and so does a list entry that matches no item |
+| Code blocks whose lines (whitespace collapsed, callout markers and blank lines dropped) appear in order and contiguous inside one source code element | **128 of 129** (the abridged Kafka Exporter example in consumer-lag.md, labelled as abridged; its list entry is keyed by a hash of the block, so any edit to it fails the check) |
 | Unterminated code fences | **0** (an unclosed fence fails the check, and its contents are still checked) |
-| Commands (`kubectl`, `bin/`, `oc`, `openssl`, `helm`; anywhere in a block, as complete logical commands with continuation lines and multi-line quoted arguments) that are not equal to a complete command in a source code element | **0 of 140**: 133 equal a source command exactly; 7 are inline prose mentions listed with a reason in `tools/abbreviated_commands.txt` (fenced blocks are never allowlisted) |
-| Cited Strimzi anchors / Kafka anchors / GitHub paths / index pages that fail | **0 of 77 / 0 of 36 / 0 of 11 / 0 of 2** (distinct URLs in the runbooks, FINDINGS.md, coverage.md, RESOLUTION.md, ATTRIBUTION.md and eval `source_url`) |
+| Commands (`kubectl`, `bin/`, `oc`, `openssl`, `helm`; anywhere in a block, as complete logical commands with continuation lines and multi-line quoted arguments) that are not equal to a complete command in a source code element | **0 of 138**: 131 equal a source command exactly; 7 are inline prose mentions listed with a reason in `tools/abbreviated_commands.txt` (fenced blocks are never allowlisted) |
+| Cited Strimzi anchors / Kafka anchors / GitHub paths / index pages that fail | **0 of 77 / 0 of 35 / 0 of 11 / 0 of 2** (distinct URLs in the runbooks, FINDINGS.md, coverage.md, RESOLUTION.md, ATTRIBUTION.md and eval `source_url`) |
 | Backtick repo paths missing in the pinned repos | **0 of 50** |
 | Pinned-source URLs cited in a runbook body but missing from its Sources row | **0** |
-| Top-level list steps in Diagnosis / Remediation / Verification / Rollback | **294** (93 / 122 / 15 / 64) |
-| Steps with a Source line | **284 of 294**; the other 10 carry a NO OFFICIAL SOURCE marker; **0 of 294** have neither |
+| Top-level list steps in Diagnosis / Remediation / Verification / Rollback | **293** (93 / 122 / 15 / 63) |
+| Steps with a Source line | **282 of 293**; the other 11 carry a NO OFFICIAL SOURCE marker; **0 of 293** have neither |
 | Coverage rows | **37**: 16 covered, 20 partial, 1 no official source; Totals table matches; 0 "covered" rows with a NO OFFICIAL SOURCE marker in a required section |
 | Eval items | **189** in 32 files; 0 fail the field, runbook or `source_url` check; 0 identical questions |
 
-Run against the original PR head (`0fabf2c`), the same script gives 878 code items (125 blocks, 753 spans), 289 steps and 1 missing repo path, which matches both audits. On steps it is stricter than both audits: it also counts cross-link bullets under a section-level NO OFFICIAL SOURCE paragraph, so it finds 8 unmarked steps where the audits found 2.
+With the earlier 4.4 pin, run against the original PR head (`0fabf2c`), the script gave 878 code items (125 blocks, 753 spans), 289 steps and 1 missing repo path, which matches both audits. On steps it is stricter than both audits: it also counts cross-link bullets under a section-level NO OFFICIAL SOURCE paragraph, so it finds 8 unmarked steps where the audits found 2.
 
 **Not checked mechanically:** whether a code item sits in the section its step cites (both audits did this by hand), and whether each eval answer is fully supported by its runbook. The eval check only confirms that the `source_url` is cited in the runbook.

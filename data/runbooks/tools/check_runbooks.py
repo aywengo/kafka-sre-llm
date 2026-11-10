@@ -44,17 +44,17 @@ ROOT = os.path.dirname(HERE)  # data/runbooks
 
 STRIMZI_GUIDE = "https://strimzi.io/docs/operators/1.3.1/deploying"
 KAFKA_PAGES = {
-    "https://kafka.apache.org/44/operations/basic-kafka-operations/": "k-basic.html",
-    "https://kafka.apache.org/44/operations/kraft/": "k-kraft.html",
-    "https://kafka.apache.org/44/operations/monitoring/": "k-monitoring.html",
-    "https://kafka.apache.org/44/operations/geo-replication-cross-cluster-data-mirroring/": "k-geo.html",
-    "https://kafka.apache.org/44/getting-started/zk2kraft/": "k-zk2kraft.html",
+    "https://kafka.apache.org/43/operations/basic-kafka-operations/": "k-basic.html",
+    "https://kafka.apache.org/43/operations/kraft/": "k-kraft.html",
+    "https://kafka.apache.org/43/operations/monitoring/": "k-monitoring.html",
+    "https://kafka.apache.org/43/operations/geo-replication-cross-cluster-data-mirroring/": "k-geo.html",
+    "https://kafka.apache.org/43/getting-started/zk2kraft/": "k-zk2kraft.html",
 }
 STRIMZI_REPO = "https://github.com/strimzi/strimzi-kafka-operator/"
 DRAIN_REPO = "https://github.com/strimzi/drain-cleaner/"
 DRAIN_SHA = "70f1bc25bc14aacd15eb478768db6566bde783e3"
 STRIMZI_SHA = "555c3e0f07c203911bc3cb7d13ac085bfaa81b50"
-KAFKA_SHA = "1156b2752aaa28eafc0b4c4d387e63356793268d"
+KAFKA_SHA = "0a6c96d3b61167f1141df2032f25f10fd6e118fe"
 
 STEP_SECTIONS = ("diagnosis", "remediation", "verification", "rollback")
 NOSRC = re.compile(r"NO OFFICIAL SOURCE", re.I)
@@ -244,13 +244,13 @@ def rel(p):
 class Sources:
     def __init__(self, cache):
         self.cache = cache
-        need = ["strimzi", "drain-cleaner", "kafka44", "web"]
+        need = ["strimzi", "drain-cleaner", "kafka43", "web"]
         missing = [d for d in need if not os.path.isdir(os.path.join(cache, d))]
         if missing:
             sys.exit("missing in %s: %s (run tools/fetch_sources.sh)" % (cache, ", ".join(missing)))
         self.strimzi = os.path.join(cache, "strimzi")
         self.drain = os.path.join(cache, "drain-cleaner")
-        self.kafka = os.path.join(cache, "kafka44")
+        self.kafka = os.path.join(cache, "kafka43")
         self.verify_page_hashes()
         self.verify_repos()
         self.pages = {}
@@ -626,7 +626,7 @@ def check_url(src, url):
             return ("kafka-anchor", frag in src.pages[page][1], frag)
     # index pages, fetched but not cited for content (sources.md, ATTRIBUTION.md)
     index_pages = {"https://strimzi.io/documentation/": "strimzi-documentation.html",
-                   "https://kafka.apache.org/44/operations/": "k-operations.html"}
+                   "https://kafka.apache.org/43/operations/": "k-operations.html"}
     if base in index_pages and not frag:
         return ("index-page", os.path.exists(os.path.join(src.cache, "web", index_pages[base])), "")
     if base.startswith("https://kafka.apache.org/") or base.startswith("https://strimzi.io/"):
