@@ -7,3 +7,4 @@ k-geo.html https://kafka.apache.org/43/operations/geo-replication-cross-cluster-
 k-zk2kraft.html https://kafka.apache.org/43/getting-started/zk2kraft/ d9279825825f328f
 strimzi-documentation.html https://strimzi.io/documentation/ 431ca56a891c78e0
 k-operations.html https://kafka.apache.org/43/operations/ 7b1f3c5e2381bc6d
+k-hwos.html https://kafka.apache.org/43/operations/hardware-and-os/ 049775f08c8c82db

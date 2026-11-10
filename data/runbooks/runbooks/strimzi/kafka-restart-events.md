@@ -4,8 +4,8 @@
 |---|---|
 | Product | Strimzi, KRaft |
 | Doc version | Strimzi 1.3.1, "Deploying and Managing Strimzi" |
-| Sources | https://strimzi.io/docs/operators/1.3.1/deploying#ref-operator-restart-events-reasons-str ; https://strimzi.io/docs/operators/1.3.1/deploying#ref-operator-restart-events-fields-str ; https://strimzi.io/docs/operators/1.3.1/deploying#proc-operator-restart-events-str ; repo `documentation/modules/deploying/ref-operator-restart-events-reasons.adoc`, `ref-operator-restart-events-fields.adoc`, `proc-operator-restart-events.adoc` @ tag 1.3.1 (commit 555c3e0f07c203911bc3cb7d13ac085bfaa81b50) |
-| License | Strimzi documentation, part of strimzi/strimzi-kafka-operator, licensed under the Apache License 2.0 (repository LICENSE and README at tag 1.3.1). © Strimzi a Series of LF Projects, LLC. Prose reworded; commands quoted verbatim. |
+| Sources | https://strimzi.io/docs/operators/1.3.1/deploying#ref-operator-restart-events-reasons-str ; https://strimzi.io/docs/operators/1.3.1/deploying#ref-operator-restart-events-fields-str ; https://strimzi.io/docs/operators/1.3.1/deploying#proc-operator-restart-events-str ; repo `documentation/modules/deploying/ref-operator-restart-events-reasons.adoc`, `ref-operator-restart-events-fields.adoc`, `proc-operator-restart-events.adoc` @ tag 1.3.1 (commit 555c3e0f07c203911bc3cb7d13ac085bfaa81b50) ; Kubernetes v1.34.0 source (FINDINGS F26) |
+| License | Strimzi documentation, part of strimzi/strimzi-kafka-operator, licensed under the Apache License 2.0 (repository LICENSE and README at tag 1.3.1). © Strimzi a Series of LF Projects, LLC. Prose reworded; commands quoted verbatim, except the three event queries corrected in FINDINGS F26. |
 | Retrieved | 2026-11-10 |
 
 ## Symptoms / trigger
@@ -15,37 +15,39 @@ A Kafka pod was restarted (rolled) and you need to know why. The Cluster Operato
 
 ## Diagnosis steps
 
-1. List all restart events emitted by the Cluster Operator:
+1. List all restart events emitted by the Cluster Operator. Query the `events.k8s.io` API group by name:
    ```
-   kubectl -n kafka get events --field-selector reportingController=strimzi.io/cluster-operator
+   kubectl -n kafka get events.events.k8s.io --field-selector reportingController=strimzi.io/cluster-operator
    ```
+   **Corrected command (FINDINGS F26).** The source writes `kubectl -n kafka get events --field-selector reportingController=strimzi.io/cluster-operator`. Compiler's note, not from the Strimzi source (from the Kubernetes v1.34.0 source): a bare `events` resolves to the core/v1 Event API, which does not accept the `reportingController` field selector (it calls the field `reportingComponent`). Naming the `events.k8s.io` API group makes the source's field names work.
    The example output in the source shows `TYPE`, `REASON`, `OBJECT` (for example `kafka/strimzi-cluster`) and a `MESSAGE` such as `Rolling Pod strimzi-cluster-kafka-0 due to CA certificate renewed`.
-   — *Source:* https://strimzi.io/docs/operators/1.3.1/deploying#proc-operator-restart-events-str (Strimzi 1.3.1, retrieved 2026-11-10)
+   — *Source:* https://strimzi.io/docs/operators/1.3.1/deploying#proc-operator-restart-events-str (Strimzi 1.3.1, retrieved 2026-11-10); https://github.com/kubernetes/kubernetes/blob/275918a59a3df182fc5e9f7f9f6e960384399a35/staging/src/k8s.io/client-go/restmapper/discovery.go ; https://github.com/kubernetes/kubernetes/blob/275918a59a3df182fc5e9f7f9f6e960384399a35/pkg/apis/core/v1/conversion.go ; https://github.com/kubernetes/kubernetes/blob/275918a59a3df182fc5e9f7f9f6e960384399a35/pkg/apis/events/v1/conversion.go (Kubernetes v1.34.0, retrieved 2026-11-10)
 2. Filter by reason:
    ```
-   kubectl -n kafka get events --field-selector reportingController=strimzi.io/cluster-operator,reason=PodForceRestartOnError
+   kubectl -n kafka get events.events.k8s.io --field-selector reportingController=strimzi.io/cluster-operator,reason=PodForceRestartOnError
    ```
+   Corrected in the same way as step 1 (FINDINGS F26).
    — *Source:* https://strimzi.io/docs/operators/1.3.1/deploying#proc-operator-restart-events-str (Strimzi 1.3.1, retrieved 2026-11-10)
 3. Get the full details in YAML:
    ```
-   kubectl -n kafka get events --field-selector reportingController=strimzi.io/cluster-operator,reason=PodForceRestartOnError -o yaml
+   kubectl -n kafka get events.events.k8s.io --field-selector reportingController=strimzi.io/cluster-operator,reason=PodForceRestartOnError -o yaml
    ```
    In the detailed event, `action` is `StrimziInitiatedPodRestart`, `related` names the restarted Pod, `reportingController` is `strimzi.io/cluster-operator` and `type` is `Normal`.
    — *Source:* https://strimzi.io/docs/operators/1.3.1/deploying#proc-operator-restart-events-str (Strimzi 1.3.1, retrieved 2026-11-10)
-4. Fields you can use with `--field-selector`:
+4. Fields you can use with `--field-selector`. The field names depend on the API group you query, not on the Kubernetes version (FINDINGS F26):
 
-   | Field | Meaning |
-   |---|---|
-   | `regardingObject.kind` | Owner of the restarted Pod; always `Kafka` for restart events |
-   | `regarding.namespace` | Namespace of the resource (the field name is spelled this way in the source) |
-   | `regardingObject.name`, `regardingObject.uid` | Name and unique ID of the resource |
-   | `reason` | Restart reason |
-   | `reportingController` | Always `strimzi.io/cluster-operator` |
-   | `source` | Older form of `reportingController` |
-   | `type` | `Warning` or `Normal`; Strimzi restart events are `Normal` |
+   | Source's field | `events.events.k8s.io` | core `events` | Meaning (from the source) |
+   |---|---|---|---|
+   | `regardingObject.kind` | `regarding.kind` | `involvedObject.kind` | Owner of the restarted Pod; always `Kafka` for restart events |
+   | `regarding.namespace` | `regarding.namespace` | `involvedObject.namespace` | Namespace of the resource |
+   | `regardingObject.name`, `regardingObject.uid` | `regarding.name`, `regarding.uid` | `involvedObject.name`, `involvedObject.uid` | Name and unique ID of the resource |
+   | `reason` | `reason` | `reason` | Restart reason |
+   | `reportingController` | `reportingController` | `reportingComponent` | Always `strimzi.io/cluster-operator` |
+   | `source` | not accepted | `source` | Older form of `reportingController` |
+   | `type` | `type` | `type` | `Warning` or `Normal`; Strimzi restart events are `Normal` |
 
-   On older Kubernetes versions the `regarding` fields may use the `involvedObject` prefix instead, and `reportingController` used to be called `reportingComponent`.
-   — *Source:* https://strimzi.io/docs/operators/1.3.1/deploying#ref-operator-restart-events-fields-str (Strimzi 1.3.1, retrieved 2026-11-10)
+   The source lists the names in the first column and says that "In older versions of Kubernetes, the fields using the `regarding` prefix might use an `involvedObject` prefix instead. `reportingController` was previously called `reportingComponent`." Compiler's note, not from the Strimzi source: in the Kubernetes v1.34.0 source, the `events.k8s.io/v1` Event API accepts the `regarding.*` names and `reportingController` and maps them to the core field names, and the core/v1 Event API accepts only the `involvedObject.*` names, `reportingComponent` and `source`. Neither accepts `regardingObject.*`.
+   — *Source:* https://strimzi.io/docs/operators/1.3.1/deploying#ref-operator-restart-events-fields-str (Strimzi 1.3.1, retrieved 2026-11-10); https://github.com/kubernetes/kubernetes/blob/275918a59a3df182fc5e9f7f9f6e960384399a35/pkg/apis/events/v1/conversion.go ; https://github.com/kubernetes/kubernetes/blob/275918a59a3df182fc5e9f7f9f6e960384399a35/pkg/apis/core/v1/conversion.go (Kubernetes v1.34.0, retrieved 2026-11-10)
 5. Look up the reason:
 
    | Reason | Meaning (reworded from the source) |

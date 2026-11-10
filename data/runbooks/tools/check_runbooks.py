@@ -49,6 +49,7 @@ KAFKA_PAGES = {
     "https://kafka.apache.org/43/operations/monitoring/": "k-monitoring.html",
     "https://kafka.apache.org/43/operations/geo-replication-cross-cluster-data-mirroring/": "k-geo.html",
     "https://kafka.apache.org/43/getting-started/zk2kraft/": "k-zk2kraft.html",
+    "https://kafka.apache.org/43/operations/hardware-and-os/": "k-hwos.html",
 }
 STRIMZI_REPO = "https://github.com/strimzi/strimzi-kafka-operator/"
 DRAIN_REPO = "https://github.com/strimzi/drain-cleaner/"
@@ -227,6 +228,22 @@ def load_abbreviated():
     One per line: the normalised command, a tab, the reason."""
     out = {}
     path = os.path.join(HERE, "abbreviated_commands.txt")
+    if os.path.exists(path):
+        for line in open(path, encoding="utf-8"):
+            if line.strip() and not line.startswith("#"):
+                cmd, _, why = line.rstrip("\n").partition("\t")
+                out[cmd.strip()] = why.strip()
+    return out
+
+
+def load_corrected():
+    """Commands that deliberately differ from the source because the source
+    command does not work as written. One per line: the normalised command,
+    a TAB, the reason. The reason must name the FINDINGS entry with the
+    evidence (for example "FINDINGS F26"). Blocks and spans may use these;
+    unused entries and entries without a FINDINGS reference fail."""
+    out = {}
+    path = os.path.join(HERE, "corrected_commands.txt")
     if os.path.exists(path):
         for line in open(path, encoding="utf-8"):
             if line.strip() and not line.startswith("#"):
@@ -527,6 +544,9 @@ def check_code(src, verbose):
     source_cmds = src.source_commands()
     abbreviated = load_abbreviated()
     abbreviated_used = set()
+    corrected = load_corrected()
+    corrected_used = set()
+    cmd_corrected = 0
     blocks_contig = 0
     unmatched = load_unmatched()
     allowed_used = set()
@@ -553,6 +573,10 @@ def check_code(src, verbose):
                 if kind == "span" and key in abbreviated:
                     cmd_abbrev += 1
                     abbreviated_used.add(key)
+                    continue
+                if key in corrected:
+                    cmd_corrected += 1
+                    corrected_used.add(key)
                     continue
                 cmd_bad += 1
                 cmd_bad_items.append((rel(p), ln, key[:140]))
@@ -591,13 +615,21 @@ def check_code(src, verbose):
     print("  blocks found line for line inside one source code element: %d of %d" % (blocks_contig, total["block"]))
     print("repo-path spans: %d, exist in the pinned repos: %d, missing: %d" % (len(paths_ok) + len(paths_bad), len(paths_ok), len(paths_bad)))
     print("commands (kubectl/bin//oc/openssl/helm, anywhere in a block, with continuations): %d" % cmd_total)
-    print("  equal to a complete command in a source code element: %d" % (cmd_total - cmd_abbrev - cmd_bad))
+    print("  equal to a complete command in a source code element: %d" % (cmd_total - cmd_abbrev - cmd_corrected - cmd_bad))
     print("  inline mentions listed in tools/abbreviated_commands.txt: %d" % cmd_abbrev)
+    print("  corrections of broken source commands listed in tools/corrected_commands.txt: %d" % cmd_corrected)
     print("  not verbatim: %d" % cmd_bad)
     stale = sorted(set(abbreviated) - abbreviated_used)
     for s in stale:
         print("  UNUSED ABBREVIATION ENTRY %s" % s)
     cmd_bad += len(stale)
+    for c in sorted(set(corrected) - corrected_used):
+        print("  UNUSED CORRECTION ENTRY %s" % c)
+        cmd_bad += 1
+    for c, why in sorted(corrected.items()):
+        if not re.search(r"FINDINGS F\d+", why):
+            print("  CORRECTION WITHOUT A FINDINGS REFERENCE %s" % c)
+            cmd_bad += 1
     for f, ln, c in cmd_bad_items:
         print("  COMMAND NOT VERBATIM %s:%d %s" % (f, ln, c))
     print("items not verbatim but listed with a reason in tools/allowed_unmatched.txt: %d" % allowed_n)

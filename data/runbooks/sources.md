@@ -16,6 +16,7 @@ Retrieval date for everything below: **2026-11-10**. All fetches were plain HTTP
 | https://kafka.apache.org/43/operations/kraft/ | Apache Kafka 4.3 (page says "version (4.3) of Kafka") | 91,527 | 6ca9f92aa9a55856 | KRaft runbooks, including the Upgrade section (`#upgrade`, `#update-kraft-config`) on the same page |
 | https://kafka.apache.org/43/operations/monitoring/ | Apache Kafka 4.3 (page says "version (4.3) of Kafka") | 231,556 | 450615c61b0790ee | Metrics runbooks |
 | https://kafka.apache.org/43/operations/geo-replication-cross-cluster-data-mirroring/ | Apache Kafka 4.3 (page says "version (4.3) of Kafka") | 111,651 | e8422af4c8f8b16f | Geo-replication runbook |
+| https://kafka.apache.org/43/operations/hardware-and-os/ | Apache Kafka 4.3 (page says "version (4.3) of Kafka") | 76,761 | 049775f08c8c82db | KRaft quorum runbooks: the complete `describe --replication` command (`#replace-kraft-controller-disk`) |
 | https://kafka.apache.org/43/operations/datacenters/ | Apache Kafka 4.3 (page says "version (4.3) of Kafka") | 60,857 | ef8eb308766ebfdb | Not cited (short page with no operational procedure) |
 | https://kafka.apache.org/43/getting-started/zk2kraft/ | Apache Kafka 4.3 (page says "version (4.3) of Kafka") | 79,890 | d9279825825f328f | FINDINGS F3 only (`reserved.broker.max.id` removed in KRaft) |
 | https://strimzi.io/documentation/ | Strimzi documentation index | 13,492 | 431ca56a891c78e0 | Licence check only ([ATTRIBUTION.md](ATTRIBUTION.md)): the page has a copyright line and no licence statement |
@@ -32,6 +33,16 @@ Kafka pin: 4.3.2 is the newest Kafka version Strimzi 1.3.1 supports (FINDINGS F2
 
 The local `raw/strimzi` copy (also 555c3e0, from `sources.yaml`) is a sparse clone of `documentation/` only. A fresh clone at tag 1.3.1 was made so the example metrics files could be read as well.
 
+## Code and tools consulted to check commands (FINDINGS F26)
+
+Not documentation, and not in the documentation source list above. Used only to check whether a command given in the documentation runs as written. The runbooks label every claim based on them as a compiler's note.
+
+| Source | Ref | What was used |
+|---|---|---|
+| https://github.com/apache/kafka `tools/src/main/java/org/apache/kafka/tools/MetadataQuorumCommand.java` | tag `4.3.2` (0a6c96d3b61167f1141df2032f25f10fd6e118fe), fetched with the GitHub contents API | Line 103: `--bootstrap-server` / `--bootstrap-controller` are a required mutually exclusive group |
+| https://github.com/kubernetes/kubernetes `pkg/apis/core/v1/conversion.go`, `pkg/apis/events/v1/conversion.go`, `staging/src/k8s.io/client-go/restmapper/discovery.go` | tag `v1.34.0` (275918a59a3df182fc5e9f7f9f6e960384399a35), fetched with the GitHub contents API | Event field selectors accepted by each API group; core `v1` resources take priority when a bare resource name such as `events` is resolved |
+| kubectl 1.37.1 (local binary, Homebrew) | `kubectl version --client` | `kubectl apply -h` text for `-f`; offline tests with an empty kubeconfig and an unreachable server (glob after one `-f`), and `--dry-run=client` ConfigMaps (JSONPath dot escaping). No cluster was contacted |
+
 ## Referenced by the sources but not fetched
 
 These are outside the allowed source list or outside the pinned versions. Runbooks mark the gaps with NO OFFICIAL SOURCE FOUND or point to the reference by name.
@@ -45,7 +56,7 @@ These are outside the allowed source list or outside the pinned versions. Runboo
 | Kubernetes documentation (upgrade path, PDB) | Strimzi 1.3.1 §30.2 | Not in the allowed source list |
 | Strimzi in-development docs | Task brief ("only for comparison") | Not fetched; no comparison was made |
 
-The checks in `tools/check_runbooks.py` run against a cache made by `tools/fetch_sources.sh`, which clones the three repositories at the commits above and fetches the six primary pages plus the two index pages, failing on a commit mismatch, on modified or untracked files in a checkout, or on a page hash mismatch. The pinned page hashes are in `tools/pinned_pages.txt`, and `check_runbooks.py` refuses to run against cached pages that do not match them.
+The checks in `tools/check_runbooks.py` run against a cache made by `tools/fetch_sources.sh`, which clones the three repositories at the commits above and fetches the seven primary pages plus the two index pages, failing on a commit mismatch, on modified or untracked files in a checkout, or on a page hash mismatch. The pinned page hashes are in `tools/pinned_pages.txt`, and `check_runbooks.py` refuses to run against cached pages that do not match them.
 
 ## Sources that could not be reached
 

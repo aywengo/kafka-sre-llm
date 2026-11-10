@@ -1,0 +1,11 @@
+# Commands that deliberately differ from the source because the source command
+# does not run as written. check_runbooks.py accepts a command (block or span)
+# that is not equal to a complete source command only if it is listed here.
+# Format: normalised command, a TAB, the reason, which must name the FINDINGS
+# entry with the evidence. Unused entries fail the check.
+kubectl -n kafka get events.events.k8s.io --field-selector reportingController=strimzi.io/cluster-operator	Source queries bare events (core/v1), which rejects the reportingController field selector; FINDINGS F26
+kubectl -n kafka get events.events.k8s.io --field-selector reportingController=strimzi.io/cluster-operator,reason=PodForceRestartOnError	Same API-group correction as the unfiltered query; FINDINGS F26
+kubectl -n kafka get events.events.k8s.io --field-selector reportingController=strimzi.io/cluster-operator,reason=PodForceRestartOnError -o yaml	Same API-group correction as the unfiltered query; FINDINGS F26
+kubectl get configmaps <my_rebalance> -o jsonpath="{['data']['executorState\.json']}"	Source leaves the dot in the key unescaped, so the query prints nothing; FINDINGS F26
+kubectl apply -f pod-monitors/	Source passes a multi-file glob after one -f, which kubectl apply rejects; FINDINGS F26
+kubectl apply -f prometheus-rules/	Source passes a multi-file glob after one -f, which kubectl apply rejects; FINDINGS F26

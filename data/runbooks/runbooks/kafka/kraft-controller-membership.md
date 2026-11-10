@@ -4,7 +4,7 @@
 |---|---|
 | Product | Apache Kafka (KRaft); Strimzi 1.3.1 limitation |
 | Doc version | Apache Kafka 4.3 documentation, Operations > KRaft (docs source: apache/kafka tag 4.3.2, commit 0a6c96d3b61167f1141df2032f25f10fd6e118fe, `docs/operations/kraft.md`). Strimzi 1.3.1 "Deploying and Managing Strimzi", §2.1 KRaft limitations (repo tag 1.3.1, commit 555c3e0f07c203911bc3cb7d13ac085bfaa81b50, `documentation/assemblies/deploying/assembly-kraft-mode.adoc`) |
-| Sources | https://strimzi.io/docs/operators/1.3.1/deploying#limitations_with_static_controller_quorums ; https://strimzi.io/docs/operators/1.3.1/deploying#controller_scaling ; https://kafka.apache.org/43/operations/kraft/#static-versus-dynamic-kraft-quorums ; https://kafka.apache.org/43/operations/kraft/#upgrade ; https://kafka.apache.org/43/operations/kraft/#describe-kraft-version ; https://kafka.apache.org/43/operations/kraft/#upgrade-kraft-version ; https://kafka.apache.org/43/operations/kraft/#update-kraft-config ; https://kafka.apache.org/43/operations/kraft/#add-new-controller ; https://kafka.apache.org/43/operations/kraft/#remove-controller ; https://strimzi.io/docs/operators/1.3.1/deploying#con-custom-resources-status-str ; https://kafka.apache.org/43/operations/kraft/#metadata-quorum-tool |
+| Sources | https://strimzi.io/docs/operators/1.3.1/deploying#limitations_with_static_controller_quorums ; https://strimzi.io/docs/operators/1.3.1/deploying#controller_scaling ; https://kafka.apache.org/43/operations/kraft/#static-versus-dynamic-kraft-quorums ; https://kafka.apache.org/43/operations/kraft/#upgrade ; https://kafka.apache.org/43/operations/kraft/#describe-kraft-version ; https://kafka.apache.org/43/operations/kraft/#upgrade-kraft-version ; https://kafka.apache.org/43/operations/kraft/#update-kraft-config ; https://kafka.apache.org/43/operations/kraft/#add-new-controller ; https://kafka.apache.org/43/operations/kraft/#remove-controller ; https://strimzi.io/docs/operators/1.3.1/deploying#con-custom-resources-status-str ; https://kafka.apache.org/43/operations/kraft/#metadata-quorum-tool ; https://kafka.apache.org/43/operations/hardware-and-os/#replace-kraft-controller-disk |
 | License | Strimzi documentation, part of strimzi/strimzi-kafka-operator, licensed under the Apache License 2.0 (repository LICENSE and README at tag 1.3.1). © Strimzi a Series of LF Projects, LLC. Also derived from: Apache Kafka documentation, © The Apache Software Foundation, Apache License 2.0 (https://www.apache.org/licenses/LICENSE-2.0). Prose reworded; commands quoted verbatim. |
 | Retrieved | 2026-11-10 |
 
@@ -72,8 +72,12 @@ Kafka 4.1 added the upgrade from a static to a dynamic controller configuration.
 
 3. **[Apache Kafka reference, do not run on a Strimzi-managed cluster]** Provision the new controller with `kafka-storage.sh` and start it.
    — *Source:* https://kafka.apache.org/43/operations/kraft/#add-new-controller (Kafka 4.3, retrieved 2026-11-10)
-4. **[Apache Kafka reference, do not run on a Strimzi-managed cluster]** Watch replication to it with `bin/kafka-metadata-quorum.sh describe --replication` until it has caught up with the active controller.
-   — *Source:* https://kafka.apache.org/43/operations/kraft/#add-new-controller (Kafka 4.3, retrieved 2026-11-10)
+4. **[Apache Kafka reference, do not run on a Strimzi-managed cluster]** Watch replication to it until it has caught up with the active controller:
+   ```
+   $ bin/kafka-metadata-quorum.sh --bootstrap-server localhost:9092 describe --replication
+   ```
+   The add-controller section writes the command without `--bootstrap-server` or `--bootstrap-controller`, and the tool needs one of them (FINDINGS F26).
+   — *Source:* https://kafka.apache.org/43/operations/kraft/#add-new-controller ; https://kafka.apache.org/43/operations/hardware-and-os/#replace-kraft-controller-disk (Kafka 4.3, retrieved 2026-11-10)
 5. **[Apache Kafka reference, do not run on a Strimzi-managed cluster] [Changes quorum membership]** Add it to the quorum, through broker endpoints:
    ```
    $ bin/kafka-metadata-quorum.sh --command-config config/controller.properties --bootstrap-server localhost:9092 add-controller

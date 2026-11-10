@@ -31,3 +31,20 @@ runbooks/strimzi/consumer-lag.md	block:d42e4613e1b7	Kafka Exporter example marke
 runbooks/kafka/kraft-controller-membership.md	ClusterTool.java	name from the apache/kafka 4.3.2 tools source (tools/src/main/java/org/apache/kafka/tools/), which the docs-only checkout does not contain; cited in a compiler's note
 runbooks/kafka/kraft-controller-membership.md	list-endpoints	name from the apache/kafka 4.3.2 tools source (tools/src/main/java/org/apache/kafka/tools/), which the docs-only checkout does not contain; cited in a compiler's note
 runbooks/kafka/kraft-controller-membership.md	MetadataQuorumCommand.java	name from the apache/kafka 4.3.2 tools source (tools/src/main/java/org/apache/kafka/tools/), which the docs-only checkout does not contain; cited in a compiler's note
+runbooks/strimzi/kafka-restart-events.md	block:d074a7e88367	Corrected event query (events.events.k8s.io); FINDINGS F26
+runbooks/strimzi/kafka-restart-events.md	block:c4bf2d05c9a4	Corrected event query (events.events.k8s.io); FINDINGS F26
+runbooks/strimzi/kafka-restart-events.md	block:a25cdf1c5ec6	Corrected event query (events.events.k8s.io); FINDINGS F26
+runbooks/strimzi/kafka-restart-events.md	events.events.k8s.io	Kubernetes API group name, from the Kubernetes v1.34.0 source; FINDINGS F26
+runbooks/strimzi/kafka-restart-events.md	events.k8s.io/v1	Kubernetes API group/version, from the Kubernetes v1.34.0 source; FINDINGS F26
+runbooks/strimzi/kafka-restart-events.md	regarding.kind	events.k8s.io/v1 field selector, Kubernetes v1.34.0 pkg/apis/events/v1/conversion.go; FINDINGS F26
+runbooks/strimzi/kafka-restart-events.md	regarding.uid	events.k8s.io/v1 field selector, Kubernetes v1.34.0 pkg/apis/events/v1/conversion.go; FINDINGS F26
+runbooks/strimzi/kafka-restart-events.md	regarding.*	events.k8s.io/v1 field selectors, Kubernetes v1.34.0 pkg/apis/events/v1/conversion.go; FINDINGS F26
+runbooks/strimzi/kafka-restart-events.md	involvedObject.kind	core/v1 field selector, Kubernetes v1.34.0 pkg/apis/core/v1/conversion.go; FINDINGS F26
+runbooks/strimzi/kafka-restart-events.md	involvedObject.namespace	core/v1 field selector, Kubernetes v1.34.0 pkg/apis/core/v1/conversion.go; FINDINGS F26
+runbooks/strimzi/kafka-restart-events.md	involvedObject.name	core/v1 field selector, Kubernetes v1.34.0 pkg/apis/core/v1/conversion.go; FINDINGS F26
+runbooks/strimzi/kafka-restart-events.md	involvedObject.uid	core/v1 field selector, Kubernetes v1.34.0 pkg/apis/core/v1/conversion.go; FINDINGS F26
+runbooks/strimzi/kafka-restart-events.md	involvedObject.*	core/v1 field selectors, Kubernetes v1.34.0 pkg/apis/core/v1/conversion.go; FINDINGS F26
+runbooks/strimzi/kafka-restart-events.md	regardingObject.*	Wildcard for the source's regardingObject.kind/name/uid, which neither Event API accepts; FINDINGS F26
+runbooks/strimzi/kafkarebalance-tracking-and-stopping.md	block:f5f088e23ce1	Corrected JSONPath with the dot escaped; FINDINGS F26
+runbooks/strimzi/prometheus-alert-rules.md	block:449d1e1478fd	Corrected apply commands with directory arguments; the third line is verbatim; FINDINGS F26
+runbooks/strimzi/prometheus-alert-rules.md	error: Unexpected args	kubectl 1.37.1 error text from the test in FINDINGS F26

@@ -4,7 +4,7 @@
 |---|---|
 | Product | Apache Kafka (KRaft) |
 | Doc version | Apache Kafka 4.3 documentation, Operations > KRaft and Operations > Monitoring (docs source: apache/kafka tag 4.3.2, commit 0a6c96d3b61167f1141df2032f25f10fd6e118fe, `docs/operations/kraft.md`, `docs/operations/monitoring.md`) |
-| Sources | https://kafka.apache.org/43/operations/kraft/#metadata-quorum-tool ; https://kafka.apache.org/43/operations/kraft/#dump-log-tool ; https://kafka.apache.org/43/operations/kraft/#metadata-shell ; https://kafka.apache.org/43/operations/monitoring/#kraft-quorum-monitoring-metrics ; https://kafka.apache.org/43/operations/monitoring/#kraft-controller-monitoring-metrics ; https://kafka.apache.org/43/operations/monitoring/#kraft-broker-monitoring-metrics ; https://strimzi.io/docs/operators/1.3.1/deploying#limitations_with_static_controller_quorums ; https://github.com/strimzi/strimzi-kafka-operator/blob/1.3.1/packaging/examples/metrics/prometheus-install/prometheus-rules/prometheus-kafka-rules.yaml ; https://kafka.apache.org/43/operations/kraft/#add-new-controller ; https://kafka.apache.org/43/operations/monitoring/#kraft-monitoring-metrics |
+| Sources | https://kafka.apache.org/43/operations/kraft/#metadata-quorum-tool ; https://kafka.apache.org/43/operations/kraft/#dump-log-tool ; https://kafka.apache.org/43/operations/kraft/#metadata-shell ; https://kafka.apache.org/43/operations/monitoring/#kraft-quorum-monitoring-metrics ; https://kafka.apache.org/43/operations/monitoring/#kraft-controller-monitoring-metrics ; https://kafka.apache.org/43/operations/monitoring/#kraft-broker-monitoring-metrics ; https://strimzi.io/docs/operators/1.3.1/deploying#limitations_with_static_controller_quorums ; https://github.com/strimzi/strimzi-kafka-operator/blob/1.3.1/packaging/examples/metrics/prometheus-install/prometheus-rules/prometheus-kafka-rules.yaml ; https://kafka.apache.org/43/operations/kraft/#add-new-controller ; https://kafka.apache.org/43/operations/monitoring/#kraft-monitoring-metrics ; https://kafka.apache.org/43/operations/hardware-and-os/#replace-kraft-controller-disk |
 | License | Strimzi documentation, part of strimzi/strimzi-kafka-operator, licensed under the Apache License 2.0 (repository LICENSE and README at tag 1.3.1). © Strimzi a Series of LF Projects, LLC. Also derived from: Strimzi repo example files (strimzi-kafka-operator tag 1.3.1), Apache License 2.0 (https://www.apache.org/licenses/LICENSE-2.0); Apache Kafka documentation, © The Apache Software Foundation, Apache License 2.0 (https://www.apache.org/licenses/LICENSE-2.0). Prose reworded; commands quoted verbatim. |
 | Retrieved | 2026-11-10 |
 
@@ -28,8 +28,12 @@ The source gives no symptom list for these tools. Related signals from the Strim
    ```
    The output includes `ClusterId`, `LeaderId`, `LeaderEpoch`, `HighWatermark`, `MaxFollowerLag`, `MaxFollowerLagTimeMs`, `CurrentVoters` and `CurrentObservers`.
    — *Source:* https://kafka.apache.org/43/operations/kraft/#metadata-quorum-tool (Kafka 4.3, retrieved 2026-11-10)
-2. Watch replication to the controllers with `bin/kafka-metadata-quorum.sh describe --replication`. The docs mention this command in the add-controller procedure.
-   — *Source:* https://kafka.apache.org/43/operations/kraft/#add-new-controller (Kafka 4.3, retrieved 2026-11-10)
+2. Watch replication to the controllers, with the same endpoint option as in step 1:
+   ```
+   $ bin/kafka-metadata-quorum.sh --bootstrap-server localhost:9092 describe --replication
+   ```
+   The output has one row per node with `NodeId`, `DirectoryId`, `LogEndOffset`, `Lag`, `LastFetchTimestamp`, `LastCaughtUpTimestamp` and `Status`. The add-controller procedure mentions this command without a connection option (`bin/kafka-metadata-quorum.sh describe --replication`); as written it does not run, because the tool needs `--bootstrap-server` or `--bootstrap-controller` (FINDINGS F26).
+   — *Source:* https://kafka.apache.org/43/operations/hardware-and-os/#replace-kraft-controller-disk ; https://kafka.apache.org/43/operations/kraft/#add-new-controller (Kafka 4.3, retrieved 2026-11-10)
 3. Decode metadata log segments and snapshots:
    ```
    $ bin/kafka-dump-log.sh --cluster-metadata-decoder --files metadata_log_dir/__cluster_metadata-0/00000000000000000000.log

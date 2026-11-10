@@ -78,13 +78,13 @@ There is **no Cruise Control alert** in any of the 1.3.1 example rule files.
 
 ## Remediation steps: deploying the rules
 
-1. Review the example alerting rules. Then deploy them together with the Prometheus resources:
+1. Review the example alerting rules. Then deploy them together with the Prometheus resources, passing the two example directories to `-f`:
    ```
-   kubectl apply -f pod-monitors/*.yaml
-   kubectl apply -f prometheus-rules/*.yaml
+   kubectl apply -f pod-monitors/
+   kubectl apply -f prometheus-rules/
    kubectl apply -f prometheus.yaml
    ```
-   The commands are quoted from the AsciiDoc source. The rendered HTML page drops the `*` (see FINDINGS.md).
+   **Corrected command (FINDINGS F26).** The AsciiDoc source writes `kubectl apply -f pod-monitors/*.yaml` and `kubectl apply -f prometheus-rules/*.yaml` (the rendered HTML page also drops the `*`, FINDINGS F13). Both directories hold several YAML files, so the shell expands each glob into several file names after a single `-f`, and kubectl stops with `error: Unexpected args`. The kubectl help text says `-f` takes "The files, directories or URLs that contain the configurations to apply". Compiler's note, not from the source: the directory form above is the correction; it was checked only for argument parsing, with kubectl 1.37.1 and no cluster.
    — *Source:* https://github.com/strimzi/strimzi-kafka-operator/blob/1.3.1/documentation/modules/metrics/proc_metrics-deploying-prometheus.adoc ; https://strimzi.io/docs/operators/1.3.1/deploying#proc-metrics-deploying-prometheus-str (Strimzi 1.3.1, retrieved 2026-11-10)
 2. Adapt the default configuration of the example rules to your own needs.
    — *Source:* https://strimzi.io/docs/operators/1.3.1/deploying#ref-metrics-alertmanager-examples-str (Strimzi 1.3.1, retrieved 2026-11-10)
