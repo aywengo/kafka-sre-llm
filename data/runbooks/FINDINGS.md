@@ -1,6 +1,8 @@
 # Findings
 
-Compiled from the sources in [sources.md](sources.md), all retrieved 2026-11-10. Strimzi docs: 1.3.1 (repo commit 555c3e0f07c203911bc3cb7d13ac085bfaa81b50). Apache Kafka docs: 4.4 (docs source at tag 4.4.0, commit 1156b2752aaa28eafc0b4c4d387e63356793268d).
+Attribution and licences of the sources used here: [ATTRIBUTION.md](ATTRIBUTION.md).
+
+Compiled from the sources in [sources.md](sources.md), all retrieved 2026-11-10. Strimzi docs: 1.3.1 (repo commit 555c3e0f07c203911bc3cb7d13ac085bfaa81b50). Apache Kafka docs: 4.3 (docs source at tag 4.3.2, commit 0a6c96d3b61167f1141df2032f25f10fd6e118fe). Earlier commits on this branch used the 4.4 docs; see F2.
 
 ## F1. Strimzi repo check: `runbook_url` and runbook folders
 
@@ -19,21 +21,27 @@ Compiled from the sources in [sources.md](sources.md), all retrieved 2026-11-10.
 ## F2. Version mismatch between the pinned Strimzi and Kafka docs
 
 - Strimzi 1.3.1 supports Kafka 4.2.0 to 4.3.2. The default and latest supported version is 4.3.2 (attributes `KafkaVersionLower`, `KafkaVersionHigher`, `DefaultKafkaVersion` in `documentation/shared/`, and §30.8.2).
-- The Apache Kafka docs pinned for this task are **4.4**. A Strimzi 1.3.1 cluster cannot run Kafka 4.4, so 4.4-only behaviour in the Kafka runbooks may not apply to it. Each Kafka runbook has a version note.
-- One concrete case: decommissioning starts with cordoning (`cordoned.log.dirs="*"`) in the 4.4 docs. These runbooks do not establish whether Kafka 4.3.2 supports it, because the 4.3 docs were not fetched.
-- The repo's own `sources.yaml` also pins Kafka 4.4.0 next to Strimzi 1.3.1, so the training data has the same mismatch. **Open decision for v2:** whether to pin the Kafka docs at 4.3 to match Strimzi 1.3.1.
+- The brief pinned the Apache Kafka docs at **4.4**, which a Strimzi 1.3.1 cluster cannot run. **Decided by the owner on 2026-11-10: the Kafka docs are now pinned at 4.3** (published pages under https://kafka.apache.org/43/operations/ , docs source at tag 4.3.2, commit 0a6c96d3b61167f1141df2032f25f10fd6e118fe). Each Kafka runbook has a version note.
+- Content that is only in the 4.4 docs was removed when the pin moved. Each case was found by diffing the cited docs files between tags 4.4.0 and 4.3.2:
+  - `kafka-metadata-quorum.sh remove-controller ... --unregister`, and the whole "Unregister Controller" section (`kafka-cluster.sh unregister-controller`): neither is in the 4.3 KRaft page. kraft-controller-membership.md step 7 is now labelled "4.4 only, not valid on Strimzi 1.3.1" and says NO OFFICIAL SOURCE FOUND, and its eval item was replaced. The apache/kafka 4.3.2 tools have neither command: `ClusterTool.java` defines `cluster-id`, `unregister` and `list-endpoints`, and `MetadataQuorumCommand.java` defines `remove-controller` with no unregister option.
+  - The note that `--command-config` must point to the configuration of the controller being added, and that its `controller.quorum.bootstrap.servers` must include a current quorum member. The 4.3 page says only that Admin Client settings such as authentication go in `controller.properties`. The runbook now says that and marks the rest NO OFFICIAL SOURCE FOUND.
+  - The 4.3 reset-offsets list names no flag for the default execution option ("(default) to display which offsets to reset"), whereas 4.4 says `--dry-run`. consumer-group-position.md and its eval item no longer call the default `--dry-run`.
+  - The other differences in the cited files are not used by any runbook: front-matter descriptions, whitespace, the 4.4 `by_duration` recommendation, share-group reset options and DLQ, streams-group tool text, the controller formatting sections, and group-coordinator and consumer metrics.
+- Decommissioning starts with cordoning (`cordoned.log.dirs="*"`). **Resolved:** `cordoned.log.dirs` exists in Kafka 4.3.2 (apache/kafka tag 4.3.2, commit 0a6c96d3b61167f1141df2032f25f10fd6e118fe): `server-common/src/main/java/org/apache/kafka/server/config/ServerLogConfigs.java:54` defines `CORDONED_LOG_DIRS_CONFIG = "cordoned.log.dirs"`, `core/src/main/scala/kafka/server/DynamicBrokerConfig.scala:590` validates it, and `docs/operations/basic-kafka-operations.md:471-476` at that tag has the same cordon step. So the cordon step is valid for Strimzi 1.3.1 clusters (Kafka up to 4.3.2).
+- The repo's own `sources.yaml` pinned Kafka 4.4.0 next to Strimzi 1.3.1. It now pins apache/kafka `4.3.2` and kafka-site `content/en/43/generated`. `MODEL_CARD.md` still describes the 4.4.0 sources that the existing dataset was built from.
+- `documentation/shared/attributes.adoc` at tag 1.3.1 sets `ProductVersion: 1.3.0` (line 17), while the published page says 1.3.1 throughout. Take version strings from the published page, not from that attribute.
 
 ## F3. Conflict: `reserved.broker.max.id`
 
 - Strimzi 1.3.1 §11.3.1 (https://strimzi.io/docs/operators/1.3.1/deploying#proc-managing-node-pools-ids-str) says to add `reserved.broker.max.id` to the Kafka resource to allow node IDs above 999. The prose spells it `reserved.broker-max.id`, and the YAML example spells it `reserved.broker.max.id: 10000`.
-- The Kafka 4.4 ZooKeeper→KRaft page (https://kafka.apache.org/44/getting-started/zk2kraft/#configurations) lists `reserved.broker.max.id` under "Removed the broker id generation-related configurations… used in ZooKeeper mode".
+- The Kafka 4.3 ZooKeeper→KRaft page (https://kafka.apache.org/43/getting-started/zk2kraft/#configurations) lists `reserved.broker.max.id` under "Removed the broker id generation-related configurations… used in ZooKeeper mode".
 - These sources disagree. The property was not put in any runbook.
 
 ## F4. Pod and StrimziPodSet naming with node pools
 
 - §28.1 (manual rolling update) and §11.2.10 (delete pod and PVC) name Kafka pods `<cluster_name>-kafka-<index_number>`. §28.2 names the StrimziPodSet `<cluster_name>-kafka`.
 - §30.2.2 (same guide) uses the node-pool pod name `my-cluster-pool-a-1`. §18.3.3 names per-node secrets `<cluster_name>-<pool_name>-<node_id>`. §33.2 uses PVCs such as `data-0-my-cluster-broker-0`.
-- The two patterns are inconsistent within the same guide, and the fetched sections do not state the node-pool pod or StrimziPodSet name explicitly. The runbooks quote the documented patterns and flag the difference.
+- The two patterns are inconsistent within the same guide. **Correction:** the guide does state the node-pool names explicitly, in its list of Kafka cluster resources (https://strimzi.io/docs/operators/1.3.1/deploying#ref-list-of-kafka-cluster-resources-str, `documentation/modules/configuring/ref-list-of-kafka-cluster-resources.adoc:48`): pods are `<kafka_cluster_name>-<pool_name>-<pod_id>`, the StrimziPodSet is `<kafka_cluster_name>-<pool_name>`, and the PVC is `data-<kafka_cluster_name>-<pool_name>-<pod_id>` for single-volume persistent storage, or `data-<id>-<kafka_cluster_name>-<pool_name>-<pod_id>` for each JBOD volume `id` (line 61). An earlier version of this finding said the node-pool names were not stated; that was wrong. The procedures in §28.1 and §11.2.10 still show only the non-node-pool form. The runbooks quote the procedure commands and show the node-pool form next to them, citing that list.
 
 ## F5. Restart reasons table (§29.1, §29.2)
 
@@ -53,7 +61,9 @@ Compiled from the sources in [sources.md](sources.md), all retrieved 2026-11-10.
 
 ## F8. Expired CA recovery: unnamed "Kafka secret" (§18.4.6)
 
-The procedure says to "Delete the Kafka secret" without naming it. The secrets reference (§18.3.3) lists per-node secrets `<cluster_name>-<pool_name>-<node_id>` and several operator certificate secrets. Which secrets are meant is **ambiguous**. The runbook leaves it unnamed.
+The procedure says "Delete the Kafka secret." and "Wait for the Cluster Operator to detect the missing Kafka secret and recreate it." (`documentation/modules/security/proc-recovering-expired-ca-certs.adoc:71-72`), without naming the secret. The guide defines a per-node secret `<cluster_name>-<pool_name>-<pod_id>`, which "Contains the private and public keys for a Kafka node. Each pod has its own secret" (§18.3.2, https://strimzi.io/docs/operators/1.3.1/deploying#con-certificates-str, `documentation/modules/security/ref-certificates-and-secrets.adoc:102-103`). The resource list gives the same pattern (§7.2.4, https://strimzi.io/docs/operators/1.3.1/deploying#ref-list-of-kafka-cluster-resources-str, `documentation/modules/configuring/ref-list-of-kafka-cluster-resources.adoc:48-51`). The procedure does not say that this is the secret it means, and its singular wording may be left over from before node pools. `<kafka_cluster_name>-kafka-brokers` is a Service, not a Secret (same file, line 29). An earlier version of this finding gave the pattern as `<node_id>` and the section as §18.3.3. The source has `<pod_id>`, and the section is §18.3.2.
+
+**Owner's decision (2026-11-10):** quote the procedure verbatim. Give the per-node secret only as a labelled compiler's note, not as a command. Mark step 4.1 "cannot be completed from official docs; ask the Strimzi maintainers". The other secrets the guide lists (`<cluster_name>-cluster-operator-certs`, `<cluster_name>-entity-topic-operator-certs` and the like) are kept out of the steps: the procedure says the Cluster Operator updates other components on reconciliation after the Kafka pods restart. The secret name stays DEFERRED until the maintainers answer.
 
 ## F9. Cluster recovery example values do not match (§33.2)
 
@@ -64,7 +74,7 @@ The procedure says to "Delete the Kafka secret" without naming it. The secrets r
 ## F10. KafkaTopic
 
 - §12.4 lists "Modifying the number of replicas specified in spec.replicas" as not allowed. §12.5 says changing replicas "requires a deployment of Cruise Control". The docs do not reconcile the two statements. The Cruise Control procedure (chapter 22) was not compiled here.
-- §12.4 uses `oc get kafkatopics my-topic-2 -o yaml` (OpenShift CLI) once and `kubectl get …` elsewhere. §13.1 uses only `kubectl`.
+- `oc get kafkatopics` (OpenShift CLI) appears in three modules, not one: `operators/proc-configuring-kafka-topic.adoc:90` (`my-topic-2`), `operators/proc-converting-non-managed-topics.adoc:58` (`my-topic-1`) and `cruise-control/proc-cruise-control-topic-replication.adoc:53` (`my-topic`). The rest of the guide uses `kubectl get …`. (An earlier version of this finding said it appears once, in §12.4.)
 
 ## F11. Cruise Control rebalancing modes
 
@@ -87,6 +97,8 @@ The published HTML shows `kubectl apply -f pod-monitors/.yaml` and `prometheus-r
 
 The repo has `grafana-dashboards/strimzi-kafka-oauth.json`, which the §25.1.4 table does not list.
 
+`grafana-dashboards/strimzi-cruise-control.json` queries three Cruise Control anomaly-detector metrics: `kafka_cruisecontrol_anomalydetector_balancedness_score_value` (line 352), `kafka_cruisecontrol_anomalydetector_goal_violation_rate_count` (line 547) and `kafka_cruisecontrol_anomalydetector_disk_failure_rate_count` (line 641). An earlier version of these findings, and of the Cruise Control runbook, said no allowed source names anomaly-detector metrics; that was wrong. Alert expressions and the anomaly notifier configuration are still not in the allowed sources.
+
 ## F15. Consumer lag panel name
 
 §25.5 calls the panel "Messages consumed per minute". The tip in §25.5.1 says "Messages consumed per second".
@@ -100,35 +112,70 @@ The text says "task 0 for connector … MirrorSourceConnector … is restarted",
 - `kubectl edit kafka <kafka_configuration_file>` uses a file placeholder where `kubectl edit` takes a resource name.
 - The procedure says "Otherwise, go to step 9", but the rendered procedure (`<ol class="arabic">`) has only **8** top-level steps.
 
-## F18. Apache Kafka 4.4 docs: rendering and source issues
+## F18. Apache Kafka 4.3 docs: rendering and source issues
 
 - In prose, long options appear with an en dash ("–execute", "–verify", "–members –verbose", "–bootstrap-controller"). Code blocks use the correct `--`. The runbooks use `--`.
-- The MirrorMaker MBean patterns read `([-.w]+)`, while the other Kafka MBean patterns use `([-.\w]+)`. The backslash is missing in the published page **and** in the docs source (`docs/operations/geo-replication-(cross-cluster-data-mirroring).md` at 4.4.0).
+- The MirrorMaker MBean patterns read `([-.w]+)`, while the other Kafka MBean patterns use `([-.\w]+)`. The backslash is missing in the published page **and** in the docs source (`docs/operations/geo-replication-(cross-cluster-data-mirroring).md` at 4.3.2; also at 4.4.0).
 - The broker metrics table on the monitoring page has no heading or anchor of its own. It sits under `#security-considerations-for-remote-monitoring-using-jmx`, which is what the runbooks cite.
 - Typo "Kafka’sintra-cluster" on the geo-replication overview.
 
 ## F19. Out of scope or not covered
 
-- **Argo CD / GitOps:** the brief's scope allows Argo CD, but the allowed source list has no Argo CD or GitOps source, and the Strimzi 1.3.1 deploying guide has no Argo CD procedure. Marked "no official source" in coverage.md.
+- **Argo CD / GitOps:** the brief's scope allows Argo CD, but the allowed source list has no Argo CD source, and the Strimzi 1.3.1 deploying guide has no Argo CD procedure. Marked "no official source" in coverage.md. The guide does mention GitOps twice, in the OLM upgrade procedure without an upgrade path (`documentation/modules/upgrading/proc-upgrade-cluster-operator-olm-no-upgrade-path.adoc:33` and `:83`): pause GitOps reconciliation of the OLM resources first, then update the `Subscription` manifest in Git and resume. The default of `STRIMZI_LABELS_EXCLUSION_PATTERN` also excludes Flux labels (`kustomize.toolkit.fluxcd.io.*`, `operators/con-configuring-cluster-operator.adoc:85`). Neither is an Argo CD procedure.
 - **Strimzi in-development docs** were not fetched, so no comparison was made.
 - **ZooKeeper** content is included only as the migration path required before upgrading (§30.3).
 
+## F20. Conflict: static-to-dynamic controller quorum migration
+
+- Strimzi 1.3.1 §2.1.2 (https://strimzi.io/docs/operators/1.3.1/deploying#limitations_with_static_controller_quorums, `documentation/assemblies/deploying/assembly-kraft-mode.adoc:78-79`): "Migration between static and dynamic controller quorums is not currently supported by Apache Kafka". As a result, "Strimzi uses static controller quorums for all deployments, including new installations."
+- Apache Kafka 4.3 KRaft page (https://kafka.apache.org/43/operations/kraft/#upgrade, `docs/operations/kraft.md:69` at 4.3.2; the same line at 4.4.0): "Apache Kafka 4.1 added support for upgrading a cluster from a static controller configuration to a dynamic controller configuration."
+- These sources disagree on whether Kafka supports the migration. For a Strimzi 1.3.1 cluster the Strimzi statement governs what the operator does: the quorum is static, and controller node pools cannot be added, removed, scaled or renamed. [kraft-controller-membership.md](runbooks/kafka/kraft-controller-membership.md) now states this first and marks every dynamic-quorum command as Apache Kafka reference, not for Strimzi-managed clusters.
+- The earlier version of that runbook said NO OFFICIAL SOURCE FOUND for how Strimzi handles controller membership, and `sources.md` said the Kafka "Upgrade" section was outside the fetched pages. Both were wrong: the Strimzi section exists (§2.1.1, §2.1.2) and the Upgrade section is on the cited KRaft page.
+
+## F21. Drain Cleaner: the drain is expected to fail in the default mode
+
+The drain-cleaner README ("See it in action", lines 206-232 at 70f1bc2) says `kubectl drain` evicts the pods that can be evicted "and eventually fail because Drain Cleaner denied the eviction" of the Kafka broker and controller pods. Once the Cluster Operator has rolled them, the drain is retried and succeeds. The Strimzi 1.3.1 Drain Cleaner procedure (https://strimzi.io/docs/operators/1.3.1/deploying#proc-drain-cleaner-using-str) does not say this. [drain-cleaner.md](runbooks/strimzi/drain-cleaner.md) step 3 now does.
+
+## F22. Storage procedures the storage runbook did not use
+
+The broker storage section (§11.2.9) says "Free disk space or increase available storage capacity" and "Review quota settings" without a procedure, but the same guide has them: resizing persistent volumes (`#proc-resizing-persistent-volumes-str`, `configuring/con-config-storage-kraft.adoc:99-160`), "Setting throughput and storage limits on brokers" and "Choosing a quota plugin" (the last two are the section's own additional resources). [broker-storage-issues.md](runbooks/strimzi/broker-storage-issues.md) now links them.
+
+## F23. Recovery from persistent volumes is routed to from a live-cluster symptom
+
+The broker storage section sends issues "such as failed mounts or unavailable volumes" to cluster recovery from persistent volumes (`configuring/con-kafka-recovering-brokers.adoc:27`). That procedure recovers "a deleted Kafka cluster" after namespace deletion or cluster loss (`managing/proc-cluster-recovery-volume.adoc:11`, `managing/con-cluster-recovery-scenarios.adoc:11-16`). The guide does not say how a failed mount on a running cluster maps to it. The runbooks now state the precondition and flag the ambiguity.
+
+## F24. Strimzi documentation licence
+
+- **Owner's decision (2026-11-10):** the License row of every runbook that uses the Strimzi docs reads "Strimzi documentation, part of strimzi/strimzi-kafka-operator, licensed under the Apache License 2.0 (repository LICENSE and README at tag 1.3.1). © Strimzi a Series of LF Projects, LLC." CC BY 4.0 is not used.
+- Evidence checked here at tag 1.3.1: `LICENSE` is the Apache License 2.0; `README.md` says "Strimzi is licensed under the [Apache License](./LICENSE), Version 2.0" (line 98); `documentation/README.md` says the folder "contains the source files for managing the Strimzi documentation" and lists `/documentation/deploying/` for the Deploying and Managing guide. No CC BY statement was found in the repo. The footer of https://strimzi.io/documentation/ gives a copyright line and no licence. The owner also cites the Strimzi documentation contributor guide, which `documentation/README.md` links to, for the docs living in `/documentation`. That page was not fetched here.
+- **Not checked:** the site terms at lfprojects.org/policies, which the page footer links to.
+- The Apache Kafka docs, the Strimzi example files under `packaging/examples/` and the drain-cleaner README keep their Apache License 2.0 attribution.
+
 ## Verification
 
-Done with scripts in the session scratchpad, against the fetched copies listed in sources.md.
+The first version of this table came from scripts kept outside the repo, so its counts could not be reproduced (two audits found 2 steps without a citation and 1 missing repo path where it reported 0). The checks are now in `tools/`:
+
+```
+tools/fetch_sources.sh <cache_dir>
+python3 -I tools/check_runbooks.py --sources <cache_dir>
+```
+
+Run 2026-11-10 against clean checkouts (no modified or untracked files) of strimzi-kafka-operator 1.3.1 (555c3e0), drain-cleaner 70f1bc2, apache/kafka 4.3.2 (0a6c96d) and the pages in sources.md fetched by the script (hashes matched):
 
 | Check | Result |
 |---|---|
-| Steps in Diagnosis / Remediation / Verification / Rollback sections (top-level list items) | **289** |
-| Steps without a citation (or an explicit NO OFFICIAL SOURCE FOUND) | **0** |
-| Cited `strimzi.io` / `kafka.apache.org` anchors missing from the fetched page | **0** |
-| Cited Strimzi repo paths missing at tag 1.3.1 | **0** (2 wrong paths found and fixed) |
-| Code-block lines not found verbatim in a fetched page, `.adoc` source, example YAML or the drain-cleaner README | **0** |
-| Inline `kubectl` / `bin/` commands not found verbatim | **0** |
-| Broken links between runbooks | **0** |
-| Eval items whose `source_url` is not cited in their runbook | **0** (1 found and fixed) |
-| Steps re-opened at random and checked by hand against the cited source | **10** of 10 confirmed (seed 20261110; all happened to be Strimzi) plus **3** extra Kafka steps, all confirmed. **13 total.** |
+| Code items (fenced blocks and inline spans) found in a pinned source | **906 of 979** (129 blocks, 850 spans). The other 73: 43 repo-path spans, all of which exist; 30 items that are knowingly not verbatim (26 placeholders, elisions or composed spans, 3 names from the Kafka 4.3.2 tools source, and the abridged block below), each listed with a reason in `tools/allowed_unmatched.txt`. An item that is neither found nor listed fails the check, and so does a list entry that matches no item |
+| Code blocks whose lines (whitespace collapsed, callout markers and blank lines dropped) appear in order and contiguous inside one source code element | **128 of 129** (the abridged Kafka Exporter example in consumer-lag.md, labelled as abridged; its list entry is keyed by a hash of the block, so any edit to it fails the check) |
+| Unterminated code fences | **0** (an unclosed fence fails the check, and its contents are still checked) |
+| Commands (`kubectl`, `bin/`, `oc`, `openssl`, `helm`; anywhere in a block, as complete logical commands with continuation lines and multi-line quoted arguments) that are not equal to a complete command in a source code element | **0 of 138**: 131 equal a source command exactly; 7 are inline prose mentions listed with a reason in `tools/abbreviated_commands.txt` (fenced blocks are never allowlisted) |
+| Cited Strimzi anchors / Kafka anchors / GitHub paths / index pages that fail | **0 of 78 / 0 of 35 / 0 of 11 / 0 of 2** (distinct URLs in the runbooks, FINDINGS.md, coverage.md, RESOLUTION.md, ATTRIBUTION.md and eval `source_url`) |
+| Backtick repo paths missing in the pinned repos | **0 of 53** |
+| Pinned-source URLs cited in a runbook body but missing from its Sources row | **0** |
+| Top-level list steps in Diagnosis / Remediation / Verification / Rollback | **293** (93 / 122 / 15 / 63) |
+| Steps with a Source line | **282 of 293**; the other 11 carry a NO OFFICIAL SOURCE marker; **0 of 293** have neither |
+| Coverage rows | **37**: 16 covered, 20 partial, 1 no official source; Totals table matches; 0 "covered" rows with a NO OFFICIAL SOURCE marker in a required section |
+| Eval items | **189** in 32 files; 0 fail the field, runbook or `source_url` check; 0 identical questions |
 
-During drafting, several sentences that went beyond the source were removed or reworded. One example: a claim that a Kafka feature upgrade is irreversible, which no fetched source states.
+With the earlier 4.4 pin, run against the original PR head (`0fabf2c`), the script gave 878 code items (125 blocks, 753 spans), 289 steps and 1 missing repo path, which matches both audits. On steps it is stricter than both audits: it also counts cross-link bullets under a section-level NO OFFICIAL SOURCE paragraph, so it finds 8 unmarked steps where the audits found 2.
 
-**Limit of the eval check:** the 180 eval items were written from the runbooks, and each item's `source_url` was checked to appear in its runbook. Whether each answer is fully supported by the runbook text was checked by reading, not mechanically.
+**Not checked mechanically:** whether a code item sits in the section its step cites (both audits did this by hand), and whether each eval answer is fully supported by its runbook. The eval check only confirms that the `source_url` is cited in the runbook.

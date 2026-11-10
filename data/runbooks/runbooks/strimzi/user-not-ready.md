@@ -4,8 +4,8 @@
 |---|---|
 | Product | Strimzi User Operator, KRaft |
 | Doc version | Strimzi 1.3.1, "Deploying and Managing Strimzi" (§13.1, §16.3.1) |
-| Sources | https://strimzi.io/docs/operators/1.3.1/deploying#proc-configuring-kafka-user-str ; https://strimzi.io/docs/operators/1.3.1/deploying#con-securing-client-labels-str ; repo `documentation/modules/operators/proc-configuring-kafka-user.adoc`, `documentation/modules/security/con-securing-client-labels.adoc` @ tag 1.3.1 (commit 555c3e0f07c203911bc3cb7d13ac085bfaa81b50) |
-| License | Derived from Strimzi documentation, © the Strimzi authors, CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Prose reworded; commands quoted verbatim. |
+| Sources | https://strimzi.io/docs/operators/1.3.1/deploying#proc-configuring-kafka-user-str ; https://strimzi.io/docs/operators/1.3.1/deploying#con-securing-client-labels-str ; https://strimzi.io/docs/operators/1.3.1/deploying#ref-operator-restart-events-reasons-str ; repo `documentation/modules/operators/proc-configuring-kafka-user.adoc`, `documentation/modules/security/con-securing-client-labels.adoc` @ tag 1.3.1 (commit 555c3e0f07c203911bc3cb7d13ac085bfaa81b50) |
+| License | Strimzi documentation, part of strimzi/strimzi-kafka-operator, licensed under the Apache License 2.0 (repository LICENSE and README at tag 1.3.1). © Strimzi a Series of LF Projects, LLC. Prose reworded; commands quoted verbatim. |
 | Retrieved | 2026-11-10 |
 
 ## Symptoms / trigger
@@ -40,7 +40,7 @@ After `kubectl apply` of a `KafkaUser`, the `READY` column in `kubectl get kafka
 
 ## Remediation steps
 
-1. **Simple authorization missing:** enable it in the `Kafka` resource:
+1. **[POSSIBLE ROLLING RESTART: cluster-wide authorization change on the `Kafka` resource]** **Simple authorization missing:** enable it in the `Kafka` resource:
    ```
      apiVersion: kafka.strimzi.io/v1
      kind: Kafka
@@ -52,8 +52,8 @@ After `kubectl apply` of a `KafkaUser`, the `READY` column in `kubectl get kafka
          authorization:
            type: simple
    ```
-   The source does not say whether this change triggers a rolling update.
-   — *Source:* https://strimzi.io/docs/operators/1.3.1/deploying#proc-configuring-kafka-user-str (Strimzi 1.3.1, retrieved 2026-11-10)
+   The source does not say whether this change triggers a rolling update. Treat it as one that may roll every broker: the restart reasons table says some Kafka configuration changes are applied dynamically, while others require that the broker be restarted (`ConfigChangeRequiresRestart`). Compiler's note, not from the source: enabling authorization also changes which clients are allowed, so plan it as a cluster-wide change.
+   — *Source:* https://strimzi.io/docs/operators/1.3.1/deploying#proc-configuring-kafka-user-str ; https://strimzi.io/docs/operators/1.3.1/deploying#ref-operator-restart-events-reasons-str (Strimzi 1.3.1, retrieved 2026-11-10)
 2. **Wrong label:** set `metadata.labels.strimzi.io/cluster` to the name of the `Kafka` resource:
    ```
    apiVersion: kafka.strimzi.io/v1

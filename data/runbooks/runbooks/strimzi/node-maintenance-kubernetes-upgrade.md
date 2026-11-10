@@ -5,7 +5,7 @@
 | Product | Strimzi, KRaft |
 | Doc version | Strimzi 1.3.1, "Deploying and Managing Strimzi" (§30.2) |
 | Sources | https://strimzi.io/docs/operators/1.3.1/deploying#con-upgrade-cluster-str ; https://strimzi.io/docs/operators/1.3.1/deploying#rolling_pods_using_drain_cleaner ; https://strimzi.io/docs/operators/1.3.1/deploying#rolling_pods_manually_alternative_to_drain_cleaner ; repo `documentation/modules/upgrading/con-upgrade-cluster.adoc` @ tag 1.3.1 (commit 555c3e0f07c203911bc3cb7d13ac085bfaa81b50) |
-| License | Derived from Strimzi documentation, © the Strimzi authors, CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Prose reworded; commands quoted verbatim. |
+| License | Strimzi documentation, part of strimzi/strimzi-kafka-operator, licensed under the Apache License 2.0 (repository LICENSE and README at tag 1.3.1). © Strimzi a Series of LF Projects, LLC. Prose reworded; commands quoted verbatim. |
 | Retrieved | 2026-11-10 |
 
 > **[ROLLING RESTART]** Both methods below roll Kafka pods.
@@ -57,14 +57,14 @@ You are upgrading Kubernetes, or taking worker nodes out for maintenance, and th
 
 ## Verification
 
-In a highly available setup, the Cluster Operator keeps the minimum number of in-sync replicas for topics during the upgrade, so there is no downtime. For per-pod verification see [manual-rolling-update.md](manual-rolling-update.md) and [drain-cleaner.md](drain-cleaner.md).
+**Expectation from the source, not a check:** in a highly available setup, the Cluster Operator keeps the minimum number of in-sync replicas for topics during the upgrade, so there is no downtime. NO OFFICIAL SOURCE FOUND for a verification step specific to this procedure. For per-pod verification see [manual-rolling-update.md](manual-rolling-update.md) and [drain-cleaner.md](drain-cleaner.md).
 — *Source:* https://strimzi.io/docs/operators/1.3.1/deploying#con-upgrade-cluster-str (Strimzi 1.3.1, retrieved 2026-11-10)
 
 ## Rollback or caveats
 
 - With `maxUnavailable: 0`, Kubernetes cannot evict Kafka pods automatically. Pods must be moved through the Cluster Operator.
   — *Source:* https://strimzi.io/docs/operators/1.3.1/deploying#rolling_pods_manually_alternative_to_drain_cleaner (Strimzi 1.3.1, retrieved 2026-11-10)
-- NO OFFICIAL SOURCE FOUND for setting `maxUnavailable` back after the maintenance.
+- NO OFFICIAL SOURCE FOUND for setting `maxUnavailable` back after the maintenance. Compiler's note, not from the source: write down the `spec.kafka.template.podDisruptionBudget` value before Method B step 1, and restore it in the `Kafka` resource when the maintenance is over, because the PodDisruptionBudget covers the pods of all node pools.
 
 ## Related runbooks
 

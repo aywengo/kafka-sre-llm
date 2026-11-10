@@ -4,8 +4,8 @@
 |---|---|
 | Product | Strimzi, KRaft |
 | Doc version | Strimzi 1.3.1, "Deploying and Managing Strimzi" (§30.6) |
-| Sources | https://strimzi.io/docs/operators/1.3.1/deploying#proc-upgrade-kafka-kraft-str ; https://strimzi.io/docs/operators/1.3.1/deploying#con-versions-and-images-str |
-| License | Derived from Strimzi documentation, © the Strimzi authors, CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Prose reworded; commands and YAML quoted verbatim. |
+| Sources | https://strimzi.io/docs/operators/1.3.1/deploying#proc-upgrade-kafka-kraft-str ; https://strimzi.io/docs/operators/1.3.1/deploying#con-versions-and-images-str ; https://strimzi.io/docs/operators/1.3.1/deploying#con-upgrade-status-str |
+| License | Strimzi documentation, part of strimzi/strimzi-kafka-operator, licensed under the Apache License 2.0 (repository LICENSE and README at tag 1.3.1). © Strimzi a Series of LF Projects, LLC. Prose reworded; commands and YAML quoted verbatim. |
 | Retrieved | 2026-11-10 |
 
 > **[ROLLING RESTART]** Changing `spec.kafka.version` rolls every Kafka node. **[POSSIBLY IRREVERSIBLE]** Raising `metadataVersion` can make a Kafka downgrade impossible.
@@ -46,7 +46,7 @@ You are upgrading a Kafka cluster to a newer supported Kafka version and KRaft m
    ```
    During the roll, some brokers run the old binaries and others the new ones. Keeping `metadataVersion` unchanged lets brokers and controllers keep talking to each other throughout the upgrade.
    — *Source:* https://strimzi.io/docs/operators/1.3.1/deploying#proc-upgrade-kafka-kraft-str (Strimzi 1.3.1, retrieved 2026-11-10)
-4. If `Kafka.spec.kafka.image` is set, point it to an image with the new Kafka version.
+4. If `Kafka.spec.kafka.image` is set, point it to an image with the new Kafka version. **Warning from the source:** the Cluster Operator cannot validate that an image actually contains a Kafka broker of the expected version. Make sure the image matches the Kafka version you set.
    — *Source:* https://strimzi.io/docs/operators/1.3.1/deploying#proc-upgrade-kafka-kraft-str ; https://strimzi.io/docs/operators/1.3.1/deploying#con-versions-and-images-str (Strimzi 1.3.1, retrieved 2026-11-10)
 5. Save, exit the editor, and wait for the rolling updates to finish. Follow progress by watching pod state transitions, for example:
    ```
@@ -83,7 +83,7 @@ You are upgrading a Kafka cluster to a newer supported Kafka version and KRaft m
 
 ## Rollback or caveats
 
-- Be careful when changing `metadataVersion`. You cannot downgrade Kafka if the new `metadataVersion` is higher than the Kafka version you want to downgrade to.
+- Be careful when changing `metadataVersion`. You cannot downgrade Kafka if the new `metadataVersion` is higher than the Kafka version you want to downgrade to. Understand the potential implications on support and compatibility if you keep an older version.
   — *Source:* https://strimzi.io/docs/operators/1.3.1/deploying#proc-upgrade-kafka-kraft-str (Strimzi 1.3.1, retrieved 2026-11-10)
 
 ## Related runbooks

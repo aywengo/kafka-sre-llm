@@ -5,7 +5,7 @@
 | Product | Strimzi Drain Cleaner with Strimzi Cluster Operator, KRaft |
 | Doc version | Strimzi 1.3.1, "Deploying and Managing Strimzi" (chapter 27); drain-cleaner repo README at main commit 70f1bc25bc14aacd15eb478768db6566bde783e3 (latest tag at retrieval: 1.8.0) |
 | Sources | https://strimzi.io/docs/operators/1.3.1/deploying#default_webhook_configuration ; https://strimzi.io/docs/operators/1.3.1/deploying#proc-drain-cleaner-deploying-str ; https://strimzi.io/docs/operators/1.3.1/deploying#proc-drain-cleaner-using-str ; https://strimzi.io/docs/operators/1.3.1/deploying#proc-drain-cleaner-certs-renewing-str ; https://github.com/strimzi/drain-cleaner/blob/70f1bc25bc14aacd15eb478768db6566bde783e3/README.md ; repo `documentation/modules/drain-cleaner/*.adoc` @ strimzi-kafka-operator tag 1.3.1 (commit 555c3e0f07c203911bc3cb7d13ac085bfaa81b50) |
-| License | Derived from Strimzi documentation and the strimzi/drain-cleaner README, © the Strimzi authors. Docs CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/); drain-cleaner repo Apache-2.0. Prose reworded; commands quoted verbatim. |
+| License | Strimzi documentation, part of strimzi/strimzi-kafka-operator, licensed under the Apache License 2.0 (repository LICENSE and README at tag 1.3.1). © Strimzi a Series of LF Projects, LLC. Also derived from: strimzi/drain-cleaner README, Apache License 2.0 (https://www.apache.org/licenses/LICENSE-2.0). Prose reworded; commands quoted verbatim. |
 | Retrieved | 2026-11-10 |
 
 > **[ROLLING RESTART]** Draining a node with Drain Cleaner makes the Cluster Operator roll the affected Kafka pods.
@@ -60,12 +60,15 @@ The drain-cleaner README also mentions controller pods: Drain Cleaner annotates 
 
 ### Drain the node
 
-3. **[ROLLING RESTART]** Drain the Kubernetes node that hosts the Kafka broker:
+3. **[ROLLING RESTART] [FORCED DRAIN: `--force`, `--delete-emptydir-data`; NO OFFICIAL SOURCE FOUND in these sources for what the two flags do]** Drain the Kubernetes node that hosts the Kafka broker:
    ```
    kubectl get nodes
    kubectl drain <name_of_node> --delete-emptydir-data --ignore-daemonsets --timeout=6000s --force
    ```
    — *Source:* https://strimzi.io/docs/operators/1.3.1/deploying#proc-drain-cleaner-using-str (Strimzi 1.3.1, retrieved 2026-11-10)
+
+   **Expect the drain to fail in the default mode.** `kubectl drain` cordons the node and evicts the pods that can be evicted. It then fails, because Drain Cleaner denies the eviction of the Kafka broker and controller pods. The error reads `admission webhook "strimzi-drain-cleaner.strimzi.io" denied the request: The pod will be rolled by the Strimzi Cluster Operator`. Once the Cluster Operator has restarted those pods, run `kubectl drain` again; it should then succeed and print `<worker-node> drained`. In legacy mode (`STRIMZI_DENY_EVICTION=false`) the eviction requests are allowed instead.
+   — *Source:* https://github.com/strimzi/drain-cleaner/blob/70f1bc25bc14aacd15eb478768db6566bde783e3/README.md ("See it in action", lines 196-232; "Legacy mode", lines 99-110) (drain-cleaner main@70f1bc2, retrieved 2026-11-10)
 
 ## Verification
 

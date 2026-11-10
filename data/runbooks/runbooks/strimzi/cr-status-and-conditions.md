@@ -5,7 +5,7 @@
 | Product | Strimzi (Kafka operators for Kubernetes), KRaft |
 | Doc version | Strimzi 1.3.1, "Deploying and Managing Strimzi" |
 | Sources | https://strimzi.io/docs/operators/1.3.1/deploying#con-custom-resources-status-str ; https://strimzi.io/docs/operators/1.3.1/deploying#proc-accessing-resource-status-str ; repo `documentation/modules/managing/con-custom-resources-status.adoc`, `documentation/modules/managing/proc-accessing-resource-status.adoc` @ tag 1.3.1 (commit 555c3e0f07c203911bc3cb7d13ac085bfaa81b50) |
-| License | Derived from Strimzi documentation, © the Strimzi authors, licensed CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Prose reworded; commands quoted verbatim. |
+| License | Strimzi documentation, part of strimzi/strimzi-kafka-operator, licensed under the Apache License 2.0 (repository LICENSE and README at tag 1.3.1). © Strimzi a Series of LF Projects, LLC. Prose reworded; commands quoted verbatim. |
 | Retrieved | 2026-11-10 |
 
 ## Symptoms / trigger
@@ -32,7 +32,7 @@ Resources that publish status: `Kafka`, `KafkaNodePool`, `KafkaTopic`, `KafkaUse
    — *Source:* https://strimzi.io/docs/operators/1.3.1/deploying#con-custom-resources-status-str (Strimzi 1.3.1, retrieved 2026-11-10)
 
 4. For a `Kafka` resource, check these fields:
-   - `kafkaMetadataState`: `KRaft` means KRaft manages the metadata.
+   - `kafkaMetadataState`: `KRaft` means KRaft manages the Kafka metadata and coordinates operations.
    - `kafkaVersion`: the Kafka version the cluster uses.
    - `operatorLastSuccessfulVersion`: the operator version that last completed a reconciliation.
    - `kafkaNodePools`, `listeners`, `clusterId`.

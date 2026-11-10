@@ -5,7 +5,7 @@
 | Product | Strimzi Kafka Exporter, KRaft |
 | Doc version | Strimzi 1.3.1, "Deploying and Managing Strimzi" (§11.2.6, §25.5, §25.5.1); example rules at repo tag 1.3.1 |
 | Sources | https://strimzi.io/docs/operators/1.3.1/deploying#con-kafka-exporter-str ; https://strimzi.io/docs/operators/1.3.1/deploying#con-metrics-kafka-exporter-lag-str ; https://strimzi.io/docs/operators/1.3.1/deploying#proc-kafka-exporter-deploy-str ; https://github.com/strimzi/strimzi-kafka-operator/blob/1.3.1/packaging/examples/metrics/prometheus-install/prometheus-rules/prometheus-kafka-exporter-topic-rules-group.yaml |
-| License | Derived from Strimzi documentation (CC BY 4.0, https://creativecommons.org/licenses/by/4.0/) and Strimzi example files (Apache-2.0), © the Strimzi authors. Prose reworded; config quoted verbatim. |
+| License | Strimzi documentation, part of strimzi/strimzi-kafka-operator, licensed under the Apache License 2.0 (repository LICENSE and README at tag 1.3.1). © Strimzi a Series of LF Projects, LLC. Also derived from: Strimzi repo example files (strimzi-kafka-operator tag 1.3.1), Apache License 2.0 (https://www.apache.org/licenses/LICENSE-2.0). Prose reworded; commands quoted verbatim. YAML examples may be abridged: the Kafka Exporter example in Diagnosis step 1 is (see the note there). |
 | Retrieved | 2026-11-10 |
 
 ## Symptoms / trigger
@@ -20,7 +20,7 @@ Definition: consumer lag for a group is the distance between the last message in
 
 ## Diagnosis steps
 
-1. Make sure Kafka Exporter is enabled. It exposes consumer group lag metrics that broker JMX metrics do not provide. Enable it with a `kafkaExporter` section in the `Kafka` resource. The source's example (abridged):
+1. Make sure Kafka Exporter is enabled. It exposes consumer group lag metrics that broker JMX metrics do not provide. Enable it with a `kafkaExporter` section in the `Kafka` resource. The source's example, **abridged**: lines are cut, `# ...` marks the cuts, and the callouts `<1>` to `<5>` are shown as `(1)` to `(5)`. The full example also sets `resources`, `logging`, `template` and `image` (`documentation/modules/metrics/proc-kafka-exporter-deploy.adoc:33-81` at tag 1.3.1):
    ```
    apiVersion: kafka.strimzi.io/v1
    kind: Kafka
@@ -46,7 +46,7 @@ Definition: consumer lag for a group is the distance between the last message in
    — *Source:* https://strimzi.io/docs/operators/1.3.1/deploying#proc-kafka-exporter-deploy-str ; https://strimzi.io/docs/operators/1.3.1/deploying#con-metrics-kafka-exporter-lag-str (Strimzi 1.3.1, retrieved 2026-11-10)
 4. If lag metrics are missing, check that consumer groups are in use and committing offsets. Kafka Exporter reads lag from the `__consumer_offsets` topic, which only has data when consumer groups actively commit offsets.
    — *Source:* https://strimzi.io/docs/operators/1.3.1/deploying#proc-kafka-exporter-deploy-str (Strimzi 1.3.1, retrieved 2026-11-10)
-5. For the Apache Kafka CLI view of a group's position, see [../kafka/consumer-group-position.md](../kafka/consumer-group-position.md).
+5. Cross-link, not a sourced step (NO OFFICIAL SOURCE FOUND in the Strimzi sections for using it here): for the Apache Kafka CLI view of a group's position, see [../kafka/consumer-group-position.md](../kafka/consumer-group-position.md).
 
 ## Remediation steps
 

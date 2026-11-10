@@ -5,7 +5,7 @@
 | Product | Strimzi example metrics configuration (kube-state-metrics), KRaft |
 | Doc version | Strimzi 1.3.1, "Deploying and Managing Strimzi" (§25.4); repo files at tag 1.3.1 |
 | Sources | https://strimzi.io/docs/operators/1.3.1/deploying#proc-metrics-custom-resource-monitoring-str ; https://github.com/strimzi/strimzi-kafka-operator/blob/1.3.1/packaging/examples/metrics/kube-state-metrics/prometheus-rules.yaml |
-| License | Derived from Strimzi documentation (CC BY 4.0, https://creativecommons.org/licenses/by/4.0/) and Strimzi example files (Apache-2.0), © the Strimzi authors. Commands and rule expressions quoted verbatim. |
+| License | Strimzi documentation, part of strimzi/strimzi-kafka-operator, licensed under the Apache License 2.0 (repository LICENSE and README at tag 1.3.1). © Strimzi a Series of LF Projects, LLC. Also derived from: Strimzi repo example files (strimzi-kafka-operator tag 1.3.1), Apache License 2.0 (https://www.apache.org/licenses/LICENSE-2.0). Prose reworded. |
 | Retrieved | 2026-11-10 |
 
 ## Symptoms / trigger
@@ -33,7 +33,7 @@ All of them are severity `warning` with `for: 15m`, except the two rebalance-pro
 | `*Warnings` (Kafka, KafkaTopic, KafkaUser, KafkaNodePool, KafkaRebalance, KafkaConnect, KafkaConnector, KafkaMirrorMaker2, KafkaAccess) | `strimzi_<resource>_resource_info{warnings="Warning"}` | 15m / warning | [cr-status-and-conditions.md](cr-status-and-conditions.md) |
 | `*Deprecated` (same resources) | `strimzi_<resource>_resource_info{deprecated="Warning"}` | 15m / warning | [cr-status-and-conditions.md](cr-status-and-conditions.md) |
 
-The rules use a `message` annotation and have no `runbook_url`. The "Related runbook" column is this compilation's own cross-link.
+The rules use a `message` annotation and have no `runbook_url`. For example, the `KafkaRebalanceProposalPending` message says the KafkaRebalance "is in proposal pending state and waits for approval for more than 1h." The "Related runbook" column is this compilation's own cross-link.
 — *Source:* https://github.com/strimzi/strimzi-kafka-operator/blob/1.3.1/packaging/examples/metrics/kube-state-metrics/prometheus-rules.yaml (repo tag 1.3.1, retrieved 2026-11-10)
 
 ## Remediation steps: deploying KSM for Strimzi resources

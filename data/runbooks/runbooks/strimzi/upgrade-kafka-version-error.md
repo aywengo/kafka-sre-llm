@@ -4,8 +4,8 @@
 |---|---|
 | Product | Strimzi Cluster Operator, KRaft |
 | Doc version | Strimzi 1.3.1, "Deploying and Managing Strimzi" (§30.5.5, §30.8.1, §30.8.2, §31.2.1, §31.3.2) |
-| Sources | https://strimzi.io/docs/operators/1.3.1/deploying#con-upgrade-cluster-operator-unsupported-kafka-str ; https://strimzi.io/docs/operators/1.3.1/deploying#con-downgrade-cluster-operator-unsupported-kafka-str ; https://strimzi.io/docs/operators/1.3.1/deploying#con-upgrade-paths-kafka-versions-str ; https://strimzi.io/docs/operators/1.3.1/deploying#con-downgrade-paths-kafka-versions-str ; https://strimzi.io/docs/operators/1.3.1/deploying#con-versions-and-images-str |
-| License | Derived from Strimzi documentation, © the Strimzi authors, CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Prose reworded; commands quoted verbatim. |
+| Sources | https://strimzi.io/docs/operators/1.3.1/deploying#con-upgrade-cluster-operator-unsupported-kafka-str ; https://strimzi.io/docs/operators/1.3.1/deploying#con-downgrade-cluster-operator-unsupported-kafka-str ; https://strimzi.io/docs/operators/1.3.1/deploying#con-upgrade-paths-kafka-versions-str ; https://strimzi.io/docs/operators/1.3.1/deploying#con-downgrade-paths-kafka-versions-str ; https://strimzi.io/docs/operators/1.3.1/deploying#con-versions-and-images-str ; https://strimzi.io/docs/operators/1.3.1/deploying#con-upgrade-status-str ; https://strimzi.io/docs/operators/1.3.1/deploying#proc-upgrade-kafka-kraft-str |
+| License | Strimzi documentation, part of strimzi/strimzi-kafka-operator, licensed under the Apache License 2.0 (repository LICENSE and README at tag 1.3.1). © Strimzi a Series of LF Projects, LLC. Prose reworded; commands quoted verbatim. |
 | Retrieved | 2026-11-10 |
 
 > **[ROLLING RESTART]** Changing `spec.kafka.version` rolls the Kafka nodes onto new binaries (see [upgrade-kafka-cluster.md](upgrade-kafka-cluster.md)).
