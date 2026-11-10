@@ -35,7 +35,7 @@ After `kubectl apply` of a `KafkaUser`, the `READY` column in `kubectl get kafka
    | Mechanism mismatch | The authentication and authorization mechanisms in the `KafkaUser` must match the equivalent Kafka configuration. |
 
    — *Source:* https://strimzi.io/docs/operators/1.3.1/deploying#proc-configuring-kafka-user-str ; https://strimzi.io/docs/operators/1.3.1/deploying#con-securing-client-labels-str (Strimzi 1.3.1, retrieved 2026-11-10)
-4. Check the prerequisites: a running Kafka cluster with a broker listener that uses mTLS authentication and TLS encryption, and a running User Operator (usually deployed with the Entity Operator).
+4. Check that a User Operator is running (usually deployed with the Entity Operator). This is a prerequisite of the user procedure. The procedure's other prerequisite, a broker listener with mTLS authentication and TLS encryption, belongs to its example, which uses mTLS authentication; it is not a documented cause of `NotReady`. What the `KafkaUser` needs is an authentication mechanism that matches the equivalent `Kafka` configuration (see the table above).
    — *Source:* https://strimzi.io/docs/operators/1.3.1/deploying#proc-configuring-kafka-user-str (Strimzi 1.3.1, retrieved 2026-11-10)
 
 ## Remediation steps

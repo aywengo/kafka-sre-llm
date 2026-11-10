@@ -151,6 +151,16 @@ The broker storage section sends issues "such as failed mounts or unavailable vo
 - **Not checked:** the site terms at lfprojects.org/policies, which the page footer links to.
 - The Apache Kafka docs, the Strimzi example files under `packaging/examples/` and the drain-cleaner README keep their Apache License 2.0 attribution.
 
+## F25. Resource names and commands in the guide that do not work as written
+
+Found by review on PR #1, then checked against the 1.3.1 sources and the Kafka 4.3 docs:
+
+- **Entity Operator pod.** §"Using loggers" (`con-using-loggers_str`, `documentation/modules/configuring/con-using-loggers.adoc:41`) shows `kubectl logs my-cluster-entity-operator-0 -c topic-operator`. The list of Kafka cluster resources (`ref-list-of-kafka-cluster-resources-str`, `ref-list-of-kafka-cluster-resources.adoc:67-74`) says `<kafka_cluster_name>-entity-operator` is a Deployment and its pod is `<kafka_cluster_name>-entity-operator-<random_string>`, so `-0` does not exist. The runbooks use the guide's other form, `kubectl logs -n kafka deployment/my-cluster-entity-operator -c topic-operator` (`proc-configuring-entity-operator-watched-namespace-str`, `proc-configuring-entity-operator-watched-namespace.adoc:121`).
+- **Kafka Exporter pod.** The deploy procedure (`proc-kafka-exporter-deploy.adoc:98`) says "Resources, including a `Service` and `Pod`, are created for the Kafka Exporter with the naming convention `<kafka_cluster_name>-kafka-exporter`". The resource list (`:84-93`) names the Deployment, Service, service account and network policy `<kafka_cluster_name>-kafka-exporter`, and the Pod `<kafka_cluster_name>-kafka-exporter-<random_string>`.
+- **Cluster Operator logging ConfigMap.** `ref-operator-cluster-logging-configmap.adoc:14-20` says the ConfigMap "is created with default values during installation", then gives `kubectl create -f install/cluster-operator/050-ConfigMap-strimzi-cluster-operator.yaml` to "reapply" an edited file. Compiler's note, not from the source: `kubectl create` fails for an object that already exists. The runbook puts the documented `kubectl edit configmap strimzi-cluster-operator` first.
+- **`ActiveControllerCount`.** The Kafka 4.3 broker metrics table says "only one broker in the cluster should have 1". The KRaft controller metrics list the same MBean as "The number of Active Controllers on this node. Valid values are '0' or '1'", and `kraft.md` (#controllers) says each controller "is either an active or a hot standby for the current active controller". The runbook and eval point to the controller-role nodes.
+- **mTLS prerequisite of the `KafkaUser` procedure.** Like the `KafkaTopic` procedure (F10), it lists "a Kafka broker listener using mTLS authentication and TLS encryption" as a prerequisite; its example uses mTLS authentication. The runbook treats it as part of the example, not as a requirement for every `KafkaUser`.
+
 ## Verification
 
 The first version of this table came from scripts kept outside the repo, so its counts could not be reproduced (two audits found 2 steps without a citation and 1 missing repo path where it reported 0). The checks are now in `tools/`:
@@ -164,11 +174,11 @@ Run 2026-11-10 against clean checkouts (no modified or untracked files) of strim
 
 | Check | Result |
 |---|---|
-| Code items (fenced blocks and inline spans) found in a pinned source | **906 of 979** (129 blocks, 850 spans). The other 73: 43 repo-path spans, all of which exist; 30 items that are knowingly not verbatim (26 placeholders, elisions or composed spans, 3 names from the Kafka 4.3.2 tools source, and the abridged block below), each listed with a reason in `tools/allowed_unmatched.txt`. An item that is neither found nor listed fails the check, and so does a list entry that matches no item |
+| Code items (fenced blocks and inline spans) found in a pinned source | **922 of 995** (129 blocks, 866 spans). The other 73: 43 repo-path spans, all of which exist; 30 items that are knowingly not verbatim (26 placeholders, elisions or composed spans, 3 names from the Kafka 4.3.2 tools source, and the abridged block below), each listed with a reason in `tools/allowed_unmatched.txt`. An item that is neither found nor listed fails the check, and so does a list entry that matches no item |
 | Code blocks whose lines (whitespace collapsed, callout markers and blank lines dropped) appear in order and contiguous inside one source code element | **128 of 129** (the abridged Kafka Exporter example in consumer-lag.md, labelled as abridged; its list entry is keyed by a hash of the block, so any edit to it fails the check) |
 | Unterminated code fences | **0** (an unclosed fence fails the check, and its contents are still checked) |
-| Commands (`kubectl`, `bin/`, `oc`, `openssl`, `helm`; anywhere in a block, as complete logical commands with continuation lines and multi-line quoted arguments) that are not equal to a complete command in a source code element | **0 of 138**: 131 equal a source command exactly; 7 are inline prose mentions listed with a reason in `tools/abbreviated_commands.txt` (fenced blocks are never allowlisted) |
-| Cited Strimzi anchors / Kafka anchors / GitHub paths / index pages that fail | **0 of 78 / 0 of 35 / 0 of 11 / 0 of 2** (distinct URLs in the runbooks, FINDINGS.md, coverage.md, RESOLUTION.md, ATTRIBUTION.md and eval `source_url`) |
+| Commands (`kubectl`, `bin/`, `oc`, `openssl`, `helm`; anywhere in a block, as complete logical commands with continuation lines and multi-line quoted arguments) that are not equal to a complete command in a source code element | **0 of 139**: 132 equal a source command exactly; 7 are inline prose mentions listed with a reason in `tools/abbreviated_commands.txt` (fenced blocks are never allowlisted) |
+| Cited Strimzi anchors / Kafka anchors / GitHub paths / index pages that fail | **0 of 79 / 0 of 36 / 0 of 11 / 0 of 2** (distinct URLs in the runbooks, FINDINGS.md, coverage.md, RESOLUTION.md, ATTRIBUTION.md and eval `source_url`) |
 | Backtick repo paths missing in the pinned repos | **0 of 53** |
 | Pinned-source URLs cited in a runbook body but missing from its Sources row | **0** |
 | Top-level list steps in Diagnosis / Remediation / Verification / Rollback | **293** (93 / 122 / 15 / 63) |
