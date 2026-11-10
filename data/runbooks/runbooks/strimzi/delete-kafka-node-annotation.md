@@ -24,7 +24,7 @@ Use this only for storage issues, and only after non-destructive recovery has be
 2. Find the name of the pod to delete. The procedure gives the pattern `<cluster_name>-kafka-<index_number>`, with the index running from zero to the number of replicas minus one, for example `my-cluster-kafka-0`.
    — *Source:* https://strimzi.io/docs/operators/1.3.1/deploying#proc-manual-delete-pod-pvc-kafka-str (Strimzi 1.3.1, retrieved 2026-11-10)
 
-   With node pools (required for KRaft), the guide's list of Kafka cluster resources names the pods created by a node pool's StrimziPodSet `<kafka_cluster_name>-<pool_name>-<pod_id>`. The node's PVC is `data-<kafka_cluster_name>-<pool_name>-<pod_id>`. The two sections use different patterns (FINDINGS F4).
+   With node pools (required for KRaft), the guide's list of Kafka cluster resources names the pods created by a node pool's StrimziPodSet `<kafka_cluster_name>-<pool_name>-<pod_id>`. The node's PVC is `data-<kafka_cluster_name>-<pool_name>-<pod_id>` with single-volume persistent storage. With JBOD storage there is one PVC per persistent volume, named `data-<id>-<kafka_cluster_name>-<pool_name>-<pod_id>`, where `<id>` is the volume `id`. The two sections use different patterns (FINDINGS F4).
    — *Source:* https://strimzi.io/docs/operators/1.3.1/deploying#ref-list-of-kafka-cluster-resources-str (Strimzi 1.3.1, retrieved 2026-11-10)
 
 ## Remediation steps

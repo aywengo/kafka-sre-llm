@@ -122,6 +122,40 @@ def is_cmd(line):
     return bool(CMD_RE.match(line))
 
 
+def _open_quote(s):
+    """True if s ends inside a double- or single-quoted string."""
+    q = None
+    i = 0
+    while i < len(s):
+        c = s[i]
+        if c == "\\" and q != "'":
+            i += 2
+            continue
+        if q is None and c in "\"'":
+            q = c
+        elif c == q:
+            q = None
+        i += 1
+    return q is not None
+
+
+def logical_commands(content):
+    """Yield each command in a block or span with its continuation lines
+    (trailing backslash) and multi-line quoted arguments joined on."""
+    lines = content.split("\n")
+    i = 0
+    while i < len(lines):
+        if not is_cmd(lines[i]):
+            i += 1
+            continue
+        buf = [lines[i]]
+        while i + 1 < len(lines) and (buf[-1].rstrip().endswith("\\") or _open_quote("\n".join(buf))):
+            i += 1
+            buf.append(lines[i])
+        yield "\n".join(buf)
+        i += 1
+
+
 def runbook_files():
     return sorted(glob.glob(os.path.join(ROOT, "runbooks", "*", "*.md")))
 
@@ -329,13 +363,13 @@ def check_code(src, verbose):
             if not sq:
                 found[kind] += 1
                 continue
-            # commands are checked line by line, with whitespace kept
-            for line in content.split("\n"):
-                if is_cmd(line):
-                    cmd_total += 1
-                    if spaced(line) not in spaced_corpus:
-                        cmd_bad += 1
-                        cmd_bad_items.append((rel(p), ln, line.strip()[:100]))
+            # commands are checked as complete logical commands (with their
+            # continuation lines and multi-line quoted arguments), whitespace kept
+            for cmd in logical_commands(content):
+                cmd_total += 1
+                if spaced(cmd) not in spaced_corpus:
+                    cmd_bad += 1
+                    cmd_bad_items.append((rel(p), ln, spaced(cmd)[:120]))
             if kind == "block":
                 if sq in corpus:
                     found[kind] += 1
@@ -362,7 +396,7 @@ def check_code(src, verbose):
     print("found in a pinned source: %d of %d" % (n_found, n_all))
     print("  blocks found as one contiguous piece: %d of %d" % (blocks_contig, total["block"]))
     print("repo-path spans: %d, exist in the pinned repos: %d, missing: %d" % (len(paths_ok) + len(paths_bad), len(paths_ok), len(paths_bad)))
-    print("command lines (kubectl/bin//oc/openssl/helm, any line of a block): %d, not verbatim with spacing kept: %d" % (cmd_total, cmd_bad))
+    print("commands (kubectl/bin//oc/openssl/helm, anywhere in a block, with continuations): %d, not verbatim with spacing kept: %d" % (cmd_total, cmd_bad))
     for f, ln, c in cmd_bad_items:
         print("  COMMAND NOT VERBATIM %s:%d %s" % (f, ln, c))
     print("other items not found: %d (placeholders, elisions, composed text; listed with -v)" % len(notfound))

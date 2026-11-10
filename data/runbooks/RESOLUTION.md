@@ -72,7 +72,7 @@ Status values: **APPLIED** (fixed as described), **REJECTED** (the source refute
 
 From `python3 -I tools/check_runbooks.py --sources <cache>` on the branch head; see FINDINGS.md, "Verification", for the full table.
 
-- Code items found in a pinned source: 902 of 968. The other 66: 40 repo paths (all exist) and 26 placeholders or elisions. Command lines not verbatim (whitespace kept): 0 of 140. Contiguous blocks: 130 of 131.
+- Code items found in a pinned source: 902 of 968. The other 66: 40 repo paths (all exist) and 26 placeholders or elisions. Commands not verbatim (complete logical commands, whitespace kept): 0 of 140. Contiguous blocks: 130 of 131.
 - Citations failing: 0 of 77 Strimzi anchors, 0 of 36 Kafka anchors, 0 of 11 GitHub paths, 0 of 2 index pages, 0 of 50 backtick repo paths (distinct URLs; 808 occurrences).
 - Steps: 294; 284 with a Source line, 10 with only a NO OFFICIAL SOURCE marker, 0 with neither.
 - Coverage: 37 rows, 16 covered, 20 partial, 1 no official source; Totals table matches.
