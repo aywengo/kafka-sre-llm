@@ -13,8 +13,10 @@ import json
 import os
 import re
 import statistics
+import threading
 import time
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import httpx
@@ -80,6 +82,7 @@ def main():
                     help='JSON merged into judge requests, e.g. \'{"chat_template_kwargs": {"thinking_mode": "chat"}}\'')
     ap.add_argument("--cache", help="JSONL of generated answers; written as they are produced and "
                                     "reused on rerun, so generation can resume and judging can run later")
+    ap.add_argument("--judge-concurrency", type=int, default=1, help="parallel judge calls")
     ap.add_argument("--judge-cache", help="JSONL of judge replies keyed by prompt hash; written per item and reused on rerun")
     args = ap.parse_args()
 
@@ -117,19 +120,32 @@ def main():
             jcache[c["key"]] = c
     scores = defaultdict(lambda: {"base": [], "tuned": []})  # keyed by (set, category)
     clean = defaultdict(lambda: {"base": [], "tuned": []})   # pairs where neither answer was truncated
+    def judge_key(r):
+        # randomise which answer is shown first to reduce position bias
+        swap = int(hashlib.md5(r["question"].encode()).hexdigest(), 16) % 2
+        a, b = (r["tuned"], r["base"]) if swap else (r["base"], r["tuned"])
+        ckey = hashlib.md5(f"{args.judge_model}\0{r['question']}\0{a}\0{b}".encode()).hexdigest()
+        return swap, a, b, ckey
+
+    def judge_one(r):
+        _, a, b, ckey = judge_key(r)
+        j, stats = judge(args.judge_url, args.judge_model, r["question"], r.get("reference"), a, b,
+                         args.judge_api_key, args.judge_extra_body)
+        entry = {"key": ckey, "question": r["question"], "j": j, **stats}
+        with jlock:
+            jcache[ckey] = entry
+            if args.judge_cache:
+                with open(args.judge_cache, "a") as f:
+                    f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+    jlock = threading.Lock()
+    if args.judge_url:
+        pending = {judge_key(r)[3]: r for r in rows if judge_key(r)[3] not in jcache}
+        with ThreadPoolExecutor(args.judge_concurrency) as ex:
+            list(ex.map(judge_one, pending.values()))
     for r in rows:
         if args.judge_url:
-            # randomise which answer is shown first to reduce position bias
-            swap = int(hashlib.md5(r["question"].encode()).hexdigest(), 16) % 2
-            a, b = (r["tuned"], r["base"]) if swap else (r["base"], r["tuned"])
-            ckey = hashlib.md5(f"{args.judge_model}\0{r['question']}\0{a}\0{b}".encode()).hexdigest()
-            if ckey not in jcache:
-                j, stats = judge(args.judge_url, args.judge_model, r["question"], r.get("reference"), a, b,
-                                 args.judge_api_key, args.judge_extra_body)
-                jcache[ckey] = {"key": ckey, "question": r["question"], "j": j, **stats}
-                if args.judge_cache:
-                    with open(args.judge_cache, "a") as f:
-                        f.write(json.dumps(jcache[ckey], ensure_ascii=False) + "\n")
+            swap, _, _, ckey = judge_key(r)
             j = jcache[ckey]["j"]
             if j:
                 r["score_base"], r["score_tuned"] = (j["b"], j["a"]) if swap else (j["a"], j["b"])
