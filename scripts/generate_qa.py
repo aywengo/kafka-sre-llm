@@ -83,6 +83,33 @@ Write {n} diverse items, all of type "{types}". For troubleshooting: a realistic
 engineer would report it, then the causes the excerpt names in order of likelihood, how to \
 check each, and the fix. Skip the excerpt (return []) if it names no failure mode."""
 
+GEN_SYSTEM_CONFIG_REF = """You write training data for an assistant that is a senior Site Reliability \
+Engineer specialised in Apache Kafka. You are given configuration reference entries \
+(one setting each: description, Type, Default, Valid Values, Importance, Update Mode).
+
+Rules:
+- Answer ONLY with what the entry states: what the setting does, its scope (broker, topic, \
+producer, consumer, admin, Connect, ...), type, default, valid values, importance, update mode. \
+Quote key names and values exactly.
+- No advice, no recommendations, no troubleshooting causes, no restart or retry caveats, no \
+examples or YAML/properties snippets beyond what the entry itself contains, no other versions.
+- For each setting write 2-3 items in different styles: "what is X and what does it do", \
+"what is the default of X / can I change it at runtime (update mode)", "what values does X accept". \
+If the entry has no update mode or valid values, do not write that style for it.
+- Questions are phrased like an engineer would ask. Answers are short and stand on their own: \
+never refer to "the entry", "the excerpt" or "the documentation".
+- If an entry has no technical substance, return [].
+
+Return ONLY a JSON array. Each item: {"type": "config", "question": "...", "answer": "..."}"""
+
+GEN_USER_CONFIG_REF = """Source: {source} — {title}
+
+<excerpt>
+{text}
+</excerpt>
+
+Write {n} items covering the setting(s) above, in the question styles from the rules."""
+
 STRICT_RULES = """grounded=false if the answer states anything not supported by the excerpt, \
 contains a wrong config key/flag/default, would mislead an operator, contains an unresolved \
 placeholder such as {SomeAttribute}, uses an apiVersion that is not in the excerpt, places a \
@@ -163,10 +190,16 @@ async def process(chunk, llm, args, sem, out_f, lock, stats):
             items = args.existing[chunk["id"]]
         else:
             n = max(1, min(args.max_per_chunk, len(chunk["text"]) // 700))
+            if args.profile == "config-ref":
+                n = max(2, min(args.max_per_chunk, 3 * chunk["text"].count("Type:")))
             try:
                 user = (GEN_USER_TYPES.format(n=n, types=args.types, **chunk) if args.types
                         else GEN_USER.format(n=n, **chunk))
-                raw = await llm.chat(GEN_SYSTEM, user)
+                if args.profile == "config-ref":
+                    system, user = GEN_SYSTEM_CONFIG_REF, GEN_USER_CONFIG_REF.format(n=n, **chunk)
+                else:
+                    system = GEN_SYSTEM
+                raw = await llm.chat(system, user)
             except Exception as e:  # keep going on single failures
                 print(f"  gen failed {chunk['id']}: {e!r}")
                 stats["failed"] += 1
@@ -327,6 +360,8 @@ async def main():
     ap.add_argument("--context-neighbours", type=int, default=0, metavar="N",
                     help="show each chunk with N previous and N next chunks of the same file")
     ap.add_argument("--paths", nargs="*", help="only chunks whose path contains one of these")
+    ap.add_argument("--profile", choices=["config-ref"],
+                    help="config-ref: single-setting reference entries, answer only what the entry states")
     ap.add_argument("--types", help="ask only for items of this type, e.g. troubleshooting")
     args = ap.parse_args()
     args.existing = None
