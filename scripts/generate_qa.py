@@ -93,9 +93,11 @@ producer, consumer, admin, Connect, ...), type, default, valid values, importanc
 Quote key names and values exactly.
 - No advice, no recommendations, no troubleshooting causes, no restart or retry caveats, no \
 examples or YAML/properties snippets beyond what the entry itself contains, no other versions.
-- For each setting write 2-3 items in different styles: "what is X and what does it do", \
-"what is the default of X / can I change it at runtime (update mode)", "what values does X accept". \
-If the entry has no update mode or valid values, do not write that style for it.
+- Write exactly one item per setting, in the order the settings appear, and rotate the question \
+style: setting 1 "what is X and what does it do", setting 2 "what is the default of X / can I \
+change it at runtime (update mode)", setting 3 "what values does X accept", then repeat. If the \
+entry lacks the facts a style needs (no update mode, no valid values), use the "what is X" style \
+for that setting.
 - Questions are phrased like an engineer would ask. Answers are short and stand on their own: \
 never refer to "the entry", "the excerpt" or "the documentation".
 - If an entry has no technical substance, return [].
@@ -108,7 +110,7 @@ GEN_USER_CONFIG_REF = """Source: {source} — {title}
 {text}
 </excerpt>
 
-Write {n} items covering the setting(s) above, in the question styles from the rules."""
+Write exactly {n} items, one per setting in the excerpt, following the rules."""
 
 STRICT_RULES = """grounded=false if the answer states anything not supported by the excerpt, \
 contains a wrong config key/flag/default, would mislead an operator, contains an unresolved \
@@ -191,7 +193,7 @@ async def process(chunk, llm, args, sem, out_f, lock, stats):
         else:
             n = max(1, min(args.max_per_chunk, len(chunk["text"]) // 700))
             if args.profile == "config-ref":
-                n = max(2, min(args.max_per_chunk, 3 * chunk["text"].count("Type:")))
+                n = max(1, chunk["text"].count("Type:"))  # one item per setting
             try:
                 user = (GEN_USER_TYPES.format(n=n, types=args.types, **chunk) if args.types
                         else GEN_USER.format(n=n, **chunk))
