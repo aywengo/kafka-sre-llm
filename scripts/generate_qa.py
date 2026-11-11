@@ -211,7 +211,7 @@ async def verify_one(chunk, it, llm, args, stats):
     try:
         v = extract_json(await llm.chat(
             VERIFY_SYSTEM,
-            f"<excerpt>\n{chunk['text']}\n</excerpt>\n\nQ: {it['question']}\n\nA: {it['answer']}",
+            f"Source: {chunk['source']} — {chunk['title']}\n\n<excerpt>\n{chunk['text']}\n</excerpt>\n\nQ: {it['question']}\n\nA: {it['answer']}",
             temperature=0.0, max_tokens=args.verify_max_tokens,
             extra_body=args.verify_extra_body), kind="{")
     except Exception:
@@ -229,7 +229,7 @@ async def verify_batch(chunk, items, llm, args, stats, rejected=None):
     try:
         v = extract_json(await llm.chat(
             VERIFY_BATCH_SYSTEM,
-            f"<excerpt>\n{chunk['text']}\n</excerpt>\n\n{pairs}",
+            f"Source: {chunk['source']} — {chunk['title']}\n\n<excerpt>\n{chunk['text']}\n</excerpt>\n\n{pairs}",
             temperature=0.0, max_tokens=args.verify_max_tokens,
             extra_body=args.verify_extra_body))
     except Exception:
