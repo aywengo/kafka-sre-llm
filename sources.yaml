@@ -64,6 +64,21 @@ sources:
       - "*/SUPPORT.md"
     license: Apache-2.0
 
+  - name: runbooks
+    local: ./data/runbooks/runbooks
+    globs: ["**/*.md"]
+    exclude:
+      - "*/kafka/graceful-shutdown-and-leadership.md"
+      - "*/kafka/kraft-quorum-debugging.md"
+      - "*/strimzi/kafkarebalance-tracking-and-stopping.md"
+      - "*/strimzi/lock-acquisition-warnings.md"
+      - "*/strimzi/manual-rolling-update.md"
+      - "*/strimzi/mirrormaker2-restart-connector-and-task.md"
+      - "*/strimzi/operator-logs.md"
+      - "*/strimzi/topic-not-ready.md"
+    max_chars: 12000
+    license: Apache-2.0
+
   # Your own material is usually the most valuable data:
   # runbooks, postmortems, internal wiki exports. Scrub secrets,
   # hostnames and customer data first.

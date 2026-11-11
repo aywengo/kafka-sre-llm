@@ -138,7 +138,8 @@ def split_sections(text: str):
     yield from flush()
 
 
-def split_long(body: str):
+def split_long(body: str, max_chars: int = MAX_CHARS):
+    MAX_CHARS = max_chars
     if len(body) <= MAX_CHARS:
         return [body]
     # A single paragraph (table, list, generated metrics dump) can exceed
@@ -166,7 +167,11 @@ def split_long(body: str):
     return parts
 
 
-def chunk_text(text: str):
+def chunk_text(text: str, max_chars: int = MAX_CHARS):
+    if max_chars != MAX_CHARS and len(text) <= max_chars:   # per-source limit: keep small docs whole
+        m = re.search(r"^#{1,4}\s+(.*)", text, re.M)
+        yield (m.group(1).strip() if m else ""), text.strip()
+        return
     pending_title, pending = None, ""
     for title, body in split_sections(text):
         body = re.sub(r"\n{3,}", "\n\n", body)
@@ -174,7 +179,7 @@ def chunk_text(text: str):
             body = pending + "\n\n" + (f"## {title}\n" if title else "") + body
             title = pending_title or title
             pending = ""
-        for part in split_long(body):
+        for part in split_long(body, max_chars):
             if len(part) < MIN_CHARS:
                 pending_title, pending = title, part
                 continue
@@ -228,7 +233,7 @@ def main():
                     text = CLEANERS[path.suffix](raw_text)
                 else:
                     continue
-                for i, (title, body) in enumerate(chunk_text(text)):
+                for i, (title, body) in enumerate(chunk_text(text, src.get("max_chars", MAX_CHARS))):
                     if path.suffix == ".adoc" and ADOC_PLACEHOLDER.search(body):
                         dropped += 1
                         continue

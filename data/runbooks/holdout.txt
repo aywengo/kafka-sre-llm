@@ -1,0 +1,8 @@
+kafka/graceful-shutdown-and-leadership.md
+kafka/kraft-quorum-debugging.md
+strimzi/kafkarebalance-tracking-and-stopping.md
+strimzi/lock-acquisition-warnings.md
+strimzi/manual-rolling-update.md
+strimzi/mirrormaker2-restart-connector-and-task.md
+strimzi/operator-logs.md
+strimzi/topic-not-ready.md
