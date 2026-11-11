@@ -41,7 +41,8 @@ def main():
             run(["git", "fetch", "--depth", "1", "origin", "tag", ref], cwd=target)
             run(["git", "checkout", "--quiet", ref], cwd=target)
         else:
-            run(["git", "pull", "--depth", "1"], cwd=target)
+            run(["git", "fetch", "--depth", "1", "origin"], cwd=target)
+            run(["git", "reset", "--hard", "--quiet", "FETCH_HEAD"], cwd=target)
         missing = [p for p in src["paths"] if not (target / p).exists()]
         if missing:
             sys.exit(f"{src['name']}: configured paths missing after checkout: {', '.join(missing)}")
