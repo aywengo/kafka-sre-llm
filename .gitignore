@@ -17,3 +17,14 @@ private/
 __pycache__/
 *.pyc
 .DS_Store
+
+# local and generated eval/run files
+.idea/
+eval/answers_*.jsonl
+eval/results_*.jsonl
+eval/judge2_*.cache.jsonl
+runs/*
+!runs/v1/
+runs/v1/*
+!runs/v1/REPORT.md
+!runs/v1/LEFTOVERS.md
