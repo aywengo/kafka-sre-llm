@@ -262,7 +262,7 @@ async def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--url", default="http://localhost:8080/v1")
     ap.add_argument("--model", default="default")
-    ap.add_argument("--api-key", default="local")
+    ap.add_argument("--api-key", default=os.environ.get("OMLX_API_KEY", "local"))
     ap.add_argument("--chunks", default="work/chunks.jsonl")
     ap.add_argument("--out", default="work/raw_qa.jsonl")
     ap.add_argument("--concurrency", type=int, default=2)
