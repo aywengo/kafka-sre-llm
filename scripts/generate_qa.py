@@ -36,7 +36,7 @@ CRD fields, CLI flags, metrics or defaults.
 - Write questions the way people actually ask: incident descriptions, Slack-style questions, \
 "how do I", "why does", "what's the difference", config review requests.
 - Answers are practical: short explanation first, then commands or YAML in fenced code \
-blocks where useful, then caveats (version differences, risks, what to check next).
+blocks where useful, then caveats only if the excerpt states them.
 - Never refer to "the excerpt", "the document", "the text" or "the passage". The answer must \
 stand on its own.
 - Use only API versions (apiVersion), kinds and field paths that appear in the excerpt. Never \
