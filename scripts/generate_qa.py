@@ -73,6 +73,16 @@ GEN_USER = """Source: {source} — {title}
 Write {n} diverse items. Mix types; include at least one troubleshooting or config item if the \
 excerpt allows it."""
 
+GEN_USER_TYPES = """Source: {source} — {title}
+
+<excerpt>
+{text}
+</excerpt>
+
+Write {n} diverse items, all of type "{types}". For troubleshooting: a realistic symptom as an \
+engineer would report it, then the causes the excerpt names in order of likelihood, how to \
+check each, and the fix. Skip the excerpt (return []) if it names no failure mode."""
+
 STRICT_RULES = """grounded=false if the answer states anything not supported by the excerpt, \
 contains a wrong config key/flag/default, would mislead an operator, contains an unresolved \
 placeholder such as {SomeAttribute}, uses an apiVersion that is not in the excerpt, places a \
@@ -154,7 +164,9 @@ async def process(chunk, llm, args, sem, out_f, lock, stats):
         else:
             n = max(1, min(args.max_per_chunk, len(chunk["text"]) // 700))
             try:
-                raw = await llm.chat(GEN_SYSTEM, GEN_USER.format(n=n, **chunk))
+                user = (GEN_USER_TYPES.format(n=n, types=args.types, **chunk) if args.types
+                        else GEN_USER.format(n=n, **chunk))
+                raw = await llm.chat(GEN_SYSTEM, user)
             except Exception as e:  # keep going on single failures
                 print(f"  gen failed {chunk['id']}: {e!r}")
                 stats["failed"] += 1
@@ -258,6 +270,29 @@ def report(stats, usage):
           f"{usage['completion_tokens'] / calls:.0f} out tok/call", flush=True)
 
 
+CONTEXT_MAX_CHARS = 12000
+
+
+def add_context(chunks, n):
+    """Replace each chunk's text by it plus n neighbours each side (same file, file order),
+    dropping the farthest neighbours until the excerpt fits CONTEXT_MAX_CHARS."""
+    by_path = {}
+    for c in chunks:
+        by_path.setdefault(c["path"], []).append(c)
+    out = []
+    for group in by_path.values():
+        for i, c in enumerate(group):
+            k = n
+            while True:
+                parts = group[max(0, i - k): i + k + 1]
+                text = "\n\n".join(p["text"] for p in parts)
+                if len(text) <= CONTEXT_MAX_CHARS or k == 0:
+                    break
+                k -= 1
+            out.append({**c, "text": text[:CONTEXT_MAX_CHARS]})
+    return out
+
+
 async def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--url", default="http://localhost:8080/v1")
@@ -289,6 +324,10 @@ async def main():
                     help="--reverify only: stop when a source's reject rate exceeds this")
     ap.add_argument("--guard-min-items", type=int, default=100)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--context-neighbours", type=int, default=0, metavar="N",
+                    help="show each chunk with N previous and N next chunks of the same file")
+    ap.add_argument("--paths", nargs="*", help="only chunks whose path contains one of these")
+    ap.add_argument("--types", help="ask only for items of this type, e.g. troubleshooting")
     args = ap.parse_args()
     args.existing = None
     if args.reverify:
@@ -304,8 +343,11 @@ async def main():
         done = {json.loads(l)["chunk_id"] for l in out.open() if l.strip()}
 
     chunks = [json.loads(l) for l in Path(args.chunks).open() if l.strip()]
+    if args.context_neighbours:
+        chunks = add_context(chunks, args.context_neighbours)
     chunks = [c for c in chunks if c["id"] not in done
               and (not args.sources or c["source"] in args.sources)
+              and (not args.paths or any(p in c["path"] for p in args.paths))
               and (args.existing is None or c["id"] in args.existing)]
     random.Random(args.seed).shuffle(chunks)  # spread sources across a partial run
     if args.limit:
