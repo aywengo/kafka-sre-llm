@@ -11,13 +11,14 @@ language: [en]
 
 > **Experimental preview — verify all configs and commands before applying them to a cluster. Not for unattended use.**
 
-> **Automatic eval gate: FAILED.**
-> DeepSeek judge on 40 real-world questions: tuned 3.05 vs base 3.15 (gate needed +0.3).
-> Better on Strimzi (+1.2), Kafka config (+0.8), Argo CD (+0.4); worse on Kafka
-> operations (-1.8), streaming and Kubernetes. Blind review by the author and a second
-> LLM reviewer on 10 of those questions favoured the tuned model (8-1 and 5-4), mainly because the base model
-> invents CRD fields, endpoints and defaults. The tuned model gives short answers
-> (~230 tokens) that are more accurate but less complete for troubleshooting.
+> **Automatic eval gate: FAILED** (re-run with a fair 2048-token limit).
+> DeepSeek judge on 40 real-world questions: tuned 3.05 vs base 3.12 (gate needed +0.3).
+> A second judge (GLM-5.3-Flash) gives +0.18 on 39 of them, also below the gate.
+> Better on Strimzi (+1.0), Kafka config (+0.7), Argo CD (+0.6); worse on Kafka
+> operations (-1.6), streaming (-2.0) and Kubernetes (-0.2). Blind review by the author and a second
+> LLM reviewer on 10 of those questions favoured the tuned model (8-1 and 5-4), mainly because
+> the base model invents CRD fields, endpoints and defaults. The tuned model gives short answers
+> (~260 tokens on average) that are more accurate but less complete for troubleshooting.
 
 A LoRA fine-tune of **Qwen/Qwen3.8-27B** for operating Apache Kafka on Kubernetes: Strimzi,
 cluster operations and troubleshooting, GitOps with Argo CD, and data streaming patterns.
@@ -87,88 +88,68 @@ weak filter: it rejected only 1-3% of items it re-checked.
 
 ## Evaluation
 
-**The judge is the same model that generated the training data** (DeepSeek-V4.1-Flash, local 4-bit build `DeepSeek-V4.1-Flash-1017-oQ4e-mtp`), so its scores can favour the style and the mistakes of the training data; read them together with the blind review below. Judge settings: thinking off, scores 1-5 per answer with the reference notes; answer order randomised; the judge was told to score content only and not to penalise answers cut off by the length limit (1024 new tokens). Base and tuned answers use the same non-thinking prompt.
+**Two local LLM judges, no human judge in the tables.** Judge 1 is DeepSeek-V4.1-Flash (local 4-bit build `DeepSeek-V4.1-Flash-1017-oQ4e-mtp`, thinking off). **It is the same model that generated the training data**, so its scores can favour the style and the mistakes of the training data. Judge 2 is GLM-5.3-Flash (local `oQ4e` build, thinking on; the chat template cannot turn it off; about 3,500 tokens and 2.8 minutes per item). Both score each answer 1-5 against reference notes, answer order randomised, content only; they were told not to penalise answers cut off by the length limit. Answers come from greedy decoding (temperature 0) with up to **2048** new tokens; base and tuned use the same non-thinking prompt. Read the scores together with the blind review below.
+
+**Why this replaces the first run.** The first run allowed only 1024 new tokens. 122 of 152 base answers were cut off, so the comparison was not fair. All numbers below use 2048 tokens (8 of 152 base answers and 3 of 152 tuned answers are still cut off). Answers that had finished under 1024 tokens were reused (greedy output does not change). The gate result did not change: on `questions_real` the first run gave base 3.15, tuned 3.05 (-0.10); this run gives base 3.12, tuned 3.05 (-0.08).
 
 ### questions.jsonl (12 hand-written, first set)
 
-All pairs:
-
 | Category | Base | Tuned | Delta | n |
 |---|---|---|---|---|
-| gitops | 4.00 | 2.50 | -1.50 | 2 |
-| kafka-ops | 4.33 | 3.67 | -0.67 | 3 |
-| kubernetes | 3.00 | 4.50 | +1.50 | 2 |
-| schema-registry | 1.00 | 2.00 | +1.00 | 1 |
+| gitops | 4.50 | 2.50 | -2.00 | 2 |
+| kafka-ops | 4.33 | 4.00 | -0.33 | 3 |
+| kubernetes | 3.00 | 4.00 | +1.00 | 2 |
+| schema-registry | 2.00 | 2.00 | +0.00 | 1 |
 | streaming | 5.00 | 4.00 | -1.00 | 1 |
-| strimzi | 4.00 | 2.67 | -1.33 | 3 |
-| **Overall** | **3.75** | **3.25** | **-0.50** | **12** |
-
-Pairs where neither answer was truncated:
-
-| Category | Base | Tuned | Delta | n |
-|---|---|---|---|---|
-| strimzi | 5.00 | 2.00 | -3.00 | 1 |
-| **Overall** | **5.00** | **2.00** | **-3.00** | **1** |
+| strimzi | 3.67 | 2.67 | -1.00 | 3 |
+| **Overall** | **3.83** | **3.25** | **-0.58** | **12** |
 
 ### questions_real.jsonl (40 hand-written, publish gate)
 
-All pairs:
-
 | Category | Base | Tuned | Delta | n |
 |---|---|---|---|---|
-| argo-cd | 2.80 | 3.20 | +0.40 | 5 |
-| kafka-config | 2.50 | 3.33 | +0.83 | 6 |
-| kafka-ops | 4.10 | 2.30 | -1.80 | 10 |
-| kubernetes | 3.60 | 3.20 | -0.40 | 5 |
-| schema-registry | 2.50 | 2.50 | +0.00 | 2 |
-| streaming | 3.50 | 2.00 | -1.50 | 2 |
-| strimzi | 2.60 | 3.80 | +1.20 | 10 |
-| **Overall** | **3.15** | **3.05** | **-0.10** | **40** |
-
-Pairs where neither answer was truncated:
-
-| Category | Base | Tuned | Delta | n |
-|---|---|---|---|---|
-| kafka-config | 1.00 | 3.50 | +2.50 | 2 |
-| kafka-ops | 4.00 | 1.50 | -2.50 | 2 |
-| schema-registry | 1.00 | 1.00 | +0.00 | 1 |
-| strimzi | 4.00 | 4.00 | +0.00 | 2 |
-| **Overall** | **2.71** | **2.71** | **+0.00** | **7** |
+| argo-cd | 2.60 | 3.20 | +0.60 | 5 |
+| kafka-config | 2.67 | 3.33 | +0.67 | 6 |
+| kafka-ops | 4.00 | 2.40 | -1.60 | 10 |
+| kubernetes | 3.60 | 3.40 | -0.20 | 5 |
+| schema-registry | 1.50 | 2.00 | +0.50 | 2 |
+| streaming | 4.00 | 2.00 | -2.00 | 2 |
+| strimzi | 2.70 | 3.70 | +1.00 | 10 |
+| **Overall** | **3.12** | **3.05** | **-0.08** | **40** |
 
 ### questions_synthetic.jsonl (100 held-out synthetic test items)
 
-All pairs:
-
 | Category | Base | Tuned | Delta | n |
 |---|---|---|---|---|
-| apache-kafka | 2.65 | 2.06 | -0.59 | 17 |
-| apache-kafka-config | 1.70 | 2.70 | +1.00 | 10 |
-| argo-cd | 2.00 | 1.83 | -0.17 | 18 |
-| kubernetes | 2.62 | 2.54 | -0.08 | 24 |
-| strimzi | 2.13 | 2.81 | +0.68 | 31 |
-| **Overall** | **2.27** | **2.43** | **+0.16** | **100** |
+| apache-kafka | 2.59 | 2.00 | -0.59 | 17 |
+| apache-kafka-config | 1.80 | 2.70 | +0.90 | 10 |
+| argo-cd | 2.06 | 1.83 | -0.22 | 18 |
+| kubernetes | 2.71 | 2.54 | -0.17 | 24 |
+| strimzi | 2.13 | 2.77 | +0.65 | 31 |
+| **Overall** | **2.30** | **2.41** | **+0.11** | **100** |
 
-Pairs where neither answer was truncated:
-
-| Category | Base | Tuned | Delta | n |
-|---|---|---|---|---|
-| apache-kafka | 4.25 | 2.75 | -1.50 | 4 |
-| apache-kafka-config | 1.75 | 3.50 | +1.75 | 4 |
-| argo-cd | 2.20 | 2.80 | +0.60 | 5 |
-| kubernetes | 3.50 | 2.75 | -0.75 | 4 |
-| strimzi | 2.00 | 2.60 | +0.60 | 5 |
-| **Overall** | **2.68** | **2.86** | **+0.18** | **22** |
-
-### Truncation and length
+### Truncation and length (2048-token limit)
 
 | Set | Base truncated | Tuned truncated | Base mean tokens | Tuned mean tokens |
 |---|---|---|---|---|
-| questions | 11/12 | 0/12 | 1014 | 252 |
-| questions_real | 33/40 | 0/40 | 993 | 218 |
-| questions_synthetic | 78/100 | 3/100 | 991 | 250 |
-| **All** | **122/152** | **3/152** | | |
+| questions | 2/12 | 0/12 | 1752 | 252 |
+| questions_real | 2/40 | 0/40 | 1407 | 218 |
+| questions_synthetic | 4/100 | 3/100 | 1331 | 281 |
+| **All** | **8/152** | **3/152** | 1385 | 262 |
 
-### Five biggest wins and losses on the real set (tuned vs base)
+### Second judge (GLM-5.3-Flash), same 2048-token answers
+
+GLM returned no valid JSON for 4 of 152 questions at 2048 tokens (1 real, 3 synthetic; the reply hit its 32,768-token limit while thinking). Those questions are left out for both judges in this table.
+
+| Set | DeepSeek base / tuned (delta) | GLM-5.3-Flash base / tuned (delta) | n scored by GLM |
+|---|---|---|---|
+| questions | 3.83 / 3.25 (-0.58) | 3.17 / 3.75 (+0.58) | 12/12 |
+| questions_real | 3.18 / 3.08 (-0.10) | 2.97 / 3.15 (+0.18) | 39/40 |
+| questions_synthetic | 2.26 / 2.45 (+0.20) | 2.21 / 2.86 (+0.65) | 97/100 |
+
+On the gate set GLM also stays below the +0.3 gate (+0.18). Across all questions the two judges agree on the exact score 55% of the time, within one point 93%, and have a correlation of 0.78; they pick the same better answer (base, tuned or tie) for 65% of questions.
+
+### Five biggest wins and losses on the real set (tuned vs base, DeepSeek, 2048 tokens)
 
 Judge notes are shortened; "base" and "tuned" replace the judge's A/B labels (answer order was randomised).
 
@@ -176,29 +157,34 @@ Wins:
 
 | Category | Question | Base | Tuned | Judge note |
 |---|---|---|---|---|
-| kafka-config | What is the difference between log.retention.hours, log.retention.ms and retention.ms, and which one wins? | 1 | 5 | tuned is correct: log.retention.* are broker defaults, retention.ms is the topic-level override that wins, and log.retention.ms takes precedence over log.retention.hours at broker level. Minor nit: the deprecation caveat about log.retention.ms is questionable,… |
-| argo-cd | Argo CD wants to prune KafkaTopics that the application created at runtime. How do we stop it from deleting to… | 2 | 5 | base recommends AppProject 'exclusions' as a way to exclude KafkaTopics from Argo CD management/pruning; AppProject has no such 'exclusions' field (it has clusterResourceWhitelist/blacklist, namespaceResourceWhitelist/blacklist, and sync windows), so this is a… |
-| strimzi | We still run a ZooKeeper-based Strimzi cluster. What do we need to know before upgrading Strimzi to the latest… | 2 | 5 | base is partly correct but contains significant errors: it claims ZooKeeper is only deprecated and that upgrading Strimzi while staying on ZooKeeper is a viable path, whereas recent Strimzi releases removed ZooKeeper support entirely. It also invents/implies i… |
-| strimzi | We added two brokers. How do we move existing partitions onto them with Cruise Control? | 2 | 5 | base describes generic Cruise Control REST workflow but ignores Strimzi KafkaRebalance CR, uses invented/incorrect REST endpoints and flags (e.g. /kafka/cruisecontrol/proposal, dryrun, execute), and misses the add-brokers mode and approval annotation. tuned co… |
-| kafka-config | What are the default values of linger.ms and batch.size in current Kafka producers, and when would I change th… | 1 | 4 | base is wrong: it states linger.ms default is 0 in Kafka 4.0 and explicitly denies any change, contradicting KIP-1030 (default 5 ms in 4.0). It also fails to flag version dependence. tuned correctly gives 5 ms and 16384 bytes, explains trade-offs and caveats, … |
+| kafka-config | What is the difference between log.retention.hours, log.retention.ms and retention.ms, and which one wins? | 1 | 5 | tuned is correct: log.retention.* are broker defaults, retention.ms is the topic-level override that wins, and log.retention.ms takes precedence over log.retention.hours at broker level. Minor nit: the deprecation caveat about log.retention.ms is qu… |
+| strimzi | We added two brokers. How do we move existing partitions onto them with Cruise Control? | 2 | 5 | base describes raw Cruise Control REST API workflow but misses the Strimzi KafkaRebalance add-brokers mode entirely, and uses invented/incorrect endpoints and params (e.g. /kafka/cruisecontrol/proposal, dryrun=false, /execute, /execution, replica.mo… |
+| strimzi | We still run a ZooKeeper-based Strimzi cluster. What do we need to know before upgrading Strimzi to the lates… | 2 | 5 | base is largely wrong/dangerous: claims latest Strimzi still supports ZooKeeper (deprecated only), invents CRD fields (kafka.controller, entityTopic/entityConfig), wrong ports (9092/9093 for controller/broker), wrong migration steps (stopping ZK ens… |
+| argo-cd | Argo CD wants to prune KafkaTopics that the application created at runtime. How do we stop it from deleting t… | 2 | 5 | base: invents AppProject 'exclusions' field (not a real Argo CD AppProject field; real mechanism is ignoreDifferences/Resource customizations or sync-options), and wrongly claims ignoreDifferences doesn't prevent pruning without extra config; also c… |
+| kafka-config | What are the default values of linger.ms and batch.size in current Kafka producers, and when would I change t… | 2 | 4 | base states linger.ms default is 0 and explicitly claims no change in Kafka 4.0, contradicting KIP-1030 (default 5 ms in 4.0); it also fails to flag version dependence, so capped at 2 despite otherwise good tuning guidance. tuned correctly gives lin… |
 
 Losses:
 
 | Category | Question | Base | Tuned | Judge note |
 |---|---|---|---|---|
-| kafka-ops | A broker took 40 minutes to come back after it crashed. Why so long and how can I make restarts faster? | 5 | 2 | tuned is vague and partly wrong: it claims reducing segment count/size is the main lever, but the reference notes emphasize num.recovery.threads.per.data.dir (default 1), unclean shutdown, partition/segment counts, disk speed, and controlled shutdown. It omits… |
-| kafka-ops | We run Kafka in KRaft mode. How do I check that the controller quorum is healthy? | 4 | 1 | base is largely correct: uses kafka-metadata-quorum describe --status, mentions leader/epoch/high watermark/voters, and adds replication/logs/metrics. Minor issues: 'describe --replica' is not the documented subcommand (should be --replication), and some JMX m… |
-| argo-cd | A bad Kafka config change was synced by Argo CD. What is the right way to roll it back? | 5 | 2 | base correctly recommends reverting the commit in Git and letting Argo CD sync, keeps Git as source of truth, warns against manual kubectl edits, and notes Strimzi broker restarts for non-dynamic configs. Minor issue: the emergency 'argocd app set --sync-optio… |
-| streaming | How do we enable exactly-once processing in Kafka Streams and what does it require? | 5 | 2 | tuned has a dangerous factual error: claims EOS is only supported when input and output topics are internal topics, which is false (EOS works with external source/sink topics; only repartition/changelog topics are internal). Also misattributes transaction.stat… |
-| kafka-ops | After deploying a new version of our consumer service, the consumer group keeps rebalancing every few minutes … | 4 | 2 | tuned misdiagnoses the issue: it attributes rebalances to unclean shutdown/session.timeout.ms rather than max.poll.interval.ms exceeded due to slow processing, which is the likely cause per reference. It also incorrectly states session.timeout.ms is a consumer… |
+| kafka-ops | After deploying a new version of our consumer service, the consumer group keeps rebalancing every few minutes… | 5 | 2 | tuned misdiagnoses the problem: it attributes rebalances to unclean shutdown/LeaveGroup and session.timeout.ms, whereas the reference points to max.poll.interval.ms exceeded due to slower processing (members leaving group). It also incorrectly state… |
+| kafka-ops | We run Kafka in KRaft mode. How do I check that the controller quorum is healthy? | 4 | 1 | base is largely correct: uses kafka-metadata-quorum describe --status, mentions leader/epoch/high watermark/voters, and adds replication/logs/metrics. Minor issues: 'describe --replica' is not the documented subcommand (should be --replication), and… |
+| kafka-ops | We need more throughput on a keyed topic and want to go from 12 to 24 partitions. What are the risks? | 5 | 2 | base is correct, specific and safe: explains hash(key)%partitions remapping, per-key ordering break, split key history, consumer rebalance, producer metadata refresh, Streams/state impact, and gives both in-place and new-topic migration paths plus S… |
+| streaming | How do we enable exactly-once processing in Kafka Streams and what does it require? | 5 | 2 | tuned has a serious factual error: it claims EOS is only supported when input and output topics are internal topics, which is wrong (EOS works with external source/sink topics; it's the internal repartition/changelog topics that matter). It also mis… |
+| kafka-ops | One broker's data disk fills much faster than the others in the same cluster. How do I find out why and rebal… | 4 | 2 | base is thorough and mostly correct: covers partition/leader skew, kafka-log-dirs, retention configs, reassignment with generate/execute/verify, compaction, and caveats. Minor issues: kafka-leader-election.sh --all-replica-leaders is not a real flag… |
 
 ### Blind review by the author and a second LLM reviewer (10 of the real questions)
+
+The blind review used the answers from the first run (1024-token limit); the judge rows use the same answers.
 
 | Reviewer | Tuned better | Base better | Tie | Major errors base / tuned |
 |---|---|---|---|---|
 | The author | 8 | 1 | 1 | 9 / 4 |
 | A second LLM reviewer | 5 | 4 | 1 | 7 / 3 |
 | DeepSeek judge (same 10) | 4 | 5 | 1 | |
+| GLM-5.3-Flash judge (same 10) | 6 | 2 | 2 | |
+
+Agreement with the author's verdict on the 10: GLM 8, DeepSeek 6. Agreement with the second reviewer: GLM 8, DeepSeek 9. The author and the second reviewer agree on 7 of 10. Ten questions is a small sample.
 
 ## Known failure modes
 Found in the evaluation and in manual review of answers. Check these especially:
@@ -213,7 +199,7 @@ Found in the evaluation and in manual review of answers. Check these especially:
   contain, and wrong placement of a setting (broker vs topic vs client vs Connect worker).
 - **No system prompt:** without the recommended system prompt the model can invent tools and
   scripts (for example a non-existent `strimzi-lag-report.sh` for consumer lag). Always use the prompt below.
-- **Short answers:** about 230 tokens on average; less complete than the base model for
+- **Short answers:** about 260 tokens on average; less complete than the base model for
   multi-step troubleshooting.
 
 ## Limitations
@@ -261,21 +247,10 @@ mlx_lm.generate --model aywengo/kafka-sre-27b-v1-preview-MLX-4bit --max-tokens 6
 llama-cli -m kafka-sre-27b-v1-preview-Q4_K_M.gguf --jinja -sys "<system prompt above>" -p "..."
 ```
 
-**Ollama** (Modelfile not tested): save as `Modelfile` next to the GGUF file, then `ollama create kafka-sre -f Modelfile`:
-```
-FROM ./kafka-sre-27b-v1-preview-Q4_K_M.gguf
-TEMPLATE """{{- if .System }}<|im_start|>system
-{{ .System }}<|im_end|>
-{{ end }}<|im_start|>user
-{{ .Prompt }}<|im_end|>
-<|im_start|>assistant
-<think>
-
-</think>
-
-"""
-PARAMETER stop "<|im_end|>"
-```
+**Ollama:** not supported by Ollama 0.14.2. Importing the GGUF works, but loading it fails with
+`unknown model architecture: 'qwen35'` (this model is a hybrid with linear-attention layers). Use
+llama.cpp. Newer Ollama releases (v0.40.x) list Qwen3.5 and Qwen3.8 support; this GGUF was not
+tested with them.
 
 ## License
 Apache-2.0, the same as the base model. The Kubernetes documentation part of the training data

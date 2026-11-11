@@ -10,8 +10,10 @@ Writes eval/results.jsonl and prints mean scores per category.
 import argparse
 import hashlib
 import json
+import os
 import re
 import statistics
+import time
 from collections import defaultdict
 from pathlib import Path
 
@@ -42,17 +44,25 @@ def answer(model, tok, question, max_tokens):
 
 
 def judge(url, model, q, ref, a, b, api_key=None, extra_body=None):
+    """Returns (parsed JSON or None, stats); None means the reply had no valid JSON."""
     user = f"Question:\n{q}\n\nReference notes:\n{ref or '(none)'}\n\nAnswer A:\n{a}\n\nAnswer B:\n{b}"
-    r = httpx.post(f"{url.rstrip('/')}/chat/completions", timeout=600,
+    t0 = time.time()
+    r = httpx.post(f"{url.rstrip('/')}/chat/completions", timeout=1800,
                    headers={"Authorization": f"Bearer {api_key}"} if api_key else {}, json={
         **(extra_body or {}),
         "model": model, "temperature": 0,
         "messages": [{"role": "system", "content": JUDGE_SYSTEM}, {"role": "user", "content": user}],
     })
     r.raise_for_status()
-    txt = re.sub(r"<think>.*?</think>", "", r.json()["choices"][0]["message"]["content"], flags=re.S)
+    body = r.json()
+    stats = {"seconds": round(time.time() - t0, 1), "completion_tokens": body.get("usage", {}).get("completion_tokens"),
+             "finish_reason": body["choices"][0].get("finish_reason")}
+    txt = re.sub(r"<think>.*?</think>", "", body["choices"][0]["message"].get("content") or "", flags=re.S)
     m = re.search(r"\{.*\}", txt, flags=re.S)
-    return json.loads(m.group(0)) if m else None
+    try:
+        return (json.loads(m.group(0)) if m else None), stats
+    except json.JSONDecodeError:
+        return None, stats
 
 
 def main():
@@ -65,11 +75,12 @@ def main():
     ap.add_argument("--max-tokens", type=int, default=1024)
     ap.add_argument("--judge-url")
     ap.add_argument("--judge-model", default="default")
-    ap.add_argument("--judge-api-key")
+    ap.add_argument("--judge-api-key", default=os.environ.get("JUDGE_API_KEY"))
     ap.add_argument("--judge-extra-body", type=json.loads, default=None,
                     help='JSON merged into judge requests, e.g. \'{"chat_template_kwargs": {"thinking_mode": "chat"}}\'')
     ap.add_argument("--cache", help="JSONL of generated answers; written as they are produced and "
                                     "reused on rerun, so generation can resume and judging can run later")
+    ap.add_argument("--judge-cache", help="JSONL of judge replies keyed by prompt hash; written per item and reused on rerun")
     args = ap.parse_args()
 
     qs = [dict(json.loads(l), set=Path(p).stem) for p in args.questions
@@ -99,6 +110,11 @@ def main():
             rows[i][label], rows[i][f"{label}_tokens"], rows[i][f"{label}_truncated"] = \
                 e["text"], e["tokens"], e["truncated"]
 
+    jcache = {}
+    if args.judge_cache and Path(args.judge_cache).exists():
+        for l in Path(args.judge_cache).open():
+            c = json.loads(l)
+            jcache[c["key"]] = c
     scores = defaultdict(lambda: {"base": [], "tuned": []})  # keyed by (set, category)
     clean = defaultdict(lambda: {"base": [], "tuned": []})   # pairs where neither answer was truncated
     for r in rows:
@@ -106,8 +122,15 @@ def main():
             # randomise which answer is shown first to reduce position bias
             swap = int(hashlib.md5(r["question"].encode()).hexdigest(), 16) % 2
             a, b = (r["tuned"], r["base"]) if swap else (r["base"], r["tuned"])
-            j = judge(args.judge_url, args.judge_model, r["question"], r.get("reference"), a, b,
-                      args.judge_api_key, args.judge_extra_body)
+            ckey = hashlib.md5(f"{args.judge_model}\0{r['question']}\0{a}\0{b}".encode()).hexdigest()
+            if ckey not in jcache:
+                j, stats = judge(args.judge_url, args.judge_model, r["question"], r.get("reference"), a, b,
+                                 args.judge_api_key, args.judge_extra_body)
+                jcache[ckey] = {"key": ckey, "question": r["question"], "j": j, **stats}
+                if args.judge_cache:
+                    with open(args.judge_cache, "a") as f:
+                        f.write(json.dumps(jcache[ckey], ensure_ascii=False) + "\n")
+            j = jcache[ckey]["j"]
             if j:
                 r["score_base"], r["score_tuned"] = (j["b"], j["a"]) if swap else (j["a"], j["b"])
                 r["judge_notes"] = j.get("notes")
