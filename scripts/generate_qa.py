@@ -46,6 +46,16 @@ or connector, or the exact custom resource field path. Never move a setting to a
 - If the question's premise is wrong (wrong component, wrong version, wrong scope), the answer \
 must correct it first instead of going along with it.
 - Label early-access, preview or deprecated features as such, using the excerpt's wording.
+- Caveats, side effects, alternatives (other modes, flags, endpoints), examples, defaults and \
+deprecations are facts too. Include one only if the excerpt states it. If the excerpt gives no \
+caveat, write none.
+- Troubleshooting answers are a checklist: the likely causes the excerpt names, most likely \
+first; for each, how to check it (command or metric from the excerpt) and the fix. Never add a \
+cause the excerpt does not name. If it names only one, give that one well.
+- If the excerpt says something is not covered by official documentation, is a compiler's \
+note, or cannot be completed from the docs, keep that warning in the answer in plain words.
+- This dataset targets Kafka 4.3 and Strimzi 1.3.1. Do not mention other versions unless the \
+excerpt does.
 - Never output unresolved placeholders such as {SomeAttribute}; if the excerpt has one, leave \
 that detail out.
 - If the excerpt is navigation, a changelog, a list of links or has no technical substance, \
@@ -68,7 +78,11 @@ contains a wrong config key/flag/default, would mislead an operator, contains an
 placeholder such as {SomeAttribute}, uses an apiVersion that is not in the excerpt, places a \
 setting at the wrong scope (broker vs topic vs client vs Connect worker vs connector vs a \
 specific custom resource field), or accepts a false premise in the question instead of \
-correcting it."""
+correcting it, adds a caveat, alternative, example, endpoint, default or deprecation that is \
+not in the excerpt, lists a troubleshooting cause that is not in the excerpt, or drops a \
+not-covered-by-the-docs warning that the excerpt has. First restate the premise of the \
+question in a few words and check it against the excerpt (key vs value, component, scope, \
+version)."""
 
 VERIFY_SYSTEM = """You check training data for factual grounding. Given an excerpt and a \
 question/answer pair, reply with ONLY a JSON object: {"grounded": true|false, "reason": "..."}. \
