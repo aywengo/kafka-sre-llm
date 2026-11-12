@@ -81,7 +81,9 @@ GEN_USER_TYPES = """Source: {source} — {title}
 
 Write {n} diverse items, all of type "{types}". For troubleshooting: a realistic symptom as an \
 engineer would report it, then the causes the excerpt names in order of likelihood, how to \
-check each, and the fix. Skip the excerpt (return []) if it names no failure mode."""
+check each, and the fix. Do not repeat general setup text from the excerpt (e.g. how to \
+enable remote JMX or its security) unless the question is about it. Skip the excerpt (return \
+[]) if it names no failure mode."""
 
 GEN_SYSTEM_CONFIG_REF = """You write training data for an assistant that is a senior Site Reliability \
 Engineer specialised in Apache Kafka. You are given configuration reference entries \
