@@ -93,11 +93,11 @@ producer, consumer, admin, Connect, ...), type, default, valid values, importanc
 Quote key names and values exactly.
 - No advice, no recommendations, no troubleshooting causes, no restart or retry caveats, no \
 examples or YAML/properties snippets beyond what the entry itself contains, no other versions.
-- Write exactly one item per setting, in the order the settings appear, and rotate the question \
-style: setting 1 "what is X and what does it do", setting 2 "what is the default of X / can I \
-change it at runtime (update mode)", setting 3 "what values does X accept", then repeat. If the \
-entry lacks the facts a style needs (no update mode, no valid values), use the "what is X" style \
-for that setting.
+- Write exactly one item per setting, in the order the settings appear. Use the question style \
+"what is the default of X / can I change it at runtime (update mode)" ONLY for a setting whose \
+entry has an "Update Mode:" line. For every other setting use "what is X and what does it do". \
+Where valid values are listed you may use "what values does X accept" instead, but never rotate \
+into a style whose facts the entry lacks.
 - Questions are phrased like an engineer would ask. Answers are short and stand on their own: \
 never refer to "the entry", "the excerpt" or "the documentation".
 - If an entry has no technical substance, return [].
@@ -364,6 +364,7 @@ async def main():
     ap.add_argument("--paths", nargs="*", help="only chunks whose path contains one of these")
     ap.add_argument("--profile", choices=["config-ref"],
                     help="config-ref: single-setting reference entries, answer only what the entry states")
+    ap.add_argument("--text-contains", help="only chunks whose text contains this string")
     ap.add_argument("--types", help="ask only for items of this type, e.g. troubleshooting")
     args = ap.parse_args()
     args.existing = None
@@ -385,6 +386,7 @@ async def main():
     chunks = [c for c in chunks if c["id"] not in done
               and (not args.sources or c["source"] in args.sources)
               and (not args.paths or any(p in c["path"] for p in args.paths))
+              and (not args.text_contains or args.text_contains in c["text"])
               and (args.existing is None or c["id"] in args.existing)]
     random.Random(args.seed).shuffle(chunks)  # spread sources across a partial run
     if args.limit:
