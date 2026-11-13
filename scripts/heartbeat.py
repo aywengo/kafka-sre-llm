@@ -148,6 +148,7 @@ def training_state(args):
         total = (yaml.safe_load(Path(args.train_config).read_text()) or {}).get("iters")
     trains, vals = parse_train_table(text)
     st = {"iters_total": total, "vals": [(i, l) for i, l, _ in vals]}
+    nan = any(math.isnan(l) or math.isinf(l) for _, l, _ in vals)
     if trains:
         it, loss, tps, tokens = trains[-1]
         st.update(iter=it, train_loss=loss, tokens_per_sec=tps)
@@ -156,7 +157,7 @@ def training_state(args):
             st["it_per_sec"] = round(tps / tok_per_iter, 4)
         nan = any(math.isnan(l) or math.isinf(l) for _, l, _, _ in trains) or \
             any(math.isnan(l) or math.isinf(l) for _, l, _ in vals)
-    else:  # older mlx-lm: "Iter N: Train loss ..."
+    elif not vals:  # older mlx-lm: "Iter N: Train loss ..."
         old_trains, old_vals = TRAIN_RE.findall(text), VAL_RE.findall(text)
         st["vals"] = [(int(i), float(l)) for i, l in old_vals]
         if old_trains:
