@@ -78,15 +78,23 @@ def main():
     splits = {"train": [], "valid": [], "test": []}
     by_source = Counter()
 
-    def dropped(it):
-        return any(r.search(it["question"]) or r.search(it["answer"]) for r in drop_res)
+    by_file = Counter()
+    pattern_drops = Counter()
+
+    def dropped(it, count=True):
+        for r in drop_res:
+            if r.search(it["question"]) or r.search(it["answer"]):
+                if count:
+                    pattern_drops[r.pattern] += 1
+                return True
+        return False
 
     skip_cap = set()  # (chunk_id, item index) removed by --cap-path
     for pat, n in caps:
         cand = [(rec["chunk_id"], i)
                 for raw in args.raw for rec in map(json.loads, Path(raw).open())
                 if pat.search(rec.get("path", "")) and rec.get("source") not in args.skip_sources
-                for i, it in enumerate(rec["items"]) if not dropped(it)]
+                for i, it in enumerate(rec["items"]) if not dropped(it, count=False)]
         keep = set(random.Random(args.seed).sample(cand, min(n, len(cand))))
         skip_cap |= set(cand) - keep
         drop["cap_path"] += len(cand) - len(keep)
@@ -137,6 +145,7 @@ def main():
                 msgs += [{"role": "user", "content": q}, {"role": "assistant", "content": a}]
                 splits[split].append({"messages": msgs})
                 by_source[rec["source"]] += 1
+                by_file[(Path(raw).name, rec["source"])] += 1
 
     if args.general:
         gen = [json.loads(l) for l in Path(args.general).open() if l.strip()]
@@ -155,6 +164,8 @@ def main():
         print(f"{name}: {len(rows)}")
     print(f"per source: {dict(by_source)}")
     print(f"dropped: {dict(drop)}")
+    print(f"drop_pattern by pattern: {dict(pattern_drops)}")
+    print("per file:", {f"{f}:{s}": n for (f, s), n in sorted(by_file.items())})
     n = len(splits["train"])
     print(f"hint: iters for 2 epochs at batch 4 ≈ {max(1, 2 * n // 4)}")
 
