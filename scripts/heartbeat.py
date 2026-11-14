@@ -167,6 +167,12 @@ def training_state(args):
         nan = "nan" in text.lower().split("iter")[-1]
     if nan:
         st["nan"] = True
+    off = args.iter_offset  # resumed run: report global iterations
+    if off:
+        st["iters_total"] = (st["iters_total"] or 0) + off
+        st["vals"] = [(i + off, l) for i, l in st["vals"]]
+        if "iter" in st:
+            st["iter"] += off
     return st
 
 
@@ -276,6 +282,7 @@ def main():
     ap.add_argument("--gen-log", default="runs/v1/logs/generate.log")
     ap.add_argument("--train-log", default="runs/v1/logs/train.log")
     ap.add_argument("--train-config", default="runs/v1/lora.yaml")
+    ap.add_argument("--iter-offset", type=int, default=0, help="iterations already done before this (resumed) run")
     ap.add_argument("--regen-chunks",
                     help="chunk file of the generation stage; other chunks are re-verify only and "
                          "are counted at the (separately measured) reverify rate")
