@@ -72,7 +72,21 @@ and fixes from several pages) and still contain nothing the docs don't say.
 4. **Standing go for judge swaps: GIVEN (Roman, 2026-11-15).** Phase 0 and Phase 9 each need
    the oQ8e ↔ DeepSeek swap; the agent may do those named swaps without asking. It must
    still check, before every swap, that no other oMLX client is active, and wait for Roman
-   if one is. The go covers these swaps only, not other oMLX model changes.
+   if one is.
+   **On-demand loads of the mission's own models are also covered (Roman, 2026-11-15).**
+   oMLX loads models on demand, as in v2. The agent may, without asking:
+   - load DeepSeek-V4.1-Flash for generation and verification (Phases 1, 3, 4) and as the
+     second judge;
+   - load `GLM-5.3-Flash-oQ4e` next to DeepSeek for the Phase 4 check and audit;
+   - load `GLM-5.3-Flash-oQ8e-mtp` as the primary judge (Phases 0 and 9);
+   - unload any of these three when its job is done or when GPU exclusivity is needed for
+     training or answer generation.
+   Conditions for every load or unload: no other oMLX client is active (otherwise wait for
+   Roman); the models that will be loaded together fit in memory (oQ4e + DeepSeek fit;
+   oQ8e goes alone); and the change is noted in `HEARTBEAT.md` with what was loaded and
+   unloaded.
+   Still needs Roman's go: any model not named here (for example an embedding model for
+   retrieval), any download or install, and unloading a model the mission did not load.
 
 ## Goal
 
