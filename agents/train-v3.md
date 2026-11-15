@@ -1,4 +1,4 @@
-# Mission: kafka-sre v3 — retrieval-grounded generation (DRAFT, needs Roman's review)
+# Mission: kafka-sre v3 — retrieval-grounded generation
 
 v2 failed its gate and scored below v1 on the 40 real questions (GLM: v1 +0.18, v2 −0.15;
 kafka-ops −1.0). Its data was accurate but short: mean training answer 868 chars (v1 1,135),
@@ -28,10 +28,16 @@ and fixes from several pages) and still contain nothing the docs don't say.
    checkpoint 600 −0.62, checkpoint 1050 −0.48, final at scale 10 −0.30. Earlier checkpoints
    are worse, so v3 does not train fewer steps. Scale 10 vs 20 is undecided until the final
    adapter at scale 20 is re-judged with oQ8e (Phase 0 step 4); only a difference ≥ 0.3
-   changes the v3 scale.
+   changes the v3 scale. Rule: scale 20 at −0.60 or worse (tuned − base) → v3 trains at
+   scale 10; anything better → keep 20.
 2. **RAG baseline first.** Phase 0 measures base model + retrieval with no fine-tuning and is
-   run as its own step; the mission stops after it and waits for Roman. If RAG base beats v1
-   by ≥ 0.3 (paired, oQ8e), decide whether v3 training is still worth a week.
+   run as its own step; the mission stops after it and waits for Roman. Rules for the
+   Phase 0 report (the agent applies them and states which case holds; Roman confirms):
+   - Recall under 28 / 40: decide nothing else. The RAG baseline and the v3 packs both
+     depend on retrieval; propose the retrieval fix and wait.
+   - RAG base ≥ v1 + 0.3 (paired, oQ8e): closed-book (A) is dropped. The choice is
+     open-book (B) or shipping RAG on the base model as is.
+   - RAG base within 0.3 of v1: go to decision point 3.
 3. **Closed-book or open-book training.** As first drafted, v3 answers are written from a pack
    but the model is trained on question → answer with no pack in the prompt. A rank-16 LoRA
    over one epoch learns the style, not the facts, so long closed-book answers risk more
@@ -40,8 +46,18 @@ and fixes from several pages) and still contain nothing the docs don't say.
    - (B) open-book: training rows carry the pack in the user message, formatted exactly as in
      Phase 0 step 3, and the adapter ships with retrieval;
    - (C) both, with separate adapters.
-   Recommendation: (B) if RAG base ≥ base + 0.3 in Phase 0, otherwise (A).
-   **Open-book is only feasible with small packs.** With full packs (k=6, 14,000 chars,
+   Rules for the Phase 0 report:
+   - RAG base ≥ base + 0.3: (B).
+   - RAG base under base + 0.3: (A) is the default, but flag it for Roman. (A) is the same
+     kind of training that gave +0.18 in v1 and −0.15 in v2, with kafka-ops below base both
+     times, so he decides whether a third attempt is worth ~5½ days.
+   - RAG base at k=3 / 6,000 is ≥ 0.3 below RAG base at k=6 / 14,000: small packs handicap
+     open-book. Then (B) uses full packs on the ~1,500-row subset instead of small packs on
+     all rows (and Phases 2–3 keep the full packs).
+   - (C) only if Roman wants the closed-book vs open-book comparison for the article; it
+     costs both trainings (~1 day + roughly 3 days).
+
+   **Open-book is only feasible with small packs** (or the subset above). With full packs (k=6, 14,000 chars,
    ~3,500 tokens) a row is ~4,000–4,500 tokens against ~500 in v2, which took ~22 hours;
    4,500 such rows would take roughly 4–7 days and more peak memory. So for (B) and (C) the
    pack is **k=3, capped at ~6,000 chars (~1,500 tokens per row)**, decided now, not at the
@@ -51,7 +67,7 @@ and fixes from several pages) and still contain nothing the docs don't say.
      Phases 2–3 build and use the k=3 / 6,000 packs for generation as well.
    - v3 + retrieval is evaluated with the same pack shape, and Phase 0 also records RAG base
      at k=3 / 6,000 so gate 4 compares like with like.
-   - Second fallback if the Phase 7 probe still projects over 2 days: train on a subset of
+   - If the Phase 7 probe still projects over 2 days with small packs: train on a subset of
      ~1,500 pack rows.
 4. **Standing go for judge swaps: GIVEN (Roman, 2026-11-15).** Phase 0 and Phase 9 each need
    the oQ8e ↔ DeepSeek swap; the agent may do those named swaps without asking. It must
