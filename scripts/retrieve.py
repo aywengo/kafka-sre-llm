@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""BM25 retrieval over work/v2/chunks.jsonl (title indexed TITLE_W times, path once).
+"""Retrieval over work/v2/chunks.jsonl: LLM query expansion -> BM25 top 40 -> cross-encoder rerank (CPU) ->
+top k, fused with the BM25 rank (RRF). BM25 indexes the title TITLE_W times, the path once.
 
     retrieve(question, k=6, max_chars=14000) -> [chunk dicts, best first]
 CLI: retrieve.py QUESTIONS.jsonl [--k 6 --max-chars 14000] > packs.jsonl
@@ -9,6 +10,7 @@ from collections import Counter
 from functools import lru_cache
 
 CHUNKS = "work/v2/chunks.jsonl"
+EXPAND_SYSTEM = """You help search technical documentation (Apache Kafka 4.3, Strimzi, Kubernetes, Argo CD). Given an on-call engineer's question, list the exact terms the relevant documentation pages would contain: configuration keys, metric and log names, CLI tools with flags, Kubernetes/Strimzi/Argo CD resource kinds and fields, error and exception names, and the names of the concepts involved. Output one comma-separated line of 15 to 30 terms, most important first. No sentences, no explanations."""
 K1, B, TITLE_W = 1.2, 0.75, 2
 STOP = set("a an and are as at be but by can do does for from has have how i if in is it its my of on or our so that the "
            "their then there these they this to was we what when where which why will with you your should would not no "
@@ -56,10 +58,32 @@ def scores(question):
     return s
 
 
-def retrieve(question, k=6, max_chars=14000):
+@lru_cache(maxsize=1)
+def reranker():
+    from sentence_transformers import CrossEncoder
+    return CrossEncoder("BAAI/bge-reranker-v2-m3", device="cpu", max_length=512)
+
+
+def rank(question, expansion=None, pool=40, rerank_query=None, chunk_chars=1500, rrf=True):
+    """Chunk indices, best first: BM25 on question + expansion -> top `pool` -> cross-encoder rerank (CPU)."""
+    chunks = index()[0]
+    cand = [i for i, _ in scores(question + " " + expansion if expansion else question).most_common(pool)]
+    if rerank_query is None and not expansion:
+        rerank_query = question
+    rq = rerank_query or question
+    ce = reranker().predict([(rq, (chunks[i]["title"] + "\n" + chunks[i]["text"])[:chunk_chars]) for i in cand], batch_size=8)
+    order = sorted(range(len(cand)), key=lambda j: -ce[j])
+    if rrf:
+        pos = {j: r for r, j in enumerate(order)}
+        order = sorted(range(len(cand)), key=lambda j: -(1 / (60 + j) + 1 / (60 + pos[j])))
+    return [cand[j] for j in order]
+
+
+def retrieve(question, k=6, max_chars=14000, expansion=None, rerank=True, **kw):
     chunks = index()[0]
     out, used = [], 0
-    for i, _ in scores(question).most_common(k):
+    ranked = rank(question, expansion, **kw) if rerank else [i for i, _ in scores(question + " " + expansion if expansion else question).most_common(k)]
+    for i in ranked[:k]:
         c = dict(chunks[i])
         room = max_chars - used
         if room < 500:
