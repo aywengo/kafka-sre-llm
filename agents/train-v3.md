@@ -101,8 +101,23 @@ All rules from `agents/train-v2.md` apply unchanged (cloud operator model; Roman
 uploads, push, deletes, installs, oMLX model changes; secrets from env only; commit rules;
 GPU exclusivity for training and answer generation; resumable jobs with retry wrappers;
 small context; heartbeat with the cron form, plus `scripts/heartbeat.py` during long jobs —
-point it at the right log and config every time a job changes). Three additions from v2:
+point it at the right log and config every time a job changes). Four additions from v2:
 
+- **GPU jobs run under `scripts/run_guarded.py`** (training, answer generation, anything that
+  loads a model locally), in place of `scripts/run_retry.sh`. It restarts a job that died of
+  a GPU or memory problem after 20 minutes, at most 6 times, writes `GUARD:` lines to the
+  job's log and, with `--heartbeat runs/v3/HEARTBEAT.md`, an entry per restart. Any other
+  failure is not restarted. This replaces v2's "if it hangs again, do not restart".
+  - Jobs that resume from their own output (generation, `compare.py` with caches) need
+    nothing more.
+  - Training must be started with `--resume-cmd`, a command that builds the resume config
+    from the last checkpoint in the exact batch order (as `runs/v2/lora_resume.yaml` was
+    built) and runs it. Without it the guard refuses to restart training, because a rerun
+    would start at iteration 0 and overwrite the adapter. Write and dry-run that resume
+    command before training starts.
+  - Use `--stall-min` (for training: at least 3 times the gap between log lines) so a
+    silent hang is caught too.
+  - Exit 75 = gave up after 6 restarts, or training without a resume command: needs Roman.
 - **Stop or repoint `scripts/heartbeat.py` when its job ends.** Never leave it running against
   a finished job: in v2 it kept appending "Phase 4 Train — DONE" every 30 minutes and left
   `status.json` at phase "4 Train", `needs_human: false`, after the gate had failed and while
