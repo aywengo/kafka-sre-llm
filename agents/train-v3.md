@@ -24,12 +24,11 @@ and fixes from several pages) and still contain nothing the docs don't say.
 
 ## Decision points before this mission starts (Roman)
 
-1. **The v2 diagnostic: answered for steps, open for scale.** On `questions_real` (oQ8e):
-   checkpoint 600 −0.62, checkpoint 1050 −0.48, final at scale 10 −0.30. Earlier checkpoints
-   are worse, so v3 does not train fewer steps. Scale 10 vs 20 is undecided until the final
-   adapter at scale 20 is re-judged with oQ8e (Phase 0 step 4); only a difference ≥ 0.3
-   changes the v3 scale. Rule: scale 20 at −0.60 or worse (tuned − base) → v3 trains at
-   scale 10; anything better → keep 20.
+1. **The v2 diagnostic: ANSWERED (2026-11-15).** On `questions_real` (oQ8e, 40 of 40 scored):
+   checkpoint 600 −0.62, checkpoint 1050 −0.48, final at scale 20 −0.18, final at scale 10
+   −0.30 (`work/v2/diag/results_*_oq8.jsonl`). Earlier checkpoints are worse, so v3 does not
+   train fewer steps; scale 20 is not worse than scale 10, so **v3 keeps LoRA scale 20**.
+   Every variant is below base, and kafka-ops is below base in all of them (−0.8 to −1.3).
 2. **RAG baseline first.** Phase 0 measures base model + retrieval with no fine-tuning and is
    run as its own step; the mission stops after it and waits for Roman. Rules for the
    Phase 0 report (the agent applies them and states which case holds; Roman confirms):
@@ -118,6 +117,12 @@ point it at the right log and config every time a job changes). Four additions f
   - Use `--stall-min` (for training: at least 3 times the gap between log lines) so a
     silent hang is caught too.
   - Exit 75 = gave up after 6 restarts, or training without a resume command: needs Roman.
+  - **To stop a guarded job, send SIGTERM to the guard's PID** (it stops the job's whole
+    process group and does not restart). Never kill the job or its children directly, and
+    never with `kill -9`: a SIGKILL looks like an out-of-memory kill and the guard restarts it.
+  - The guard runs the job in its own process group, stops the whole group on a stall, and
+    refuses to restart (exit 75) if any process of the old group survived, so two GPU jobs
+    never run side by side. If that happens, report the surviving PIDs and wait for Roman.
 - **Stop or repoint `scripts/heartbeat.py` when its job ends.** Never leave it running against
   a finished job: in v2 it kept appending "Phase 4 Train — DONE" every 30 minutes and left
   `status.json` at phase "4 Train", `needs_human: false`, after the gate had failed and while
@@ -162,9 +167,10 @@ point it at the right log and config every time a job changes). Four additions f
    judges RAG-base vs plain base (judge: GLM-5.3-Flash-oQ8e-mtp). Record `rag_base` scores; they
    are a second bar v3 must beat. Also record RAG base with the small pack (k=3, 6,000
    chars), needed if decision point 3 goes open-book.
-4. Same judge, for the final table: re-judge v1 (`eval/answers_2048.jsonl`, tuned) and v2 final
-   (scale 20) against base on `questions_real` with oQ8e, reusing the existing answers. The
-   v2 scale-20 result also settles decision point 1 (scale 10 vs 20).
+4. Same judge, for the final table: re-judge v1 (`eval/answers_2048.jsonl`, tuned) against base
+   on `questions_real` with oQ8e, reusing the existing answers. v2 final (scale 20) is already
+   judged with oQ8e (`work/v2/diag/results_final20_oq8.jsonl`: −0.18); reuse it, and add the
+   second judge pass the gate rules need.
 5. Inference-only variants of v2 (final adapter, scale 20) on `questions_real`, ~2 extra
    hours, same judge. They answer "would a prompt have saved v2" for the article:
    - v2 with a "be thorough" instruction added to the prompt;
@@ -282,7 +288,7 @@ Gate: ≤ 3 wrong. The agent must not pre-fill verdicts. Record in REPORT how it
 As v2 (`runs/v2/lora.yaml` copy: same hyperparameters, one epoch, `save_every 50`,
 `adapter_path adapters/kafka-sre-v3`), except:
 
-- LoRA scale as decision point 1 settles it. Not fewer steps.
+- LoRA scale 20, as in v2 (decision point 1). Not fewer steps.
 - Open-book (decision point 3): rows use the small packs (k=3, 6,000 chars). Set
   `max_seq_length` so no row is truncated (report the longest row), then run a 20-iteration
   probe and report it/s, peak memory and the projected total time. If the projection is over

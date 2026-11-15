@@ -29,6 +29,14 @@ command that contains "mlx_lm.lora" / "mlx_lm lora".
 The child sees GUARD_ATTEMPT (1 = first run) and GUARD_REASON (gpu|memory|stall|other) in its
 environment. Every restart and the final give-up are written to the log as lines starting with
 "GUARD:", to --status (JSON) and, if given, appended to --heartbeat as a short entry.
+
+The job runs in its own process group, and the guard always signals the whole group, so a
+trainer started by a wrapper script or --resume-cmd (shell) is stopped with it. Before a
+restart the guard checks that no process of the old group is left (a GPU-hung process may not
+die); if one is, it does not restart (exit 75), so two GPU jobs never run side by side.
+
+To stop a guarded job, send SIGTERM to the GUARD's pid (it stops the job and does not
+restart). Never kill the job itself: a SIGKILL looks like an out-of-memory kill and is restarted.
 """
 import argparse
 import datetime as dt
@@ -39,6 +47,8 @@ import signal
 import subprocess
 import sys
 import time
+
+GROUP_EXIT_WAIT_S = 30
 
 GPU_PATTERNS = [
     r"\[METAL\]",
@@ -81,6 +91,47 @@ def classify(returncode, text, stalled, extra):
     if returncode == -signal.SIGKILL:
         return "memory", "killed with SIGKILL (the kernel does this when memory runs out)"
     return "other", f"exit {returncode}"
+
+
+def group_alive(pgid):
+    try:
+        os.killpg(pgid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
+def signal_group(pgid, sig):
+    """Signal a process group. -> False if there was nothing to signal.
+    macOS answers EPERM (PermissionError), not ESRCH, when the group holds only a zombie,
+    i.e. the job has exited but was not reaped yet; that is not an error here."""
+    try:
+        os.killpg(pgid, sig)
+        return True
+    except (ProcessLookupError, PermissionError):
+        return False
+
+
+def stop_group(proc, wait_s=GROUP_EXIT_WAIT_S):
+    """SIGTERM the job's whole process group, then SIGKILL after wait_s. -> True if the group is gone."""
+    pgid = proc.pid
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        if not signal_group(pgid, sig):
+            break
+        deadline = time.time() + wait_s
+        while time.time() < deadline:
+            if proc.poll() is not None and not group_alive(pgid):
+                break
+            time.sleep(0.5)
+        if not group_alive(pgid):
+            break
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        pass
+    return not group_alive(pgid)
 
 
 def main():
@@ -135,8 +186,8 @@ def main():
     def on_signal(signum, _frame):
         nonlocal stopping
         stopping = True
-        if child and child.poll() is None:
-            child.send_signal(signum)
+        if child is not None:
+            signal_group(child.pid, signal.SIGTERM)
 
     signal.signal(signal.SIGTERM, on_signal)
     signal.signal(signal.SIGINT, on_signal)
@@ -150,28 +201,36 @@ def main():
         start = os.path.getsize(a.log) if os.path.exists(a.log) else 0
         with open(a.log, "a") as out:
             if use_resume:
-                child = subprocess.Popen(a.resume_cmd, shell=True, stdout=out, stderr=subprocess.STDOUT, env=env)
+                child = subprocess.Popen(a.resume_cmd, shell=True, stdout=out, stderr=subprocess.STDOUT, env=env,
+                                         start_new_session=True)
             else:
-                child = subprocess.Popen(cmd, stdout=out, stderr=subprocess.STDOUT, env=env)
+                child = subprocess.Popen(cmd, stdout=out, stderr=subprocess.STDOUT, env=env,
+                                         start_new_session=True)
         state["pid"] = child.pid
         save()
         stalled = False
         last_size, last_change = start, time.time()
         while child.poll() is None:
             time.sleep(1 if a.wait_min < 1 else 5)
+            if stopping:
+                # the handler sent SIGTERM; make sure the group really goes (SIGKILL after the wait)
+                stop_group(child)
+                break
             if a.stall_min > 0:
                 size = os.path.getsize(a.log)
                 if size != last_size:
                     last_size, last_change = size, time.time()
                 elif time.time() - last_change > a.stall_min * 60:
                     stalled = True
-                    note(f"no output for {a.stall_min:g} min, killing pid {child.pid}")
-                    child.terminate()
-                    try:
-                        child.wait(timeout=30)
-                    except subprocess.TimeoutExpired:
-                        child.kill()
-                        child.wait()
+                    note(f"no output for {a.stall_min:g} min, killing process group {child.pid}")
+                    stop_group(child)
+                    break
+        if child.returncode is None:
+            # never wait without a limit: a GPU-hung process can survive SIGKILL
+            try:
+                child.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                note(f"pid {child.pid} did not exit after SIGKILL")
         with open(a.log, "rb") as f:
             f.seek(start)
             text = f.read().decode("utf-8", "replace")
@@ -192,7 +251,8 @@ def main():
         if stopping:
             state["state"] = "STOPPED"
             save()
-            note("stopped by signal, not restarting")
+            note("stopped by signal, not restarting"
+                 + (f"; processes of group {child.pid} are STILL ALIVE" if group_alive(child.pid) else ""))
             return 130
         kind, detail = classify(rc, text, stalled, a.pattern)
         last_line = next((l for l in reversed(text.splitlines()) if l.strip()), "")[-300:]
@@ -234,6 +294,15 @@ def main():
             heartbeat(f"GAVE UP after {a.max_restarts} restarts ({kind})",
                       [f"event:     {detail}", f"last line: {last_line}",
                        f"history:   " + "; ".join(f"{e['ts'][11:16]} {e['kind']}" for e in state["events"]),
+                       f"log:       {a.log}"], True)
+            return GIVE_UP_EXIT
+        if group_alive(child.pid) and not stop_group(child):
+            state["state"] = "GAVE_UP"
+            save()
+            note(f"attempt {state['attempt']} failed ({kind}: {detail}); processes of group {child.pid} "
+                 f"are still alive after SIGKILL, NOT restarting (a second GPU job would run beside them)")
+            heartbeat(f"{kind.upper()} failure, old processes survived SIGKILL, not restarted",
+                      [f"event:     {detail}", f"group:     {child.pid} still alive (check ps; may need a reboot)",
                        f"log:       {a.log}"], True)
             return GIVE_UP_EXIT
         state["restarts"] += 1
