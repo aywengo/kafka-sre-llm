@@ -22,7 +22,7 @@ __pycache__/
 .idea/
 eval/answers_*.jsonl
 eval/results_*.jsonl
-eval/judge2_*.cache.jsonl
+eval/judge*.cache.jsonl
 runs/*
 !runs/v1/
 runs/v1/*
