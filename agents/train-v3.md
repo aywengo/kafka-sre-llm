@@ -53,10 +53,10 @@ and fixes from several pages) and still contain nothing the docs don't say.
      at k=3 / 6,000 so gate 4 compares like with like.
    - Second fallback if the Phase 7 probe still projects over 2 days: train on a subset of
      ~1,500 pack rows.
-4. **Standing go for judge swaps.** Phase 0 and Phase 9 each need the oQ8e ↔ DeepSeek swap.
-   Give one standing go for those named swaps, or the agent waits at each one. With a
-   standing go the agent must still check, before every swap, that no other oMLX client is
-   active, and wait for Roman if one is.
+4. **Standing go for judge swaps: GIVEN (Roman, 2026-11-15).** Phase 0 and Phase 9 each need
+   the oQ8e ↔ DeepSeek swap; the agent may do those named swaps without asking. It must
+   still check, before every swap, that no other oMLX client is active, and wait for Roman
+   if one is. The go covers these swaps only, not other oMLX model changes.
 
 ## Goal
 
@@ -264,7 +264,8 @@ Answers at max_tokens 2048 (GPU exclusive), then GLM-5.3-Flash-oQ8e-mtp (primary
 (one judge loaded at a time). Contestants on `questions_real`: base, RAG base (Phase 0), v1,
 v3 closed-book, and **v3 + retrieval** (required, not optional: for an open-book adapter it
 is the configuration that ships). "v3" in the gate means the configuration proposed for
-shipping. Gate (GLM oQ8e, two passes, paired, all 40 scored):
+shipping. Thresholds below were approved by Roman on 2026-11-15. Gate (GLM oQ8e, two passes,
+paired, all 40 scored):
 1. `questions_real`: v3 ≥ base + 0.3 with more wins than losses, and v3 ≥ v1 + 0.2
    head-to-head (see below);
 2. no `questions_real` category with n ≥ 5 below base − 0.5 (at n = 5 to 10 a smaller
