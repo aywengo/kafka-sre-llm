@@ -185,4 +185,6 @@ are never training data. The leakage filter is re-run whenever an eval file is a
 From 2026-11-16 the work is run from Claude as conductor, one worker per task, each on the
 role and model defined in `.claude/agents/`. Standing go (Roman, 2026-11-16) for loading and
 unloading DeepSeek-V4.1-Flash, GLM-5.3-Flash-oQ4e and GLM-5.3-Flash-oQ8e-mtp on oMLX when no
-other client is active; every swap is noted in `runs/v3/HEARTBEAT.md`. Commits stay local.
+other client is active; every swap is noted in `runs/v3/HEARTBEAT.md`. Commits are pushed to
+`origin/main` at checkpoints (Roman, 2026-11-16), after every commit to be pushed has been
+checked for keys, IP addresses, home paths and other sensitive data.
