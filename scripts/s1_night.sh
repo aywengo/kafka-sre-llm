@@ -17,7 +17,10 @@ hb() { printf '\n### %s — %s\nneeds_human: no\n' "$(date +%Y-%m-%dT%H:%M:%S%z)
 busy() { curl -s -m 20 -H "Authorization: Bearer $OMLX_API_KEY" "$OMLX_URL/api/status" \
   | python3 -c 'import sys,json; d=json.load(sys.stdin); print(int(d.get("active_requests",1))+int(d.get("waiting_requests",0)))' 2>/dev/null || echo 1; }
 idle() { n=0; until [ "$(busy)" = "0" ]; do sleep 30; n=$((n+1)); [ $n -lt 120 ] || { hb "s1_night: server still busy after 60 min, stopping"; exit 1; }; done; }
-unload() { idle; curl -s -m 300 -X POST -H "Authorization: Bearer $OMLX_API_KEY" "$OMLX_URL/admin/api/models/$1/unload" >/dev/null; hb "s1_night: unloaded $1 (no active or waiting requests)"; }
+loaded() { curl -s -m 20 -H "Authorization: Bearer $OMLX_API_KEY" "$OMLX_URL/api/status" \
+  | python3 -c 'import sys,json; print("yes" if sys.argv[1] in (json.load(sys.stdin).get("loaded_models") or []) else "no")' "$1" 2>/dev/null || echo no; }
+unload() { idle; [ "$(loaded $1)" = "yes" ] || return 0
+  curl -s -m 300 -X POST -H "Authorization: Bearer $OMLX_API_KEY" "$OMLX_URL/admin/api/models/$1/unload" >/dev/null; hb "s1_night: unloaded $1 (no active or waiting requests)"; }
 
 # 0. wait for the jobs that are still using DeepSeek
 until [ -s runs/v3/bank_stats.md ] && [ -e runs/v3/logs/s1_ceiling_teacher_holdout.done ] && [ -e runs/v3/logs/s1_pilot4.done ]; do sleep 60; done
@@ -26,7 +29,8 @@ n=0; while pgrep -f "scripts/s1_bank.sh" >/dev/null; do
   pkill -TERM -f "run_guarded.py.*s1_expand.log" || true
   sleep 10; n=$((n+1)); [ $n -lt 90 ] || { hb "s1_night: s1_bank.sh did not exit, stopping"; exit 1; }
 done
-hb "s1_night: question bank generated ($(wc -l < $W/questions.jsonl | tr -d ' ') questions kept); search-terms step paused for the second verifier and the ceiling check"
+[ -e runs/v3/logs/s1_night_glm.started ] || hb "s1_night: question bank generated ($(wc -l < $W/questions.jsonl | tr -d ' ') questions kept); search-terms step paused for the second verifier and the ceiling check"
+touch runs/v3/logs/s1_night_glm.started
 unload $DS
 
 # 1. second verifier on every pilot 3 row and on the not-covered check

@@ -348,13 +348,34 @@ class LLMTests(unittest.TestCase):
 
         def handler(req):
             n.append(1)
-            return httpx.Response(503, json={}) if len(n) < 3 else httpx.Response(
+            return httpx.Response(500, json={}) if len(n) < 3 else httpx.Response(
                 200, json={"choices": [{"message": {"content": "hi"}, "finish_reason": "stop"}]})
         (content, finish), log, _ = self.run_chat(handler)
         self.assertEqual((content, finish), ("hi", "stop"))
-        self.assertIn("retry after HTTPStatusError 503", log)
+        self.assertIn("retry after HTTPStatusError 500", log)
         self.assertNotIn("secret-host", log)
         self.assertNotIn("http", log)
+
+    def test_busy_server_is_waited_out(self):
+        # 507 (and 429, 503) mean the server is out of capacity for the moment: wait, and do not
+        # spend the three ordinary attempts on it
+        n = []
+
+        def handler(req):
+            n.append(1)
+            return httpx.Response(507, json={}) if len(n) <= 5 else httpx.Response(
+                200, json={"choices": [{"message": {"content": "hi"}, "finish_reason": "stop"}]})
+        (content, finish), log, _ = self.run_chat(handler)
+        self.assertEqual((content, finish), ("hi", "stop"))
+        self.assertEqual(log.count("server busy (HTTPStatusError 507)"), 5)
+        self.assertNotIn("retry after", log)
+        self.assertNotIn("secret-host", log)
+
+    def test_busy_server_gives_up_eventually(self):
+        def handler(req):
+            return httpx.Response(507, json={})
+        with self.assertRaises(httpx.HTTPStatusError):
+            self.run_chat(handler)
 
     def test_connect_error_log_has_no_url(self):
         n = []

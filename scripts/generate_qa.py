@@ -273,6 +273,10 @@ def extract_json(s: str, kind="["):
         return None
 
 
+BUSY_STATUS = (429, 503, 507)   # server out of capacity: transient
+BUSY_RETRIES, BUSY_WAIT_S = 20, 60
+
+
 class LLM:
     def __init__(self, url, model, api_key, temperature, max_tokens, extra_body, usage):
         self.client = httpx.AsyncClient(base_url=url.rstrip("/"), timeout=1800,
@@ -294,7 +298,8 @@ class LLM:
             "max_tokens": max_tokens or self.max_tokens,
         }
         body.update(self.extra_body if extra_body is None else extra_body)
-        for attempt in range(3):
+        attempt = busy = 0
+        while True:
             try:
                 r = await self.client.post("/chat/completions", json=body)
                 r.raise_for_status()
@@ -309,14 +314,23 @@ class LLM:
                 self.usage["reasoning_tokens"] += details.get("reasoning_tokens", 0) or 0
                 return content, choice.get("finish_reason")
             except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError, AttributeError) as e:
+                # class name (and status code) only: httpx error text contains the server address
+                what = type(e).__name__
+                code = e.response.status_code if isinstance(e, httpx.HTTPStatusError) else None
+                if code:
+                    what += f" {code}"
+                if code in BUSY_STATUS and busy < BUSY_RETRIES:
+                    # the server is out of capacity for the moment (e.g. requests of a killed client are
+                    # still generating): wait, do not count it against the three ordinary attempts
+                    busy += 1
+                    print(f"  server busy ({what}), waiting {BUSY_WAIT_S}s ({busy}/{BUSY_RETRIES})", flush=True)
+                    await asyncio.sleep(BUSY_WAIT_S)
+                    continue
                 if attempt == 2:
                     raise
                 await asyncio.sleep(2 ** attempt)
-                # class name (and status code) only: httpx error text contains the server address
-                what = type(e).__name__
-                if isinstance(e, httpx.HTTPStatusError):
-                    what += f" {e.response.status_code}"
-                print(f"  retry after {what}")
+                attempt += 1
+                print(f"  retry after {what}", flush=True)
 
 
 async def process(chunk, llm, args, sem, out_f, lock, stats):
@@ -696,6 +710,8 @@ async def verify_one_row(item, index, vllm, args, sem, out_f, lock, stats):
         out_f.flush()
         stats["done"] += 1
         stats["records"].append({**item, **row})
+        verdict = "no verdict (" + err + ")" if err else ("grounded" if verify.get("grounded") is True else "not grounded")
+        print(f"[verify] {stats['done']} {item['id'][:8]} {verdict}", flush=True)
 
 
 async def run_pack_verify(args, vllm=None):
@@ -708,10 +724,18 @@ async def run_pack_verify(args, vllm=None):
     index = load_index(args.index)
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
+    if out.exists():
+        # rows without a verdict (request or parse failure) are dropped here, so a rerun retries them
+        old_rows = list(read_jsonl(out))
+        kept_rows = [r for r in old_rows if isinstance(r.get("verify"), dict)]
+        if len(kept_rows) != len(old_rows):
+            out.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in kept_rows))
+            print(f"{len(old_rows) - len(kept_rows)} rows without a verdict removed from {out.name}; they are retried", flush=True)
     done = {r["id"] for r in read_jsonl(out)} if out.exists() else set()
     seen = set(done)  # ids already handled or being handled
     sem, lock = asyncio.Semaphore(args.concurrency), asyncio.Lock()
     stats = {"done": 0, "failed": 0, "records": []}
+    print(f"[verify] {len(done)} already have a verdict", flush=True)
     t0 = time.monotonic()
     with out.open("a") as f:
         while True:
