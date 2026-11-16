@@ -28,9 +28,12 @@ pack (CPU only): calls retrieve.rank() once per question and applies the selecti
         treatment_requested: the bank's treatment, treatment: what was done ("normal", "withheld", "ooc"),
         withheld: [seed chunk id] when the seed chunk was removed, else [],
         backfill_ranks: for withheld rows, the 1-based ranks (in the full ranking) of the chunks that entered
-                      the k6 pack in place of the seed chunk.
-  A "withheld" record whose seed chunk is in the k6 selection gets that chunk removed from the ranking and the
-  SAME selection rule (plan_pack) re-applied, so the pack is backfilled from the following ranks; k3 and
+                      the k6 pack in place of the removed chunks,
+        withheld_dupes: for withheld rows, how many near-duplicates of the seed chunk were removed as well
+                      (token-set Jaccard of title + text >= 0.7, only among the ranked candidates); their ids
+                      follow the seed chunk id in "withheld".
+  A "withheld" record whose seed chunk is in the k6 selection gets that chunk, and every other ranked chunk
+  that is a near-duplicate of it, removed from the ranking and the SAME selection rule (plan_pack) re-applied, so the pack is backfilled from the following ranks; k3 and
   reserve come from the same reduced ranking. If the seed chunk is not in k6 the pack is the normal one and
   the row says treatment "normal" (the question then stays a normal row). Without --questions the rows are
   exactly as before.
@@ -172,29 +175,45 @@ def select(ranked, chunks, k, max_chars):
     return select_ranked(ranked, {i: len(chunks[i]["text"]) for i in ranked[:k]}, k, max_chars)
 
 
-def plan_pack(ranked, lens, treatment=None, seed=None):
+DUPE_JACCARD = 0.7
+
+
+def jaccard(a, b):
+    """Token-set Jaccard similarity of two texts (retrieve.tokens); 0.0 when both are empty."""
+    a, b = set(RT.tokens(a)), set(RT.tokens(b))
+    return len(a & b) / len(a | b) if a | b else 0.0
+
+
+def chunk_text(c):
+    return (c.get("title") or "") + " " + c["text"]
+
+
+def plan_pack(ranked, lens, treatment=None, seed=None, is_dupe=None):
     """Pure: selection for one question from its ranking (chunk indices, best first) and chunk lengths.
     treatment: None (no bank record), "normal", "withheld" or "ooc"; seed: chunk index of the seed chunk, or None
     when the record has none (an index that lacks the seed chunk: pass -1).
     -> {"sel": {"k6": [...], "k3": [...]}, "reserve": [...], "seed_in_pack": bool|None, "treatment": ...,
-        "withheld": bool, "backfill_ranks": [...]}; indices, not chunk ids.
+        "withheld": bool, "backfill_ranks": [...], "dupes": [...]}; indices, not chunk ids.
     seed_in_pack is computed on the original k6 selection. A "withheld" request whose seed chunk is in it is
     honoured: the chunk is taken out of the ranking and the same rule re-applied (k6, k3 and reserve all
-    come from the reduced ranking); otherwise the pack is the normal one and treatment is "normal"."""
+    come from the reduced ranking); is_dupe(i) -> bool, called only then and only for the other ranked chunks,
+    marks near-duplicates of the seed chunk, which are removed with it ("dupes", in rank order); otherwise the pack is the normal one and treatment is "normal"."""
     sel = {name: select_ranked(ranked, lens, k, cap) for name, (k, cap) in SIZES.items()}
     in_pack = None if treatment in (None, "ooc") or seed is None else seed in sel["k6"]
     withheld = treatment == "withheld" and in_pack
-    backfill = []
+    backfill, dupes = [], []
     if withheld:
         rank_of = {i: n + 1 for n, i in enumerate(ranked)}
         old = set(sel["k6"])
-        ranked = [i for i in ranked if i != seed]
+        dupes = [i for i in ranked if i != seed and is_dupe is not None and is_dupe(i)]
+        gone = {seed, *dupes}
+        ranked = [i for i in ranked if i not in gone]
         sel = {name: select_ranked(ranked, lens, k, cap) for name, (k, cap) in SIZES.items()}
         backfill = [rank_of[i] for i in sel["k6"] if i not in old]
     reserve = ranked[len(sel["k6"]):len(sel["k6"]) + RESERVE]
     return {"sel": sel, "reserve": reserve, "seed_in_pack": in_pack, "withheld": bool(withheld),
             "treatment": "withheld" if withheld else "ooc" if treatment == "ooc" else "normal" if treatment else None,
-            "backfill_ranks": backfill}
+            "backfill_ranks": backfill, "dupes": dupes}
 
 
 def pack_one(r, chunks, index_path, last, bank=None, idx=None):
@@ -214,7 +233,9 @@ def pack_one(r, chunks, index_path, last, bank=None, idx=None):
         treatment = bank.get("treatment") or "normal"
         if bank.get("seed_chunk_id") is not None:
             seed = idx.get(bank["seed_chunk_id"], -1)
-    plan = plan_pack(ranked, {i: len(chunks[i]["text"]) for i in ranked}, treatment, seed)
+    seed_text = chunk_text(chunks[seed]) if seed is not None and seed >= 0 else ""
+    plan = plan_pack(ranked, {i: len(chunks[i]["text"]) for i in ranked}, treatment, seed,
+                     lambda i: jaccard(seed_text, chunk_text(chunks[i])) >= DUPE_JACCARD)
     sel, reserve = plan["sel"], plan["reserve"]
     row = {"id": r["id"], "question": q, "expansion": exp,
            **{name: [chunks[i]["id"] for i in ix] for name, ix in sel.items()},
@@ -223,9 +244,11 @@ def pack_one(r, chunks, index_path, last, bank=None, idx=None):
                       for i in sel["k6"] + reserve}}
     if bank is not None:
         row.update(treatment_requested=treatment, treatment=plan["treatment"], seed_in_pack=plan["seed_in_pack"],
-                   withheld=[bank["seed_chunk_id"]] if plan["withheld"] else [])
+                   withheld=[bank["seed_chunk_id"]] + [chunks[i]["id"] for i in plan["dupes"]]
+                   if plan["withheld"] else [])
         if plan["withheld"]:
             row["backfill_ranks"] = plan["backfill_ranks"]
+            row["withheld_dupes"] = len(plan["dupes"])
     return row
 
 
@@ -289,6 +312,8 @@ def bank_stats(packs, a):
            f"Requested: {len(asked)}. Honoured (seed chunk was in k6 and was removed): **{len(done)}**. Not honoured "
            f"(seed chunk not in k6, row stays normal): {len(asked) - len(done)}.", ""]
     if done:
+        md += [f"Honoured rows with at least one near-duplicate of the seed chunk removed as well "
+               f"(Jaccard >= {DUPE_JACCARD}): **{sum(bool(p.get('withheld_dupes')) for p in done)}** of {len(done)}.", ""]
         first = Counter(min(p["backfill_ranks"]) if p.get("backfill_ranks") else None for p in done)
         md += ["Rank (1 = best in the full ranking) from which the backfill came, lowest rank of the chunks that "
                "entered the pack:", "", "| backfill from rank | rows |", "|---|---:|",

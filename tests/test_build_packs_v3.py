@@ -127,8 +127,9 @@ class WithheldTests(unittest.TestCase):
 class PackOneTests(unittest.TestCase):
     """pack_one() with retrieve.scores / retrieve.rank stubbed: the row fields, no reranker."""
 
-    def run_one(self, bank, ranked):
-        chunks = [{"id": f"c{i}", "text": "x" * 3000} for i in range(20)]
+    def run_one(self, bank, ranked, texts=None):
+        # distinct texts (token sets), so that no chunk is a near-duplicate of another
+        chunks = [{"id": f"c{i}", "text": (texts or {}).get(i, f"word{i} " * 500)} for i in range(20)]
         idx = {c["id"]: i for i, c in enumerate(chunks)}
         pool = list(range(20))
         last = {}
@@ -165,10 +166,54 @@ class PackOneTests(unittest.TestCase):
         self.assertEqual((r["treatment"], r["seed_in_pack"]), ("normal", False))
 
 
+class JaccardTests(unittest.TestCase):
+    def test_identical_disjoint_partial(self):
+        self.assertEqual(bp.jaccard("alpha beta gamma", "gamma beta alpha"), 1.0)
+        self.assertEqual(bp.jaccard("alpha beta", "gamma delta"), 0.0)
+        self.assertEqual(bp.jaccard("", ""), 0.0)
+        self.assertAlmostEqual(bp.jaccard("alpha beta gamma", "beta gamma delta"), 0.5)
+
+    def test_title_is_part_of_the_text(self):
+        self.assertEqual(bp.chunk_text({"title": "T", "text": "x"}), "T x")
+        self.assertEqual(bp.chunk_text({"title": None, "text": "x"}), " x")
+
+
+class WithheldDupesTests(unittest.TestCase):
+    run_one = PackOneTests.run_one
+
+    def test_near_duplicate_is_withheld_too(self):
+        same = "alpha beta gamma delta epsilon zeta eta theta " * 60
+        r = self.run_one({"treatment": "withheld", "seed_chunk_id": "c0"}, list(range(20)), {0: same, 2: same + " extra"})
+        self.assertEqual(r["withheld"], ["c0", "c2"])
+        self.assertEqual(r["withheld_dupes"], 1)
+        self.assertEqual(r["k6"], ["c1", "c3", "c4", "c5", "c6"])
+        self.assertEqual(r["backfill_ranks"], [6, 7])
+        self.assertTrue(set(r["withheld"]).isdisjoint(r["scores"]))
+        self.assertNotIn("c2", r["reserve"])
+
+    def test_no_near_duplicate_is_unchanged(self):
+        r = self.run_one({"treatment": "withheld", "seed_chunk_id": "c2"}, list(range(20)))
+        self.assertEqual((r["withheld"], r["withheld_dupes"], r["k6"]), (["c2"], 0, ["c0", "c1", "c3", "c4", "c5"]))
+
+    def test_not_withheld_rows_have_no_dupe_fields(self):
+        same = "alpha beta gamma delta " * 100
+        r = self.run_one({"treatment": "normal", "seed_chunk_id": "c0"}, list(range(20)), {0: same, 2: same})
+        self.assertEqual((r["withheld"], r["k6"][:3]), ([], ["c0", "c1", "c2"]))
+        self.assertNotIn("withheld_dupes", r)
+
+    def test_plan_pack_is_dupe_only_for_ranked_others(self):
+        calls = []
+        bp.plan_pack(list(range(10)), lens_of(10), "withheld", 1, lambda i: calls.append(i) or False)
+        self.assertEqual(calls, [0, 2, 3, 4, 5, 6, 7, 8, 9])
+        calls.clear()
+        bp.plan_pack(list(range(10)), lens_of(10), "normal", 1, lambda i: calls.append(i) or False)
+        self.assertEqual(calls, [])
+
+
 class StatsTests(unittest.TestCase):
     def test_bank_stats(self):
         packs = [{"id": "a", "seed_in_pack": True, "treatment": "withheld", "treatment_requested": "withheld",
-                  "backfill_ranks": [7]},
+                  "backfill_ranks": [7], "withheld_dupes": 1},
                  {"id": "b", "seed_in_pack": False, "treatment": "normal", "treatment_requested": "withheld"},
                  {"id": "c", "seed_in_pack": True, "treatment": "normal", "treatment_requested": "normal"},
                  {"id": "d", "seed_in_pack": None, "treatment": "ooc", "treatment_requested": "ooc"}]
@@ -183,6 +228,7 @@ class StatsTests(unittest.TestCase):
         self.assertIn("| strimzi | 1 | 1 | 100.0% |", md)
         self.assertIn("Requested: 2. Honoured (seed chunk was in k6 and was removed): **1**", md)
         self.assertIn("| 7 | 1 |", md)
+        self.assertIn("near-duplicate of the seed chunk removed as well (Jaccard >= 0.7): **1** of 1", md)
         self.assertEqual(bp.bank_stats([{"id": "x"}], SimpleNamespace(questions=None)), [])
 
 

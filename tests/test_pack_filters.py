@@ -53,8 +53,24 @@ class LeakTests(unittest.TestCase):
                   "That flag isn't documented."):
             self.assertIsNotNone(F.leak_problem(t), t)
 
-    def test_bridge_line_is_fine(self):
-        self.assertIsNone(F.leak_problem("What it does cover:\n- `num.recovery.threads.per.data.dir` sets the threads."))
+    def test_bridge_line_only_in_not_covered(self):
+        t = GAP + "\nWhat it does cover:\n- `num.recovery.threads.per.data.dir` sets the threads."
+        self.assertIsNone(F.leak_problem(t, "none"))
+        self.assertEqual(F.mechanical_problems({"coverage": "none", "answer": t}), [])
+        self.assertIsNotNone(F.leak_problem(t))
+        self.assertIsNotNone(F.leak_problem(t, "partial"))
+        # only the first occurrence is allowed
+        self.assertIsNotNone(F.leak_problem(t + "\nWhat it does cover:", "none"))
+
+    def test_widened_patterns(self):
+        for t in ("Strimzi documents this as", "Example from the `KafkaUser` quotas documentation",
+                  "The documentation's example", "isn't included in what I have in front of me",
+                  "What it does give that bears on this situation:",
+                  "(the excerpt on end-entity rotation is cut off)", "an excerpt"):
+            self.assertIsNotNone(F.leak_problem(t), t)
+            self.assertIsNotNone(F.leak_problem(t, "none"), t)
+        self.assertIsNotNone(F.leak_problem("What it does cover is the Strimzi side", "partial"))
+        self.assertIsNotNone(F.leak_problem(GAP + " See the documentation for more."))
 
     def test_source_alone_is_fine(self):
         self.assertIsNone(F.leak_problem("Point the connector at the source cluster."))

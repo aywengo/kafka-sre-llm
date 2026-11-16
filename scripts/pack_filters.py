@@ -2,7 +2,7 @@
 import re
 
 GAP_SENTENCE_RE = re.compile(r"The retrieved documentation does not cover [^\n]*?\.")
-LEAK_RE = re.compile(r"(?i)\bthe (material|excerpts?|docs)\b|\bthe (documentation|sources?) (has|have|says|does|do|lists?|gives?|shows?|describes?)\b|(\bnot|n't|\bnothing|\bno|\bnever) (\w+ ){0,2}documented\b|\b(undocumented|nothing here|described here|given here|in what (is|was) (described|given|shown)|what I can point you to|from the material)\b|\bthe [\w-]+ documentation\b")
+LEAK_RE = re.compile(r"(?i)\bthe (material|excerpts?|docs)\b|\b(the )?excerpt\b|\bdocumentation('s)?\b|\b(strimzi|kafka|kubernetes|argo cd|apicurio registry|karapace) documents\b|\bin front of me\b|\bwhat it does (cover|give)\b|\bthe (documentation|sources?) (has|have|says|does|do|lists?|gives?|shows?|describes?)\b|(\bnot|n't|\bnothing|\bno|\bnever) (\w+ ){0,2}documented\b|\b(undocumented|nothing here|described here|given here|in what (is|was) (described|given|shown)|what I can point you to|from the material)\b")
 
 
 def gap_sentence_count(answer):
@@ -26,9 +26,16 @@ def gap_problem(coverage, answer):
     return None
 
 
-def leak_problem(answer):
-    """The matched text of a reference to the material outside the gap sentence, else None."""
-    m = LEAK_RE.search(GAP_SENTENCE_RE.sub("", answer or ""))
+BRIDGE_LINE = "What it does cover:"
+
+
+def leak_problem(answer, coverage=None):
+    """The matched text of a reference to the material outside the gap sentence, else None.
+    With coverage "none" the fixed bridge line is removed too (first exact occurrence only)."""
+    text = GAP_SENTENCE_RE.sub("", answer or "")
+    if coverage == "none":
+        text = text.replace(BRIDGE_LINE, "", 1)
+    m = LEAK_RE.search(text)
     return m.group(0) if m else None
 
 
@@ -42,7 +49,7 @@ def mechanical_problems(row):
     g = gap_problem(row.get("coverage"), answer)
     if g:
         problems.append(g)
-    leak = leak_problem(answer)
+    leak = leak_problem(answer, row.get("coverage"))
     if leak:
         problems.append("leak:" + leak)
     return problems
