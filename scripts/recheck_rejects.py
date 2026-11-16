@@ -8,7 +8,8 @@ chunks = {c["id"]: c for c in map(json.loads, open("work/v2/chunks.jsonl"))}
 body = {"chat_template_kwargs": {"thinking_mode": "chat"}}
 args = types.SimpleNamespace(verify_max_tokens=2048, verify_extra_body=body)
 usage = {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "reasoning_tokens": 0}
-llm = g.LLM("http://127.0.0.1:8000/v1", "DeepSeek-V4.1-Flash-1017-oQ4e-mtp",
+url = (os.environ.get("OMLX_URL") or open(os.path.expanduser("~/.config/kafka-sre-llm/omlx_url")).read()).strip().rstrip("/")
+llm = g.LLM(url if url.endswith("/v1") else url + "/v1", "DeepSeek-V4.1-Flash-1017-oQ4e-mtp",
             os.environ["OMLX_API_KEY"], 0.7, 4096, body, usage)
 
 async def main():

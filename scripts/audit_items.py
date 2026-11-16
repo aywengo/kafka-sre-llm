@@ -3,7 +3,8 @@
 using the generator's verifier rules, report flag rate per source.
 
   python scripts/audit_items.py --raw work/v2/raw_qa.jsonl work/v2/raw_qa_runbooks2.jsonl \
-      --chunks work/v2/chunks.jsonl --url http://127.0.0.1:8000/v1 --model GLM-5.3-Flash-oQ4e
+      --chunks work/v2/chunks.jsonl --model GLM-5.3-Flash-oQ4e
+Server address from --url, OMLX_URL or ~/.config/kafka-sre-llm/omlx_url.
 Key from JUDGE_API_KEY. Resumes from --cache (one line per audited item).
 """
 import argparse
@@ -20,6 +21,12 @@ sys.path.insert(0, str(Path(__file__).parent))
 from generate_qa import LLM, VERIFY_BATCH_SYSTEM, add_context, extract_json
 
 
+def server_url():
+    url = os.environ.get("OMLX_URL") or (Path.home() / ".config/kafka-sre-llm/omlx_url").read_text()
+    url = url.strip().rstrip("/")
+    return url if url.endswith("/v1") else url + "/v1"
+
+
 def key(chunk_id, it):
     return hashlib.sha1(f"{chunk_id}\0{it['question']}\0{it['answer']}".encode()).hexdigest()
 
@@ -28,7 +35,7 @@ async def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--raw", nargs="+", required=True)
     ap.add_argument("--chunks", default="work/v2/chunks.jsonl")
-    ap.add_argument("--url", default="http://127.0.0.1:8000/v1")
+    ap.add_argument("--url", default=None, help="default: OMLX_URL or the config file")
     ap.add_argument("--model", default="GLM-5.3-Flash-oQ4e")
     ap.add_argument("--sample", type=int, default=400)
     ap.add_argument("--concurrency", type=int, default=3)
@@ -62,7 +69,7 @@ async def main():
         if key(cid, it) not in cache:
             groups[(src, cid)].append((src, it))
 
-    llm = LLM(args.url, args.model, os.environ["JUDGE_API_KEY"], 0.0, args.max_tokens, {},
+    llm = LLM(args.url or server_url(), args.model, os.environ["JUDGE_API_KEY"], 0.0, args.max_tokens, {},
               collections.Counter())
     sem, lock = asyncio.Semaphore(args.concurrency), asyncio.Lock()
 

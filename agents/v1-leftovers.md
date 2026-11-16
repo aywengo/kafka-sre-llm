@@ -40,10 +40,10 @@ You are done when the report exists and Roman has the list of what is waiting fo
 
 - Base model and adapter: use **exactly** the ones the v1 eval used (see `runs/v1/REPORT.md`):
   the patched non-thinking base in `runs/v1/base27b` and the final v1 adapter.
-- Judge 1: DeepSeek on oMLX, `http://192.168.3.69:8000/v1`, model
+- Judge 1: DeepSeek on oMLX, `$OMLX_URL/v1`, model
   `DeepSeek-V4.1-Flash-1017-oQ4e-mtp`, `--judge-extra-body '{"chat_template_kwargs": {"thinking_mode": "chat"}}'`.
 - Judge 2: the model Roman calls "GTM-5.3-Flash" (probably GLM-5.3-Flash). Run
-  `curl -s http://192.168.3.69:8000/v1/models | jq -r '.data[].id'` and use the exact id. If
+  `curl -s $OMLX_URL/v1/models | jq -r '.data[].id'` and use the exact id. If
   it is not listed, or more than one id could match, ask Roman. Find out how to turn its
   thinking off (check its chat template); if you cannot, run it with thinking on and record that.
 - Question sets: `eval/questions.jsonl` (12), `eval/questions_real.jsonl` (40),
@@ -64,7 +64,7 @@ You are done when the report exists and Roman has the list of what is waiting fo
        --questions eval/questions.jsonl eval/questions_real.jsonl eval/questions_synthetic.jsonl \
        --max-tokens 2048 --cache eval/answers_2048.jsonl \
        --out eval/results_2048_deepseek.jsonl \
-       --judge-url http://192.168.3.69:8000/v1 --judge-model DeepSeek-V4.1-Flash-1017-oQ4e-mtp \
+       --judge-url $OMLX_URL/v1 --judge-model DeepSeek-V4.1-Flash-1017-oQ4e-mtp \
        --judge-extra-body '{"chat_template_kwargs": {"thinking_mode": "chat"}}' \
        > runs/v1/logs/eval_2048.log 2>&1 &
    ```
