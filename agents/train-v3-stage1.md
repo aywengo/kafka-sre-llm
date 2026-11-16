@@ -154,7 +154,19 @@ are checked by both verifiers.
    pack did not mention, and it declared gaps for facts its pack held. The prompts were
    revised (pack/2: no denial without evidence, no skipping of real questions, no padded
    causes, a verifier that checks denials and the gap sentence) and the same 40 questions
-   re-run. Outputs carry `prompt_version` and the two versions are never mixed.
+   re-run. Outputs carry `prompt_version` and versions are never mixed.
+
+   Pilot 2 (pack/2) still failed two gates: unsupported denials (5 answers, 2 of them kept
+   by the verifier) and the claim-by-claim read (3 of 10 with a defect). Cause: the rule
+   "if the question's premise is wrong, correct it" led the teacher to treat anything its
+   pack does not mention as a wrong premise. pack/3 states that a premise the material does
+   not mention is a gap, forbids statements about what is missing outside the gap sentence,
+   and tightens the verifier; `scripts/pack_filters.py` adds a mechanical filter (references
+   to the documentation outside the gap sentence; a gap sentence that is missing, repeated
+   or misplaced). Pilot 3 runs on 40 fresh questions plus the 6 that still failed. From
+   pilot 3 on, the gates are measured on the rows that pass the first verifier and the
+   mechanical filter, because those are the rows that can reach training data; the rates
+   over all rows are reported next to them.
 2. **Ceiling check** (about 4 to 7 h). The teacher (DeepSeek, frozen pilot prompt) answers
    the runbook holdout from its packs, and the answers are judged head-to-head against base
    + retrieval, two flipped passes. **(Pending Roman:)** the same on `questions_real`, and a

@@ -31,6 +31,9 @@ import httpx
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from kafka_sre_rag.prompts import pack_text  # noqa: E402  (single source for how a pack is rendered)
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import pack_filters  # noqa: E402
+
 GEN_SYSTEM = """You write training data for an assistant that is a senior Site Reliability \
 Engineer specialised in Apache Kafka, Strimzi, Kubernetes, GitOps (Argo CD) and data \
 streaming. You are given one documentation excerpt. Produce realistic questions an engineer \
@@ -158,7 +161,8 @@ a **Check** (the exact command, metric or field from the material) and a **Fix**
 if none of them fit, if the material says. Number only causes that can produce the symptom asked \
 about. A numbered cause needs a Check naming a command, metric, field, log or status from the \
 material; if the material gives none, mention the cause in prose instead of numbering it. Do not \
-force the troubleshooting shape onto a question that is not about a symptom. For how-to, the steps in order with the exact commands \
+force the troubleshooting shape onto a question that is not about a symptom. Check and Fix labels \
+are for causes of a symptom only; steps of a procedure are plain numbered steps. For how-to, the steps in order with the exact commands \
 or YAML from the material. For config review and concept questions, the facts, with the scope of \
 each setting. No generic sections, no recap, no closing summary. Stop when the relevant material \
 is used up.
@@ -168,24 +172,30 @@ material for one component must not be used for another.
 - Use only API versions (apiVersion), kinds and field paths that appear in the material. Say where \
 each setting lives: broker, topic, client (producer/consumer/admin), Connect worker or connector, \
 or the exact custom resource field path. Never move a setting to another scope.
-- If the question's premise is wrong (wrong component, wrong version, wrong scope), correct it \
-first instead of going along with it.
-- Never say that a field, flag, feature or behaviour does not exist, is not supported or is not \
-exposed unless the material says so. If the material does not mention it, that is a gap: use the \
-gap sentence.
+- If the material contradicts the question's premise (wrong component, wrong version, wrong \
+scope), correct it first. A premise the material does not mention is not wrong; it is a gap.
+- Never say or imply that a field, flag, metric, feature or behaviour does not exist, is not \
+supported, is not exposed, does not apply, does not propagate or cannot be done unless the \
+material says so in those terms, including hedged forms ("there is no ... that I can point to", \
+"not ... here"). If the question names something the material does not mention, say so only in \
+the gap sentence.
 - Label early-access, preview or deprecated features as such, using the material's wording. Do not \
 mention product versions unless the material does. Never output unresolved placeholders such as \
 {SomeAttribute}.
 - Coverage. Decide how far the material answers the question. "full": it supports a complete \
 answer. "partial": it answers part of it; answer that part fully, then add one sentence in exactly \
 this form: "The retrieved documentation does not cover <what is missing>." A partial or none \
-answer without that sentence is wrong, and a full answer must not contain it. "none": it does not \
-answer the question; start with that same sentence form, then give what the material does say that \
-helps, if anything. Keep the same layout as a covered answer: short paragraphs, numbered items \
+answer without that sentence is wrong, and a full answer must not contain it. Before writing the \
+gap sentence, check that nothing in your answer or in the material, including comments inside code \
+blocks, gives what it names as missing. Every statement about what is missing goes in that one \
+sentence and nowhere else, and the sentence appears exactly once. "none": it does not answer the \
+question; start with that same sentence form, then continue with the facts that do help, if any, \
+stated as facts without mentioning the documentation again. Keep the same layout as a covered answer: short paragraphs, numbered items \
 and code blocks where they help, never one block of text.
 - After that sentence you may add at most two sentences of general direction, starting with "In \
-general,", in plain words, naming no command, flag, key, metric, field, tool or other identifier. \
-Never write an answer that only says something is not covered.
+general,", in plain words, naming no command, flag, key, metric, field, tool or other identifier and stating no technical \
+fact that the material does not support; they give direction only (where to look, what kind of \
+thing to check). Never write an answer that only says something is not covered.
 - Apart from that one sentence form, never refer to "the material", "the excerpts", "the \
 documentation", "the docs", "the source", "the sources", "the context", "described here", \
 "given here". The answer must read as the assistant's own.
@@ -220,17 +230,27 @@ the material lacks part of the answer and the answer does not say so, or if the 
 if the coverage is partial or none and the answer does not contain a sentence of the form "The \
 retrieved documentation does not cover ...".
 - Sentences starting with "In general," after the gap sentence are not claims; only check that \
-they name no command, flag, key, metric, field, tool or other identifier.
+they name no command, flag, key, metric, field, tool or other identifier and that they state no \
+technical fact that the material does not support.
 - grounded is false if any claim is not ok, if identifiers_not_in_material is not empty, if a \
 setting is placed at the wrong scope, if a false premise in the question is accepted, if an \
 identifier that the material gives for one component is used for another, or if gap_ok is false.
-- grounded is false if the answer says that something does not exist, is not supported or is not \
-exposed and the material does not say so.
+- grounded is false if the answer says that something does not exist, is not supported, is not \
+exposed, is not governed by, does not apply, does not propagate to or cannot be done, including \
+hedged forms, and the material does not say so.
+- grounded is false if any sentence other than the gap sentence refers to the material, the \
+documentation, a table or a source, or to what is or is not documented or described.
+- gap_ok is false if what the gap sentence names as missing appears anywhere in the answer or in \
+the material, including comments inside code blocks, or if the answer contains more than one gap \
+sentence.
+- grounded is false if a numbered cause cannot produce the symptom asked about.
+- grounded is false if a command or setting of one product is offered to change a resource that \
+another product manages, unless the material connects them.
 - If a <withheld> block is present, it holds an excerpt the writer did NOT see: grounded is false \
 if the answer states any fact that is supported only by the withheld block.
 Excerpts are numbered in the order they appear, starting at 1."""
 
-PACK_PROMPT_VERSION = "pack/2"   # pack/1 (the pilot) had no constant; written into every pack row
+PACK_PROMPT_VERSION = "pack/3"   # pack/1 (the pilot) had no constant; written into every pack row
 PACK_VERIFY_MAX_TOKENS = 4096   # pack mode default; the old modes keep 2048
 OLD_VERIFY_MAX_TOKENS = 2048
 
@@ -530,6 +550,14 @@ def pack_report(rows, secs=None, n_run=None):
     L.append(f"- items with identifiers_not_in_material: {ids}")
     L.append(f"- verifier parse failures (verify null, not rejected): "
              f"{sum(1 for r in answered if r.get('verify_error') == 'parse')}")
+    mech = {r["id"]: pack_filters.mechanical_problems(r) for r in items}
+    bad = [r for r in items if mech[r["id"]] and mech[r["id"]] != ["skip"]]
+    codes = Counter(c.split(":", 1)[0] for r in bad for c in mech[r["id"]])
+    L.append(f"- rows with a mechanical problem: {len(bad)}"
+             + (" (" + ", ".join(f"{k}={v}" for k, v in sorted(codes.items())) + ")" if codes else ""))
+    both = sum(1 for r in ver if r["verify"].get("grounded") is True and not mech[r["id"]])
+    L.append(f"- grounded and mechanical filter passed: {both} "
+             f"({both / max(1, len(items)):.0%} of {len(items)} items)")
     L.append(f"- generation truncations (finish_reason length): "
              f"{sum(1 for r in items if r.get('gen_finish') == 'length')}")
     L.append(f"- generation parse errors: {sum(1 for r in items if r.get('gen_error'))}")
@@ -592,6 +620,7 @@ async def pack_item(q, pk, index, llm, vllm, args, sems, out_f, lock, stats):
            "skip": skip, "verify": verify, "prompt_version": PACK_PROMPT_VERSION}
     if gen_error:
         row["gen_error"] = gen_error
+    row["mech"] = pack_filters.mechanical_problems(row)
     if verify_error:
         row["verify_error"] = verify_error
     async with lock:

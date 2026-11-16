@@ -182,11 +182,37 @@ class PackTests(Base):
         self.assertIn("grounded rate: 2/2", out)
         self.assertIn("verifier coverage agreement: 2/2", out)
         self.assertIn("type=troubleshooting", out)
+        self.assertIn("rows with a mechanical problem: 0", out)
+        self.assertIn("grounded and mechanical filter passed: 2 (67% of 3 items)", out)
+
+    def test_report_counts_mechanical_problems(self):
+        leak = {"Why is X slow?": ('{"coverage": "full", "not_covered": "", "answer": "The documentation says Z."}', "stop"),
+                "How do I set Y?": ('{"coverage": "partial", "not_covered": "x", "answer": "Part."}', "stop")}
+        out = self.run_pack(FakeLLM(answers=leak), "--verify")
+        self.assertIn("rows with a mechanical problem: 2 (gap_sentence_missing=1, leak=1)", out)
+        self.assertIn("grounded and mechanical filter passed: 0 (0% of 3 items)", out)
+        rows = {r["id"]: r for r in rows_of(self.d / "out.jsonl")}
+        self.assertEqual(rows["q1"]["mech"], ["leak:The documentation says"])
+        self.assertEqual(rows["q2"]["mech"], ["gap_sentence_missing"])
+        self.assertEqual(rows["q3"]["mech"], ["skip"])
 
 
 class PromptVersionTests(Base):
     def test_new_sentences_in_prompts(self):
-        for text in ("does not exist, is not supported or is not exposed",
+        for text in ("If the material contradicts the question's premise",
+                     "A premise the material does not mention is not wrong; it is a gap.",
+                     "Never say or imply that a field, flag, metric, feature or behaviour",
+                     "does not apply, does not propagate or cannot be done",
+                     '"there is no ... that I can point to"',
+                     "say so only in the gap sentence",
+                     "including comments inside code blocks, gives what it names as missing",
+                     "the sentence appears exactly once",
+                     "continue with the facts that do help, if any, stated as facts without "
+                     "mentioning the documentation again",
+                     "and stating no technical fact that the material does not support",
+                     "direction only (where to look, what kind of thing to check)",
+                     "Check and Fix labels are for causes of a symptom only",
+                     "steps of a procedure are plain numbered steps",
                      "Number only causes that can produce the symptom",
                      "mention the cause in prose instead of numbering it",
                      "Do not force the troubleshooting shape onto a question that is not about a symptom",
@@ -200,8 +226,16 @@ class PromptVersionTests(Base):
         self.assertNotIn("is not a real question, return", G.PACK_GEN_SYSTEM)
         v = " ".join(G.PACK_VERIFY_SYSTEM.split())
         for text in ("are not claims",
-                     "grounded is false if the answer says that something does not exist, is not "
-                     "supported or is not exposed and the material does not say so",
+                     "is not governed by, does not apply, does not propagate to or cannot be done, "
+                     "including hedged forms",
+                     "they state no technical fact that the material does not support",
+                     "refers to the material, the documentation, a table or a source",
+                     "or to what is or is not documented or described",
+                     "gap_ok is false if what the gap sentence names as missing appears anywhere",
+                     "if the answer contains more than one gap sentence",
+                     "grounded is false if a numbered cause cannot produce the symptom asked about",
+                     "offered to change a resource that another product manages, unless the "
+                     "material connects them",
                      "counts only causes that can produce the symptom asked about",
                      "For an answer that is not about a symptom it is 0",
                      'does not contain a sentence of the form "The retrieved documentation does not '
@@ -209,12 +243,13 @@ class PromptVersionTests(Base):
             self.assertIn(text, v, text)
 
     def test_rows_and_report_carry_prompt_version(self):
-        self.assertEqual(G.PACK_PROMPT_VERSION, "pack/2")
+        self.assertEqual(G.PACK_PROMPT_VERSION, "pack/3")
         out = self.run_pack(FakeLLM(), "--verify", "--stats", str(self.d / "stats.md"))
         rows = rows_of(self.d / "out.jsonl")
         self.assertEqual(len(rows), 3)
-        self.assertEqual({r["prompt_version"] for r in rows}, {"pack/2"})
-        self.assertIn("prompt_version: pack/2", (self.d / "stats.md").read_text())
+        self.assertEqual({r["prompt_version"] for r in rows}, {"pack/3"})
+        self.assertTrue(all(isinstance(r["mech"], list) for r in rows))
+        self.assertIn("prompt_version: pack/3", (self.d / "stats.md").read_text())
 
     def test_resume_into_other_version_or_none_exits_and_writes_nothing(self):
         for row in ({"id": "q1", "prompt_version": "pack/1"}, {"id": "q1"}):
