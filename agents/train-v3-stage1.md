@@ -129,19 +129,32 @@ are checked by both verifiers.
    two verifiers. Pilot of 40 bank questions (20 troubleshooting, 6 withheld, 3
    out-of-corpus). Gates:
    - skips at most 30%;
-   - at least 80% of fully covered troubleshooting answers name 2 or more causes, each with
-     a check and a fix;
+   - at least 80% of fully covered answers to questions that describe a symptom name 2 or
+     more causes, each with a check and a fix (a concept or settings question typed as
+     troubleshooting does not count);
    - of 10 items read claim by claim, at most 1 has an unsupported claim; no fact found only
      in a withheld chunk;
    - `scripts/invention_count.py` (frozen regex and allowlist): code-like tokens absent from
-     the pack in at most 2 of 40 kept rows;
-   - false gaps (a "not covered" claim where the pack holds the fact) in at most 5% of rows
-     labelled fully covered.
+     the pack in at most 2 of 40 rows, judged after setting aside tokens that the question
+     itself contains and field paths assembled from YAML that is in the pack; the tool's raw
+     count is reported next to it;
+   - false gaps, measured two ways: partly or not covered rows where the pack does hold the
+     fact declared missing (at most 5% of all rows), and fully covered rows that leave out
+     something the question asked and the pack lacks (reported);
+   - no answer says that a field, flag or feature does not exist unless the pack says so.
    Also reported: length of kept rows against generated rows and reject rate by length
    quartile (verifiers must not bias the set short), verdicts that failed to parse, rejects
    per verifier and their disagreement, seconds per row with GLM running alongside, yield.
    A failed gate stops the stage until Roman has seen it. **Roman:** 3 items (fully covered,
    partly covered, how-to) and the numbers. The generation prompt is frozen after the pilot.
+
+   Pilot 1 (2026-11-16, prompt version pack/1) failed three gates as measured and was
+   reviewed claim by claim: two failures were measurement artefacts (hence the wording of
+   the gates above), two problems were real: the teacher denied the existence of things its
+   pack did not mention, and it declared gaps for facts its pack held. The prompts were
+   revised (pack/2: no denial without evidence, no skipping of real questions, no padded
+   causes, a verifier that checks denials and the gap sentence) and the same 40 questions
+   re-run. Outputs carry `prompt_version` and the two versions are never mixed.
 2. **Ceiling check** (about 4 to 7 h). The teacher (DeepSeek, frozen pilot prompt) answers
    the runbook holdout from its packs, and the answers are judged head-to-head against base
    + retrieval, two flipped passes. **(Pending Roman:)** the same on `questions_real`, and a
@@ -153,8 +166,13 @@ are checked by both verifiers.
    nothing. None of these answers is ever training data. Reported next to the scores: the
    count of tokens absent from the pack, teacher against base + retrieval. **Roman:** go or
    stop for steps 3 and 4.
-3. **Bulk generation with two verifiers** (about 28 h; GLM alone needs about 19 h for 1,750
-   rows), then the dataset build. Stop and report if the verifier reject rate passes 40%, if
+3. **Bulk generation with two verifiers**, then the dataset build. GLM `oQ4e` cannot be
+   loaded next to DeepSeek under the model server's memory ceiling (measured at the pilot:
+   302 GB in use, 466 GB ceiling, GLM estimated at 178 to 191 GB), so it does not run
+   alongside generation as the brief assumed: it checks the rows after DeepSeek, in blocks.
+   The time for this step is re-estimated after the re-pilot, from the measured yield (the
+   first verifier kept 34 of 40 at the pilot, against a planned 0.5) and rates, and goes to
+   Roman with the go for steps 3 and 4. Stop and report if the verifier reject rate passes 40%, if
    the yield at the first 300 items is under 0.40 (then pack the reserve), or if the
    projected time passes 35 h. The user message of every row is built by the same function
    that built the Phase 0 prompts, checked byte for byte. Shape gate on fully and partly

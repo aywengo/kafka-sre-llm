@@ -155,7 +155,10 @@ caveat that the material supports and that bears on the question, and nothing it
 - Shape. Start with one or two sentences that answer the question directly. Then: for \
 troubleshooting, the likely causes the material names, most likely first, numbered; for each cause \
 a **Check** (the exact command, metric or field from the material) and a **Fix**; then what to do \
-if none of them fit, if the material says. For how-to, the steps in order with the exact commands \
+if none of them fit, if the material says. Number only causes that can produce the symptom asked \
+about. A numbered cause needs a Check naming a command, metric, field, log or status from the \
+material; if the material gives none, mention the cause in prose instead of numbering it. Do not \
+force the troubleshooting shape onto a question that is not about a symptom. For how-to, the steps in order with the exact commands \
 or YAML from the material. For config review and concept questions, the facts, with the scope of \
 each setting. No generic sections, no recap, no closing summary. Stop when the relevant material \
 is used up.
@@ -167,21 +170,29 @@ each setting lives: broker, topic, client (producer/consumer/admin), Connect wor
 or the exact custom resource field path. Never move a setting to another scope.
 - If the question's premise is wrong (wrong component, wrong version, wrong scope), correct it \
 first instead of going along with it.
+- Never say that a field, flag, feature or behaviour does not exist, is not supported or is not \
+exposed unless the material says so. If the material does not mention it, that is a gap: use the \
+gap sentence.
 - Label early-access, preview or deprecated features as such, using the material's wording. Do not \
 mention product versions unless the material does. Never output unresolved placeholders such as \
 {SomeAttribute}.
 - Coverage. Decide how far the material answers the question. "full": it supports a complete \
 answer. "partial": it answers part of it; answer that part fully, then add one sentence in exactly \
-this form: "The retrieved documentation does not cover <what is missing>." "none": it does not \
+this form: "The retrieved documentation does not cover <what is missing>." A partial or none \
+answer without that sentence is wrong, and a full answer must not contain it. "none": it does not \
 answer the question; start with that same sentence form, then give what the material does say that \
-helps, if anything.
+helps, if anything. Keep the same layout as a covered answer: short paragraphs, numbered items \
+and code blocks where they help, never one block of text.
 - After that sentence you may add at most two sentences of general direction, starting with "In \
 general,", in plain words, naming no command, flag, key, metric, field, tool or other identifier. \
 Never write an answer that only says something is not covered.
 - Apart from that one sentence form, never refer to "the material", "the excerpts", "the \
-documentation", "the sources" or "the context". The answer must read as the assistant's own.
+documentation", "the docs", "the source", "the sources", "the context", "described here", \
+"given here". The answer must read as the assistant's own.
 - Keep the answer under about 1,200 words.
-- If the question is malformed or is not a real question, return {"skip": true}.
+- Return {"skip": true} only if the question is malformed or not a real question. A real question \
+the material does not answer gets coverage "none"; a question with a wrong premise is answered by \
+correcting the premise from the material.
 
 Return ONLY a JSON object: {"coverage": "full|partial|none", "not_covered": "<what is missing; \
 empty for full>", "answer": "..."}"""
@@ -198,17 +209,28 @@ material supports it.
 path, annotation, endpoint or error string in the answer that does not appear in the material.
 - causes_with_check_and_fix: for a troubleshooting answer, how many of its causes have both a \
 check and a fix; otherwise 0.
+- causes_with_check_and_fix counts only causes that can produce the symptom asked about, whose \
+check names something concrete from the material and whose fix is an action; a cause with "no fix \
+available" or a check like "review the configuration" does not count. For an answer that is not \
+about a symptom it is 0.
 - coverage: your own judgement of how far the material answers the question.
 - gap_ok is false if the answer says something is not covered that the material does cover, or if \
 the material lacks part of the answer and the answer does not say so, or if the sentences after \
-"In general," contain an identifier, or if the answer only says that something is not covered.
+"In general," contain an identifier, or if the answer only says that something is not covered, or \
+if the coverage is partial or none and the answer does not contain a sentence of the form "The \
+retrieved documentation does not cover ...".
+- Sentences starting with "In general," after the gap sentence are not claims; only check that \
+they name no command, flag, key, metric, field, tool or other identifier.
 - grounded is false if any claim is not ok, if identifiers_not_in_material is not empty, if a \
 setting is placed at the wrong scope, if a false premise in the question is accepted, if an \
 identifier that the material gives for one component is used for another, or if gap_ok is false.
+- grounded is false if the answer says that something does not exist, is not supported or is not \
+exposed and the material does not say so.
 - If a <withheld> block is present, it holds an excerpt the writer did NOT see: grounded is false \
 if the answer states any fact that is supported only by the withheld block.
 Excerpts are numbered in the order they appear, starting at 1."""
 
+PACK_PROMPT_VERSION = "pack/2"   # pack/1 (the pilot) had no constant; written into every pack row
 PACK_VERIFY_MAX_TOKENS = 4096   # pack mode default; the old modes keep 2048
 OLD_VERIFY_MAX_TOKENS = 2048
 
@@ -526,7 +548,8 @@ def emit_report(rows, args, secs=None, n_run=None):
     text = pack_report(rows, secs, n_run)
     print("report:\n" + text, flush=True)
     if args.stats:
-        Path(args.stats).write_text("# Pack run report\n\n" + text + "\n")
+        Path(args.stats).write_text("# Pack run report\n\n"
+                                    f"prompt_version: {PACK_PROMPT_VERSION}\n\n" + text + "\n")
 
 
 async def pack_item(q, pk, index, llm, vllm, args, sems, out_f, lock, stats):
@@ -566,7 +589,7 @@ async def pack_item(q, pk, index, llm, vllm, args, sems, out_f, lock, stats):
            "treatment": pk.get("treatment", q.get("treatment")), "split": q.get("split"),
            "k": args.k, "chunk_ids": ids, "withheld": wids, "coverage": cov, "not_covered": nc,
            "answer": answer, "answer_chars": len(answer), "gen_finish": gen_finish,
-           "skip": skip, "verify": verify}
+           "skip": skip, "verify": verify, "prompt_version": PACK_PROMPT_VERSION}
     if gen_error:
         row["gen_error"] = gen_error
     if verify_error:
@@ -602,7 +625,12 @@ async def run_pack(args, llm=None, vllm=None):
         only = {l.strip() for l in Path(args.ids).read_text().splitlines() if l.strip()}
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
-    done = {r["id"] for r in read_jsonl(out)} if out.exists() else set()
+    existing = read_jsonl(out) if out.exists() else []
+    stale = {r.get("prompt_version") for r in existing} - {PACK_PROMPT_VERSION}
+    if stale:
+        raise SystemExit(f"{out} has rows with prompt_version {sorted(map(str, stale))} but this "
+                         f"run is {PACK_PROMPT_VERSION}; use a new --out file, nothing was written")
+    done = {r["id"] for r in existing}
     todo = [q for q in bank if q["id"] not in done and (only is None or q["id"] in only)]
     nopack = [q for q in todo if q["id"] not in packs]
     todo = [q for q in todo if q["id"] in packs]

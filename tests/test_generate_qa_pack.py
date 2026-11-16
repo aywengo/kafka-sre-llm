@@ -184,6 +184,51 @@ class PackTests(Base):
         self.assertIn("type=troubleshooting", out)
 
 
+class PromptVersionTests(Base):
+    def test_new_sentences_in_prompts(self):
+        for text in ("does not exist, is not supported or is not exposed",
+                     "Number only causes that can produce the symptom",
+                     "mention the cause in prose instead of numbering it",
+                     "Do not force the troubleshooting shape onto a question that is not about a symptom",
+                     "A partial or none answer without that sentence is wrong",
+                     "a full answer must not contain it",
+                     "never one block of text",
+                     '"the docs", "the source", "the sources", "the context", "described here", "given here"',
+                     'Return {"skip": true} only if the question is malformed or not a real question',
+                     "gets coverage \"none\""):
+            self.assertIn(text, " ".join(G.PACK_GEN_SYSTEM.replace("\\\n", "").split()), text)
+        self.assertNotIn("is not a real question, return", G.PACK_GEN_SYSTEM)
+        v = " ".join(G.PACK_VERIFY_SYSTEM.split())
+        for text in ("are not claims",
+                     "grounded is false if the answer says that something does not exist, is not "
+                     "supported or is not exposed and the material does not say so",
+                     "counts only causes that can produce the symptom asked about",
+                     "For an answer that is not about a symptom it is 0",
+                     'does not contain a sentence of the form "The retrieved documentation does not '
+                     'cover ..."'):
+            self.assertIn(text, v, text)
+
+    def test_rows_and_report_carry_prompt_version(self):
+        self.assertEqual(G.PACK_PROMPT_VERSION, "pack/2")
+        out = self.run_pack(FakeLLM(), "--verify", "--stats", str(self.d / "stats.md"))
+        rows = rows_of(self.d / "out.jsonl")
+        self.assertEqual(len(rows), 3)
+        self.assertEqual({r["prompt_version"] for r in rows}, {"pack/2"})
+        self.assertIn("prompt_version: pack/2", (self.d / "stats.md").read_text())
+
+    def test_resume_into_other_version_or_none_exits_and_writes_nothing(self):
+        for row in ({"id": "q1", "prompt_version": "pack/1"}, {"id": "q1"}):
+            out = self.d / "out.jsonl"
+            write_jsonl(out, [row])
+            before = out.read_text()
+            llm = FakeLLM()
+            with self.assertRaises(SystemExit) as cm:
+                self.run_pack(llm)
+            self.assertIn("prompt_version", str(cm.exception))
+            self.assertEqual(llm.calls, [])
+            self.assertEqual(out.read_text(), before)
+
+
 class PackVerifyTests(Base):
     def make_in(self):
         base = {"question": "Q", "chunk_ids": ["c0"], "withheld": [], "skip": False}
