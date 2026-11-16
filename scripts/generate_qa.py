@@ -189,8 +189,9 @@ answer without that sentence is wrong, and a full answer must not contain it. Be
 gap sentence, check that nothing in your answer or in the material, including comments inside code \
 blocks, gives what it names as missing. Every statement about what is missing goes in that one \
 sentence and nowhere else, and the sentence appears exactly once. "none": it does not answer the \
-question; start with that same sentence form, then continue with the facts that do help, if any, \
-stated as facts without mentioning the documentation again. Keep the same layout as a covered answer: short paragraphs, numbered items \
+question; start with that same sentence form, then, if anything in the material helps, a line \
+reading exactly "What it does cover:" followed by those facts, stated as facts. Do not mention the \
+material or the documentation anywhere else. Keep the same layout as a covered answer: short paragraphs, numbered items \
 and code blocks where they help, never one block of text.
 - After that sentence you may add at most two sentences of general direction, starting with "In \
 general,", in plain words, naming no command, flag, key, metric, field, tool or other identifier and stating no technical \
@@ -250,7 +251,7 @@ another product manages, unless the material connects them.
 if the answer states any fact that is supported only by the withheld block.
 Excerpts are numbered in the order they appear, starting at 1."""
 
-PACK_PROMPT_VERSION = "pack/3"   # pack/1 (the pilot) had no constant; written into every pack row
+PACK_PROMPT_VERSION = "pack/4"   # pack/1 (the pilot) had no constant; written into every pack row
 PACK_VERIFY_MAX_TOKENS = 4096   # pack mode default; the old modes keep 2048
 OLD_VERIFY_MAX_TOKENS = 2048
 

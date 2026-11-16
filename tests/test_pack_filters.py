@@ -44,6 +44,18 @@ class LeakTests(unittest.TestCase):
             self.assertIsNotNone(F.leak_problem(t), t)
         self.assertEqual(F.leak_problem("the documentation says"), "the documentation says")
 
+    def test_documented_as_plain_word_is_fine(self):
+        # "the documented behaviour" is how an engineer speaks; only statements that something is NOT
+        # documented are gap statements outside the gap sentence
+        for t in ("This is the documented behaviour of the setting.", "Your execution matches the documented shape:"):
+            self.assertIsNone(F.leak_problem(t), t)
+        for t in ("The asymmetry is not documented for this join.", "Nothing is documented about it.",
+                  "That flag isn't documented."):
+            self.assertIsNotNone(F.leak_problem(t), t)
+
+    def test_bridge_line_is_fine(self):
+        self.assertIsNone(F.leak_problem("What it does cover:\n- `num.recovery.threads.per.data.dir` sets the threads."))
+
     def test_source_alone_is_fine(self):
         self.assertIsNone(F.leak_problem("Point the connector at the source cluster."))
         self.assertIsNone(F.leak_problem("Check the source."))

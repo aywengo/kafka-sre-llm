@@ -2,7 +2,7 @@
 import re
 
 GAP_SENTENCE_RE = re.compile(r"The retrieved documentation does not cover [^\n]*?\.")
-LEAK_RE = re.compile(r"(?i)\bthe (material|excerpts?|docs)\b|\bthe (documentation|sources?) (has|have|says|does|do|lists?|gives?|shows?|describes?)\b|\b(documented|undocumented|nothing here|described here|given here|in what (is|was) (described|given|shown)|what I can point you to|from the material)\b|\bthe [\w-]+ documentation\b")
+LEAK_RE = re.compile(r"(?i)\bthe (material|excerpts?|docs)\b|\bthe (documentation|sources?) (has|have|says|does|do|lists?|gives?|shows?|describes?)\b|(\bnot|n't|\bnothing|\bno|\bnever) (\w+ ){0,2}documented\b|\b(undocumented|nothing here|described here|given here|in what (is|was) (described|given|shown)|what I can point you to|from the material)\b|\bthe [\w-]+ documentation\b")
 
 
 def gap_sentence_count(answer):

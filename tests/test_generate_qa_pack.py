@@ -207,8 +207,7 @@ class PromptVersionTests(Base):
                      "say so only in the gap sentence",
                      "including comments inside code blocks, gives what it names as missing",
                      "the sentence appears exactly once",
-                     "continue with the facts that do help, if any, stated as facts without "
-                     "mentioning the documentation again",
+                     'a line reading exactly "What it does cover:" followed by those facts',
                      "and stating no technical fact that the material does not support",
                      "direction only (where to look, what kind of thing to check)",
                      "Check and Fix labels are for causes of a symptom only",
@@ -243,13 +242,13 @@ class PromptVersionTests(Base):
             self.assertIn(text, v, text)
 
     def test_rows_and_report_carry_prompt_version(self):
-        self.assertEqual(G.PACK_PROMPT_VERSION, "pack/3")
+        self.assertEqual(G.PACK_PROMPT_VERSION, "pack/4")
         out = self.run_pack(FakeLLM(), "--verify", "--stats", str(self.d / "stats.md"))
         rows = rows_of(self.d / "out.jsonl")
         self.assertEqual(len(rows), 3)
-        self.assertEqual({r["prompt_version"] for r in rows}, {"pack/3"})
+        self.assertEqual({r["prompt_version"] for r in rows}, {"pack/4"})
         self.assertTrue(all(isinstance(r["mech"], list) for r in rows))
-        self.assertIn("prompt_version: pack/3", (self.d / "stats.md").read_text())
+        self.assertIn("prompt_version: pack/4", (self.d / "stats.md").read_text())
 
     def test_resume_into_other_version_or_none_exits_and_writes_nothing(self):
         for row in ({"id": "q1", "prompt_version": "pack/1"}, {"id": "q1"}):
