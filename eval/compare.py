@@ -45,14 +45,14 @@ def answer(model, tok, question, max_tokens):
             "tokens": last.generation_tokens, "truncated": last.finish_reason == "length"}
 
 
-def judge(url, model, q, ref, a, b, api_key=None, extra_body=None):
+def judge(url, model, q, ref, a, b, api_key=None, extra_body=None, temperature=0):
     """Returns (parsed JSON or None, stats); None means the reply had no valid JSON."""
     user = f"Question:\n{q}\n\nReference notes:\n{ref or '(none)'}\n\nAnswer A:\n{a}\n\nAnswer B:\n{b}"
     t0 = time.time()
     r = httpx.post(f"{url.rstrip('/')}/chat/completions", timeout=1800,
                    headers={"Authorization": f"Bearer {api_key}"} if api_key else {}, json={
         **(extra_body or {}),
-        "model": model, "temperature": 0,
+        "model": model, "temperature": temperature,
         "messages": [{"role": "system", "content": JUDGE_SYSTEM}, {"role": "user", "content": user}],
     })
     r.raise_for_status()
@@ -82,6 +82,9 @@ def main():
                     help='JSON merged into judge requests, e.g. \'{"chat_template_kwargs": {"thinking_mode": "chat"}}\'')
     ap.add_argument("--cache", help="JSONL of generated answers; written as they are produced and "
                                     "reused on rerun, so generation can resume and judging can run later")
+    ap.add_argument("--judge-temperature", type=float, default=0, help="judge sampling temperature (0)")
+    ap.add_argument("--judge-flip", action="store_true",
+                    help="show the answers in the opposite order to the default (second pass, position-bias check)")
     ap.add_argument("--judge-concurrency", type=int, default=1, help="parallel judge calls")
     ap.add_argument("--judge-cache", help="JSONL of judge replies keyed by prompt hash; written per item and reused on rerun")
     args = ap.parse_args()
@@ -122,7 +125,7 @@ def main():
     clean = defaultdict(lambda: {"base": [], "tuned": []})   # pairs where neither answer was truncated
     def judge_key(r):
         # randomise which answer is shown first to reduce position bias
-        swap = int(hashlib.md5(r["question"].encode()).hexdigest(), 16) % 2
+        swap = int(hashlib.md5(r["question"].encode()).hexdigest(), 16) % 2 ^ args.judge_flip
         a, b = (r["tuned"], r["base"]) if swap else (r["base"], r["tuned"])
         ckey = hashlib.md5(f"{args.judge_model}\0{r['question']}\0{a}\0{b}".encode()).hexdigest()
         return swap, a, b, ckey
@@ -130,13 +133,14 @@ def main():
     def judge_one(r):
         _, a, b, ckey = judge_key(r)
         j, stats = judge(args.judge_url, args.judge_model, r["question"], r.get("reference"), a, b,
-                         args.judge_api_key, args.judge_extra_body)
+                         args.judge_api_key, args.judge_extra_body, args.judge_temperature)
         entry = {"key": ckey, "question": r["question"], "j": j, **stats}
         with jlock:
             jcache[ckey] = entry
             if args.judge_cache:
                 with open(args.judge_cache, "a") as f:
                     f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            print(f"[judge] {len(jcache)} cached, scored={bool(j)} {stats['seconds']}s", flush=True)
 
     jlock = threading.Lock()
     if args.judge_url:

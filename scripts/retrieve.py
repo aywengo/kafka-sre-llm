@@ -8,9 +8,12 @@ CLI: retrieve.py QUESTIONS.jsonl [--k 6 --max-chars 14000] > packs.jsonl
 import argparse, json, math, re, sys
 from collections import Counter
 from functools import lru_cache
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from kafka_sre_rag.prompts import EXPAND_SYSTEM  # noqa: E402,F401  (re-export; single source of truth)
 
 CHUNKS = "work/v2/chunks.jsonl"
-EXPAND_SYSTEM = """You help search technical documentation (Apache Kafka 4.3, Strimzi, Kubernetes, Argo CD). Given an on-call engineer's question, list the exact terms the relevant documentation pages would contain: configuration keys, metric and log names, CLI tools with flags, Kubernetes/Strimzi/Argo CD resource kinds and fields, error and exception names, and the names of the concepts involved. Output one comma-separated line of 15 to 30 terms, most important first. No sentences, no explanations."""
 K1, B, TITLE_W = 1.2, 0.75, 2
 STOP = set("a an and are as at be but by can do does for from has have how i if in is it its my of on or our so that the "
            "their then there these they this to was we what when where which why will with you your should would not no "
@@ -30,9 +33,9 @@ def tokens(text):
     return out
 
 
-@lru_cache(maxsize=1)
-def index():
-    chunks = [json.loads(l) for l in open(CHUNKS)]
+@lru_cache(maxsize=2)
+def index(path=CHUNKS):
+    chunks = [json.loads(l) for l in open(path)]
     docs = []
     for c in chunks:
         path_words = c["path"].rsplit("/", 2)[-2:] if c["path"] else []
@@ -48,8 +51,8 @@ def index():
     return chunks, docs, idf, lens, sum(lens) / n, inv
 
 
-def scores(question):
-    chunks, docs, idf, lens, avg, inv = index()
+def scores(question, index_path=CHUNKS):
+    chunks, docs, idf, lens, avg, inv = index(index_path)
     s = Counter()
     for t in set(tokens(question)):
         for i in inv.get(t, ()):
@@ -64,10 +67,10 @@ def reranker():
     return CrossEncoder("BAAI/bge-reranker-v2-m3", device="cpu", max_length=512)
 
 
-def rank(question, expansion=None, pool=40, rerank_query=None, chunk_chars=1500, rrf=True):
+def rank(question, expansion=None, pool=40, rerank_query=None, chunk_chars=1500, rrf=True, index_path=CHUNKS):
     """Chunk indices, best first: BM25 on question + expansion -> top `pool` -> cross-encoder rerank (CPU)."""
-    chunks = index()[0]
-    cand = [i for i, _ in scores(question + " " + expansion if expansion else question).most_common(pool)]
+    chunks = index(index_path)[0]
+    cand = [i for i, _ in scores(question + " " + expansion if expansion else question, index_path).most_common(pool)]
     if rerank_query is None and not expansion:
         rerank_query = question
     rq = rerank_query or question
@@ -79,10 +82,10 @@ def rank(question, expansion=None, pool=40, rerank_query=None, chunk_chars=1500,
     return [cand[j] for j in order]
 
 
-def retrieve(question, k=6, max_chars=14000, expansion=None, rerank=True, **kw):
-    chunks = index()[0]
+def retrieve(question, k=6, max_chars=14000, expansion=None, rerank=True, index_path=CHUNKS, **kw):
+    chunks = index(index_path)[0]
     out, used = [], 0
-    ranked = rank(question, expansion, **kw) if rerank else [i for i, _ in scores(question + " " + expansion if expansion else question).most_common(k)]
+    ranked = rank(question, expansion, index_path=index_path, **kw) if rerank else [i for i, _ in scores(question + " " + expansion if expansion else question, index_path).most_common(k)]
     for i in ranked[:k]:
         c = dict(chunks[i])
         room = max_chars - used

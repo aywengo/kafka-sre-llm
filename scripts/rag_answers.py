@@ -3,7 +3,7 @@
 
   rag_answers.py expand --model M [--adapter A] --questions Q.jsonl --out expansions.jsonl
   rag_answers.py answer --model M [--adapter A] --questions Q.jsonl --out answers.jsonl --label tuned
-                        [--packs packs.json --k k6|k3] [--thorough] [--thinking]
+                        [--packs packs.json|packs.jsonl --k k6|k3] [--thorough] [--thinking]
 
 answers.jsonl rows are in eval/compare.py cache format (label, question, text, tokens, truncated).
 Packs come from scripts/retrieve.py (CPU); expansions are written by the model under test.
@@ -13,11 +13,9 @@ from pathlib import Path
 from mlx_lm import load, stream_generate
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from build_dataset import SYSTEM_PROMPT
-from retrieve import EXPAND_SYSTEM, index
-
-THOROUGH = ("Answer thoroughly: give every likely cause the situation allows, how to check each one "
-            "(exact command, metric or field) and the fix, then what to do if none of them fit.")
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from kafka_sre_rag.prompts import answer_messages, expand_messages
+from retrieve import CHUNKS, index
 
 
 def gen(model, tok, msgs, max_tokens, thinking=False):
@@ -28,13 +26,20 @@ def gen(model, tok, msgs, max_tokens, thinking=False):
     return re.sub(r"<think>.*?</think>", "", text, flags=re.S).strip(), last.generation_tokens, last.finish_reason == "length"
 
 
-def pack_text(chunk_ids):
-    chunks = {c["id"]: c for c in index()[0]}
-    parts = []
-    for cid in chunk_ids:
-        c = chunks[cid]
-        parts.append(f"{c['source']} \u2014 {c['title'] or c['path'].rsplit('/', 1)[-1]}\n{c['text']}")
-    return "\n\n".join(parts)
+def chunks_for(chunk_ids, index_path=None):
+    """Full chunk dicts by id (the prompt uses the full chunk text); layout lives in kafka_sre_rag.prompts."""
+    chunks = {c["id"]: c for c in index(index_path or CHUNKS)[0]}
+    return [chunks[cid] for cid in chunk_ids]
+
+
+def load_packs(path, k):
+    """Packs as {question: chunk ids}: a JSON array, or JSONL (one object per line) from build_packs_v3.py."""
+    text = Path(path).read_text()
+    if text.lstrip().startswith("["):
+        rows = json.loads(text)
+    else:
+        rows = [json.loads(l) for l in text.splitlines() if l.strip()]
+    return {p["question"]: p[k] for p in rows}
 
 
 def main():
@@ -48,6 +53,8 @@ def main():
     ap.add_argument("--packs")
     ap.add_argument("--k", choices=["k6", "k3"])
     ap.add_argument("--thorough", action="store_true")
+    ap.add_argument("--strict", action="store_true")
+    ap.add_argument("--index", help="chunks.jsonl the packs were built on (default: retrieve.CHUNKS)")
     ap.add_argument("--thinking", action="store_true")
     ap.add_argument("--max-tokens", type=int, default=2048)
     a = ap.parse_args()
@@ -57,20 +64,15 @@ def main():
     todo = [q for q in qs if q not in done]
     if not todo:
         return
-    packs = {p["question"]: p[a.k] for p in json.load(open(a.packs))} if a.packs else {}
+    packs = load_packs(a.packs, a.k) if a.packs else {}
     model, tok = load(a.model, adapter_path=a.adapter)
     for n, q in enumerate(todo, 1):
         if a.mode == "expand":
-            text, toks, trunc = gen(model, tok, [{"role": "system", "content": EXPAND_SYSTEM}, {"role": "user", "content": q}], 300)
+            text, toks, trunc = gen(model, tok, expand_messages(q), 300)
             row = {"question": q, "expansion": text}
         else:
-            user = q
-            if packs:
-                user = ("Use these documentation excerpts where relevant.\n\n" + pack_text(packs[q]) + f"\n\nQuestion: {q}")
-            if a.thorough:
-                user += "\n\n" + THOROUGH
-            text, toks, trunc = gen(model, tok, [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": user}],
-                                    a.max_tokens, a.thinking)
+            msgs = answer_messages(q, chunks_for(packs[q], a.index) if packs else None, strict=a.strict, thorough=a.thorough)
+            text, toks, trunc = gen(model, tok, msgs, a.max_tokens, a.thinking)
             row = {"label": a.label, "question": q, "text": text, "tokens": toks, "truncated": trunc}
         with open(out, "a") as f:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")

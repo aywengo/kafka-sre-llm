@@ -12,15 +12,12 @@ import hashlib
 import json
 import random
 import re
+import sys
 from collections import Counter
 from pathlib import Path
 
-SYSTEM_PROMPT = (
-    "You are an expert Site Reliability Engineer for Apache Kafka, Strimzi, Kubernetes, "
-    "GitOps and data streaming platforms. Give precise, practical answers with commands or "
-    "YAML where useful, and call out risks and version-specific behaviour. If you are not "
-    "sure about an exact config key or flag, say so."
-)
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from kafka_sre_rag.prompts import SYSTEM_PROMPT  # noqa: E402,F401  (re-export; single source of truth)
 
 LEAK_PATTERNS = re.compile(
     r"\b(the|this) (excerpt|passage|document|text|documentation snippet)\b|as mentioned above",

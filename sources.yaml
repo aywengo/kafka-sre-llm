@@ -1,5 +1,6 @@
 # Documentation sources for the Kafka SRE dataset.
-# `ref` pins a release tag. Sources without it follow the default branch.
+# `ref` pins a release tag or a full commit hash (quote a hash). Sources without
+# it follow the default branch.
 # Verify each license before publishing a model trained on it, and credit
 # the sources in the model card (CC BY requires attribution).
 
@@ -18,8 +19,42 @@ sources:
   # the apache-kafka pin above.
   - name: apache-kafka-config
     repo: https://github.com/apache/kafka-site.git
+    ref: "cd727c4dd8664857751a87cd0442e51a3d3aca8f"   # kafka-site has no release tags; commit of 2026-11-08
     paths: [content/en/43/generated]
-    globs: ["**/*.html"]
+    globs: ["**/*.html", "connect_rest.yaml"]   # connect_rest.yaml is an OpenAPI file, one chunk per path and method
+    license: Apache-2.0
+
+  # Schema Registry compatibility, from two Apache-2.0 registries that implement the Confluent
+  # Schema Registry API. Apicurio 3.3.4 = commit 5662f79947dce0c09a3b9f61ddd5c4bc588fa004.
+  # The assemblies hold their content inline; the only include is the shared attribute file,
+  # which lives outside `paths` (fetch_sources.py adds its directory to the sparse checkout).
+  # `keep_placeholders` are REST path parameters such as /subjects/{subject}/versions/{version}:
+  # left as written instead of being read as AsciiDoc attributes.
+  - name: apicurio-registry
+    repo: https://github.com/Apicurio/apicurio-registry.git
+    ref: 3.3.4
+    attribute_files:
+      - docs/modules/ROOT/partials/shared/attributes.adoc   # includes attributes-links.adoc
+    keep_placeholders: [id, subject, version]
+    paths: [docs/modules/ROOT/pages/getting-started]
+    globs:
+      - "assembly-registry-compatibility-modes.adoc"
+      - "assembly-rule-reference.adoc"
+      - "assembly-intro-to-registry-rules.adoc"
+      - "assembly-confluent-schema-registry-compatibility.adoc"
+      - "assembly-using-kafka-client-serdes.adoc"
+      - "assembly-configuring-kafka-client-serdes.adoc"
+      - "assembly-schema-lifecycle-best-practices.adoc"
+    license: Apache-2.0
+
+  # Karapace 6.2.4 = commit 09cba53ffcc961038f608b34f7d00fc2df1d313c. README.rst (repository
+  # root) has the configuration keys and the JSON Schema compatibility rules.
+  - name: karapace
+    repo: https://github.com/Aiven-Open/karapace.git
+    ref: 6.2.4
+    paths: [website/docs]
+    files: [README.rst]
+    globs: ["api-examples.md", "compatibility.md", "import-mode.md", "troubleshooting.md"]
     license: Apache-2.0
 
   - name: strimzi
@@ -37,6 +72,7 @@ sources:
   # `exclude` patterns match paths relative to each entry in `paths`.
   - name: kubernetes
     repo: https://github.com/kubernetes/website.git
+    ref: "18f8e9f6d2b0bc9d33e82ceac8abcfffdf8c1ca8"   # main, commit of 2026-11-11
     paths: [content/en/docs/concepts, content/en/docs/tasks]
     globs: ["**/*.md"]
     exclude:
@@ -64,6 +100,26 @@ sources:
       - "*/SUPPORT.md"
     license: Apache-2.0
 
+  # Container CPU throttling: the cAdvisor metric reference (container_cpu_cfs_* and the rest
+  # of the Prometheus metrics table) and the kube-prometheus CPUThrottlingHigh alert runbook.
+  # cAdvisor v0.60.6 = commit 5bf5d43ac6f60d7ee36a13b4d5b4a78ad2d0abc7.
+  - name: cadvisor
+    repo: https://github.com/google/cadvisor.git
+    ref: v0.60.6
+    paths: [docs/storage]
+    globs: ["prometheus.md"]
+    license: Apache-2.0
+
+  # The runbooks repository has no tags, so `ref` is a commit. `max_chars` keeps the short
+  # runbook as one chunk titled "CPU Throttling High".
+  - name: prometheus-operator-runbooks
+    repo: https://github.com/prometheus-operator/runbooks.git
+    ref: "a685d14cf5128bb30e2bf935c3983decd772d885"
+    paths: [content/runbooks/kubernetes]
+    globs: ["CPUThrottlingHigh.md"]
+    max_chars: 12000
+    license: Apache-2.0
+
   - name: runbooks
     local: ./data/runbooks/runbooks
     globs: ["**/*.md"]
@@ -76,6 +132,9 @@ sources:
       - "*/strimzi/mirrormaker2-restart-connector-and-task.md"
       - "*/strimzi/operator-logs.md"
       - "*/strimzi/topic-not-ready.md"
+      # new runbooks awaiting the owner's review; not in the stage-1 index
+      - "*/kafka/schema-registry-wire-format-and-magic-byte.md"
+      - "*/kubernetes/*.md"
     max_chars: 12000
     license: Apache-2.0
 

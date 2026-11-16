@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """Shallow, sparse clone of every git source listed in sources.yaml."""
 import argparse
+import re
 import subprocess
 import sys
 from pathlib import Path
 
 import yaml
+
+COMMIT_HASH = re.compile(r"[0-9a-f]{40}")   # a `ref` that is a full commit hash, not a tag
 
 
 def run(cmd, cwd=None):
@@ -36,14 +39,23 @@ def main():
                  src["repo"], str(target)])
         # set on every run, not only on clone: an existing clone must pick up
         # changed paths (e.g. a version switch from content/en/44 to 43)
-        run(["git", "sparse-checkout", "set", *src["paths"]], cwd=target)
-        if ref:
+        # `files` and `attribute_files` are single files. Cone mode always checks
+        # out files at the repository root; a file elsewhere needs its directory
+        # in the cone unless one of `paths` already covers it.
+        files = [*src.get("files", []), *src.get("attribute_files", [])]
+        file_dirs = [d for d in dict.fromkeys(Path(f).parent.as_posix() for f in files)
+                     if d != "." and not any(d == p or d.startswith(p.rstrip("/") + "/") for p in src["paths"])]
+        run(["git", "sparse-checkout", "set", *src["paths"], *file_dirs], cwd=target)
+        if ref and COMMIT_HASH.fullmatch(ref):
+            run(["git", "fetch", "--depth", "1", "origin", ref], cwd=target)
+            run(["git", "checkout", "--quiet", ref], cwd=target)
+        elif ref:
             run(["git", "fetch", "--depth", "1", "origin", "tag", ref], cwd=target)
             run(["git", "checkout", "--quiet", ref], cwd=target)
         else:
             run(["git", "fetch", "--depth", "1", "origin"], cwd=target)
             run(["git", "reset", "--hard", "--quiet", "FETCH_HEAD"], cwd=target)
-        missing = [p for p in src["paths"] if not (target / p).exists()]
+        missing = [p for p in [*src["paths"], *files] if not (target / p).exists()]
         if missing:
             sys.exit(f"{src['name']}: configured paths missing after checkout: {', '.join(missing)}")
         commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=target, text=True).strip()

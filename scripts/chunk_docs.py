@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Convert Markdown / AsciiDoc / HTML docs into clean, heading-aware chunks.
+"""Convert Markdown / AsciiDoc / reStructuredText / HTML docs into clean, heading-aware chunks.
 
 Output: one JSON object per line with id, source, license, path, title, text.
 """
@@ -21,18 +21,31 @@ MIN_CHARS = 400
 MAX_CHARS = 4000
 
 ADOC_ATTR_DEF = re.compile(r"^:([\w-]+):\s*(.*)$")
-ADOC_PLACEHOLDER = re.compile(r"(?<![$\w])\{[A-Za-z]\w*\}")
+ADOC_ATTR_REF = re.compile(r"\{([\w-]+)\}")                        # names may contain hyphens
+ADOC_PLACEHOLDER = re.compile(r"(?<![$\w])\{([A-Za-z][\w-]*)\}")
+ADOC_COND = re.compile(r"^if(n?)def::([\w-]+)\[\]$")
+RST_ADORN = re.compile(r"^([=\-~^\"'`#*+])\1{2,}$")
 
 
-def parse_adoc_text(text: str) -> dict:
-    return {m.group(1): m.group(2) for line in text.splitlines()
-            if (m := ADOC_ATTR_DEF.match(line.strip()))}
+def parse_adoc_text(text: str, known=()) -> dict:
+    """`:name: value` definitions. Definitions inside ifdef::x[] / ifndef::x[] blocks count only
+    when the condition holds for the attributes defined so far (`known` plus this text)."""
+    found, skip = {}, []
+    for line in text.splitlines():
+        s = line.strip()
+        if m := ADOC_COND.match(s):
+            skip.append((m.group(2) in found or m.group(2) in known) == bool(m.group(1)))
+        elif s.startswith("endif::") and skip:
+            skip.pop()
+        elif not any(skip) and (m := ADOC_ATTR_DEF.match(s)):
+            found[m.group(1)] = m.group(2)
+    return found
 
 
 def parse_adoc_attributes(path: Path, attrs=None) -> dict:
     """Read `:name: value` definitions from an AsciiDoc file, following include:: lines."""
     attrs = {} if attrs is None else attrs
-    attrs.update(parse_adoc_text(path.read_text(errors="ignore")))
+    attrs.update(parse_adoc_text(path.read_text(errors="ignore"), attrs))
     for line in path.read_text(errors="ignore").splitlines():
         m = re.match(r"^include::([^\[]+)\[", line.strip())
         if m and (path.parent / m.group(1)).is_file():
@@ -42,7 +55,7 @@ def parse_adoc_attributes(path: Path, attrs=None) -> dict:
 
 def resolve_attributes(attrs: dict) -> dict:
     """Expand attributes that refer to other attributes."""
-    sub = lambda v: re.sub(r"\{(\w+)\}", lambda m: attrs.get(m.group(1), m.group(0)), v)
+    sub = lambda v: ADOC_ATTR_REF.sub(lambda m: attrs.get(m.group(1), m.group(0)), v)
     for _ in range(5):
         attrs = {k: sub(v) for k, v in attrs.items()}
     return attrs
@@ -60,8 +73,8 @@ def clean_markdown(text: str) -> str:
     return text
 
 
-def clean_adoc(text: str, attrs: dict) -> str:
-    attrs = resolve_attributes({**attrs, **parse_adoc_text(text)})
+def clean_adoc(text: str, attrs: dict, keep=()) -> str:
+    attrs = resolve_attributes({**attrs, **parse_adoc_text(text, attrs), **{k: "{%s}" % k for k in keep}})
     out, in_listing, in_comment = [], False, False
     for line in text.splitlines():
         s = line.strip()
@@ -79,14 +92,17 @@ def clean_adoc(text: str, attrs: dict) -> str:
                 continue
             if re.match(r"^:[\w-]+:", s):                                  # attribute definitions
                 continue
-            if re.match(r"^\[(id|role|source|discrete|options|cols|NOTE|IMPORTANT|WARNING|TIP|\.)", s):
+            if re.match(r"^\[(id|role|source|discrete|options|cols|%|NOTE|IMPORTANT|WARNING|TIP|\.)", s):
                 continue
             m = re.match(r"^(=+)\s+(.*)", line)
             if m:
                 line = "#" * len(m.group(1)) + " " + m.group(2)
             line = re.sub(r"xref:[^\[]+\[([^\]]*)\]", r"\1", line)
             line = re.sub(r"link:[^\[]+\[([^\]]*)\]", r"\1", line)
-        line = re.sub(r"\{(\w+)\}", lambda m: attrs.get(m.group(1), m.group(0)), line)
+        line = ADOC_ATTR_REF.sub(lambda m: attrs.get(m.group(1), m.group(0)), line)
+        if not in_listing:                                                 # an attribute value can be an xref
+            line = re.sub(r"xref:([^\[]+)\[([^\]]*)\]",
+                          lambda m: m.group(2) or m.group(1).rsplit("_", 1)[0].replace("-", " "), line)
         out.append(line)
     return "\n".join(out)
 
@@ -110,7 +126,47 @@ def clean_html(text: str) -> str:
     return txt
 
 
-CLEANERS = {".md": clean_markdown, ".html": clean_html, ".txt": lambda t: t}
+def clean_rst(text: str) -> str:
+    """reStructuredText -> markdown: underlined titles become # headings (level = order in which
+    the underline characters first appear), `::` literal blocks become fenced code, directive
+    and option lines are dropped (list-table rows stay as nested lists)."""
+    text = re.sub(r"`([^`<]+?)\s*<[^>]+>`__?", r"\1", text)                 # `text <url>`_ -> text
+    text = re.sub(r"(?<!`)`([^`\n]+)`_", r"\1", text)                       # `named reference`_
+    text = re.sub(r"``([^`\n]+)``", r"`\1`", text)                          # ``literal`` -> `literal`
+    lines, out, levels, fence = text.splitlines(), [], [], None
+    i = 0
+    while i < len(lines):
+        line, nxt = lines[i], lines[i + 1] if i + 1 < len(lines) else ""
+        i += 1
+        indent = len(line) - len(line.lstrip())
+        if fence is not None:
+            if not line.strip() or indent > fence:
+                out.append(line)
+                continue
+            out.append("```")                                              # literal block ends on a dedent
+            fence = None
+        s = line.strip()
+        if s and not RST_ADORN.match(line) and RST_ADORN.match(nxt) and len(nxt) >= len(line.rstrip()):
+            if nxt[0] not in levels:
+                levels.append(nxt[0])
+            out.append("#" * (levels.index(nxt[0]) + 1) + " " + s)
+            i += 1
+        elif re.match(r"\.\. (code|code-block|sourcecode)::", s) or (s.endswith("::") and not s.startswith(".. ")):
+            if not s.startswith(".. ") and s != "::":
+                out.append(line.rstrip()[:-1])                             # "text::" reads "text:"
+            out.append("```")
+            fence = indent
+        elif RST_ADORN.match(line) or s.startswith(".. ") or re.match(r"^\s+:[\w-]+:( |$)", line) \
+                or re.fullmatch(r"(\|[^|]+\|\s*)+", s):                      # overlines, directives, options, |substitutions|
+            continue
+        else:
+            out.append(line)
+    if fence is not None:
+        out.append("```")
+    return "\n".join(out)
+
+
+CLEANERS = {".md": clean_markdown, ".html": clean_html, ".rst": clean_rst, ".txt": lambda t: t}
 
 
 # ---------- chunking ----------------------------------------------------------
@@ -188,6 +244,56 @@ def chunk_text(text: str, max_chars: int = MAX_CHARS):
         yield pending_title, pending
 
 
+# ---------- OpenAPI -----------------------------------------------------------
+
+def _schema_text(schema: dict, components: dict, depth: int = 0) -> str:
+    """One-line description of a schema; named schemas are expanded one level."""
+    if not schema:
+        return ""
+    ref = schema.get("$ref")
+    if ref:
+        name = ref.rsplit("/", 1)[-1]
+        target = components.get(name, {})
+        if depth == 0 and target.get("properties"):
+            props = ", ".join(f"{k}: {_schema_text(v, components, 1)}" for k, v in target["properties"].items())
+            return f"{name} {{{props}}}"
+        return name
+    if schema.get("type") == "array":
+        return f"array of {_schema_text(schema.get('items', {}), components, depth)}"
+    if schema.get("type") == "object" and schema.get("properties"):
+        return "{" + ", ".join(f"{k}: {_schema_text(v, components, 1)}" for k, v in schema["properties"].items()) + "}"
+    if schema.get("additionalProperties"):
+        return f"object with {_schema_text(schema['additionalProperties'], components, 1) or 'any'} values"
+    return schema.get("type", "") + (f" (default {schema['default']})" if "default" in schema else "")
+
+
+def chunk_openapi(text: str):
+    """One chunk per path and method: method + path as the title, then summary, parameters,
+    request body and responses."""
+    spec = yaml.safe_load(text)
+    components = spec.get("components", {}).get("schemas", {})
+    info = spec.get("info", {})
+    for path, ops in spec.get("paths", {}).items():
+        for method, op in ops.items():
+            if not isinstance(op, dict):
+                continue
+            lines = [f"{info.get('title', 'API')} {info.get('version', '')}: {method.upper()} {path}".strip(),
+                     op.get("summary") or op.get("description", "")]
+            if op.get("operationId"):
+                lines.append(f"operationId: {op['operationId']}")
+            for p in op.get("parameters", []):
+                desc = f" - {p['description']}" if p.get("description") else ""
+                req = ", required" if p.get("required") else ""
+                lines.append(f"parameter {p['name']} (in {p['in']}{req}): {_schema_text(p.get('schema', {}), components)}{desc}")
+            body = op.get("requestBody", {})
+            for mime, content in body.get("content", {}).items():
+                lines.append(f"request body ({mime}): {_schema_text(content.get('schema', {}), components) or 'any'}")
+            for code, resp in op.get("responses", {}).items():
+                schemas = "; ".join(_schema_text(c.get("schema", {}), components) for c in resp.get("content", {}).values())
+                lines.append(f"response {code}: {resp.get('description', '')}" + (f" - {schemas}" if schemas.strip("; ") else ""))
+            yield f"{method.upper()} {path}", "\n".join(l for l in lines if l)
+
+
 # ---------- main --------------------------------------------------------------
 
 def iter_files(src, raw_dir: Path):
@@ -196,6 +302,8 @@ def iter_files(src, raw_dir: Path):
     else:
         roots = [raw_dir / src["name"] / p for p in src["paths"]]
     excludes = src.get("exclude", [])
+    for f in src.get("files", []):
+        yield raw_dir / src["name"] / f
     for root in roots:
         if not root.exists():
             print(f"  skip missing {root}")
@@ -223,18 +331,22 @@ def main():
         for src in cfg["sources"]:
             count = dropped = 0
             attrs = {}
+            keep = set(src.get("keep_placeholders", []))   # literal {name} text (REST path parameters), not attributes
             for rel in src.get("attribute_files", []):
                 parse_adoc_attributes(Path(args.raw) / src["name"] / rel, attrs)
             for path in sorted(set(iter_files(src, Path(args.raw)))):
                 raw_text = path.read_text(errors="ignore")
                 if path.suffix == ".adoc":
-                    text = clean_adoc(raw_text, attrs)
+                    text = clean_adoc(raw_text, attrs, keep)
                 elif path.suffix in CLEANERS:
                     text = CLEANERS[path.suffix](raw_text)
+                elif path.suffix in (".yaml", ".yml"):
+                    text = raw_text
                 else:
                     continue
-                for i, (title, body) in enumerate(chunk_text(text, src.get("max_chars", MAX_CHARS))):
-                    if path.suffix == ".adoc" and ADOC_PLACEHOLDER.search(body):
+                pieces = chunk_openapi(text) if path.suffix in (".yaml", ".yml") else chunk_text(text, src.get("max_chars", MAX_CHARS))
+                for i, (title, body) in enumerate(pieces):
+                    if path.suffix == ".adoc" and any(m.group(1) not in keep for m in ADOC_PLACEHOLDER.finditer(body)):
                         dropped += 1
                         continue
                     cid = hashlib.sha1(f"{path}:{i}:{title}:{body}".encode()).hexdigest()[:16]
