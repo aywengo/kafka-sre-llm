@@ -51,6 +51,10 @@ scratch directory for throwaway detail) and returns at most about 150 words: pas
 each acceptance item, the files it changed, anything that needs a decision. It says what it
 could not verify. A failed check is reported as failed, with the output.
 
+If the harness refuses the write of a report or of a document the task asks for, the worker
+does not work around it with a shell command: it says so in its summary and returns the full
+text in its reply, and the conductor saves the file.
+
 ## Decisions that are the Owner's
 
 The conductor stops only for these: the gates and go decisions in the brief, changes to the
