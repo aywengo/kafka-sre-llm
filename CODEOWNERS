@@ -1,0 +1,21 @@
+# The Owner of this repository. AGENTS.md refers to this file: gates and go decisions,
+# changes to the briefs, licences, installs, deletes and anything irreversible are the Owner's.
+# GitHub requests a review from the owner of every changed path.
+*                 @aywengo
+
+# Rules for agents and the mission briefs: changed only with the Owner's go.
+/AGENTS.md        @aywengo
+/CODEOWNERS       @aywengo
+/.claude/         @aywengo
+/agents/          @aywengo
+
+# What is published or licensed.
+/sources.yaml     @aywengo
+/MODEL_CARD.md    @aywengo
+/data/runbooks/   @aywengo
+
+# Evaluation sets and the frozen configuration behind the measured results.
+/eval/                        @aywengo
+/kafka_sre_rag/frozen.json    @aywengo
+/kafka_sre_rag/prompts.py     @aywengo
+/tests/golden/                @aywengo

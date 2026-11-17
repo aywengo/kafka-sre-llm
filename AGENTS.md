@@ -9,7 +9,7 @@ the prompt is being tested on top of it.
 
 ## Start of every session
 
-1. Read `runs/v3/STATE.md` (where things stand, what waits for Roman).
+1. Read `runs/v3/STATE.md` (where things stand, what waits for the Owner).
 2. Run `scripts/s1_status.sh` (ten lines: running jobs, markers, last log line, loaded model).
 3. If a job is running, do not edit a file it imports or executes, and do not start
    anything on the GPU or the model server next to it, unless the task says so.
@@ -49,12 +49,13 @@ scratch directory for throwaway detail) and returns at most about 150 words: pas
 each acceptance item, the files it changed, anything that needs a decision. It says what it
 could not verify. A failed check is reported as failed, with the output.
 
-## Decisions that are Roman's
+## Decisions that are the Owner's
 
 The conductor stops only for these: the gates and go decisions in the brief, changes to the
 brief, licences, installs and downloads, deletes, anything irreversible, and going ahead
-with bulk generation or training. A failed gate stops the stage until he has seen it.
-Loading and unloading the three models named below is covered by his standing go, when no
+with bulk generation or training. A failed gate stops the stage until the Owner has seen
+it. The Owner is whoever `CODEOWNERS` names.
+Loading and unloading the three models named below is covered by the Owner's standing go, when no
 other client is active.
 
 ## Repository map
@@ -99,10 +100,10 @@ Commands: `.venv/bin/python -m unittest discover -s tests` (offline, seconds);
   `GLM-5.3-Flash-oQ4e`, or `GLM-5.3-Flash-oQ8e-mtp` (judge). They do not fit in memory
   together. Local generation and training never overlap with server jobs.
 - Before a load or unload, check that the server has no active or waiting request; if
-  another client is active, wait for Roman. Unload only what we loaded. Note every swap in
+  another client is active, wait for the Owner. Unload only what we loaded. Note every swap in
   `HEARTBEAT.md`.
 - Keep `runs/v3/status.json` and `STATE.md` true at every milestone and whenever a job
-  stops or waits for Roman.
+  stops or waits for the Owner.
 
 ## Waiting
 
@@ -118,13 +119,13 @@ saves tokens; for a wait of many hours, start the next session from `STATE.md`.
   messages. The server address and key live in `~/.config/kafka-sre-llm/` or the
   environment (`OMLX_URL`, `OMLX_API_KEY`, `JUDGE_API_KEY`); scripts read them from there.
 - Check every commit to be pushed, not only the net diff, then push to `origin/main`. The
-  push follows only a clean check. No force-push and no history rewrite without Roman.
-- Workers do not commit unless the task says so. Drafts that wait for Roman's review are
+  push follows only a clean check. No force-push and no history rewrite without the Owner.
+- Workers do not commit unless the task says so. Drafts that wait for the Owner's review are
   not pushed.
 
-## Reporting to Roman
+## Reporting to the Owner
 
-Lead with the result and what he has to decide. Give every number with its size (how many
+Lead with the result and what the Owner has to decide. Give every number with its size (how many
 questions, how many passes) and say what was measured and what is inferred. Give a time
 estimate as a range, and correct it when the rate is known. Say plainly when something
 failed or was not checked.
