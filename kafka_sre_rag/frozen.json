@@ -1,0 +1,81 @@
+{
+ "schema": 1,
+ "index": {
+  "index_path": "work/v3/chunks_s1.jsonl",
+  "sha256": "233c23b0478006a8afae881b83836a226a6af89517256be4d9aac2cc7d500e92",
+  "chunks": 6444,
+  "chunks_per_source": {
+   "apache-kafka": 655,
+   "apache-kafka-config": 842,
+   "apicurio-registry": 56,
+   "argo-cd": 1223,
+   "cadvisor": 6,
+   "karapace": 61,
+   "kubernetes": 2705,
+   "prometheus-operator-runbooks": 1,
+   "runbooks": 32,
+   "strimzi": 863
+  },
+  "source_commits": {
+   "apache-kafka": "0a6c96d3b61167f1141df2032f25f10fd6e118fe",
+   "apache-kafka-config": "cd727c4dd8664857751a87cd0442e51a3d3aca8f",
+   "apicurio-registry": "5662f79947dce0c09a3b9f61ddd5c4bc588fa004",
+   "karapace": "09cba53ffcc961038f608b34f7d00fc2df1d313c",
+   "strimzi": "555c3e0f07c203911bc3cb7d13ac085bfaa81b50",
+   "kubernetes": "18f8e9f6d2b0bc9d33e82ceac8abcfffdf8c1ca8",
+   "argo-cd": "94037c4d4e1af4bd0651d37a179fbd9e347e668c",
+   "cadvisor": "5bf5d43ac6f60d7ee36a13b4d5b4a78ad2d0abc7",
+   "prometheus-operator-runbooks": "a685d14cf5128bb30e2bf935c3983decd772d885"
+  }
+ },
+ "retrieval": {
+  "reranker": {
+   "model": "BAAI/bge-reranker-v2-m3",
+   "revision": "953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e",
+   "device": "cpu",
+   "max_length": 512
+  },
+  "bm25": {
+   "K1": 1.2,
+   "B": 0.75,
+   "TITLE_W": 2
+  },
+  "pool": 40,
+  "chunk_chars": 1500,
+  "rrf": true,
+  "rrf_constant": 60,
+  "k6": {
+   "k": 6,
+   "max_chars": 14000
+  },
+  "k3": {
+   "k": 3,
+   "max_chars": 6000
+  }
+ },
+ "prompts_sha256": {
+  "SYSTEM_PROMPT": "766ff0b0e2c61316acc1239425c33f299c2f1136814e2ed6c7135f7dda20da15",
+  "EXPAND_SYSTEM": "a1fb0eefabcd052fad39ac975e1b99ff3282285903af2410e1d9d3c4ce639de9",
+  "INSTRUCTION": "65fe40116e6723ecc5128222fbe5530e7009e79f1cb7a696b12a78138d7f9307",
+  "STRICT": "031d53c501f7ef72e03c6100ab133e0fd9096089ff413236add5387654d5bac7"
+ },
+ "expansion": {
+  "max_tokens": 300,
+  "temperature": 0,
+  "thinking": false,
+  "written_by": "the answering model"
+ },
+ "answer": {
+  "max_tokens": 2048,
+  "temperature": 0,
+  "thinking": false
+ },
+ "reference_generator": {
+  "backend": "mlx",
+  "repo": "mlx-community/Qwen3.8-27B-bf16",
+  "snapshot": "6f265714824f3c38d4452baa1628aef3d9b9aae9",
+  "local_wrapper": "runs/v1/base27b",
+  "adapter": null
+ },
+ "frozen_at": "2026-11-16T15:40:00"
+}
