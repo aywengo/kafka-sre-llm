@@ -68,6 +68,7 @@ other client is active.
 
 | Path | What it is |
 |---|---|
+| `GOAL.md` | Where the project is going and how success is judged; changes only by the Owner's decision |
 | `agents/` | Mission briefs, one per version |
 | `kafka_sre_rag/` | Retrieval runtime: `prompts.py` (the only place prompt text lives), `frozen.json`, `ask` / `chat` / `verify` |
 | `scripts/` | Pipeline: sources, chunking, retrieval, question bank, packs, generation and verification, guard, chain scripts (`s1_*.sh`) |
