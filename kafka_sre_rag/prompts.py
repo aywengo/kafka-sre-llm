@@ -21,6 +21,29 @@ THOROUGH = ("Answer thoroughly: give every likely cause the situation allows, ho
             "(exact command, metric or field) and the fix, then what to do if none of them fit.")
 
 
+# The teacher's rules for pack answers (scripts/generate_qa.py, prompt version pack/4), addressed to the
+# assistant itself. Used only by the "prompted student" probe of the stage-1 ceiling check: does the base
+# model, given these rules as instructions, already write what an adapter would be trained to write?
+RULES = (
+    "Follow these rules. Every fact in your answer must be supported by the excerpts. Every command, flag, "
+    "configuration key, metric name, resource kind, field path, annotation, endpoint and error string must "
+    "appear in the excerpts, written exactly as it appears there; never complete one from memory. Be complete: "
+    "use every cause, check, step and caveat that the excerpts support and that bears on the question, and "
+    "nothing they do not support. Start with one or two sentences that answer the question directly. For a "
+    "symptom, number the likely causes the excerpts name, most likely first, each with a **Check** (the exact "
+    "command, metric or field) and a **Fix**; number only causes that can produce the symptom. For a how-to, "
+    "give the steps in order with the exact commands or YAML. For configuration and concept questions, give "
+    "the facts and say where each setting lives. No generic sections, no recap, no closing summary. Ignore "
+    "excerpts that are not about the question, and do not combine settings or steps of different products "
+    "unless the excerpts connect them. If the excerpts contradict the question's premise, correct it first; "
+    "something the excerpts do not mention is a gap, not an error: never say that it does not exist or is not "
+    "supported. If the excerpts do not cover the question or part of it, answer what they do cover, then add "
+    "one sentence in exactly this form: \"The retrieved documentation does not cover <what is missing>.\" "
+    "After that sentence you may add at most two sentences starting with \"In general,\" that give direction "
+    "only and name no command, flag, key, metric, field or tool. Apart from that one sentence, do not mention "
+    "the excerpts or the documentation. Keep the answer under about 1,200 words.")
+
+
 def pack_text(chunks):
     """chunks: dicts with source, title, path, text, best first."""
     parts = []
@@ -29,19 +52,20 @@ def pack_text(chunks):
     return "\n\n".join(parts)
 
 
-def user_message(question, chunks=None, *, strict=False, thorough=False):
-    """chunks None = closed-book (the bare question). strict only applies with chunks, as in Phase 0."""
+def user_message(question, chunks=None, *, strict=False, thorough=False, rules=False):
+    """chunks None = closed-book (the bare question). strict and rules only apply with chunks."""
     user = question
     if chunks is not None:
-        user = (INSTRUCTION + (" " + STRICT if strict else "") + "\n\n" + pack_text(chunks) + f"\n\nQuestion: {question}")
+        user = (INSTRUCTION + (" " + STRICT if strict else "") + (" " + RULES if rules else "")
+                + "\n\n" + pack_text(chunks) + f"\n\nQuestion: {question}")
     if thorough:
         user += "\n\n" + THOROUGH
     return user
 
 
-def answer_messages(question, chunks, *, strict=False, thorough=False):
+def answer_messages(question, chunks, *, strict=False, thorough=False, rules=False):
     return [{"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_message(question, chunks, strict=strict, thorough=thorough)}]
+            {"role": "user", "content": user_message(question, chunks, strict=strict, thorough=thorough, rules=rules)}]
 
 
 def expand_messages(question):

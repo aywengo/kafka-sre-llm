@@ -54,6 +54,8 @@ def main():
     ap.add_argument("--k", choices=["k6", "k3"])
     ap.add_argument("--thorough", action="store_true")
     ap.add_argument("--strict", action="store_true")
+    ap.add_argument("--rules", action="store_true",
+                    help="add the teacher's pack-answer rules to the instruction (prompted-student probe)")
     ap.add_argument("--index", help="chunks.jsonl the packs were built on (default: retrieve.CHUNKS)")
     ap.add_argument("--thinking", action="store_true")
     ap.add_argument("--max-tokens", type=int, default=2048)
@@ -71,7 +73,7 @@ def main():
             text, toks, trunc = gen(model, tok, expand_messages(q), 300)
             row = {"question": q, "expansion": text}
         else:
-            msgs = answer_messages(q, chunks_for(packs[q], a.index) if packs else None, strict=a.strict, thorough=a.thorough)
+            msgs = answer_messages(q, chunks_for(packs[q], a.index) if packs else None, strict=a.strict, thorough=a.thorough, rules=a.rules)
             text, toks, trunc = gen(model, tok, msgs, a.max_tokens, a.thinking)
             row = {"label": a.label, "question": q, "text": text, "tokens": toks, "truncated": trunc}
         with open(out, "a") as f:
