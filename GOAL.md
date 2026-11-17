@@ -29,8 +29,8 @@ the cost of these two.
 
 ## Who it is for
 
-An engineer (SRE, platform or application developer) who works with Kafka on Kubernetes,
-self-managed with Strimzi or on a managed Kafka service, deployed with Argo CD. They know
+An engineer (SRE, platform or application developer) who runs Apache Kafka themselves: on
+Kubernetes with Strimzi, deployed with Argo CD, or as plain Apache Kafka. They know
 the basics. They need exact flags, fields and procedures, a second opinion on a design, and
 help reading a failure, often with cluster details they cannot paste into a hosted service.
 
@@ -66,8 +66,6 @@ Domains:
   quotas.
 - **Kafka Streams and Kafka Connect**, and Schema Registry.
 - **Strimzi:** custom resources, operators, upgrades, rebalancing, MirrorMaker 2.
-- **Managed Kafka services:** what differs from self-managed Kafka (what the user can and
-  cannot configure, limits, the service's own tooling).
 - **Kubernetes:** workloads, scheduling, storage, networking, access control, resources.
 - **GitOps with Argo CD:** applications, sync, rollback, secrets, Helm and Kustomize as the
   rendering layer.
@@ -89,7 +87,7 @@ The assistant may gather evidence itself instead of asking the user to run comma
 paste the output.
 
 - **Read-only.** It may list, get, describe and read logs, events, status and metrics
-  (`kubectl`, the Kafka command-line tools, the Argo CD and managed-service clients). It
+  (`kubectl`, the Kafka command-line tools, the Argo CD client). It
   never applies, deletes, scales, restarts, resets or syncs. A change is proposed as a
   command or a patch; the engineer runs it. (Read-only is our reading of the Owner's
   decision "with tooling"; see "Open decisions".)
@@ -157,7 +155,7 @@ difference.
   seconds per answer (3 questions, default mode, full-precision 27B on a 512 GB machine).
 - **The evidence is narrow.** It covers question answering on operations and configuration.
   There is no evaluation yet for coding, for debugging from logs, for architecture or for
-  tool use; none on a laptop-sized model; and no managed-service documentation in the index.
+  tool use, and none on a laptop-sized model.
 
 ## From here to the goal
 
@@ -174,9 +172,8 @@ In order. Each step is a question to answer by measurement, not a commitment to 
    check of identifiers in an answer against the index and schemas, sources shown with
    every answer. Shorter answers also serve the 60-second bar.
 5. **Coverage for the new tasks:** Java and Python client material for coding, Helm and
-   Kustomize, more failure material for debugging, and managed Kafka services. Every source
-   has its licence checked; where a licence does not allow redistribution, that part of the
-   index is built on the user's machine from a recipe and is not published.
+   Kustomize, and more failure material for debugging. Every source has its licence
+   checked before it enters the index.
 6. **Read-only tools:** the tool set, its allow-list, a local test cluster with injected
    faults to measure it, and proof that nothing leaves the machine.
 7. **Fine-tuning, only where measurement shows a gap retrieval cannot close.** The likely
@@ -188,6 +185,7 @@ In order. Each step is a question to answer by measurement, not a commitment to 
 - A general chat or coding assistant outside these domains.
 - A hosted service, or anything that sends the user's data off the machine.
 - An agent that changes a cluster. The assistant reads and advises; the engineer acts.
+- Managed Kafka services and vendor distributions. The scope is Apache Kafka and Strimzi.
 - GitOps tools other than Argo CD, and stream processors other than Kafka Streams and
   Kafka Connect (for example Flux and Flink).
 - Client languages other than Java and Python.
@@ -198,11 +196,10 @@ In order. Each step is a question to answer by measurement, not a commitment to 
 
 1. **Tools: read-only, as written above, or more?** "With tooling" is recorded as read-only
    tools with the engineer making every change.
-2. **Which managed Kafka services,** and in what order.
-3. **Reference machine for Linux and Windows laptops** (memory, and whether a GPU is
+2. **Reference machine for Linux and Windows laptops** (memory, and whether a GPU is
    assumed). The 60-second bar is set for the Apple Silicon reference.
-4. **How tool calls are approved:** each command, or once per session for the allow-list.
-5. **The proposed bars** in "How we will know".
+3. **How tool calls are approved:** each command, or once per session for the allow-list.
+4. **The proposed bars** in "How we will know".
 
 ## How this file relates to the others
 
