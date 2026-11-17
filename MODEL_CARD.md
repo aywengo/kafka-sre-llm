@@ -20,6 +20,10 @@ language: [en]
 > the base model invents CRD fields, endpoints and defaults. The tuned model gives short answers
 > (~260 tokens on average) that are more accurate but less complete for troubleshooting.
 
+> **Retrieval on the base model works better than these weights.** The v3 result (+1.19 over the plain base
+> model on the same 40 questions) is for the unmodified base model with retrieval, not for the v1 weights.
+> See "Retrieval-augmented use (v3)" below.
+
 A LoRA fine-tune of **Qwen/Qwen3.8-27B** for operating Apache Kafka on Kubernetes: Strimzi,
 cluster operations and troubleshooting, GitOps with Argo CD, and data streaming patterns.
 It is the first version (v1). A second version with cleaner data is planned.
@@ -209,6 +213,140 @@ Found in the evaluation and in manual review of answers. Check these especially:
 - It can produce plausible but wrong configuration. Pair it with retrieval over current docs or
   tool access for exact values.
 - English only. Evaluated only on short questions, not on long incident threads.
+
+## Retrieval-augmented use (v3)
+
+**The published v1 weights are a fine-tuned preview that did not pass its gate. The v3 result
+below is for the unmodified base model (`Qwen3.8-27B`, bf16, no adapter) with retrieval. It is
+not a result for the v1 weights.** On the same 40 real questions the v1 weights, without
+retrieval, score +0.08 against the plain base model; v2 (not released) scores -0.18.
+
+**Pipeline.**
+1. The base model writes one line of 15 to 30 search terms for the question (thinking off).
+2. BM25 over the documentation index, on the question plus those terms, keeps 40 candidates.
+3. The cross-encoder `BAAI/bge-reranker-v2-m3` reranks them on CPU, fused with the BM25 order.
+4. The top chunks go into the user message after the sentence "Use these documentation
+   excerpts where relevant."; the base model answers with the system prompt below.
+
+The runtime is the package `kafka_sre_rag/` in the repository (`ask`, `chat`, `verify`). It
+checks the index and prompt hashes against `kafka_sre_rag/frozen.json` and prints
+`UNMEASURED CONFIGURATION` when a run differs from the measured one.
+
+### Frozen configuration
+
+| Item | Value |
+|---|---|
+| Index | 6,444 chunks, sha256 starting `233c23b0478006a8` |
+| Reranker | `BAAI/bge-reranker-v2-m3`, revision `953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e`, CPU, max length 512 |
+| BM25 | k1 1.2, b 0.75, title weight 2 |
+| Candidate pool | 40, fused by reciprocal rank fusion (constant 60) |
+| Reranker input | title plus the first 1,500 characters of the chunk |
+| Default packs (k6) | 6 chunks, 14,000 character cap |
+| Small packs (k3) | 3 chunks, 6,000 character cap |
+| Search terms | at most 300 new tokens, temperature 0 |
+| Answer | at most 2,048 new tokens, temperature 0, thinking off |
+| Reference generator | `mlx-community/Qwen3.8-27B-bf16`, revision `6f265714824f3c38d4452baa1628aef3d9b9aae9`, in-process mlx-lm, no adapter |
+
+The character cap decides how many chunks are selected; the chunks that are selected go into
+the prompt in full. Packs in the measured runs were about 8,600 to 19,400 characters.
+
+### Results
+
+Change in score against the plain base model (no retrieval), 40 real questions
+(`questions_real.jsonl`), judged by GLM-5.3-Flash (local `oQ8e` build, thinking on), 1 to 5
+against reference notes, answer order randomised. Two judge passes per row, the second with
+the order flipped. Delta is the mean of per-question differences, averaged over the passes.
+
+| Row | Passes | Delta | Wins / ties / losses |
+|---|---|---|---|
+| Base model + retrieval, k6 | 2 | **+1.19** (+1.23, +1.15) | 26 / 8 / 6 |
+| Base model + retrieval, k3 | 2 | **+1.05** (+0.88, +1.23) | 29 / 4 / 7 |
+| v1 weights, no retrieval | 2 | +0.08 (-0.03, +0.17) | 21 / 2 / 17 |
+| v2 (not released), no retrieval | 2 | -0.18 (-0.17, -0.17) | 17 / 6 / 17 |
+
+How to read it:
+- Differences under about 0.2 are noise on 40 questions (standard error about 0.2). k6 against
+  k3 (0.14) is inside the noise; the two judge passes of k3 differ by 0.35.
+- The judge is a local model, not a human. The 40 questions have been used many times
+  for evaluation. Some pages (Kafka Streams, Kafka Connect, Schema Registry) were added to the
+  corpus after questions showed no matching content, which is a form of tuning on these
+  questions, as the Phase 0 report says.
+- These numbers were measured on an earlier index of 6,292 chunks. The shipped index in the
+  table above has 6,444 chunks, so it is a different index.
+  **A re-measurement on the shipped index is not done yet.**
+- Per category, k6 against plain base: Strimzi +2.05, streaming +2.50 (2 questions),
+  Kafka config +1.75, Argo CD +0.90, Kafka operations +0.75, Kubernetes +0.10, Schema Registry
+  -0.50 (2 questions).
+- For comparison, v2 with retrieval (v2 was trained without it) scores +1.18 and ties base +
+  retrieval head to head (+0.01), with answers about four times shorter. That row is not a
+  v3 deliverable.
+
+### Failure cases
+
+- **Questions the index cannot answer.** Three of the 40 questions (CPU throttling and Avro
+  field removal in Schema Registry among them) cannot be answered from the index. On those
+  three, retrieval scored 1.0 below the plain base model on average. The model answers from
+  unrelated excerpts or from memory, and sometimes states a wrong rule. On the other 37, the
+  right fact was in the k6 pack for 25 questions, one under the gate of 26 set for this check.
+- **Invented identifiers.** On 10 questions whose answers were read in full, the default mode
+  (k6) wrote 7 invented flags, config keys, fields or endpoints in 5 answers; examples are a
+  `quotas.consumer` block in a KafkaUser, `eligible.leader.replicas` with a wrong version, and
+  `kafka-topics --describe --unparsed`. Retrieval did not reduce invention on these 10; it
+  added some from over-reading excerpts. Wrong meaning is not counted by this method.
+- **Long answers.** About 1,200 tokens on average; 2 of 40 hit the 2,048 limit. Long answers
+  lost points by adding unsupported detail.
+
+### Strict mode
+
+Adds to the user message: "Use only commands, flags, configuration keys, resource fields and
+annotations that appear in the excerpts. If the excerpts do not cover part of the question,
+say so in one sentence instead of filling the gap."
+
+| | Default (k6) | Strict (k6) |
+|---|---|---|
+| Score of strict minus default, 40 questions, 2 passes | - | -0.11 (15 wins / 10 ties / 15 losses), a tie |
+| Invented items, 10 answers read in full | 7 | 0 |
+| Mean answer length | 1,217 tokens | 516 tokens |
+
+Strict answers are shorter and cleaner but less complete on troubleshooting, and strict
+mostly did not make the model admit a gap: only one of the three uncovered questions was refused.
+Default is the default.
+
+### Index sources
+
+Pinned in `sources.yaml`; chunk counts from `frozen.json`. The text is cleaned and cut into
+chunks (and AsciiDoc attributes are resolved), so the index holds modified excerpts.
+
+| Source | Licence | Pinned to | Chunks |
+|---|---|---|---|
+| Apache Kafka documentation | Apache-2.0 | tag 4.3.2 | 655 |
+| Apache Kafka generated config reference | Apache-2.0 | commit `cd727c4` | 842 |
+| Strimzi documentation | Apache-2.0 | tag 1.3.1 | 863 |
+| Argo CD documentation | Apache-2.0 | tag v3.6.1 | 1,223 |
+| Kubernetes documentation, `concepts` and `tasks` | CC BY 4.0 | commit `18f8e9f` | 2,705 |
+| Apicurio Registry documentation (Schema Registry compatibility) | Apache-2.0 | tag 3.3.4 | 56 |
+| Karapace documentation | Apache-2.0 | tag 6.2.4 | 61 |
+| cAdvisor Prometheus metrics page | Apache-2.0 | tag v0.60.6 | 6 |
+| prometheus-operator runbook `CPUThrottlingHigh` | Apache-2.0 | commit `a685d14` | 1 |
+| Runbooks written in this repository from the documentation above | Apache-2.0 | repository | 32 |
+
+**Attribution (CC BY 4.0).** The Kubernetes documentation (https://github.com/kubernetes/website,
+© The Kubernetes Authors) is licensed under CC BY 4.0, and its chunks are shown to the model
+and, with `--sources`, to the user. The text was changed: pages were cut into chunks and
+reformatted. Any copy of the index or of excerpts must keep this attribution and the change
+statement.
+
+### Backends tested
+
+- **In-process mlx-lm** (the measured path, bf16 base model): the 40-question results above
+  come from the evaluation scripts on this path. The `kafka_sre_rag` command itself has unit
+  tests (a stub generator, the prompt text and hashes, the pack ids against stored ones) but
+  **no recorded end-to-end run yet**.
+- **OpenAI-compatible server** (`--backend openai`): unit tests with a mocked transport. **No
+  recorded end-to-end run yet**, and the client cannot switch thinking off; set that on the
+  server.
+- **4-bit MLX, GGUF, llama.cpp, Ollama:** not measured with retrieval. A run with them is
+  labelled `UNMEASURED CONFIGURATION`.
 
 ## Recommended system prompt
 > You are an expert Site Reliability Engineer for Apache Kafka, Strimzi, Kubernetes,

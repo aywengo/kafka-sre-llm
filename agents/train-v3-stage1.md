@@ -218,3 +218,30 @@ unloading DeepSeek-V4.1-Flash, GLM-5.3-Flash-oQ4e and GLM-5.3-Flash-oQ8e-mtp on 
 other client is active; every swap is noted in `runs/v3/HEARTBEAT.md`. Commits are pushed to
 `origin/main` at checkpoints (Roman, 2026-11-16), after every commit to be pushed has been
 checked for keys, IP addresses, home paths and other sensitive data.
+
+## Outcome (2026-11-17): stage 1 stopped
+
+**Decision (the Owner, 2026-11-17):** stage 1 is stopped. v3 ships as retrieval on the base
+model, with no adapter.
+
+**Reason.** The ceiling check on the 40 real questions (step 2) put the teacher (DeepSeek
+writing from the same packs with the tuned prompt, version pack/4) at **+0.24** against base
++ retrieval, with a standard error of 0.17: 12 wins, 20 ties, 8 losses; the two passes gave
++0.28 and +0.20; without questions 29, 37, 38 and 39 it is +0.35. That is under the +0.3 stop
+line fixed in advance in step 2. On the runbook holdout (42 questions, a saturated set where
+base + retrieval scores about 4.5 of 5) the teacher was -0.13. The prompted-student probe is
+still being judged; its result will be in `runs/v3/CEILING_REAL.md` (pending). It cannot
+change the decision.
+
+**Done.** Question bank of 4,050 questions (`runs/v3/bank_stats.md`); three pilots of
+teacher-written answers (pack/1, pack/2, pack/3) and the not-covered check under pack/4; the
+ceiling check on the holdout and on the real questions.
+
+**Not done (not started).** Bulk generation, the dataset build and training.
+
+**Second verifier.** GLM-5.3-Flash-oQ4e was found unusable on every row: about 6 rows an
+hour, and it failed the reviewer's acceptance test on the pilot rows: it rejected 2 of the 3
+worst rows and 1 of 4 lesser ones, kept 10 of 17 clean rows, and returned 3 missing verdicts.
+
+**What follows.** Ship retrieval on the base model (`kafka_sre_rag/`, frozen configuration
+`kafka_sre_rag/frozen.json`). The work is tracked in `runs/v3/STATE.md`.

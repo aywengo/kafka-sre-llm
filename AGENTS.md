@@ -4,8 +4,10 @@ kafka-sre-llm builds a Kafka / Strimzi / Kubernetes / Argo CD SRE assistant on a
 open-weight 27B model, on one Apple Silicon machine with mlx-lm. v1 is published as a
 preview. v3 found that retrieval is what helps (base model + retrieval scores +1.19 over the
 plain base model on the 40 real questions; the fine-tuned adapters alone add nothing), so
-the product is a retrieval runtime, and an adapter trained with the retrieved excerpts in
-the prompt is being tested on top of it.
+the product is a retrieval runtime. The adapter stage (an adapter trained with the retrieved
+excerpts in the prompt) was stopped on 2026-11-17 after a ceiling check: the teacher did not
+beat base + retrieval by the margin fixed in advance. v3 ships as the retrieval runtime on
+the base model.
 
 ## Start of every session
 
