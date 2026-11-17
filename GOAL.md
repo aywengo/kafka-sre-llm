@@ -55,7 +55,9 @@ Platforms:
   the same machine; the runtime talks to it over the local OpenAI-compatible endpoint.
 - **Linux and Windows laptops** are supported through GGUF builds (llama.cpp and tools
   built on it), over the same kind of local endpoint. Their reference machine has 32 GB of
-  memory; whether a GPU is assumed is still open (see "Open decisions").
+  memory and a GPU. The GPU requirement is the one of the Qwen3.8-27B model at the
+  quantisation we ship (about 15 to 17 GB for the 4-bit weights, an estimate to verify,
+  plus room for the context).
 
 The stretch tier never lowers what the reference tier delivers.
 
@@ -99,6 +101,13 @@ The assistant gathers evidence and acts; it does not only advise.
 - **Approval once per session.** A session has an allow-list of commands and tools. The
   user approves it once; the assistant then works inside it without asking again and never
   outside it.
+- **The default allow-list is read-only.** The user adds state-changing commands for a
+  session when they want the assistant to make changes.
+- **Destructive commands are confirmed each time** (delete, offset reset, forced
+  operations), even when they are on the allow-list.
+- **MCP servers run on the same machine by default.** A remote server receives what the
+  assistant sends it, so it is off by default, enabled only by the user's explicit choice,
+  and named as remote whenever it is used.
 - **GitOps first.** Where Argo CD manages a resource, a change is a change in Git (a commit
   or a pull request), not a direct edit of the cluster.
 - **The user's own access.** Tools run locally with the user's current context and
@@ -108,11 +117,6 @@ The assistant gathers evidence and acts; it does not only advise.
 - **Private.** Tool output stays on the machine like everything else. Secret values are not
   read unless the user asks for it.
 - **Optional.** Everything works without tools, from what the user pastes.
-
-Proposed defaults, not yet agreed (see "Open decisions"): the default allow-list holds
-read-only commands and the user adds state-changing ones for a session; destructive
-commands (delete, offset reset, forced operations) are confirmed each time even when
-allow-listed; only MCP servers that run on the same machine are enabled by default.
 
 ## How it must behave
 
@@ -215,16 +219,9 @@ In order. Each step is a question to answer by measurement, not a commitment to 
 
 ## Open decisions (the Owner's)
 
-1. **What the default allow-list holds.** Proposed: read-only commands, with state-changing
-   ones added by the user for a session.
-2. **Destructive commands.** Proposed: confirmed each time, even when allow-listed.
-3. **Remote MCP servers.** A server that runs elsewhere receives what the assistant sends
-   it, which breaks "nothing leaves the machine". Proposed: off by default, enabled only by
-   the user's explicit choice, and named as remote whenever used.
-4. **GPU on the Linux and Windows reference machine** (32 GB memory is agreed). Without a
-   GPU a 27B model will not meet the 60-second bar, so either a GPU is assumed, or that
-   tier gets a smaller model or its own speed bar.
-5. **The bar for work with tools,** after a first measurement.
+1. **The bar for work with tools,** after a first measurement.
+2. **The allow-list bar** ("no command or tool call outside the session's allow-list,
+   ever"), which replaced the earlier read-only bar and is still marked proposed.
 
 ## How this file relates to the others
 
