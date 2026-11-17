@@ -88,5 +88,5 @@ The index is therefore a mixed-licence work: Apache License 2.0 for the chunks o
 7 to 10, and CC BY 4.0 for the chunks of item 6. Using the Kubernetes chunks requires the
 attribution given in item 6.
 
-The code of this repository (kafka_sre_rag/, scripts/) has no licence file yet; the licence for
-it is not decided.
+The code of this repository (kafka_sre_rag/, scripts/) is licensed under the Apache License 2.0
+(LICENSE at the repository root).

@@ -20,8 +20,8 @@ language: [en]
 > the base model invents CRD fields, endpoints and defaults. The tuned model gives short answers
 > (~260 tokens on average) that are more accurate but less complete for troubleshooting.
 
-> **Retrieval on the base model works better than these weights.** The v3 result (+1.19 over the plain base
-> model on the same 40 questions) is for the unmodified base model with retrieval, not for the v1 weights.
+> **Retrieval on the base model works better than these weights.** The v3 result (+1.48 over the plain base
+> model on the same 40 questions, two judge passes, standard error 0.21; +1.19 on the previous index) is for the unmodified base model with retrieval, not for the v1 weights.
 > See "Retrieval-augmented use (v3)" below.
 
 A LoRA fine-tune of **Qwen/Qwen3.8-27B** for operating Apache Kafka on Kubernetes: Strimzi,
@@ -259,7 +259,8 @@ the order flipped. Delta is the mean of per-question differences, averaged over 
 
 | Row | Passes | Delta | Wins / ties / losses |
 |---|---|---|---|
-| Base model + retrieval, k6 | 2 | **+1.19** (+1.23, +1.15) | 26 / 8 / 6 |
+| Base model + retrieval, k6, shipped index (6,444 chunks) | 2 | **+1.48** (+1.57, +1.38), standard error 0.21 | 33 / 5 / 2 |
+| Base model + retrieval, k6, previous index (6,292 chunks) | 2 | +1.19 (+1.23, +1.15) | 26 / 8 / 6 |
 | Base model + retrieval, k3 | 2 | **+1.05** (+0.88, +1.23) | 29 / 4 / 7 |
 | v1 weights, no retrieval | 2 | +0.08 (-0.03, +0.17) | 21 / 2 / 17 |
 | v2 (not released), no retrieval | 2 | -0.18 (-0.17, -0.17) | 17 / 6 / 17 |
@@ -271,9 +272,11 @@ How to read it:
   for evaluation. Some pages (Kafka Streams, Kafka Connect, Schema Registry) were added to the
   corpus after questions showed no matching content, which is a form of tuning on these
   questions, as the Phase 0 report says.
-- These numbers were measured on an earlier index of 6,292 chunks. The shipped index in the
-  table above has 6,444 chunks, so it is a different index.
-  **A re-measurement on the shipped index is not done yet.**
+- The headline is the shipped-index row: +1.48, 40 questions, two judge passes, standard error
+  0.21. The other rows (k3, v1, v2, and the per-category figures below) were measured on the
+  previous index of 6,292 chunks, as was the +1.19 row. On the 34 questions whose answers are identical in both measurements the two agree (+1.41 in each); the whole +0.29 gap comes from the 6 questions whose packs changed with the index, three of which the corpus additions were aimed at. The two figures are therefore the same result on the unchanged questions, and the new index is not shown to be an improvement.
+- Runtime check: on 3 of the 40 questions the real path (mlx, base model, frozen index, k6,
+  default mode) reproduced the stored search terms, chunk ids and answers exactly.
 - Per category, k6 against plain base: Strimzi +2.05, streaming +2.50 (2 questions),
   Kafka config +1.75, Argo CD +0.90, Kafka operations +0.75, Kubernetes +0.10, Schema Registry
   -0.50 (2 questions).
@@ -310,7 +313,9 @@ say so in one sentence instead of filling the gap."
 
 Strict answers are shorter and cleaner but less complete on troubleshooting, and strict
 mostly did not make the model admit a gap: only one of the three uncovered questions was refused.
-Default is the default.
+Default is the default. A further variant, answer rules added to the prompt without an adapter,
+scored -0.15 against base plus retrieval (40 questions, standard error 0.16; 9 / 16 / 15) and
+is not shipped.
 
 ### Index sources
 
@@ -340,8 +345,8 @@ statement.
 
 - **In-process mlx-lm** (the measured path, bf16 base model): the 40-question results above
   come from the evaluation scripts on this path. The `kafka_sre_rag` command itself has unit
-  tests (a stub generator, the prompt text and hashes, the pack ids against stored ones) but
-  **no recorded end-to-end run yet**.
+  tests (a stub generator, the prompt text and hashes, the pack ids against stored ones), and a
+  real run on 3 questions reproduced the stored search terms, chunk ids and answers exactly.
 - **OpenAI-compatible server** (`--backend openai`): unit tests with a mocked transport. **No
   recorded end-to-end run yet**, and the client cannot switch thinking off; set that on the
   server.

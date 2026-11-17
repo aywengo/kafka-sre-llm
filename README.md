@@ -12,14 +12,15 @@ A Kafka / Strimzi / Kubernetes / Argo CD SRE assistant on an open-weight 27B mod
   its eval gate.
 - **v2** was trained and is not released.
 - **v3:** retrieval on the unmodified base model is what works. On 40 real questions, scored
-  by a local LLM judge in two passes, base model plus retrieval scores **+1.19** against the
-  plain base model (26 wins, 8 ties, 6 losses). The fine-tuned adapters without retrieval
+  by a local LLM judge in two passes, base model plus retrieval on the shipped index scores
+  **+1.48** against the plain base model (standard error 0.21; 33 wins, 5 ties, 2 losses). The
+  earlier measurement on the previous index was +1.19 (26 / 8 / 6). The fine-tuned adapters without retrieval
   score about zero (v1 +0.08, v2 -0.18). An adapter trained with retrieved excerpts in the
   prompt was stopped after a ceiling check. v3 therefore ships as retrieval on the base model,
   with no adapter.
-- The size of the result: 40 questions, one judge model, standard error about 0.2. The +1.19
-  was measured on an earlier version of the documentation index than the one the runtime now
-  checks; the re-measurement on the shipped index is not done yet.
+- The size of the result: 40 questions, two judge passes, one judge model, standard error 0.21.
+  The +1.19 was measured on the previous version of the documentation index (6,292 chunks); +1.48
+  is on the shipped one (6,444 chunks). On the 34 questions whose answers are identical in both measurements the two agree (+1.41 in each); the whole +0.29 gap comes from the 6 questions whose packs changed with the index, three of which the corpus additions were aimed at. The two figures are therefore the same result on the unchanged questions, and the new index is not shown to be an improvement.
 
 ## Published model (experimental preview)
 
@@ -81,8 +82,9 @@ export BASE_PATH=$PWD/runs/v1/base27b
 python -m kafka_sre_rag ask --sources "How do I check consumer lag?"
 ```
 
-`--model` takes the model directory and defaults to `BASE_PATH`. Not yet verified end to end:
-the in-process backend has unit tests but no recorded run of `ask` that loads the model.
+`--model` takes the model directory and defaults to `BASE_PATH`. Runtime check: on 3 of the 40
+questions, the real path (mlx, base model, frozen index, k6, default mode) reproduced the stored
+search terms, chunk ids and answers exactly.
 
 With an OpenAI-compatible server (a `/v1/chat/completions` endpoint):
 
@@ -124,6 +126,9 @@ sources, search terms, timings and the reasons the run is unmeasured), `--adapte
   tokens). On the 40 questions it scored -0.11 against default, which is a tie within the
   noise. It did not make the model say so on the questions the index cannot cover: only one
   of those three was refused. Default stays the default.
+- **Prompted answer rules:** adding answer rules to the prompt without an adapter scored -0.15
+  against base plus retrieval on the 40 questions (standard error 0.16; 9 wins, 16 ties, 15
+  losses), so no such prompt ships.
 
 ### Sources
 

@@ -192,8 +192,9 @@ shasum -a 256 -c SHA256SUMS      # inside this directory
 
 ## Measured result, size and limits
 
-- Base model with retrieval scores +1.19 (mean judge-score difference) over the plain base model on 40
-  real questions, two judge passes. This was measured on an earlier index of 6,292 chunks.
+- Earlier measurement: base model with retrieval scored +1.19 (mean judge-score difference, 26 wins / 8 ties /
+  6 losses) over the plain base model on the same 40 real questions, two judge passes, on the previous index
+  of 6,292 chunks.
 - The figure for this index ({chunks} chunks): {measured}. Headline: {headline}. Size: {size}.
 - Limits: 40 questions, standard error about 0.2, so differences under 0.2 are noise; the question set
   was used many times for decisions. The result is for the unmodified base model with retrieval. The
