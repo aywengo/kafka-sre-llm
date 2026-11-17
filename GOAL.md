@@ -7,11 +7,12 @@ list under "Open decisions".**
 
 A local AI assistant that fits on a working laptop and is a competent colleague for an
 engineer who builds and runs Apache Kafka on Kubernetes under GitOps: it writes and reviews
-code and configuration, diagnoses and debugs problems with read-only tools, and advises on
-streaming architecture, with answers that can be trusted enough to act on.
+code and configuration, diagnoses and debugs problems with tools, and advises on streaming
+architecture, with answers and actions that can be trusted.
 
 "Assistant" means the whole thing that runs on the laptop: a model, a documentation index,
-tools and the runtime that puts them together. The weights alone are not the product.
+tools, MCP servers, skills and the runtime that puts them together. The weights alone are
+not the product.
 
 ## Priorities: intelligence and privacy first
 
@@ -46,15 +47,15 @@ assistant may use part of the memory, not all of it.
 | Model | 27B class at 4-bit (about 15 to 17 GB, an estimate to verify) | a smaller model, to be chosen |
 | Network | none needed after installation | same |
 | Time to a complete answer | median under 60 s | same |
-| Installation | one documented command sequence, under 30 minutes (proposed) | same |
+| Installation | one documented command sequence, under 30 minutes | same |
 
 Platforms:
 
 - **Apple Silicon** is the reference. The recommended setup serves the model with oMLX on
   the same machine; the runtime talks to it over the local OpenAI-compatible endpoint.
 - **Linux and Windows laptops** are supported through GGUF builds (llama.cpp and tools
-  built on it), over the same kind of local endpoint. Their reference machine is still to
-  be defined (see "Open decisions").
+  built on it), over the same kind of local endpoint. Their reference machine has 32 GB of
+  memory; whether a GPU is assumed is still open (see "Open decisions").
 
 The stretch tier never lowers what the reference tier delivers.
 
@@ -81,22 +82,37 @@ the domains (YAML manifests and custom resources, properties files, shell, PromQ
 | **Debugging** | Logs, errors, `describe` output, stack traces, pasted or read with tools | The cause, the fix, how to verify it, how to roll it back |
 | **Streaming architecture** | A use case and its numbers | A design (topics, keys, partitions, delivery guarantees, retention, schema evolution, scaling, multi-cluster) with the trade-offs, and which missing numbers the answer depends on |
 
-## Tools
+## Tools, MCP and skills
 
-The assistant may gather evidence itself instead of asking the user to run commands and
-paste the output.
+The assistant gathers evidence and acts; it does not only advise.
 
-- **Read-only.** It may list, get, describe and read logs, events, status and metrics
-  (`kubectl`, the Kafka command-line tools, the Argo CD client). It
-  never applies, deletes, scales, restarts, resets or syncs. A change is proposed as a
-  command or a patch; the engineer runs it. (Read-only is our reading of the Owner's
-  decision "with tooling"; see "Open decisions".)
+- **Tools.** It reads (list, get, describe, logs, events, status, metrics) and it may make
+  changes (apply, patch, restart, sync, commit), through `kubectl`, the Kafka command-line
+  tools, the Argo CD client and Git.
+- **MCP.** The runtime is a Model Context Protocol client. The user connects MCP servers
+  (for example for Kubernetes, Kafka, Git or metrics) and the assistant uses their tools
+  under the same rules as its own.
+- **Skills.** A skill is a packaged procedure (instructions, checks, scripts) for a
+  recurring job, such as a rolling upgrade or a consumer-lag investigation. Skills are
+  local files, loaded when the task calls for them. The project ships a starting set and
+  the user adds their own.
+- **Approval once per session.** A session has an allow-list of commands and tools. The
+  user approves it once; the assistant then works inside it without asking again and never
+  outside it.
+- **GitOps first.** Where Argo CD manages a resource, a change is a change in Git (a commit
+  or a pull request), not a direct edit of the cluster.
 - **The user's own access.** Tools run locally with the user's current context and
   credentials. The assistant gets no access of its own.
-- **Visible.** Every command is shown, and the answer says which outputs it rests on.
+- **Visible.** Every command and tool call is shown, and the answer says which outputs it
+  rests on.
 - **Private.** Tool output stays on the machine like everything else. Secret values are not
   read unless the user asks for it.
 - **Optional.** Everything works without tools, from what the user pastes.
+
+Proposed defaults, not yet agreed (see "Open decisions"): the default allow-list holds
+read-only commands and the user adds state-changing ones for a session; destructive
+commands (delete, offset reset, forced operations) are confirmed each time even when
+allow-listed; only MCP servers that run on the same machine are enabled by default.
 
 ## How it must behave
 
@@ -112,7 +128,7 @@ is judged by its worst line.
 4. **Version-aware.** It states the versions it speaks for and flags behaviour that changed.
 5. **Safe by default.** Read-only diagnosis before any change; disruptive or destructive
    steps (offset resets, deletions, forced operations) are marked; a change comes with a
-   verification and a way back.
+   verification and a way back, whether the engineer or the assistant carries it out.
 6. **Complete enough to act on.** The essential step is never the one left out.
 7. **Short.** As long as the task needs and no longer.
 8. **Private.** It talks only to a model endpoint on the same machine and makes no other
@@ -128,14 +144,14 @@ to build or tune the assistant.
 | Nothing invented | A reviewer's reading of answers: invented or wrong items | At most 2 per 10 answers, none that would do damage | agreed |
 | Fast enough | Time to a complete answer | Median under 60 s | agreed |
 | Fits | Memory held, network off | The table above | agreed |
-| Helps | Judged score against the same model without the index, per task type | A gain beyond noise on every task type | proposed |
-| Costs little to shrink | Judged score against the full-precision 27B with the same index | Loss within noise, or a stated and accepted loss | proposed |
-| Artefacts are valid | Generated manifests and resources checked against pinned schemas; configuration keys against the real key lists; code that compiles | 95 % valid resources, 100 % existing keys | proposed |
-| Honest about gaps | Wrong refusals where the excerpts cover the question | At most 1 in 10 | proposed |
-| Complete | Answers that drop an essential, supported step | At most 1 in 10 | proposed |
-| Diagnoses with tools | Faults injected into a local test cluster: cause found | To be set after a first measurement | proposed |
-| Tools stay read-only | Commands issued during those runs | No command that changes state, ever | proposed |
-| Private | Network traffic during use | None beyond the local endpoint | proposed |
+| Helps | Judged score against the same model without the index, per task type | A gain beyond noise on every task type | agreed |
+| Costs little to shrink | Judged score against the full-precision 27B with the same index | Loss within noise, or a stated and accepted loss | agreed |
+| Artefacts are valid | Generated manifests and resources checked against pinned schemas; configuration keys against the real key lists; code that compiles | 95 % valid resources, 100 % existing keys | agreed |
+| Honest about gaps | Wrong refusals where the excerpts cover the question | At most 1 in 10 | agreed |
+| Complete | Answers that drop an essential, supported step | At most 1 in 10 | agreed |
+| Diagnoses and fixes with tools | Faults injected into a local test cluster, with tools, MCP servers and skills: cause found, fix correct | To be set after a first measurement | agreed |
+| Tools stay inside the approval | Commands and tool calls issued during those runs | None outside the session's allow-list, ever | proposed (replaces the read-only bar) |
+| Private | Network traffic during use | None beyond the local endpoint | agreed |
 
 Rules that already hold in this project apply here too: bars are fixed before the run, every
 number is given with its size, and a difference under the noise level is reported as no
@@ -156,6 +172,8 @@ difference.
 - **The evidence is narrow.** It covers question answering on operations and configuration.
   There is no evaluation yet for coding, for debugging from logs, for architecture or for
   tool use, and none on a laptop-sized model.
+- **The runtime has no tools yet.** It answers from the index only: no tool calling, no MCP
+  client and no skills exist today, and the model's tool calling has not been measured.
 
 ## From here to the goal
 
@@ -174,8 +192,10 @@ In order. Each step is a question to answer by measurement, not a commitment to 
 5. **Coverage for the new tasks:** Java and Python client material for coding, Helm and
    Kustomize, and more failure material for debugging. Every source has its licence
    checked before it enters the index.
-6. **Read-only tools:** the tool set, its allow-list, a local test cluster with injected
-   faults to measure it, and proof that nothing leaves the machine.
+6. **Tools, MCP and skills:** first measure how reliably the model calls tools; then the
+   tool set and the session allow-list, the MCP client, a starting set of skills, a local
+   test cluster with injected faults to measure them, and proof that nothing leaves the
+   machine. Read-only tools come before tools that change things.
 7. **Fine-tuning, only where measurement shows a gap retrieval cannot close.** The likely
    places are a smaller or quantised model that uses excerpts less well than the 27B does,
    and tool use. That is a hypothesis, not a result.
@@ -184,7 +204,8 @@ In order. Each step is a question to answer by measurement, not a commitment to 
 
 - A general chat or coding assistant outside these domains.
 - A hosted service, or anything that sends the user's data off the machine.
-- An agent that changes a cluster. The assistant reads and advises; the engineer acts.
+- An unattended agent. The assistant acts only inside a session the engineer started and
+  within what they approved for it.
 - Managed Kafka services and vendor distributions. The scope is Apache Kafka and Strimzi.
 - GitOps tools other than Argo CD, and stream processors other than Kafka Streams and
   Kafka Connect (for example Flux and Flink).
@@ -194,12 +215,16 @@ In order. Each step is a question to answer by measurement, not a commitment to 
 
 ## Open decisions (the Owner's)
 
-1. **Tools: read-only, as written above, or more?** "With tooling" is recorded as read-only
-   tools with the engineer making every change.
-2. **Reference machine for Linux and Windows laptops** (memory, and whether a GPU is
-   assumed). The 60-second bar is set for the Apple Silicon reference.
-3. **How tool calls are approved:** each command, or once per session for the allow-list.
-4. **The proposed bars** in "How we will know".
+1. **What the default allow-list holds.** Proposed: read-only commands, with state-changing
+   ones added by the user for a session.
+2. **Destructive commands.** Proposed: confirmed each time, even when allow-listed.
+3. **Remote MCP servers.** A server that runs elsewhere receives what the assistant sends
+   it, which breaks "nothing leaves the machine". Proposed: off by default, enabled only by
+   the user's explicit choice, and named as remote whenever used.
+4. **GPU on the Linux and Windows reference machine** (32 GB memory is agreed). Without a
+   GPU a 27B model will not meet the 60-second bar, so either a GPU is assumed, or that
+   tier gets a smaller model or its own speed bar.
+5. **The bar for work with tools,** after a first measurement.
 
 ## How this file relates to the others
 
