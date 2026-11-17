@@ -70,10 +70,10 @@ A client that uses a schema-registry deserializer fails on a record whose first 
    ```
    The docs also show the formatter properties `print.key=true`, `print.value=true`, `key.deserializer` and `value.deserializer`, each passed with `--formatter-property`. NO OFFICIAL SOURCE FOUND in the Kafka docs read for a console option that prints the first bytes of a record in hexadecimal.
    — *Source:* Kafka docs `operations/tiered-storage.md` L136-L140; `streams/quickstart.md` L147-L153
-3. Read the same topic with the schema-registry formatter. Example 1 from the source (in the source, the second line has no trailing `\`):
+3. Read the same topic with the schema-registry formatter. Example 1 from the source, with one correction: the source has no trailing `\` after `localhost:9092`, which ends the command there; it is added here:
    ```
    bin/kafka-console-consumer.sh --consumer.config config/consumer.properties --topic t1 \
-     --bootstrap-server localhost:9092
+     --bootstrap-server localhost:9092 \
      --formatter io.confluent.kafka.formatter.AvroMessageFormatter \
      --property schema.registry.url=http://localhost:8081
    ```
@@ -125,9 +125,9 @@ Each item is a cause, a check, and a fix. The sources do not say which cause is 
 
 ## Verification
 
-1. Run diagnosis step 3 again over the affected offsets with `print.schema.ids=true`: every record prints a value and a schema id, with no exception.
+1. Framed records only: run diagnosis step 3 again with `print.schema.ids=true` over offsets that should now hold framed records (records written after a producer-side fix, or the framed records of a mixed topic): each prints a value and a schema id, with no exception. The formatter always reads the value with the schema-registry deserializer, so records that were never framed (remediation steps 1 and 2 when the consumer side was changed, and records skipped under step 6) still fail there; that is not a failed fix.
    — *Source:* SR `SchemaMessageFormatter.java` L127-L135, L267-L287
-2. The consuming client moves past the offset where it failed. NO OFFICIAL SOURCE FOUND for a specific check; for position and lag see [consumer-group-position.md](consumer-group-position.md).
+2. The consuming client, with its corrected deserializer configuration, moves past the offset where it failed. Where records were skipped (remediation step 6), check that consumption resumes after the skipped offsets: `CURRENT-OFFSET` and `LAG` from `--describe`, in [consumer-group-position.md](consumer-group-position.md). NO OFFICIAL SOURCE FOUND for a more specific check.
 
 ## Rollback or caveats
 

@@ -76,6 +76,7 @@ Impact, as the prom-op runbook states it: "The alert is purely informative and u
    )
    > ( 25 / 100 )
    ```
+   Because of its last line (the `>` comparison), the expression returns only containers above the threshold. To read the ratio itself, use it without that last line, or the step 2 query, which has no comparison.
    — *Source:* mixin `alerts/resource_alerts.libsonnet` L105-L106, L254-L284; `config.libsonnet` L36, L123, L125
 2. For one pod, per container: the mixin's pod dashboard query (template; `$namespace`, `$pod`, `$cluster` are dashboard variables). Its panel draws the threshold at `cpuThrottlingPercent / 100`.
    ```
@@ -136,8 +137,9 @@ Impact, as the prom-op runbook states it: "The alert is purely informative and u
 
 ## Verification
 
-1. The ratio from diagnosis step 1 stays at or below `cpuThrottlingPercent / 100` (0.25 by default) and `CPUThrottlingHigh` stops firing.
-   — *Source:* mixin `alerts/resource_alerts.libsonnet` L105, L254-L284
+1. The ratio, read without the comparison (diagnosis step 1 without its last line, or the step 2 query), stays at or below `cpuThrottlingPercent / 100` (0.25 by default), and `CPUThrottlingHigh` stops firing.
+   - An empty result is not a pass. If the query without the comparison returns no series for the container, there is no data: the series are not scraped, or cAdvisor no longer exports them because the container's CPU quota is zero (possible after remediation step 3, see there). Throttling has gone down only when the series is present and the value is at or below the threshold.
+   — *Source:* mixin `alerts/resource_alerts.libsonnet` L105, L254-L284, `dashboards/resources/queries/pod.libsonnet` L35-L36; cAdvisor `lib/metrics/prometheus.go` L213, L228, L243
 2. The application performs normally. NO OFFICIAL SOURCE FOUND for a specific check.
 
 ## Rollback or caveats
