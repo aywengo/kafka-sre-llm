@@ -292,3 +292,12 @@ quants (Q4_K_M, Q5_K_M, Q8_0).
 
 Start with a small run end to end (a few hundred examples, 200 iters) to shake out the
 pipeline before the long runs.
+
+## Licence
+
+The code in this repository is licensed under the Apache License 2.0 (see `LICENSE`).
+
+The documentation index is a mixed-licence collection: Apache-2.0 for eight of the sources and
+CC BY 4.0 for the Kubernetes documentation. The attribution is in `NOTICE`.
+
+The base model's weights are under their own licence; see the model card (`MODEL_CARD.md`).

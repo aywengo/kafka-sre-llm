@@ -394,6 +394,10 @@ tested with them.
 Apache-2.0, the same as the base model. The Kubernetes documentation part of the training data
 is CC BY 4.0 (see above).
 
+The code in the repository (`LICENSE`) is licensed under the Apache License 2.0. The
+documentation index used for retrieval is a mixed-licence collection, Apache-2.0 for eight
+sources and CC BY 4.0 for the Kubernetes documentation, with the attribution in `NOTICE`.
+
 ## Version
 v1 is an experimental preview. v2 is planned, with generation rules that reject caveats and
 examples not found in the source, a stricter premise check, and a second verifier.
