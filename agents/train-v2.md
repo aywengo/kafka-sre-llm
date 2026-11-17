@@ -1,11 +1,11 @@
 # Mission: train kafka-sre v2
 
-v1 is published as an experimental preview and failed its eval gate (see `MODEL_CARD.md`,
-`runs/v1/REPORT.md`, `runs/v1/LEFTOVERS.md`). It is better than base on Strimzi, Kafka
+v1 is published as an experimental preview and failed its eval gate (see `MODEL_CARD.md`
+and `runs/v1/REPORT.md`). It is better than base on Strimzi, Kafka
 config and Argo CD, and clearly worse on Kafka operations and streaming: answers are short
 (~250 tokens), miss the usual cause in troubleshooting, and add caveats, modes, endpoints
 and deprecations that the source never said. v2 changes the **data**, not the method.
-Read those three files first.
+Read those two files first.
 
 ## Goal
 

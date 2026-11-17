@@ -4,8 +4,7 @@ v2 failed its gate and scored below v1 on the 40 real questions (GLM: v1 +0.18, 
 kafka-ops −1.0). Its data was accurate but short: mean training answer 868 chars (v1 1,135),
 and the tuned model now answers real questions in ~185 tokens where the base model writes
 ~1,400. Main suspected cause: every answer was grounded in ONE excerpt, so answers could only
-be as broad as one excerpt. Read `runs/v2/HEARTBEAT.md` (Phase 6 and diagnostic entries) and
-`runs/v1/LEFTOVERS.md` first.
+be as broad as one excerpt. Read `runs/v2/HEARTBEAT.md` (Phase 6 and diagnostic entries) first.
 
 Length is not the whole story, and v3 must not treat it as one:
 

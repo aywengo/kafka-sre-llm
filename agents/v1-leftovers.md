@@ -4,6 +4,8 @@ v1 is published as an experimental preview (`aywengo/kafka-sre-27b-v1-preview`, 
 `-GGUF`). Before v2 starts, finish the v1 work that v2 needs as a baseline. Read
 `runs/v1/REPORT.md` and `MODEL_CARD.md` first; they describe the v1 eval and its problems.
 
+Note: the report this brief produced is no longer kept in the repository.
+
 ## Goal
 
 1. **Fair eval baseline.** In the v1 eval, 122 of 152 base answers were cut off at 1024
@@ -13,7 +15,7 @@ v1 is published as an experimental preview (`aywengo/kafka-sre-27b-v1-preview`, 
 3. **Ollama test.** The model card says the Ollama Modelfile is untested. Test it.
 4. **Prepared updates.** Updated model card and per-repo READMEs, ready to publish, but
    **not published** until Roman says go.
-5. A short report: `runs/v1/LEFTOVERS.md`.
+5. A short report.
 
 You are done when the report exists and Roman has the list of what is waiting for his go.
 
@@ -140,7 +142,7 @@ used the **1024-token** answers, so calibrate on those.
    (`question`, `category`, `reference`, `source`). Start with the known case: the Cruise
    Control rebalance answer used the right mode but invented other modes in its caveats.
    Write references only from the pinned docs, not from memory; mark anything you are unsure of.
-2. Write `runs/v1/LEFTOVERS.md`: the four tables (2048 vs 1024 per set; truncation; judge
+2. Write the short report: the four tables (2048 vs 1024 per set; truncation; judge
    agreement on the 10; judge 1 vs judge 2 on 152), the gate result, the judge recommendation,
    the Ollama result, Q5/Q8 perplexity, the feedback items, and the list of actions waiting for
    Roman's go. One page.
