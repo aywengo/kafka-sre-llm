@@ -14,13 +14,18 @@ A Kafka / Strimzi / Kubernetes / Argo CD SRE assistant on an open-weight 27B mod
 - **v3:** retrieval on the unmodified base model is what works. On 40 real questions, scored
   by a local LLM judge in two passes, base model plus retrieval on the shipped index scores
   **+1.48** against the plain base model (standard error 0.21; 33 wins, 5 ties, 2 losses). The
-  earlier measurement on the previous index was +1.19 (26 / 8 / 6). The fine-tuned adapters without retrieval
-  score about zero (v1 +0.08, v2 -0.18). An adapter trained with retrieved excerpts in the
-  prompt was stopped after a ceiling check. v3 therefore ships as retrieval on the base model,
-  with no adapter.
-- The size of the result: 40 questions, two judge passes, one judge model, standard error 0.21.
-  The +1.19 was measured on the previous version of the documentation index (6,292 chunks); +1.48
-  is on the shipped one (6,444 chunks). On the 34 questions whose answers are identical in both measurements the two agree (+1.41 in each); the whole +0.29 gap comes from the 6 questions whose packs changed with the index, three of which the corpus additions were aimed at. The two figures are therefore the same result on the unchanged questions, and the new index is not shown to be an improvement.
+  earlier measurement on the previous index was +1.19 (26 / 8 / 6). The fine-tuned adapters
+  without retrieval score about zero (v1 +0.08, v2 -0.18). An adapter trained with retrieved
+  excerpts in the prompt was stopped after a ceiling check. v3 therefore ships as retrieval on
+  the base model, with no adapter.
+- The size of the result: 40 questions, two judge passes, one judge model, standard error
+  0.21. The +1.19 was measured on the previous version of the documentation index (6,292
+  chunks); +1.48 is on the shipped one (6,444 chunks). On the 34 questions whose answers are
+  identical in both measurements the two agree (+1.41 in each). The whole +0.29 difference
+  comes from the 6 questions whose retrieved excerpts changed with the index (-0.08 before,
+  +1.83 now). Documentation was added to the index after some of these same questions showed
+  no matching content, so that part of the gain is fitted to this question set: it shows the
+  index now covers those topics, and is not evidence that retrieval improved in general.
 
 ## Published model (experimental preview)
 

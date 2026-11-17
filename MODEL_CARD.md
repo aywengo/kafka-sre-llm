@@ -274,7 +274,12 @@ How to read it:
   questions, as the Phase 0 report says.
 - The headline is the shipped-index row: +1.48, 40 questions, two judge passes, standard error
   0.21. The other rows (k3, v1, v2, and the per-category figures below) were measured on the
-  previous index of 6,292 chunks, as was the +1.19 row. On the 34 questions whose answers are identical in both measurements the two agree (+1.41 in each); the whole +0.29 gap comes from the 6 questions whose packs changed with the index, three of which the corpus additions were aimed at. The two figures are therefore the same result on the unchanged questions, and the new index is not shown to be an improvement.
+  previous index of 6,292 chunks, as was the +1.19 row. On the 34 questions whose answers are
+  identical in both measurements the two agree (+1.41 in each). The whole +0.29 difference
+  comes from the 6 questions whose retrieved excerpts changed with the index (-0.08 before,
+  +1.83 now). Documentation was added to the index after some of these same questions showed
+  no matching content, so that part of the gain is fitted to this question set: it shows the
+  index now covers those topics, and is not evidence that retrieval improved in general.
 - Runtime check: on 3 of the 40 questions the real path (mlx, base model, frozen index, k6,
   default mode) reproduced the stored search terms, chunk ids and answers exactly.
 - Per category, k6 against plain base: Strimzi +2.05, streaming +2.50 (2 questions),
