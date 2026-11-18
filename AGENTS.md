@@ -1,13 +1,16 @@
 # Working rules for agents in this repository
 
 kafka-sre-llm builds a Kafka / Strimzi / Kubernetes / Argo CD SRE assistant on an
-open-weight 27B model, on one Apple Silicon machine with mlx-lm. v1 is published as a
-preview. v3 found that retrieval is what helps (base model + retrieval scores +1.19 over the
-plain base model on the 40 real questions; the fine-tuned adapters alone add nothing), so
+open-weight 27B model, on one Apple Silicon machine with mlx-lm. `GOAL.md` says where the
+project is going. v1 is published as a preview. v3 found that retrieval is what helps (base
+model + retrieval scores +1.48 over the plain base model on the 40 real questions with the
+shipped index, +1.19 with the earlier one; the fine-tuned adapters alone add nothing), so
 the product is a retrieval runtime. The adapter stage (an adapter trained with the retrieved
 excerpts in the prompt) was stopped on 2026-11-17 after a ceiling check: the teacher did not
-beat base + retrieval by the margin fixed in advance. v3 ships as the retrieval runtime on
-the base model.
+beat base + retrieval by the margin fixed in advance. v3 was released on 2026-11-18: the
+retrieval runtime on the base model, the documentation index as a dataset, and the v2
+adapter as a retrieval-only model. `v3.0.0` is the measured release; `v3.0.1` adds the
+fixes from the end-to-end test (`agents/e2e-v3.0.0.md`).
 
 ## Start of every session
 
@@ -72,6 +75,7 @@ other client is active.
 | `agents/` | Mission briefs, one per version |
 | `kafka_sre_rag/` | Retrieval runtime: `prompts.py` (the only place prompt text lives), `frozen.json`, `ask` / `chat` / `verify` |
 | `scripts/` | Pipeline: sources, chunking, retrieval, question bank, packs, generation and verification, guard, chain scripts (`s1_*.sh`) |
+| `model_cards/` | Cards and notices of the published Hugging Face repositories; `scripts/package_adapter.py` and `scripts/package_index.py` build the upload folders |
 | `eval/` | Question sets and `compare.py` (answers and judging) |
 | `tests/` | Offline unit tests, golden hashes of the measured prompts |
 | `sources.yaml` | Documentation sources with pins and licences |
