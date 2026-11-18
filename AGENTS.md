@@ -14,7 +14,8 @@ fixes from the end-to-end test (`agents/e2e-v3.0.0.md`).
 
 ## Start of every session
 
-1. Read `runs/v3/STATE.md` (where things stand, what waits for the Owner).
+1. Read `MILESTONE.md` (the current milestone: work packages, status, what waits for the
+   Owner). `runs/v3/STATE.md` is the closing state of the v3 release.
 2. Run `scripts/s1_status.sh` (ten lines: running jobs, markers, last log line, loaded model).
 3. If a job is running, do not edit a file it imports or executes, and do not start
    anything on the GPU or the model server next to it, unless the task says so.
@@ -72,7 +73,8 @@ other client is active.
 | Path | What it is |
 |---|---|
 | `GOAL.md` | Where the project is going and how success is judged; changes only by the Owner's decision |
-| `agents/` | Mission briefs, one per version |
+| `MILESTONE.md` | Progress of the current milestone; kept by the conductor, not edited by workers |
+| `agents/` | Mission briefs, one per version or work package |
 | `kafka_sre_rag/` | Retrieval runtime: `prompts.py` (the only place prompt text lives), `frozen.json`, `ask` / `chat` / `verify` |
 | `scripts/` | Pipeline: sources, chunking, retrieval, question bank, packs, generation and verification, guard, chain scripts (`s1_*.sh`) |
 | `model_cards/` | Cards and notices of the published Hugging Face repositories; `scripts/package_adapter.py` and `scripts/package_index.py` build the upload folders |
