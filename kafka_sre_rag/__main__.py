@@ -41,7 +41,7 @@ def build_parser():
         p.add_argument("--base-url", help="openai: server URL (default: environment variable OMLX_URL)")
         p.add_argument("--extra-body", type=json.loads, default=None, metavar="JSON",
                        help="openai: JSON merged into the request body, e.g. "
-                            "'{\"chat_template_kwargs\": {\"thinking\": false}}' to switch thinking off")
+                            "'{\"chat_template_kwargs\": {\"enable_thinking\": false}}' to switch thinking off")
         p.add_argument("--max-tokens", type=int, default=None, metavar="N",
                        help="token limit for both model calls (default: the frozen limits, 300 and 2048). "
                             "A reasoning model on the server needs a larger value; the run is then unmeasured")

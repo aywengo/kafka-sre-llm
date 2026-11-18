@@ -6,7 +6,7 @@ in kafka_sre_rag/frozen.json) contains text taken from these projects. For every
 the text was converted to plain text (Markdown, AsciiDoc, reStructuredText, HTML or OpenAPI
 YAML to plain text with headings), cleaned (front matter, comments, images, shortcodes,
 includes and link markup removed; AsciiDoc attributes expanded) and split into chunks of up to
-4,000 characters. No other change was made to the wording. The chunks are not the upstream
+4,000 characters (12,000 for the two runbook sources). No other change was made to the wording. The chunks are not the upstream
 documents and are not endorsed by the projects.
 
 Each upstream repository was read at the pinned tag or commit given below. Licence texts are
@@ -86,7 +86,7 @@ each LICENSE file are those of the upstream repositories at the pins above.
 
 The index is therefore a mixed-licence work: Apache License 2.0 for the chunks of items 1 to 5 and
 7 to 10, and CC BY 4.0 for the chunks of item 6. Using the Kubernetes chunks requires the
-attribution given in item 6.
+attribution given in item 6. The Kubernetes documentation is licensed under CC BY 4.0 and is provided without warranties, as set out in Section 5 of that licence (Disclaimer of Warranties and Limitation of Liability), https://creativecommons.org/licenses/by/4.0/legalcode.
 
 The code of this repository (kafka_sre_rag/, scripts/) is licensed under the Apache License 2.0
 (LICENSE at the repository root).

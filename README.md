@@ -10,24 +10,28 @@ A Kafka / Strimzi / Kubernetes / Argo CD SRE assistant on an open-weight 27B mod
 
 - **v1** is published as an experimental preview. It is a fine-tuned model that did not pass
   its eval gate.
-- **v2** was trained and is not released.
+- **v2** is released as a retrieval-only adapter (see "Published models"): it is for use with
+  retrieved excerpts and its own search terms, not on its own. Base model plus retrieval stays
+  the recommended default.
 - **v3:** retrieval on the unmodified base model is what works. On 40 real questions, scored
   by a local LLM judge in two passes, base model plus retrieval on the shipped index scores
   **+1.48** against the plain base model (standard error 0.21; 33 wins, 5 ties, 2 losses). The
   earlier measurement on the previous index was +1.19 (26 / 8 / 6). The fine-tuned adapters
   without retrieval score about zero (v1 +0.08, v2 -0.18). An adapter trained with retrieved
   excerpts in the prompt was stopped after a ceiling check. v3 therefore ships as retrieval on
-  the base model, with no adapter.
+  the base model; the v2 adapter is an option on top of it, not the default.
 - The size of the result: 40 questions, two judge passes, one judge model, standard error
   0.21. The +1.19 was measured on the previous version of the documentation index (6,292
   chunks); +1.48 is on the shipped one (6,444 chunks). On the 34 questions whose answers are
-  identical in both measurements the two agree (+1.41 in each). The whole +0.29 difference
+  identical in both measurements the two agree (+1.41 in each; per pass the same answers moved by +0.12 and -0.12, the judge's own variation). The whole +0.29 difference
   comes from the 6 questions whose retrieved excerpts changed with the index (-0.08 before,
   +1.83 now). Documentation was added to the index after some of these same questions showed
   no matching content, so that part of the gain is fitted to this question set: it shows the
   index now covers those topics, and is not evidence that retrieval improved in general.
 
-## Published model (experimental preview)
+## Published models
+
+### v1 (experimental preview)
 
 v1 is out as an experimental preview. Its automatic eval gate failed; read the model card
 before using it, and verify every config and command before applying it to a cluster. The v1
@@ -37,6 +41,28 @@ weights are not what the v3 result is about: the v3 number is for the base model
 - MLX 4-bit: [aywengo/kafka-sre-27b-v1-preview-MLX-4bit](https://huggingface.co/aywengo/kafka-sre-27b-v1-preview-MLX-4bit)
 - GGUF (Q4_K_M now; Q5_K_M and Q8_0 to follow): [aywengo/kafka-sre-27b-v1-preview-GGUF](https://huggingface.co/aywengo/kafka-sre-27b-v1-preview-GGUF)
 - bf16, Hugging Face layout (upload in progress): [aywengo/kafka-sre-27b-v1-preview](https://huggingface.co/aywengo/kafka-sre-27b-v1-preview)
+
+### v2 (retrieval-only adapter)
+
+- Adapter only (LoRA weights, no base model):
+  [aywengo/kafka-sre-27b-v2-retrieval-only](https://huggingface.co/aywengo/kafka-sre-27b-v2-retrieval-only)
+- **The one rule of use: only with retrieved excerpts, and with its own search terms** (the
+  runtime with `--adapter` does both). Without retrieval it scores -0.18 against the plain base
+  model (40 questions, two judge passes).
+- Result, from `runs/v3/V2RAG_CHECK.md` (40 real questions, two judge passes, one judge model,
+  standard error 0.21): with its own search terms it scores -0.07 against base plus retrieval
+  (15 wins, 6 ties, 19 losses), which is the same score within noise; with the base model's
+  search terms it is behind, -0.29 (9 / 7 / 24). Its answers are about a quarter the length
+  (median 1,208 against 4,714 characters). A reviewer's reading of ten answers (one reader, one
+  pass) found an essential step dropped in 3 to 4 of them. Pick it for short answers, not for
+  better ones; base plus retrieval remains the default. This leans on the 40 real questions
+  again.
+
+### Dataset
+
+- Documentation index (the frozen 6,444-chunk file, with its attribution and checksums):
+  [aywengo/kafka-sre-docs-index-v3](https://huggingface.co/datasets/aywengo/kafka-sre-docs-index-v3),
+  going out with the v3.0.0 release.
 
 Feedback and review are welcome.
 
@@ -57,9 +83,8 @@ pip install -r requirements.txt
 ```
 
 The reranker is `BAAI/bge-reranker-v2-m3`. It is downloaded from Hugging Face on first use
-(through sentence-transformers) and runs on CPU. The revision the runtime was measured with
-is written in `kafka_sre_rag/frozen.json`; `verify` compares it with your local cache, but the
-download itself is not pinned to it yet.
+(through sentence-transformers) and runs on CPU. The runtime loads it at the revision in
+`kafka_sre_rag/frozen.json`; `verify` compares that with your local cache.
 
 ### Get the index
 
@@ -89,7 +114,10 @@ python -m kafka_sre_rag ask --sources "How do I check consumer lag?"
 
 `--model` takes the model directory and defaults to `BASE_PATH`. Runtime check: on 3 of the 40
 questions, the real path (mlx, base model, frozen index, k6, default mode) reproduced the stored
-search terms, chunk ids and answers exactly.
+search terms, chunk ids and answers exactly. The same holds with the v2 adapter
+(`--adapter <adapter directory>` on the same base model): on 3 questions it reproduced the stored
+search terms, chunk ids and answers. These checks were run with mlx-lm 0.32.2 and mlx 0.32.4
+(`requirements.txt` does not pin them).
 
 With an OpenAI-compatible server (a `/v1/chat/completions` endpoint):
 
@@ -104,10 +132,13 @@ switch with `--extra-body`, for the base model `--extra-body '{"chat_template_kw
 A reasoning model that is left thinking needs a larger `--max-tokens` instead (the run is then
 unmeasured), and when the model returns no answer text the runtime exits with an error that says so.
 The server backend was run end to end as a path check with timing, not a quality measurement: base
-model `mlx-community--Qwen3.8-27B-bf16` (full precision), 3 questions in default and in strict mode,
-77 to 212 s per question in total, thinking off; the search terms, chunk ids and answers differed from
-the mlx-measured files, so the server backend is not a measured configuration. An earlier path check
-with another model (GLM-5.3-Flash-oQ8e-mtp, `--max-tokens 16000`) also produced answers.
+model `mlx-community--Qwen3.8-27B-bf16` served by the local model server (full-precision build),
+thinking off, 3 questions. They took 134 to 212 s per question in default mode and 77 to 117 s in
+strict mode. The output was **not** identical to the mlx path: the search terms diverge after 260
+to 440 characters; that changes the order of the excerpts (on one of 3 questions also two of
+them), and the answers differ from the first sentence. The measured results
+therefore apply to the mlx path; the server path is checked but not measured. An earlier path
+check with another model (GLM-5.3-Flash-oQ8e-mtp, `--max-tokens 16000`) also produced answers.
 
 `chat` is the same loop, one question at a time. Each turn is retrieved and answered on its
 own; no conversation history is sent, and multi-turn use is not measured.
@@ -128,18 +159,39 @@ sources, search terms, timings and the reasons the run is unmeasured), `--adapte
 
 ### Modes
 
-- **default:** the prompt that was measured.
-- **strict:** adds one sentence to the user message: "Use only commands, flags, configuration
-  keys, resource fields and annotations that appear in the excerpts. If the excerpts do not
-  cover part of the question, say so in one sentence instead of filling the gap."
-  Measured trade-off: on the 10 answers read in full it had no invented identifiers (the
-  default had 7 in 5 answers), and the answers were about half as long (516 against 1,217
-  tokens). On the 40 questions it scored -0.11 against default, which is a tie within the
-  noise. It did not make the model say so on the questions the index cannot cover: only one
-  of those three was refused. Default stays the default.
+- **default:** the prompt that was measured, and the default. Its answers are longer and
+  invent or misstate more (table below).
+- **strict** (`--mode strict`): adds one sentence to the user message: "Use only commands,
+  flags, configuration keys, resource fields and annotations that appear in the excerpts. If
+  the excerpts do not cover part of the question, say so in one sentence instead of filling the
+  gap."
 - **Prompted answer rules:** adding answer rules to the prompt without an adapter scored -0.15
   against base plus retrieval on the 40 questions (standard error 0.16; 9 wins, 16 ties, 15
   losses), so no such prompt ships.
+
+Evidence on the two modes. Both readings are by one reader, one pass; invented or wrong items
+are counted from a reviewer's reading against the excerpts, not by a program.
+
+| | Default | Strict |
+|---|---|---|
+| Invented or wrong items, 10 real questions read in full | 17 in 7 answers | 1 in 1 answer |
+| Invented or wrong items, 10 holdout questions, ten fixed positions (1, 5, 10, 15, 21, 24, 28, 31, 37, 41), apart from the ten shortest strict answers | 3 in 1 answer | 0 |
+| Essential omissions, wrong refusals (10 real) | not assessed | 2 omissions (1 more partial), 1 wrong refusal |
+| Essential omissions, wrong refusals (10 holdout) | 0 (1 partial), 0 | 0 (2 partial), 0 |
+| Judged score of strict minus default | - | -0.11 on the 40 real questions (Phase 0), -0.05 on the 42 holdout questions (standard error 0.14); both within noise |
+| Mean answer length | 1,217 tokens (40 real), 459 (42 holdout) | 516 tokens (40 real), 160 (42 holdout) |
+
+What this means. The project's bars (`GOAL.md`, on questions not used to build or tune the
+assistant): at most 2 invented or wrong items per 10 answers and none that would do damage; at
+most 1 wrong refusal and at most 1 dropped essential step per 10. On the 10 real questions (a
+set reused many times): default has 17 items in 7 answers, one of them damaging; strict has 1
+item, but drops an essential step in 2 answers (1 more partly) and wrongly refuses 1. On the 10
+holdout questions: default has 3 items in 1 answer, one probably damaging; strict has none, and
+no omissions (2 partial). So: **use `--mode strict` for anything you will paste into a cluster,
+and check that no step is missing.** The price is that when retrieval misses the page, strict
+can give a non-answer ("the excerpts do not cover this") where default writes something.
+Default stays the default because it is the mode every headline number was measured in. Sources: `runs/v3/reports/`
+(`strict_mode_invention_reading.md`, `strict_holdout_reading.md`) and `runs/v3/STRICT_HOLDOUT_CHECK.md`.
 
 ### Sources
 
@@ -153,8 +205,9 @@ If a run differs from the configuration behind the headline number, a line
 `UNMEASURED CONFIGURATION: <reasons>` is printed (and `measured: false` is in the JSON). The
 reasons are: mode other than default, `--k k3`, a generator that is not the reference model
 (the bf16 base model, no adapter), a different index file, or no reranker. It does not mean
-the run is broken. For `strict` and `k3` it means the number was measured on an earlier
-index, not on this exact setup. For another model, a 4-bit or GGUF build, or a server, it
+the run is broken. For `k3` it means the number was measured on an earlier
+index, not on this exact setup. For `strict`, the 40-question figure is from the earlier index;
+on the shipped index it was measured on the 42 holdout questions only. For another model, a 4-bit or GGUF build, or a server, it
 means nobody has measured it.
 
 ### Timings
@@ -173,13 +226,32 @@ About 2 minutes in total.
 
 - It still invents some flags, fields and commands in the default mode. Verify every command
   and every config key before you run it on a cluster.
-- It gets worse on questions the documentation index does not cover. On the three such
-  questions in the test set, retrieval lowered the score by 1.0 on average. The index covers
+- It gets worse on questions the documentation index does not cover. On the three test
+  questions the earlier index could not answer (29, 37, 38), retrieval scored 1.0 below the
+  plain base model. Pages on these topics were then added; on the shipped index the same three
+  score +2.17 on average (2 passes). That gain is fitted to these questions. On a topic the
+  index does not cover, expect answers from unrelated excerpts or from memory. The index covers
   Apache Kafka, Strimzi, Argo CD and the Kubernetes concepts and tasks pages, plus a few
   Schema Registry, cAdvisor and runbook pages. It has little on Schema Registry and on CPU
   throttling.
 - Answers in the default mode are long (about 1,200 tokens on average); 2 of 40 hit the
   2,048-token limit.
+- Some default-mode answers carried wrong advice, found by a reviewer's reading of 20 answers: a
+  statement that the offset-reset time is read in the broker's timezone (in Kafka 4.3.2 a
+  `--to-datetime` value without an offset is read as UTC; write the offset explicitly, for example
+  `2026-11-18T09:00:00.000+01:00`); a statement that NetworkPolicies are additive in the sense that one policy that
+  does not allow the traffic blocks it (the reverse holds: allowed traffic is the union of what every policy selecting the pod
+  allows; the source pod's egress must allow it too); and clearing a replication throttle by
+  setting the rates to 0 (0 is the tightest throttle, not a clear: the rate is an upper bound in
+  bytes per second for the throttled replicas; the Kafka documentation removes the throttle with
+  `kafka-reassign-partitions.sh --verify` after the reassignment completes, or remove the
+  throttle configs with `kafka-configs.sh --alter --delete-config`). Check such details.
+- Retrieval missed the source page on at least 5 of the 42 holdout questions (13, 14, 22, 34,
+  41): the source page was not among the excerpts. Strict mode then can give a non-answer (questions 13, 14, 34);
+  default may fill the gap from memory.
+- Time per answer: about 2 minutes in Phase 0; 112, 151 and 170 s in the one end-to-end check
+  (3 questions, default mode, bf16 27B through mlx-lm). `GOAL.md` asks for a median under 60 s;
+  that is not met. Strict mode is shorter and quicker (77 to 117 s on the server path check).
 - The documentation snapshots are fixed (Kafka 4.3.2, Strimzi 1.3.1, Argo CD v3.6.1).
 - English only. Tested on short questions, not on long incident threads.
 
@@ -313,7 +385,7 @@ pipeline before the long runs.
 
 The code in this repository is licensed under the Apache License 2.0 (see `LICENSE`).
 
-The documentation index is a mixed-licence collection: Apache-2.0 for eight of the sources and
+The documentation index is a mixed-licence collection: Apache-2.0 for nine of the sources (eight upstream projects and the project's runbooks) and
 CC BY 4.0 for the Kubernetes documentation. The attribution is in `NOTICE`.
 
 The base model's weights are under their own licence; see the model card (`MODEL_CARD.md`).

@@ -4,13 +4,24 @@
 Difference = strict minus default (default is the baseline slot of the head-to-head file), GLM judge, two passes (the second flipped).
 The result line states the measured difference and its standard error only; it declares no winner.
 Pure helpers (result_line, shortest, gap_count, mean_tokens) are tested in tests/test_v3_strict_holdout_summary.py."""
-import json, statistics as st, sys
+import json, re, statistics as st, sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from v3_ship_summary import aggregate, both_passes, pass_deltas  # noqa: E402
 from v3_v2rag_summary import parse_invention  # noqa: E402
-from pack_filters import gap_sentence_count  # noqa: E402
+
+# Heuristic: how the strict and default answers actually phrase a coverage statement, e.g. "The provided documentation
+# excerpts do not contain ...", "the documentation does not provide a specific CLI command", "is not included", "not covered
+# in these excerpts". Case-insensitive, within one sentence; it is a count of phrasings, not a judgement of the answer.
+_SRC = r"(?:excerpts?|documentation|docs|retrieved|provided|pack)"
+_NEG = r"(?:do(?:es)?\s+not|don't|doesn't|did\s+not|cannot|can't)"
+_VERB = r"(?:cover|contain|include|specify|describe|mention|provide|state|list|document|support|say|explicitly)"
+COVERAGE_RE = re.compile(
+    rf"\b{_SRC}\b[^.\n]{{0,80}}?\b{_NEG}\s+(?:\w+\s+){{0,2}}?{_VERB}"
+    rf"|\bnot\s+(?:explicitly\s+)?(?:included|covered|described|mentioned|documented)\b[^.\n]{{0,40}}\b(?:excerpts?|documentation|here)\b"
+    rf"|\b{_SRC}\b[^.\n]{{0,80}}?\bnot\s+(?:explicitly\s+)?(?:included|covered)\b",
+    re.I)
 
 W = Path("work/v3")
 J = W / "judge"
@@ -32,9 +43,18 @@ def mean_tokens(rows):
     return st.mean(r.get("tokens") or 0 for r in rows) if rows else None
 
 
+def has_coverage_statement(text):
+    return bool(text) and COVERAGE_RE.search(text) is not None
+
+
 def gap_count(rows):
-    """Number of answers containing at least one 'The retrieved documentation does not cover ...' sentence."""
-    return sum(gap_sentence_count(r.get("text")) > 0 for r in rows)
+    """Heuristic count of answers with a coverage statement ("the excerpts do not contain/cover/specify ...")."""
+    return sum(has_coverage_statement(r.get("text")) for r in rows)
+
+
+def gap_questions(rows, num):
+    """Sorted question numbers of the answers the heuristic flags."""
+    return sorted(num[r["question"]] for r in rows if r["question"] in num and has_coverage_statement(r.get("text")))
 
 
 def shortest(rows, num, limit=10):
@@ -83,8 +103,10 @@ def main():
     for label, key in (("default", "default"), ("strict", "strict")):
         a, b = _inv(key)
         out.append(f"- {label}: {_fmt(a)} / {_fmt(b)}")
-    out.append(f"\nAnswers with a 'The retrieved documentation does not cover ...' statement: default {gap_count(dflt)} of {len(dflt)}, "
-               f"strict {gap_count(strict)} of {len(strict)}.")
+    out.append(f"\nAnswers with a coverage statement (heuristic count by phrasing, e.g. 'the excerpts do not contain ...'; "
+               f"it can miss or over-count): default {gap_count(dflt)} of {len(dflt)}, strict {gap_count(strict)} of {len(strict)}. "
+               f"Flagged question numbers: default {', '.join(map(str, gap_questions(dflt, num))) or 'none'}; "
+               f"strict {', '.join(map(str, gap_questions(strict, num))) or 'none'}.")
     out.append("\nTen shortest strict answers (over-refusal candidates; a reviewer reads these), question number: tokens:")
     out.append(", ".join(f"Q{n}: {t}" for n, t in shortest(strict, num)) or "none")
     out.append("\nA reviewer still has to read answers for invented or wrong items; the mechanical count only sees identifiers absent "

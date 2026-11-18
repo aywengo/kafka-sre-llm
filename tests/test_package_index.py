@@ -85,5 +85,52 @@ class Readme(unittest.TestCase):
         self.assertNotIn(P.PLACEHOLDER, r2)
 
 
+class Packaging(unittest.TestCase):
+    def _root(self, tmp, with_license=True):
+        import hashlib
+        root = Path(tmp)
+        (root / "runs/v3").mkdir(parents=True)
+        (root / "kafka_sre_rag").mkdir()
+        (root / "work").mkdir()
+        (root / "data/runbooks").mkdir(parents=True)
+        idx = (json.dumps(chunk("alpha", "raw/alpha/a.md")) + "\n").encode()
+        (root / "work/c.jsonl").write_bytes(idx)
+        sha = hashlib.sha256(idx).hexdigest()
+        frozen = {"sha256": sha, "index_path": "work/c.jsonl", "chunks": 1,
+                  "chunks_per_source": {"alpha": 1}, "source_commits": {"alpha": "a" * 40}}
+        (root / "runs/v3/INDEX_FROZEN.json").write_text(json.dumps(frozen))
+        cfg = {"index": {"sha256": sha, "index_path": "work/c.jsonl"},
+               "retrieval": {"reranker": {"model": "m/r"}}}
+        (root / "kafka_sre_rag/frozen.json").write_text(json.dumps(cfg))
+        (root / "sources.yaml").write_text("sources:\n  - {name: alpha, repo: x, ref: '1.0', license: Apache-2.0}\n")
+        (root / "data/runbooks/holdout.txt").write_text("")
+        (root / "NOTICE").write_text("notice text\n")
+        if with_license:
+            (root / "LICENSE").write_text("Apache License text\n")
+        return root
+
+    def test_license_is_copied_and_listed_in_sums(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._root(tmp)
+            self.assertEqual(P.main(["--root", str(root), "--out-dir", "out/pkg"]), 0)
+            out = root / "out/pkg"
+            self.assertEqual((out / "LICENSE").read_text(), "Apache License text\n")
+            sums = (out / "SHA256SUMS").read_text()
+            self.assertIn("  LICENSE\n", sums)
+            self.assertIn("  NOTICE\n", sums)
+
+    def test_missing_license_is_an_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._root(tmp, with_license=False)
+            with self.assertRaises(P.PackageError):
+                P.main(["--root", str(root), "--out-dir", "out/pkg"])
+
+    def test_dataset_card_has_the_disclaimer_sentence(self):
+        cfg = {"index": {"sha256": "ab" * 32, "index_path": "work/v3/chunks_s1.jsonl"},
+               "retrieval": {"reranker": {"model": "m/r"}}}
+        r = P.render_readme([chunk("alpha", "raw/alpha/a.md")], "TABLE", cfg)
+        self.assertIn("Section 5 of that licence", r)
+
+
 if __name__ == "__main__":
     unittest.main()

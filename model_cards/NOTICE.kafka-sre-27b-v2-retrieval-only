@@ -1,0 +1,84 @@
+NOTICE: attribution for the kafka-sre-27b-v2-retrieval-only adapter
+
+This directory holds a LoRA adapter (adapters.safetensors, adapter_config.json). It was trained on
+question-and-answer pairs that a language model wrote from the documentation of the projects listed
+below, at the pins given. The adapter contains no copy of that documentation. For every source below
+the pages were converted to plain text (Markdown, AsciiDoc or HTML to text with headings), cleaned
+(front matter, comments, images, shortcodes, includes and link markup removed; AsciiDoc attributes
+expanded) and split into excerpts. A language model (DeepSeek-V4.1-Flash) wrote question-and-answer
+pairs from single excerpts; a verifier model checked them against the excerpt and some pairs were
+filtered out; the remaining pairs (8,039 train rows) were used to fine-tune the adapter. The adapter
+is not endorsed by the projects named here.
+
+The adapter is applied at load time to Qwen/Qwen3.8-27B. It is meant to be used only with retrieved
+documentation excerpts in the prompt (see README.md).
+
+1. Base model: Qwen3.8-27B
+   Upstream: https://huggingface.co/Qwen/Qwen3.8-27B
+   Used as: mlx-community/Qwen3.8-27B-bf16, revision 6f265714824f3c38d4452baa1628aef3d9b9aae9
+   Licence: Apache License 2.0 (LICENSE of the upstream repository; it carries "Copyright 2026 Alibaba Cloud").
+   The adapter files are new files that carry this notice of changes: they hold LoRA weight
+   differences trained by this project, not the base model's weights. Not endorsed by Alibaba Cloud.
+
+2. Apache Kafka (1,490 train rows)
+   Upstream: https://github.com/apache/kafka  (docs/)
+   Pin: tag 4.3.2 (commit 0a6c96d3b61167f1141df2032f25f10fd6e118fe)
+   Licence: Apache License 2.0
+   Copyright: Copyright 2026 The Apache Software Foundation.
+
+3. Apache Kafka website, generated configuration reference (1,354 train rows)
+   Upstream: https://github.com/apache/kafka-site  (content/en/43/generated/)
+   Pin: commit cd727c4dd8664857751a87cd0442e51a3d3aca8f (no release tags; the fetch followed the
+   default branch, so this is the probable commit, not a proven one)
+   Licence: Apache License 2.0
+   Copyright: the LICENSE carries no copyright line; the content is by The Apache Software Foundation.
+
+4. Strimzi (1,530 train rows)
+   Upstream: https://github.com/strimzi/strimzi-kafka-operator  (documentation/)
+   Pin: tag 1.3.1 (commit 555c3e0f07c203911bc3cb7d13ac085bfaa81b50)
+   Licence: Apache License 2.0
+   Copyright: the LICENSE and README.md of the checkout carry no copyright line; the content is by
+   the Strimzi authors.
+
+5. Argo CD (1,556 train rows)
+   Upstream: https://github.com/argoproj/argo-cd  (docs/)
+   Pin: tag v3.6.1 (commit 94037c4d4e1af4bd0651d37a179fbd9e347e668c)
+   Licence: Apache License 2.0
+   Copyright: Copyright 2017-2018 The Argo Authors (LICENSE).
+
+6. Kubernetes website documentation (1,757 train rows)
+   Title of the work: Kubernetes Documentation (content/en/docs/concepts and content/en/docs/tasks)
+   Author: The Kubernetes Authors
+   Source: https://github.com/kubernetes/website, commit 18f8e9f6d2b0bc9d33e82ceac8abcfffdf8c1ca8
+   (default branch of 2026-11-11, no tag); published at https://kubernetes.io/docs/
+   Licence: Creative Commons Attribution 4.0 International (CC BY 4.0),
+   https://creativecommons.org/licenses/by/4.0/
+   Copyright: The Kubernetes Authors.
+   Changes were made: excerpts of the pages were used by a language model (DeepSeek-V4.1-Flash)
+   to write question-and-answer pairs, some of which were filtered out; those pairs were used to
+   fine-tune this adapter.
+   This adapter is not endorsed by The Kubernetes Authors or The Linux Foundation.
+   The Kubernetes documentation is licensed under CC BY 4.0 and is provided without warranties, as set out in Section 5 of that licence (Disclaimer of Warranties and Limitation of Liability), https://creativecommons.org/licenses/by/4.0/legalcode.
+
+7. Runbooks of the kafka-sre-llm project (352 train rows)
+   Written for the project from the documentation above (Apache Kafka, Strimzi, Strimzi examples,
+   the Strimzi drain-cleaner README), each with its own "License" row naming those sources; all
+   Apache License 2.0. Eight runbooks held out for evaluation are not in the training data.
+
+Models that built the training data:
+
+8. DeepSeek-V4.1-Flash, https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash, MIT licence,
+   Copyright (c) 2023 DeepSeek. Wrote and first-verified the training pairs (local build
+   DeepSeek-V4.1-Flash-1017-oQ4e-mtp).
+
+9. GLM-5.3-Flash, https://huggingface.co/zai-org/GLM-5.3-Flash, MIT licence,
+   Copyright (c) 2026 Z.AI Co., Ltd. Second verifier of 1,263 training rows (local build
+   GLM-5.3-Flash-oQ4e); it filtered rows and did not write them.
+
+Apache License 2.0 text: https://www.apache.org/licenses/LICENSE-2.0 (copy in LICENSE).
+Apache Kafka, Strimzi, Argo CD and Kubernetes are trademarks of their projects and owners; no
+endorsement is implied. This is an unofficial community adapter.
+
+The adapter weights are licensed under the Apache License 2.0 (LICENSE). The Kubernetes
+documentation part of the training data is under CC BY 4.0 as stated in item 6; the Adapter's
+License applied here does not prevent recipients from complying with CC BY 4.0.

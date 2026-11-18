@@ -26,7 +26,7 @@ language: [en]
 
 A LoRA fine-tune of **Qwen/Qwen3.8-27B** for operating Apache Kafka on Kubernetes: Strimzi,
 cluster operations and troubleshooting, GitOps with Argo CD, and data streaming patterns.
-It is the first version (v1). A second version with cleaner data is planned.
+It is the first version (v1). v2 is released only as a retrieval-only adapter (see below).
 
 ## Intended use
 - Answering operational questions and walking through troubleshooting, as a first draft
@@ -219,7 +219,8 @@ Found in the evaluation and in manual review of answers. Check these especially:
 **The published v1 weights are a fine-tuned preview that did not pass its gate. The v3 result
 below is for the unmodified base model (`Qwen3.8-27B`, bf16, no adapter) with retrieval. It is
 not a result for the v1 weights.** On the same 40 real questions the v1 weights, without
-retrieval, score +0.08 against the plain base model; v2 (not released) scores -0.18.
+retrieval, score +0.08 against the plain base model; v2 without retrieval scores -0.18. v2 is
+released only as a retrieval-only adapter (see "The v2 adapter" below).
 
 **Pipeline.**
 1. The base model writes one line of 15 to 30 search terms for the question (thinking off).
@@ -263,7 +264,7 @@ the order flipped. Delta is the mean of per-question differences, averaged over 
 | Base model + retrieval, k6, previous index (6,292 chunks) | 2 | +1.19 (+1.23, +1.15) | 26 / 8 / 6 |
 | Base model + retrieval, k3 | 2 | **+1.05** (+0.88, +1.23) | 29 / 4 / 7 |
 | v1 weights, no retrieval | 2 | +0.08 (-0.03, +0.17) | 21 / 2 / 17 |
-| v2 (not released), no retrieval | 2 | -0.18 (-0.17, -0.17) | 17 / 6 / 17 |
+| v2, no retrieval | 2 | -0.18 (-0.17, -0.17) | 17 / 6 / 17 |
 
 How to read it:
 - Differences under about 0.2 are noise on 40 questions (standard error about 0.2). k6 against
@@ -275,7 +276,8 @@ How to read it:
 - The headline is the shipped-index row: +1.48, 40 questions, two judge passes, standard error
   0.21. The other rows (k3, v1, v2, and the per-category figures below) were measured on the
   previous index of 6,292 chunks, as was the +1.19 row. On the 34 questions whose answers are
-  identical in both measurements the two agree (+1.41 in each). The whole +0.29 difference
+  identical in both measurements the two agree (+1.41 in each; per pass the same answers moved by
+  +0.12 and -0.12, the judge's own variation). The whole +0.29 difference
   comes from the 6 questions whose retrieved excerpts changed with the index (-0.08 before,
   +1.83 now). Documentation was added to the index after some of these same questions showed
   no matching content, so that part of the gain is fitted to this question set: it shows the
@@ -286,41 +288,110 @@ How to read it:
   Kafka config +1.75, Argo CD +0.90, Kafka operations +0.75, Kubernetes +0.10, Schema Registry
   -0.50 (2 questions).
 - For comparison, v2 with retrieval (v2 was trained without it) scores +1.18 and ties base +
-  retrieval head to head (+0.01), with answers about four times shorter. That row is not a
-  v3 deliverable.
+  retrieval head to head (+0.01), with answers about four times shorter. That was measured on
+  the previous index; the check on the shipped index is in "The v2 adapter" below. 34 of these
+  40 answer pairs are unchanged from Phase 0; re-judged, they moved from 0.00 to -0.16, and the
+  6 questions whose base answers were regenerated on the new index moved from +0.08 to -1.00.
+  The drop is judge variation plus the fitted gain of base + retrieval on those 6, not a change
+  in v2.
 
 ### Failure cases
 
 - **Questions the index cannot answer.** Three of the 40 questions (CPU throttling and Avro
-  field removal in Schema Registry among them) cannot be answered from the index. On those
-  three, retrieval scored 1.0 below the plain base model on average. The model answers from
-  unrelated excerpts or from memory, and sometimes states a wrong rule. On the other 37, the
+  field removal in Schema Registry among them) could not be answered from the earlier index
+  (29, 37, 38). On those three, retrieval scored 1.0 below the plain base model. Pages on these
+  topics were then added; on the shipped index the same three score +2.17 on average (2
+  passes). That gain is fitted to these questions. On a topic the index does not cover, expect
+  answers from unrelated excerpts or from memory; the model sometimes states a wrong rule. On the other 37, the
   right fact was in the k6 pack for 25 questions, one under the gate of 26 set for this check.
-- **Invented identifiers.** On 10 questions whose answers were read in full, the default mode
-  (k6) wrote 7 invented flags, config keys, fields or endpoints in 5 answers; examples are a
-  `quotas.consumer` block in a KafkaUser, `eligible.leader.replicas` with a wrong version, and
-  `kafka-topics --describe --unparsed`. Retrieval did not reduce invention on these 10; it
-  added some from over-reading excerpts. Wrong meaning is not counted by this method.
+- **Invented or wrong items.** On 10 questions whose answers were read in full against their
+  excerpts (one reader, one pass), default mode (k6) had 17 items that were invented or wrong,
+  in 7 answers: 12 made-up identifiers and 5 wrong statements. An earlier identifier-only reading
+  (Phase 0) counted 7. Examples: a `quotas.consumer` block in a KafkaUser,
+  `kafka-topics --describe --unparsed`, `kafka-leader-election.sh --describe`. Retrieval did
+  not reduce invention on these 10.
 - **Long answers.** About 1,200 tokens on average; 2 of 40 hit the 2,048 limit. Long answers
   lost points by adding unsupported detail.
+- **Wrong advice in default mode.** A reviewer's reading of 20 default-mode answers (10 real, 10
+  holdout; one reader, one pass) found, besides invented identifiers: a statement that the
+  offset-reset time is read in the broker's timezone (in Kafka 4.3.2 a `--to-datetime` value
+  without an offset is read as UTC; write the offset explicitly, for example
+  `2026-11-18T09:00:00.000+01:00`); a statement
+  that NetworkPolicies are additive so that one policy that does not allow the traffic blocks it
+  (the reverse holds: allowed traffic is the union of what every policy selecting the pod
+  allows; the source pod's egress must allow it too); and clearing a replication throttle by
+  setting the rates to 0 (0 is the tightest throttle, not a clear: the rate is an upper bound in
+  bytes per second for the throttled replicas; the Kafka documentation removes the throttle with
+  `kafka-reassign-partitions.sh --verify` after the reassignment completes, or remove the
+  throttle configs with `kafka-configs.sh --alter --delete-config`). Check such details against
+  the documentation.
+- **Retrieval misses.** The source page was not among the excerpts on at least 5 of the 42
+  runbook-holdout questions (13, 14, 22, 34, 41).
+- **Time per answer.** About 2 minutes in Phase 0; 112, 151 and 170 s in the one end-to-end
+  check (3 questions, default mode, bf16 27B, mlx-lm). The project's bar is a median under 60 s
+  (`GOAL.md`); it is not met. Strict mode answers are shorter and take less time.
 
-### Strict mode
+### Prompt modes: default and strict
 
-Adds to the user message: "Use only commands, flags, configuration keys, resource fields and
-annotations that appear in the excerpts. If the excerpts do not cover part of the question,
-say so in one sentence instead of filling the gap."
+The **default** mode is the prompt that was measured and is the default. The **strict** mode
+(`--mode strict`) adds to the user message: "Use only commands, flags, configuration keys,
+resource fields and annotations that appear in the excerpts. If the excerpts do not cover part
+of the question, say so in one sentence instead of filling the gap."
+
+Invented or wrong items are counted from a reviewer's reading of the answers against the
+excerpts they were written from. One reader, one pass per reading. The ten holdout questions
+are ten fixed positions (1, 5, 10, 15, 21, 24, 28, 31, 37, 41), apart from the ten shortest
+strict answers.
 
 | | Default (k6) | Strict (k6) |
 |---|---|---|
-| Score of strict minus default, 40 questions, 2 passes | - | -0.11 (15 wins / 10 ties / 15 losses), a tie |
-| Invented items, 10 answers read in full | 7 | 0 |
-| Mean answer length | 1,217 tokens | 516 tokens |
+| Invented or wrong items, 10 real questions read in full | 17 in 7 answers | 1 in 1 answer |
+| Invented or wrong items, 10 holdout questions | 3 in 1 answer | 0 |
+| Essential omissions (10 real / 10 holdout) | not assessed / 0 (1 partial) | 2 (and 1 partial) / 0 (2 partial) |
+| Wrong refusals (10 real / 10 holdout) | not assessed / 0 | 1 / 0 |
+| Judged score of strict minus default | - | -0.11 on 40 real questions (15 wins / 10 ties / 15 losses, Phase 0); -0.05 on 42 holdout questions (5 / 28 / 9, standard error 0.14); both within noise |
+| Mean answer length | 1,217 tokens (40 real), 459 (42 holdout) | 516 tokens (40 real), 160 (42 holdout) |
 
-Strict answers are shorter and cleaner but less complete on troubleshooting, and strict
-mostly did not make the model admit a gap: only one of the three uncovered questions was refused.
-Default is the default. A further variant, answer rules added to the prompt without an adapter,
-scored -0.15 against base plus retrieval (40 questions, standard error 0.16; 9 / 16 / 15) and
-is not shipped.
+Reading of the table:
+- The project's bars (`GOAL.md`, on questions not used to build or tune the assistant): at
+  most 2 invented or wrong items per 10 answers and none that would do damage; at most 1 wrong
+  refusal and at most 1 dropped essential step per 10. On the 10 real questions (a set reused
+  many times): default has 17 items in 7 answers, one of them damaging; strict has 1 item, but
+  drops an essential step in 2 answers (1 more partly) and wrongly refuses 1. On the 10
+  holdout questions: default has 3 items in 1 answer, one probably damaging; strict has none,
+  and no omissions (2 partial). So strict misses the completeness bar on the real ten.
+- Strict mode gives a non-answer when retrieval misses the page: it declines instead of guessing.
+  On the 42 holdout questions its judged loss is concentrated in one such question (question 14
+  accounts for 8 of its 19 loss points over two passes).
+- It did not reliably make the model say so on the real questions the index cannot cover: only
+  one of those three was refused.
+- Therefore: **use `--mode strict` for anything you will paste into a cluster, and check that
+  no step is missing.** Default stays
+  the default because every headline number above was measured in it.
+- A further variant, answer rules added to the prompt without an adapter, scored -0.15 against
+  base plus retrieval (40 questions, standard error 0.16; 9 / 16 / 15) and is not shipped.
+
+### The v2 adapter (retrieval-only)
+
+Released as `aywengo/kafka-sre-27b-v2-retrieval-only` (adapter weights only; the base model is
+`mlx-community/Qwen3.8-27B-bf16` at the revision above). **The one rule of use: only with
+retrieved excerpts, and with its own search terms** (the runtime with `--adapter` does both).
+Without retrieval it scores -0.18 against the plain base model.
+
+Check on the shipped index (40 real questions, two judge passes, one judge model, standard error
+0.21), difference against base + retrieval, k6:
+
+| v2 with | Delta | Wins / ties / losses | Median answer length |
+|---|---|---|---|
+| its own search terms | -0.07 | 15 / 6 / 19 | 1,208 characters |
+| the base model's search terms | -0.29 | 9 / 7 / 24 | 1,225 characters |
+| (base + retrieval, for comparison) | - | - | 4,714 characters |
+
+With its own search terms v2 scores the same as base + retrieval within noise, with answers
+about a quarter the length. A reviewer's reading of ten answers (one reader, one pass) found an
+essential, excerpt-supported step dropped in 3 to 4 of them (it found 3 invented or wrong items in
+3 answers, against 17 in 7 for base + retrieval on the same ten). Base + retrieval remains the
+recommended default. This check leans on the 40 real questions again.
 
 ### Index sources
 
@@ -352,9 +423,17 @@ statement.
   come from the evaluation scripts on this path. The `kafka_sre_rag` command itself has unit
   tests (a stub generator, the prompt text and hashes, the pack ids against stored ones), and a
   real run on 3 questions reproduced the stored search terms, chunk ids and answers exactly.
-- **OpenAI-compatible server** (`--backend openai`): unit tests with a mocked transport. **No
-  recorded end-to-end run yet**, and the client cannot switch thinking off; set that on the
-  server.
+- **mlx path with the v2 adapter** (`--adapter`): on 3 questions it reproduced the stored
+  search terms, chunk ids and answers exactly.
+- **OpenAI-compatible server** (`--backend openai`): unit tests with a mocked transport, and
+  one end-to-end path check with the base model served by the local model server
+  (`mlx-community--Qwen3.8-27B-bf16`, full-precision build), thinking switched off with
+  `--extra-body`. 3 questions took 134 to 212 s in default mode and 77 to 117 s in strict mode.
+  The output was **not** identical to the mlx path: the search terms diverge after 260 to 440
+  characters; that changes the order of the excerpts (on one of 3 questions also two of them),
+  and the answers differ from the first sentence. The measured results apply
+  to the mlx path; the server path is checked but not measured. The client cannot switch thinking
+  off by itself; pass the model's switch with `--extra-body`.
 - **4-bit MLX, GGUF, llama.cpp, Ollama:** not measured with retrieval. A run with them is
   labelled `UNMEASURED CONFIGURATION`.
 
@@ -405,9 +484,9 @@ Apache-2.0, the same as the base model. The Kubernetes documentation part of the
 is CC BY 4.0 (see above).
 
 The code in the repository (`LICENSE`) is licensed under the Apache License 2.0. The
-documentation index used for retrieval is a mixed-licence collection, Apache-2.0 for eight
-sources and CC BY 4.0 for the Kubernetes documentation, with the attribution in `NOTICE`.
+documentation index used for retrieval is a mixed-licence collection, Apache-2.0 for nine
+sources (eight upstream projects and the project's runbooks) and CC BY 4.0 for the Kubernetes documentation, with the attribution in `NOTICE`.
 
 ## Version
-v1 is an experimental preview. v2 is planned, with generation rules that reject caveats and
-examples not found in the source, a stricter premise check, and a second verifier.
+v1 is an experimental preview. v2, trained with generation rules that reject caveats and
+examples not found in the source, is released only as a retrieval-only adapter (see above).

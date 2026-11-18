@@ -8,6 +8,7 @@ if its hash differs, checks that no chunk comes from a held-out or an excluded r
     <out-dir>/SHA256SUMS          sha256 of every other file in the directory
     <out-dir>/frozen.json         copy of kafka_sre_rag/frozen.json
     <out-dir>/NOTICE              copy of the NOTICE at the repository root
+    <out-dir>/LICENSE             copy of the Apache-2.0 LICENSE at the repository root
     <out-dir>/notices/<name>/...  upstream NOTICE files found in raw/<name>/
     <out-dir>/README.md           dataset card generated from the template below
 
@@ -147,7 +148,7 @@ documentation ({k8s_chunks} chunks) are under CC BY 4.0 and need the attribution
 Apache License 2.0 (column `license` in every chunk, table below). `NOTICE` has the copyright lines,
 the pins and the statement of changes; upstream NOTICE files are in `notices/`. The text was converted
 to plain text, cleaned and split into chunks; it is not the upstream documents and is not endorsed by
-the upstream projects.
+the upstream projects. The Kubernetes documentation is licensed under CC BY 4.0 and is provided without warranties, as set out in Section 5 of that licence (Disclaimer of Warranties and Limitation of Liability), https://creativecommons.org/licenses/by/4.0/legalcode.
 
 ## Sources
 
@@ -198,7 +199,8 @@ shasum -a 256 -c SHA256SUMS      # inside this directory
 - The figure for this index ({chunks} chunks): {measured}. Headline: {headline}. Size: {size}.
 - Limits: 40 questions, standard error about 0.2, so differences under 0.2 are noise; the question set
   was used many times for decisions. The result is for the unmodified base model with retrieval. The
-  fine-tuned adapters add nothing measurable. The index holds documentation at the pins above and goes
+  fine-tuned adapters add nothing measurable without retrieval; the v2 adapter with retrieval scores the
+  same within noise, with shorter answers, and is published separately as a retrieval-only adapter. The index holds documentation at the pins above and goes
   out of date; answers can still be wrong or invent flags, so check commands before running them.
 """
 
@@ -253,11 +255,15 @@ def main(argv=None):
     notice = root / "NOTICE"
     if not notice.exists():
         raise PackageError("NOTICE is missing at the repository root")
+    license_file = root / "LICENSE"
+    if not license_file.exists():
+        raise PackageError("LICENSE is missing at the repository root")
 
     out.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(src, out / "chunks.jsonl")
     shutil.copyfile(root / "kafka_sre_rag/frozen.json", out / "frozen.json")
     shutil.copyfile(notice, out / "NOTICE")
+    shutil.copyfile(license_file, out / "LICENSE")
     for s in sources_cfg["sources"]:
         d = root / "raw" / s["name"]
         for p in sorted(d.glob("NOTICE")) if d.is_dir() else []:   # NOTICE only, not NOTICE-binary

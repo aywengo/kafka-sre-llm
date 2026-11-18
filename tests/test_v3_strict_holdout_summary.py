@@ -50,11 +50,33 @@ class Fixture(unittest.TestCase):
 
 
 class Helpers(unittest.TestCase):
-    gap = "The retrieved documentation does not cover the exact flag."
-
     def test_gap_count_counts_answers(self):
-        rows = [{"text": "Use X. " + self.gap}, {"text": "Use Y."}, {"text": self.gap + "\n" + self.gap}, {"text": None}]
+        rows = [{"text": "Use X. The provided documentation excerpts do not contain the exact flag."}, {"text": "Use Y."},
+                {"text": "The excerpts do not cover A.\nThe excerpts do not cover B."}, {"text": None}]
         self.assertEqual(S.gap_count(rows), 2)
+
+    def test_coverage_phrasings_seen_in_real_answers(self):
+        for t in ("The provided documentation excerpts do not contain any information about a metric.",
+                  "*Note:* The documentation does not provide a specific CLI command to query this MBean.",
+                  "Based on the provided documentation excerpts, the specific command or procedure to stop a running rebalance is not included.",
+                  "**Note:** The provided excerpts do not cover how to check the status.",
+                  "The provided documentation excerpts do not explicitly describe the behavior.",
+                  "a complex operation not covered by the provided excerpts.",
+                  "the documentation provided does not explicitly state that includeTasks is supported.",
+                  "or potentially specific internal metrics of certain Kafka clients or tools not covered in these excerpts."):
+            self.assertTrue(S.has_coverage_statement(t), t)
+
+    def test_no_coverage_statement(self):
+        for t in ("Kafka does not support decreasing the number of partitions.",
+                  "Run kubectl get pods; the pod does not restart.",
+                  "The excerpts show how to run it.", "", None):
+            self.assertFalse(S.has_coverage_statement(t), t)
+
+    def test_gap_questions_numbers(self):
+        num = {"a": 3, "b": 1, "c": 2}
+        rows = [{"question": "a", "text": "The excerpts do not cover X."}, {"question": "b", "text": "ok"},
+                {"question": "c", "text": "The documentation does not specify Y."}, {"question": "zz", "text": "The excerpts do not cover X."}]
+        self.assertEqual(S.gap_questions(rows, num), [2, 3])
 
     def test_shortest_ten_by_number_and_tokens(self):
         num = {f"q{i}": i for i in range(1, 13)}
