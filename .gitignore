@@ -32,3 +32,6 @@ data_resume2/
 
 # generated M4 evaluation items (the open/hidden split is made from these)
 eval/m4/build/
+
+# catalogue sources fetched by scripts/fetch_catalogue_sources.py (Apache-2.0 files, kept out of the index)
+raw_catalogue/

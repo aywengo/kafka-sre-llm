@@ -11,11 +11,21 @@ Output: a score file, one row per item:
         band, with the count and a Wilson 95 % interval. Format failures (no `ANSWER:` line, no
         command line) are counted separately.
 
+Check types of slice A2 (write a resource, fix the manifest, write the command, version trap):
+  yaml_document, yaml_one_doc (exactly one document with a kind, of the requested kind and apiVersion),
+  yaml_strict (strict validation of that document by Catalogues.validate_resource: an unknown field is a
+  failure unless the schema preserves unknown fields at that path), yaml_fields_equal, yaml_fields_absent,
+  yaml_config_keys (the keys of a free-form config map must exist for the Kafka configuration scope; a key the
+  catalogue cannot classify is not counted as wrong), old_value_forbidden, has_kafka_command, kcmd_spec (a
+  command line for the tool with the required flags and values, none of the forbidden flags), kcmd_known_flags
+  (no flag absent from the tool's complete option list), kcmd_constraints (the `available only with` and
+  `cannot go with` rules of the tool's code, for the options spelled as flags).
+
 Identifier precision is computed over the whole answer text, independent of the item's own
 checks: every code-like token that can be classified is looked up in the catalogues:
   Kafka configuration keys (dotted names, also the keys under `config:` in a YAML manifest),
   Connect REST method and path pairs, `argocd` commands and flags, Kafka protocol error names,
-  Strimzi field paths in YAML manifests and dotted spec paths, `strimzi.io/` annotations.
+  Strimzi, Argo CD and Kubernetes field paths in YAML manifests and dotted spec paths, `strimzi.io/` annotations.
 The summary reports known, unknown and not covered. "unknown" comes only from a catalogue (or a
 tool) that is marked complete; everything else is "not covered" and is never called invented.
 
@@ -40,8 +50,8 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from kafka_sre_rag.catalogue import KNOWN, NOT_COVERED, UNKNOWN, Catalogues  # noqa: E402
 
-VERSION = "eval2_score/1"
-FORMAT_CHECKS = ("answer_line", "has_command")
+VERSION = "eval2_score/2"
+FORMAT_CHECKS = ("answer_line", "has_command", "yaml_document", "has_kafka_command")
 ANSWER_RE = re.compile(r"^[ \t>*_`#-]*ANSWER[ \t]*(?:\*\*|__)?[ \t]*:[ \t]*(?:\*\*|__)?[ \t]*(.+?)[ \t]*$", re.M)
 
 
@@ -295,6 +305,261 @@ def check_no_invented_cli(chk, text, cats):
     return not bad, ("nonexistent: " + ", ".join(bad)) if bad else "no nonexistent command or flag"
 
 
+# ------------------------------------------------------------------ YAML documents (write a resource, fix the manifest)
+def answer_yaml_docs(text):
+    """Mapping documents of the answer: those in code fences, else the whole text read as a YAML stream."""
+    docs = []
+    blocks = FENCE_RE.findall(text or "")
+    if not blocks and re.search(r"^\s*apiVersion\s*:", text or "", re.M):
+        blocks = [text]
+    for block in blocks:
+        try:
+            for d in yaml.safe_load_all(block):
+                if isinstance(d, dict):
+                    docs.append(d)
+        except yaml.YAMLError:
+            continue
+    return docs
+
+
+def doc_for(docs, chk):
+    kind = chk.get("kind")
+    hits = [d for d in docs if d.get("kind") == kind] if kind else docs
+    return hits[0] if hits else None
+
+
+def path_get(doc, path):
+    """(found, value) for a path given as a list of keys and list indexes."""
+    cur = doc
+    for seg in path:
+        if isinstance(seg, int):
+            if not isinstance(cur, list) or seg >= len(cur):
+                return False, None
+            cur = cur[seg]
+        else:
+            if not isinstance(cur, dict) or seg not in cur:
+                return False, None
+            cur = cur[seg]
+    return True, cur
+
+
+def _loose(v):
+    return ("true" if v else "false") if isinstance(v, bool) else str(v).strip().lower()
+
+
+def same_value(got, want, loose=False, as_set=False):
+    if as_set and isinstance(got, list) and isinstance(want, list):
+        return len(got) == len(want) and all(any(same_value(g, w) for g in got) for w in want) \
+            and all(any(same_value(g, w) for w in want) for g in got)
+    if loose and not isinstance(got, (dict, list)) and not isinstance(want, (dict, list)):
+        return _loose(got) == _loose(want)
+    if isinstance(want, bool) or isinstance(got, bool):
+        return isinstance(got, bool) and isinstance(want, bool) and got == want
+    if isinstance(want, (int, float)) and isinstance(got, (int, float)):
+        return got == want
+    return got == want and type(got) is type(want)
+
+
+def path_str(path):
+    return ".".join(("[%d]" % s if isinstance(s, int) else str(s)) for s in path).replace(".[", "[")
+
+
+def check_yaml_document(chk, text, cats):
+    n = len(answer_yaml_docs(text))
+    return n > 0, "%d YAML document(s)" % n
+
+
+def check_yaml_one_doc(chk, text, cats):
+    """Exactly one document with a `kind` in the answer, and it has the requested kind and apiVersion."""
+    docs = [d for d in answer_yaml_docs(text) if "kind" in d]
+    if len(docs) != 1:
+        return False, "%d documents with a kind (exactly one wanted)" % len(docs)
+    d = docs[0]
+    ok = d.get("kind") == chk["kind"] and d.get("apiVersion") == chk["api_version"]
+    return ok, "kind %r apiVersion %r, wanted %s %s" % (d.get("kind"), d.get("apiVersion"), chk["kind"], chk["api_version"])
+
+
+def check_yaml_strict(chk, text, cats):
+    """The document of the requested kind passes the strict schema validation of the catalogues."""
+    d = doc_for(answer_yaml_docs(text), chk)
+    if d is None:
+        return False, "no document of kind %s" % chk.get("kind")
+    r = cats.validate_resource(d)
+    if not r.covered:
+        return False, "no complete schema covers %s" % chk.get("kind")
+    if r.ok:
+        return True, "valid against the %s schema" % r.source
+    return False, "; ".join("%s %s" % (v.code, v.path) for v in r.violations[:4]) + (
+        " (+%d more)" % (len(r.violations) - 4) if len(r.violations) > 4 else "")
+
+
+def check_yaml_fields_equal(chk, text, cats):
+    """Every listed field is present with the listed value. fields: [{path: [...], value: v, loose: bool}]."""
+    d = doc_for(answer_yaml_docs(text), chk)
+    if d is None:
+        return False, "no document of kind %s" % chk.get("kind")
+    bad = []
+    for f in chk["fields"]:
+        found, got = path_get(d, f["path"])
+        if not found:
+            bad.append("%s missing" % path_str(f["path"]))
+        elif not same_value(got, f["value"], f.get("loose", False), f.get("as_set", False)):
+            bad.append("%s is %r, wanted %r" % (path_str(f["path"]), got, f["value"]))
+    return not bad, "; ".join(bad[:4]) if bad else "%d field(s) as specified" % len(chk["fields"])
+
+
+def check_yaml_fields_absent(chk, text, cats):
+    d = doc_for(answer_yaml_docs(text), chk)
+    if d is None:
+        return False, "no document of kind %s" % chk.get("kind")
+    bad = [path_str(p) for p in chk["paths"] if path_get(d, p)[0]]
+    return not bad, ("present but excluded: " + ", ".join(bad)) if bad else "%d excluded field(s) absent" % len(chk["paths"])
+
+
+def check_yaml_config_keys(chk, text, cats):
+    """Keys of a free-form config map must exist in the Kafka configuration catalogue for the scope.
+    A key the catalogue cannot classify (not covered) is not counted as wrong."""
+    d = doc_for(answer_yaml_docs(text), chk)
+    if d is None:
+        return False, "no document of kind %s" % chk.get("kind")
+    found, cfg = path_get(d, chk["path"])
+    if not found:
+        return False, "%s missing" % path_str(chk["path"])
+    if not isinstance(cfg, dict):
+        return False, "%s is not a map" % path_str(chk["path"])
+    bad = [str(k) for k in cfg if cats.config_key(str(k), chk["scope"]).status == UNKNOWN]
+    return not bad, ("not %s settings: %s" % (chk["scope"], ", ".join(bad))) if bad else "all keys are %s settings" % chk["scope"]
+
+
+def check_old_value_forbidden(chk, text, cats):
+    v = parse_answer_line(text)
+    if v is None:
+        return False, "no ANSWER: line"
+    hit = value_equals(v, chk["forbidden"], ci=(chk.get("norm", "ci") == "ci"))
+    return not hit, "answer %r is the old value" % v if hit else "answer %r is not the old value" % v
+
+
+# ------------------------------------------------------------------ Kafka command lines (write the command)
+KTOOL_RE = re.compile(r"^(?:\S*/)?((?:kafka|connect)-[a-z0-9-]+?|trogdor)(?:\.sh)?$")
+
+
+def kafka_lines(text):
+    """Token lists of command lines for a Kafka tool (kafka-*.sh, bin/kafka-*.sh, without .sh too): code
+    blocks, `$` prompts and inline code; continuation lines are joined; pipes and `&&` split commands."""
+    text = re.sub(r"\\[ \t]*\n[ \t]*", " ", text or "")
+    cands = []
+    for block in FENCE_RE.findall(text):
+        cands += [ln for ln in block.split("\n")]
+    cands += text.split("\n")
+    cands += re.findall(r"`([^`\n]+)`", text)
+    out = []
+    for c in cands:
+        c = c.strip().lstrip("$ ").strip()
+        for part in SPLIT_RE.split(c):
+            toks = tokenize(part.strip())
+            # an environment prefix such as `KAFKA_HEAP_OPTS=-Xmx1g bin/kafka-...`
+            while toks and re.match(r"^[A-Z_][A-Z0-9_]*=", toks[0]):
+                toks = toks[1:]
+            if toks and KTOOL_RE.match(toks[0]) and toks not in out:
+                out.append(toks)
+    return out
+
+
+def kafka_tool_name(tok):
+    m = KTOOL_RE.match(tok)
+    return (m.group(1) + ".sh") if m else tok
+
+
+def kafka_flags(toks):
+    """-> list of (flag, value or None). A value is the next token unless that is another `--flag`."""
+    out = []
+    for i, t in enumerate(toks[1:], 1):
+        if not t.startswith("--"):
+            continue
+        if "=" in t:
+            f, v = t.split("=", 1)
+            out.append((f, v))
+        else:
+            nxt = toks[i + 1] if i + 1 < len(toks) else None
+            out.append((t, nxt if nxt is not None and not nxt.startswith("--") else None))
+    return out
+
+
+def check_has_kafka_command(chk, text, cats):
+    n = len(kafka_lines(text))
+    return n > 0, "%d Kafka command line(s)" % n
+
+
+def check_kcmd_spec(chk, text, cats):
+    """A command line for the tool with every required flag (and value, when one is given) and none of the
+    forbidden flags. required_flags is {flag: value or null}; a value may be given as `--flag v` or `--flag=v`."""
+    best = "no command line for %s" % chk["tool"]
+    for toks in kafka_lines(text):
+        if kafka_tool_name(toks[0]) != chk["tool"]:
+            continue
+        flags = kafka_flags(toks)
+        have = {}
+        for f, v in flags:
+            have.setdefault(f, []).append(v)
+        miss = []
+        for f, v in chk.get("required_flags", {}).items():
+            if f not in have:
+                miss.append("%s missing" % f)
+            elif v is not None and not any(x is not None and norm_val(x) == v for x in have[f]):
+                miss.append("%s should be %s" % (f, v))
+        miss += ["%s is forbidden" % f for f in chk.get("forbidden_flags", []) if f in have]
+        if not miss:
+            return True, "line meets the specification: %s" % " ".join(toks)[:100]
+        best = "closest line %r: %s" % (" ".join(toks)[:80], "; ".join(miss))
+    return False, best
+
+
+def check_kcmd_known_flags(chk, text, cats):
+    """No flag on a command line of the tool is absent from the tool's complete option list. A tool without a
+    complete list gives no verdict, so a flag there is not called wrong."""
+    bad, seen = [], 0
+    for toks in kafka_lines(text):
+        if kafka_tool_name(toks[0]) != chk["tool"]:
+            continue
+        seen += 1
+        for f, _ in kafka_flags(toks):
+            if cats.cli_option(chk["tool"], f).status == UNKNOWN:
+                bad.append(f)
+    if not seen:
+        return False, "no command line for %s" % chk["tool"]
+    return not bad, ("nonexistent flag(s): " + ", ".join(sorted(set(bad)))) if bad else "every flag exists for %s" % chk["tool"]
+
+
+def constraint_problems(tool, flags, cats):
+    """Violations of what the tool's code states, for the flags given. Only constraints whose options are all
+    spelled as flags are applied: availableIf (an option needs one of the others) and checkInvalidArgs
+    (the first option cannot go with the rest). Constraints written as expressions are skipped."""
+    present = set(flags)
+    out = []
+    for c in cats.cli_constraints(tool):
+        if c["kind"] == "availableIf":
+            others = [o for o in c["others"] if o.startswith("--")]
+            if c["option"] in present and others and len(others) == len(c["others"]) and not (present & set(others)):
+                out.append("%s needs one of %s" % (c["option"], ", ".join(others)))
+        elif c["kind"] == "checkInvalidArgs":
+            args = c["args"]
+            if args and all(a.startswith("--") for a in args) and args[0] in present and present & set(args[1:]):
+                out.append("%s cannot go with %s" % (args[0], ", ".join(sorted(present & set(args[1:])))))
+    return out
+
+
+def check_kcmd_constraints(chk, text, cats):
+    probs, seen = [], 0
+    for toks in kafka_lines(text):
+        if kafka_tool_name(toks[0]) != chk["tool"]:
+            continue
+        seen += 1
+        probs += constraint_problems(chk["tool"], [f for f, _ in kafka_flags(toks)], cats)
+    if not seen:
+        return False, "no command line for %s" % chk["tool"]
+    return not probs, "; ".join(sorted(set(probs))) if probs else "the combination of options is allowed"
+
+
 CHECKS = {
     "answer_line": check_answer_line,
     "answer_equals": check_answer_equals,
@@ -306,6 +571,17 @@ CHECKS = {
     "has_command": check_has_command,
     "cmdline_spec": check_cmdline_spec,
     "no_invented_cli": check_no_invented_cli,
+    "yaml_document": check_yaml_document,
+    "yaml_one_doc": check_yaml_one_doc,
+    "yaml_strict": check_yaml_strict,
+    "yaml_fields_equal": check_yaml_fields_equal,
+    "yaml_fields_absent": check_yaml_fields_absent,
+    "yaml_config_keys": check_yaml_config_keys,
+    "old_value_forbidden": check_old_value_forbidden,
+    "has_kafka_command": check_has_kafka_command,
+    "kcmd_spec": check_kcmd_spec,
+    "kcmd_known_flags": check_kcmd_known_flags,
+    "kcmd_constraints": check_kcmd_constraints,
 }
 
 
@@ -330,11 +606,16 @@ NOT_ANN = {"docs", "downloads", "documentation", "quickstarts", "contributing", 
            "install", "examples"}
 REST_RE = re.compile(r"(?<![\w])(GET|POST|PUT|DELETE|PATCH)\s+`?((?:https?://[^\s/`]+)?/(?:connectors|connector-plugins|admin/loggers)\S*?)(?=[`\s'\")]|$)")
 CURL_RE = re.compile(r"curl\b[^\n]*", re.I)
-KTOOL_LINE_RE = re.compile(r"(?<![\w-])(kafka-[a-z0-9-]+)(?:\.sh)?\b([^\n]*)")
+KTOOL_LINE_RE = re.compile(r"(?<![\w-])(kafka-[a-z0-9-]+)(\.sh)?\b([^\n]*?)(?=(?<![\w-])kafka-[a-z0-9-]+(?:\.sh)?\b|\n|$)")
 SNAKE_RE = re.compile(r"(?<![\w])([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)(?![\w])")
 STRIMZI_KINDS = ("KafkaBridge", "KafkaConnect", "KafkaConnector", "KafkaMirrorMaker2", "KafkaNodePool",
                  "KafkaRebalance", "KafkaTopic", "KafkaUser", "StrimziPodSet", "Kafka")
 SPEC_PATH_RE = re.compile(r"(?<![\w.\-/])((?:spec|status)(?:\.[A-Za-z0-9_]+(?:\[(?:\d+|\*)?\])?)+)")
+
+
+# The Kafka configuration scope of the free-form config maps of the Strimzi kinds: (kind, path) -> scope
+CONFIG_SCOPE = {("Kafka", "spec.kafka.config"): "broker", ("KafkaTopic", "spec.config"): "topic",
+                ("KafkaConnect", "spec.config"): "connect"}
 
 
 class Idents:
@@ -424,10 +705,16 @@ def classify_identifiers(text, cats):
             ids.add("protocol_error", tok, look)
     # YAML manifests of Strimzi kinds: field paths, and the keys under config maps
     kinds = {k for k in (e["kind"] for e in (cats.data["strimzi_resources"] or {}).get("entries", []))}
+    other_kinds = set(cats.kinds()) - kinds  # Argo CD and Kubernetes kinds with a schema: fields are checked too
     prefixes = key_prefixes(cats)
     mentioned = set()
     for d in yaml_docs(text):
         kind = d.get("kind")
+        if kind in other_kinds:
+            for p in flatten_yaml({k: v for k, v in d.items() if k not in ("apiVersion", "kind", "metadata")}):
+                look = cats.field_path(kind, p, d.get("apiVersion") if isinstance(d.get("apiVersion"), str) else None)
+                if look.known or look.unknown:
+                    ids.add("manifest_field", "%s %s" % (kind, p), look)
         if kind in kinds:
             mentioned.add(kind)
             for p in flatten_yaml({k: v for k, v in d.items() if k not in ("apiVersion", "kind", "metadata")}):
@@ -438,8 +725,7 @@ def classify_identifiers(text, cats):
                     # the key under a free-form `config` map is a Kafka (or Connect) configuration key
                     leaf = p[len(look.data["field"]) + 1:]
                     if re.fullmatch(r"[a-z][a-z0-9_]*(?:\.[a-z0-9][a-z0-9_-]*)+", leaf):
-                        sc = "broker" if look.data["field"].endswith("kafka.config") else None
-                        ids.add("kafka_config_key", leaf, cats.config_key(leaf, sc))
+                        ids.add("kafka_config_key", leaf, cats.config_key(leaf, CONFIG_SCOPE.get((kind, look.data["field"]))))
     # dotted spec paths in prose, only when the answer names Strimzi kinds
     for m in re.finditer(r"kind:\s*(\w+)", text):
         if m.group(1) in kinds:
@@ -457,7 +743,10 @@ def classify_identifiers(text, cats):
             if pick.known or pick.unknown:
                 ids.add("strimzi_field", p, pick)
     # Kafka command-line tools: options are looked up, a tool without a full options list gives "not covered"
-    for tool, rest in KTOOL_LINE_RE.findall(scan):
+    for tool, sh, rest in KTOOL_LINE_RE.findall(scan):
+        tl = cats.cli_tool(tool + ".sh")
+        if tl.unknown and sh:  # only a name written as a script (`kafka-x.sh`): `kafka-config` may be a repository
+            ids.add("kafka_cli_tool", tool + ".sh", tl)
         for opt in sorted(set(re.findall(r"(?<![\w-])(--[a-zA-Z][\w-]*)", rest.split("|")[0]))):
             ids.add("kafka_cli_flag", "%s %s" % (tool + ".sh", opt), cats.cli_option(tool + ".sh", opt))
     # dotted configuration keys

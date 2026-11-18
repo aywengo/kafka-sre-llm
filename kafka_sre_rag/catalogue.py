@@ -20,14 +20,20 @@ Completeness, by catalogue:
   kafka_config         complete per scope (generated reference). A key that is absent from a scope
                        is UNKNOWN there; pass `scope` whenever the context is known, because
                        connector-specific keys and prefixed forms are NOT_COVERED, not UNKNOWN.
-  strimzi_resources    complete for the ten Strimzi kinds (generated API reference), except below
-                       free-form fields (config, metadata annotations, Kubernetes types such as
-                       resources or affinity), which are NOT_COVERED.
+  strimzi_resources    complete for the ten Strimzi kinds: the schema of the 1.3.1 custom resource
+                       definitions (source "crd", provenance exists, served versions only) next to the
+                       entries of the documentation reference (source "api_reference", documented);
+                       below free-form fields (config, metadata labels and annotations) NOT_COVERED.
   strimzi_annotations  names the documentation mentions; not complete, so never UNKNOWN.
-  kafka_cli            complete only for tools with an options table (`complete`); for the rest an
-                       absent option is NOT_COVERED.
-  argocd               CLI complete (generated reference); resources are examples only.
-  kubernetes           examples only; never UNKNOWN.
+  kafka_cli            complete per tool, only when the option parser was read from that tool's
+                       source (Kafka 4.3.2, tools of bin/); for the rest an absent option is
+                       NOT_COVERED (see `reason` of the entry).
+  argocd               CLI complete (generated reference); Application, ApplicationSet and AppProject
+                       complete from the v3.6.1 definitions; any other kind is examples only.
+  kubernetes           every kind of the v1.37.2 API schema complete; kubectl part examples only,
+                       never UNKNOWN; kinds only in docs examples are incomplete.
+  kafka_config_history keys whose default, type, valid values or existence differ between Kafka
+                       4.1, 4.2 and 4.3.
   protocol_errors      complete (generated protocol reference, Kafka 4.3).
   connect_rest         complete (generated OpenAPI of the Connect worker, Kafka 4.3).
 
@@ -48,7 +54,8 @@ NOT_COVERED = "not_covered"
 STATUSES = (KNOWN, UNKNOWN, NOT_COVERED)
 
 CATALOGUE_NAMES = ("kafka_config", "strimzi_resources", "strimzi_annotations",
-                   "kafka_cli", "argocd", "kubernetes", "protocol_errors", "connect_rest")
+                   "kafka_cli", "argocd", "kubernetes", "protocol_errors", "connect_rest",
+                   "kafka_config_history")
 
 MANIFEST_NAME = "CATALOGUES.json"
 
@@ -139,13 +146,14 @@ class Catalogues:
                           ("kubernetes", "resources")):
             c = self.data[name]
             if c:
-                for e in c[key]:
+                for e in c[key] + (c.get("reference_entries", []) if name == "strimzi_resources" else []):
                     self._kinds.setdefault(e["kind"], []).append(dict(e, _catalogue=name))
         self._types = set()
-        for e in (self.data["strimzi_resources"] or {}).get("entries", []):
+        sr = self.data["strimzi_resources"] or {}
+        for e in sr.get("entries", []) + sr.get("reference_entries", []):
             self._types.add(e["kind"])
             for p in e["paths"].values():
-                self._types.update(p["declared_in"])
+                self._types.update(p.get("declared_in", []))
                 self._types.update(t.split("object:")[1] for t in p["type"] if "object:" in t)
         self._ann = {e["name"]: e for e in (self.data["strimzi_annotations"] or {}).get("entries", [])}
         self._tools: Dict[str, List[dict]] = {}
@@ -341,7 +349,7 @@ class Catalogues:
 
     def cli_option(self, tool: str, option: str) -> Lookup:
         """Does `tool` (kafka-topics.sh, "argocd app sync", "kubectl get") have `option`?
-        `evidence` on a KNOWN result is options_table, options_table_inherited or seen_in_example.
+        `evidence` on a KNOWN result is source_code, options_table, options_table_inherited or seen_in_example.
         An option absent from a tool without a full options list is NOT_COVERED, not UNKNOWN."""
         tname = _tool_name(tool)
         ents = self._tools.get(tname)
@@ -351,15 +359,42 @@ class Catalogues:
         for e in ents:
             o = e["options"].get(opt)
             if o:
+                data = {"files": o["files"], "tool_complete": bool(e.get("complete"))}
+                for k in ("takes_argument", "description", "required", "commands", "aliases"):
+                    if k in o:
+                        data[k] = o[k]
                 return Lookup(KNOWN, "option listed (%s)" % o["evidence"], e["_catalogue"], o["evidence"],
-                              (), {"files": o["files"], "tool_complete": bool(e.get("complete"))})
+                              (), data)
         e = ents[0]
         if e.get("complete") is True:
             near = difflib.get_close_matches(opt, list(e["options"]), n=3, cutoff=0.7)
             return Lookup(UNKNOWN, "not in the full options list of %s" % tname, e["_catalogue"],
-                          "options_table", (), {"similar": near})
+                          "source_code" if "source_code" in {o.get("evidence") for o in e["options"].values()}
+                          else "options_table", (), {"similar": near})
         return _nc("no full options list for %s on disk (%d options seen in examples)" % (tname, len(e["options"])),
                    e["_catalogue"], options_seen=sorted(e["options"]))
+
+    def cli_tool(self, tool: str) -> Lookup:
+        """Is `tool` a script of Kafka's bin/ directory (4.3.2)? UNKNOWN only for a kafka-*.sh name that
+        bin/ does not have (kafka-clusters.sh); other names are NOT_COVERED."""
+        c = self.data["kafka_cli"]
+        if not c:
+            return _nc("kafka_cli catalogue not loaded")
+        tname = _tool_name(tool)
+        ents = [e for e in c["entries"] if e["tool"] == tname]
+        if ents and ents[0].get("in_bin"):
+            return Lookup(KNOWN, "script of bin/ in Kafka 4.3.2", "kafka_cli", "source_code", (ents[0],),
+                          {"complete": bool(ents[0].get("complete")), "reason": ents[0].get("reason")})
+        if c.get("bin_complete") and tname.startswith("kafka-") and tname.endswith(".sh"):
+            near = difflib.get_close_matches(tname, c.get("bin_tools", []), n=3, cutoff=0.8)
+            return Lookup(UNKNOWN, "not a script of bin/ in Kafka 4.3.2", "kafka_cli", "source_code", (),
+                          {"similar": near})
+        return _nc("tool %r is not in the bin/ listing" % tname, "kafka_cli")
+
+    def cli_constraints(self, tool: str) -> List[dict]:
+        """What the tool's code states about options that are required, available only with others or
+        mutually exclusive (as the code wrote them, variables replaced by option names)."""
+        return [c for e in self._tools.get(_tool_name(tool), []) for c in e.get("constraints", [])]
 
     # -------------------------------------------------------------- argocd sub-commands
     def argocd_commands(self) -> List[str]:
@@ -443,3 +478,256 @@ class Catalogues:
             return Lookup(UNKNOWN, "the path exists but not with this method", "connect_rest", "reference", (),
                           {"template": tpl, "allowed_methods": sorted(e["method"] for e in c["entries"] if e["path"] == tpl)})
         return Lookup(UNKNOWN, "no such path in the Connect REST document", "connect_rest", "reference", (), {})
+
+    # -------------------------------------------------------------- Kafka configuration history
+    def config_history(self, key: str, scope: Optional[str] = None) -> Lookup:
+        """Did the default, type, valid values or existence of `key` change between Kafka 4.1, 4.2 and 4.3?
+        KNOWN: yes (data['entries'] have the values of each version and the list of changes).
+        UNKNOWN: no difference is recorded (the key may also not exist)."""
+        c = self.data["kafka_config_history"]
+        if not c:
+            return _nc("kafka_config_history catalogue not loaded")
+        hits = [e for e in c["entries"] if e["key"] == key.strip() and (scope is None or e["scope"] == scope)]
+        if hits:
+            return Lookup(KNOWN, "differs between Kafka versions: " + ", ".join(sorted({x for e in hits for x in e["changes"]})),
+                          "kafka_config_history", "reference", tuple(hits), {"changes": hits[0]["changes"]})
+        if not self.complete("kafka_config_history"):
+            return _nc("the kafka_config_history catalogue is not marked complete", "kafka_config_history")
+        return Lookup(UNKNOWN, "no difference between Kafka 4.1, 4.2 and 4.3 is recorded", "kafka_config_history",
+                      "reference")
+
+    # -------------------------------------------------------------- Strimzi Cluster Operator install files
+    def operator_deployment(self) -> Optional[dict]:
+        c = self.data["strimzi_resources"]
+        return (c or {}).get("operator_deployment")
+
+    def operator_pod_labels(self) -> Dict[str, str]:
+        """Labels of the Cluster Operator pod in the 1.3.1 install files (name, strimzi.io/kind)."""
+        d = self.operator_deployment()
+        return dict(d["pod_labels"]) if d else {}
+
+    def operator_label(self, key: str, value: Optional[str] = None) -> Lookup:
+        """Is `key` a label of the Cluster Operator pod in the install files? With `value`, data['value_ok']
+        says whether it is the value there. Only these labels are known: other labels are NOT_COVERED."""
+        d = self.operator_deployment()
+        if not d:
+            return _nc("strimzi_resources has no operator_deployment")
+        labels = d["pod_labels"]
+        if key not in labels:
+            return _nc("not a label of the operator pod in the install files", "strimzi_resources")
+        data = {"value": labels[key]}
+        if value is not None:
+            data["value_ok"] = labels[key] == value
+        return Lookup(KNOWN, "label of the operator pod in packaging/install/cluster-operator", "strimzi_resources",
+                      "install_files", (), data)
+
+    def operator_env(self, name: str) -> Lookup:
+        """Is `name` set in the Cluster Operator Deployment of the install files? data['value'] is the
+        default value there. The operator reads more variables than the install files set: absent
+        names are NOT_COVERED."""
+        d = self.operator_deployment()
+        if not d:
+            return _nc("strimzi_resources has no operator_deployment")
+        e = d["env"].get(name)
+        if e is None:
+            return _nc("not set in the Deployment of the install files", "strimzi_resources")
+        return Lookup(KNOWN, "set in the Deployment of the install files", "strimzi_resources", "install_files",
+                      (), dict(e))
+
+    # -------------------------------------------------------------- schema validation of a manifest
+    def schema_entry(self, kind: str, api_version: Optional[str] = None) -> Optional[dict]:
+        """The entry (CRD or OpenAPI schema, complete) for `kind` and `api_version`, or None."""
+        for e in self._kinds.get(kind, []):
+            if e.get("complete") and e.get("source") in SCHEMA_SOURCES and api_version in (None, e["api_version"]):
+                return e
+        return None
+
+    def _schema_groups(self) -> Dict[str, set]:
+        """group (or '' for the core group) -> versions served, over every complete schema entry."""
+        out: Dict[str, set] = {}
+        for es in self._kinds.values():
+            for e in es:
+                if e.get("complete") and e.get("source") in SCHEMA_SOURCES:
+                    g, _, v = e["api_version"].rpartition("/")
+                    out.setdefault(g, set()).add(v)
+        return out
+
+    def validate_resource(self, doc: Any, kind: Optional[str] = None, api_version: Optional[str] = None) -> "Validation":
+        """Validate a parsed YAML document against the schema of its kind and apiVersion (the CRD of
+        Strimzi or Argo CD, the OpenAPI schema of Kubernetes). Strict: a field the schema does not
+        define is an error unless the schema preserves unknown fields at that point (free-form map,
+        x-kubernetes-preserve-unknown-fields); a value of the wrong type, a string outside an
+        enumeration, a missing required field and a oneOf of required fields that does not hold exactly
+        once are errors too. `metadata` is not checked and the CEL rules of the CRDs are not evaluated.
+        When no complete schema covers the kind, `covered` is False and there are no violations."""
+        if not isinstance(doc, dict):
+            return Validation(kind, api_version, False, [Violation("", "not_a_mapping", "the document is not a mapping")])
+        kind = kind or doc.get("kind")
+        api = api_version or doc.get("apiVersion")
+        v: List[Violation] = []
+        if not isinstance(kind, str) or not isinstance(api, str):
+            return Validation(kind, api, False, [Violation("", "missing_kind", "kind and apiVersion are needed")])
+        group = api.rpartition("/")[0]
+        e = self.schema_entry(kind, api)
+        if e is None:
+            served = sorted(x["api_version"] for x in self._kinds.get(kind, [])
+                            if x.get("complete") and x.get("source") in SCHEMA_SOURCES)
+            if served:
+                v.append(Violation("apiVersion", "unknown_api_version",
+                                   "%s is not served for %s; served: %s" % (api, kind, ", ".join(served))))
+                return Validation(kind, api, True, v)
+            if group in self._schema_groups():
+                v.append(Violation("kind", "unknown_kind", "%s is not a kind of %s in the schemas%s" % (
+                    kind, api, self._sim(kind, self.kinds_of(api)))))
+                return Validation(kind, api, True, v)
+            return Validation(kind, api, False, v)
+        paths = e["paths"]
+        kids = self._children(e)
+        self._check_object(paths, kids, "", doc, v, root=True, root_open=bool(e.get("preserve_unknown_root")))
+        return Validation(kind, api, True, v, e["source"])
+
+    def kinds_of(self, api_version: str) -> List[str]:
+        return sorted(k for k, es in self._kinds.items()
+                      if any(x.get("complete") and x.get("source") in SCHEMA_SOURCES and x["api_version"] == api_version
+                             for x in es))
+
+    @staticmethod
+    def _sim(name, pool):
+        near = difflib.get_close_matches(name, pool, n=3, cutoff=0.8)
+        return "; similar: " + ", ".join(near) if near else ""
+
+    @staticmethod
+    def _children(entry) -> Dict[str, List[str]]:
+        cache = entry.setdefault("_children", {})
+        if not cache:
+            for q in entry["paths"]:
+                if q.endswith("[]"):
+                    continue
+                parent, _, leaf = q.rpartition(".")
+                cache.setdefault(parent, []).append(leaf)
+        return cache
+
+    def _check_object(self, paths, kids, path, value, out, root=False, root_open=False):
+        info = paths.get(path, {}) if path else {}
+        names = kids.get(path, [])
+        open_ = root_open if root else bool(info.get("open"))
+        for key in sorted(value, key=str):
+            val = value[key]
+            if not isinstance(key, str):
+                out.append(Violation(_join(path, str(key)), "unknown_field", "key %r is not a string" % (key,)))
+                continue
+            if root and key in ENVELOPE:
+                continue
+            cp = _join(path, key)
+            cinfo = paths.get(cp)
+            if cinfo is None:
+                if not open_:
+                    near = difflib.get_close_matches(key, names, n=3, cutoff=0.6)
+                    out.append(Violation(cp, "unknown_field", "%s is not a field of the schema%s" % (
+                        cp, "; similar: " + ", ".join(near) if near else ""), tuple(near)))
+                continue
+            self._check_value(paths, kids, cp, val, out)
+        for name in names:
+            if name not in value and paths.get(_join(path, name), {}).get("required") and not (root and name in ENVELOPE):
+                out.append(Violation(_join(path, name), "missing_required", "%s is required" % _join(path, name)))
+        alts = info.get("one_of_required")
+        if alts:
+            ok = [a for a in alts if all(x in value and value[x] is not None for x in a)]
+            if len(ok) != 1:
+                out.append(Violation(path, "one_of", "%s needs exactly one of: %s (found %d)" % (
+                    path or "the document", " | ".join(",".join(a) for a in alts), len(ok))))
+        mv = info.get("map_values")
+        if mv and not names:
+            for key, val in value.items():
+                if val is not None and not _type_ok(val, mv):
+                    out.append(Violation(_join(path, str(key)), "wrong_type", "%s should be %s, found %s" % (
+                        _join(path, str(key)), "/".join(mv), _py_type(val))))
+
+    def _check_value(self, paths, kids, path, val, out):
+        info = paths[path]
+        if val is None:
+            return
+        types = info.get("type", ["any"])
+        if not _type_ok(val, types):
+            out.append(Violation(path, "wrong_type", "%s should be %s, found %s" % (path, "/".join(types), _py_type(val))))
+            return
+        if isinstance(val, dict):
+            if "object" in types or "any" in types:
+                self._check_object(paths, kids, path, val, out)
+        elif isinstance(val, list):
+            ipath = path + "[]"
+            if ipath in paths:
+                for i, item in enumerate(val):
+                    ip = "%s[%d]" % (path, i)
+                    if item is None:
+                        continue
+                    if not _type_ok(item, paths[ipath].get("type", ["any"])):
+                        out.append(Violation(ip, "wrong_type", "%s should be %s, found %s" % (
+                            ip, "/".join(paths[ipath]["type"]), _py_type(item))))
+                    elif isinstance(item, dict):
+                        for x in self._sub(paths, kids, ipath, item):
+                            out.append(Violation(x.path.replace(ipath, ip, 1) if x.path.startswith(ipath) else x.path,
+                                                 x.code, x.message.replace(ipath, ip), x.similar))
+                    elif paths[ipath].get("enum") and item not in paths[ipath]["enum"]:
+                        out.append(Violation(ip, "bad_enum", "%s: %r is not one of %s" % (ip, item, paths[ipath]["enum"])))
+        elif info.get("enum") is not None and val not in info["enum"] and str(val) not in [str(x) for x in info["enum"]]:
+            out.append(Violation(path, "bad_enum", "%s: %r is not one of %s" % (path, val, info["enum"])))
+
+    def _sub(self, paths, kids, path, item):
+        out: List[Violation] = []
+        self._check_object(paths, kids, path, item, out)
+        return out
+
+
+SCHEMA_SOURCES = ("crd", "openapi")
+
+
+@dataclass(frozen=True)
+class Violation:
+    path: str
+    code: str       # unknown_field wrong_type bad_enum missing_required one_of unknown_kind unknown_api_version ...
+    message: str
+    similar: tuple = ()
+
+
+@dataclass
+class Validation:
+    kind: Optional[str]
+    api_version: Optional[str]
+    covered: bool                      # a complete schema was found for the kind (and the group)
+    violations: List[Violation] = field(default_factory=list)
+    source: Optional[str] = None       # "crd" or "openapi"
+
+    @property
+    def ok(self) -> bool:
+        return not self.violations
+
+    def codes(self) -> List[str]:
+        return sorted({x.code for x in self.violations})
+
+
+def _join(path: str, key: str) -> str:
+    return path + "." + key if path else key
+
+
+def _py_type(v) -> str:
+    return {bool: "boolean", int: "integer", float: "number", str: "string", dict: "object", list: "array"}.get(type(v), type(v).__name__)
+
+
+def _type_ok(v, types) -> bool:
+    if "any" in types:
+        return True
+    if isinstance(v, bool):
+        return "boolean" in types
+    if isinstance(v, int):
+        return "integer" in types or "number" in types
+    if isinstance(v, float):
+        return "number" in types or ("integer" in types and v.is_integer())
+    if isinstance(v, str):
+        return "string" in types
+    if isinstance(v, dict):
+        return "object" in types
+    if isinstance(v, list):
+        return "array" in types
+    return False
+
