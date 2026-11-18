@@ -36,11 +36,16 @@ def prompt_hashes():
 
 
 def reranker_revision_cached(cfg):
-    """Revision the local Hugging Face cache resolves the reranker to (refs/main), or None if not cached."""
+    """Revision the local Hugging Face cache holds for the reranker, or None if not cached. Returns the pinned
+    revision when its snapshot directory exists (the state after the runtime's own first download, which writes
+    no refs/main); otherwise what refs/main resolves to."""
     import os
     home = Path(os.environ.get("HF_HOME", Path.home() / ".cache/huggingface"))
-    ref = Path(os.environ.get("HF_HUB_CACHE", home / "hub")) / \
-        ("models--" + cfg["retrieval"]["reranker"]["model"].replace("/", "--")) / "refs/main"
+    rr = cfg["retrieval"]["reranker"]
+    repo = Path(os.environ.get("HF_HUB_CACHE", home / "hub")) / ("models--" + rr["model"].replace("/", "--"))
+    if (repo / "snapshots" / rr["revision"]).is_dir():
+        return rr["revision"]
+    ref = repo / "refs/main"
     return ref.read_text().strip() if ref.exists() else None
 
 

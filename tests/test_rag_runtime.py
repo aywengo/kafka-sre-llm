@@ -18,6 +18,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from kafka_sre_rag import config, pipeline, prompts  # noqa: E402
 
+# The index is git-ignored. Tests that need it skip when it is absent. RAG_TEST_INDEX points the check at another
+# path (for example a missing one, to see the skips); it changes only the skip decision.
+INDEX = Path(os.environ.get("RAG_TEST_INDEX") or config.index_file())
+NEEDS_INDEX = unittest.skipUnless(INDEX.exists(), f"frozen index {INDEX.name} absent (work/ is git-ignored; "
+                                  "download it or build it, see README 'Get the index')")
+
 CHUNKS = [
     {"id": "a", "source": "apache-kafka", "title": "Consumer configs", "path": "raw/a/b.md", "text": "Set max.poll.interval.ms.",
      "bm25_rank": 1, "ce_score": 0.9},
@@ -40,11 +46,13 @@ class Stub:
 
 
 class TestConfig(unittest.TestCase):
+    @NEEDS_INDEX
     def test_verify_real(self):
         rep = config.verify()
         self.assertTrue(rep["index"]["match"])
         self.assertTrue(all(p["match"] for p in rep["prompts"].values()))
 
+    @NEEDS_INDEX
     def test_tampered_index(self):
         src = config.index_file()
         with tempfile.TemporaryDirectory() as d:
@@ -143,6 +151,7 @@ class TestGenerators(unittest.TestCase):
 
 
 class TestCLI(unittest.TestCase):
+    @NEEDS_INDEX
     def test_dry_run(self):
         r = subprocess.run([sys.executable, "-m", "kafka_sre_rag", "ask", "--dry-run", "--no-rerank-in-dry-run", "q"],
                            cwd=ROOT, capture_output=True, text=True)
@@ -152,6 +161,7 @@ class TestCLI(unittest.TestCase):
         self.assertIn(prompts.SYSTEM_PROMPT, r.stdout)
         self.assertIn("Question: q", r.stdout)
 
+    @NEEDS_INDEX
     def test_verify(self):
         r = subprocess.run([sys.executable, "-m", "kafka_sre_rag", "verify"], cwd=ROOT, capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stderr)

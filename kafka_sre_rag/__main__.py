@@ -5,7 +5,7 @@ import os
 import sys
 
 from . import config
-from .generators import EmptyAnswerError
+from .generators import EmptyAnswerError, ServerError
 
 DRY_EXPANSION = "consumer group, kafka-consumer-groups.sh, --describe, --group, LAG, max.poll.interval.ms"
 
@@ -24,6 +24,7 @@ class StubGenerator:
         print(f"===== {label} (max_tokens {max_tokens}) =====", file=self.out)
         for m in messages:
             print(f"--- {m['role']} ---\n{m['content']}", file=self.out)
+        self.out.flush()  # so the notice on stderr cannot land in the middle of a line
         text = DRY_EXPANSION if self.n % 2 == 1 else "[dry run: no model was called]"
         return text, 0, False
 
@@ -90,9 +91,13 @@ def run_one(question, gen, cfg, a):
                          ensure_ascii=False))
         return
     banner = config.unmeasured_banner(ans.unmeasured_reasons)
+    if stream:
+        print()  # end the streamed answer's line before the notice
+    sys.stdout.flush()
     if banner:
         print(banner, file=sys.stderr)
-    print(ans.text if not stream else "")
+    if not stream:
+        print(ans.text)
     if a.sources:
         print("\nSources:")
         for s in ans.sources:
@@ -132,6 +137,9 @@ def main(argv=None):
         except EmptyAnswerError as e:
             print(f"error: {e}", file=sys.stderr)
             return 2
+        except ServerError as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 1
         return 0
     try:  # chat
         while True:
@@ -142,7 +150,7 @@ def main(argv=None):
                 continue
             try:
                 run_one(q, gen, cfg, a)
-            except EmptyAnswerError as e:
+            except (EmptyAnswerError, ServerError) as e:
                 print(f"error: {e}", file=sys.stderr)
     except (EOFError, KeyboardInterrupt):
         print()

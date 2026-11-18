@@ -330,6 +330,8 @@ How to read it:
 - **Time per answer.** About 2 minutes in Phase 0; 112, 151 and 170 s in the one end-to-end
   check (3 questions, default mode, bf16 27B, mlx-lm). The project's bar is a median under 60 s
   (`GOAL.md`); it is not met. Strict mode answers are shorter and take less time.
+  On the 4-bit server path check (10 questions per mode, large machine): median 70.8 s in default mode
+  (not met), 47.2 s in strict mode.
 
 ### Prompt modes: default and strict
 
@@ -434,6 +436,13 @@ statement.
   and the answers differ from the first sentence. The measured results apply
   to the mlx path; the server path is checked but not measured. The client cannot switch thinking
   off by itself; pass the model's switch with `--extra-body`.
+  A second path check (2026-11-18, fresh clone of the tag, published artefacts only) used the MLX
+  4-bit build `mlx-community/Qwen3.8-27B-4bit` (about 16 GB) on the local model server, thinking off,
+  ten questions per mode: median 70.8 s per answer in default mode (65.0 to 88.9 s) and 47.2 s in
+  strict mode (36.8 to 64.6 s), about 16.9 GB held by the server's own estimate, 20 of 20 answers
+  non-empty and not cut off. It is a path check with timing on a large machine, not a quality
+  measurement and not the reference laptop. Ollama: not yet verified (the Ollama version in the
+  test was too old to load this model architecture).
 - **4-bit MLX, GGUF, llama.cpp, Ollama:** not measured with retrieval. A run with them is
   labelled `UNMEASURED CONFIGURATION`.
 

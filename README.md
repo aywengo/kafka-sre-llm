@@ -73,7 +73,7 @@ What it does, for each question:
 1. The model writes a line of search terms (config keys, tool names, error names) for the question.
 2. BM25 searches the documentation index with the question plus those terms and keeps 40 candidates.
 3. A cross-encoder reranks the candidates on CPU.
-4. The top chunks (6 by default) go into the prompt, and the model answers from them.
+4. The top chunks (up to 6, within 14,000 characters) go into the prompt, and the model answers from them.
 
 ### Install
 
@@ -88,7 +88,18 @@ The reranker is `BAAI/bge-reranker-v2-m3`. It is downloaded from Hugging Face on
 
 ### Get the index
 
-The index is not in this repository (`work/` is git-ignored). Build it from `sources.yaml`:
+The index is not in this repository (`work/` is git-ignored). Two routes.
+
+Download the frozen index (about 10 MB) and check it:
+
+```bash
+hf download aywengo/kafka-sre-docs-index-v3 --repo-type dataset --local-dir idx
+(cd idx && shasum -a 256 -c SHA256SUMS)
+mkdir -p work/v3 && cp idx/chunks.jsonl work/v3/chunks_s1.jsonl
+python -m kafka_sre_rag verify
+```
+
+Or build it from `sources.yaml`:
 
 ```bash
 python scripts/fetch_sources.py                              # shallow clones into raw/
@@ -98,9 +109,13 @@ python -m kafka_sre_rag verify
 
 `verify` checks the index hash, the four prompt hashes and the reranker revision in your
 cache against `frozen.json`. A real `ask` refuses to run if they do not match. On the
-machine where the index was built, `verify` passes. Not yet verified: that a fresh fetch and chunk on
-another machine gives the same hash. If it does not, `verify` fails and you should not trust
-the numbers below for your index.
+machine where the index was built, `verify` passes, and the downloaded index passes `verify` in
+a fresh clone of the tag (end-to-end test, 2026-11-18). Not yet verified: that a fresh fetch and
+chunk on another machine gives the same hash. If it does not, `verify` fails and you should not
+trust the numbers below for your index.
+
+The unit tests (`python -m unittest discover -s tests`) skip four tests that need the index when
+`work/v3/chunks_s1.jsonl` is absent.
 
 ### Ask a question
 
@@ -139,6 +154,17 @@ to 440 characters; that changes the order of the excerpts (on one of 3 questions
 them), and the answers differ from the first sentence. The measured results
 therefore apply to the mlx path; the server path is checked but not measured. An earlier path
 check with another model (GLM-5.3-Flash-oQ8e-mtp, `--max-tokens 16000`) also produced answers.
+
+A second path check, from the published artefacts in a fresh clone of the tag (2026-11-18): the MLX
+4-bit build of the base model, `mlx-community/Qwen3.8-27B-4bit` (about 16 GB), downloaded and
+served by the local model server, thinking off, ten questions per mode. The median was 70.8 s per
+answer in default mode (65.0 to 88.9 s) and 47.2 s in strict mode (36.8 to 64.6 s), and the server
+held about 16.9 GB by its own estimate. 20 of 20 answers were non-empty and not cut off. This is a
+path check with timing on a large machine, not a quality measurement and not the reference laptop.
+If the server lists its models, the client checks the `--model` name against the list and stops
+with an error when the server does not have it, instead of letting the server answer with another
+model. Ollama: not yet verified; the Ollama version in the test (0.14.2) was too old to load this
+model architecture.
 
 `chat` is the same loop, one question at a time. Each turn is retrieved and answered on its
 own; no conversation history is sent, and multi-turn use is not measured.
@@ -252,6 +278,8 @@ About 2 minutes in total.
 - Time per answer: about 2 minutes in Phase 0; 112, 151 and 170 s in the one end-to-end check
   (3 questions, default mode, bf16 27B through mlx-lm). `GOAL.md` asks for a median under 60 s;
   that is not met. Strict mode is shorter and quicker (77 to 117 s on the server path check).
+  On the 4-bit server path check (10 questions per mode, large machine): median 70.8 s in default mode,
+  47.2 s in strict mode.
 - The documentation snapshots are fixed (Kafka 4.3.2, Strimzi 1.3.1, Argo CD v3.6.1).
 - English only. Tested on short questions, not on long incident threads.
 
