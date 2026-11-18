@@ -231,6 +231,33 @@ class TestSplit(Base):
         for cell, n in tot.items():
             self.assertLessEqual(abs(hid.get(cell, 0) - n / 2), 1.5, cell)  # largest family is 3 items
 
+    def test_exposed_item_and_its_whole_family_go_open(self):
+        items = self.make()
+        fams = sorted({i["family"] for i in items})
+        exposed_fams = set(fams[::3])
+        marked = {}
+        for it in items:  # one item per family is marked; the rest of the family is not
+            if it["family"] in exposed_fams and it["family"] not in marked:
+                it["exposed"] = True
+                marked[it["family"]] = it["id"]
+        for seed in range(1, 12):
+            o, h = eval2.split_families(items, seed)
+            self.assertFalse(exposed_fams & {i["family"] for i in h}, seed)
+            self.assertTrue(exposed_fams <= {i["family"] for i in o}, seed)
+            self.assertFalse({i["family"] for i in o} & {i["family"] for i in h})
+            self.assertEqual(len(o) + len(h), len(items))
+            tot, hid = eval2.counts_by_cell(items), eval2.counts_by_cell(h)
+            for cell, n in tot.items():  # the share is reached with the remaining families
+                self.assertLessEqual(abs(hid.get(cell, 0) - n / 2), 3, (seed, cell))
+        self.assertEqual(eval2.split_families(items, 4), eval2.split_families(items, 4))
+
+    def test_exposed_false_does_not_force_open(self):
+        items = self.make()
+        for it in items:
+            it["exposed"] = False
+        ids = lambda pair: [[i["id"] for i in side] for side in pair]
+        self.assertEqual(ids(eval2.split_families(items, 5)), ids(eval2.split_families(self.make(), 5)))
+
     @NEEDS_OPENSSL
     def test_cli_split_writes_open_clear_hidden_encrypted(self):
         src = self.items_file(self.make())

@@ -1,0 +1,170 @@
+{
+ "catalogue_hash": "e319653a543211a5366cd1a5734c83ee4d2683c2d41077058369116804a8447e",
+ "counts": {
+  "exposed_open": 59,
+  "exposed_total": 59,
+  "families_hidden": 191,
+  "families_open": 187,
+  "hidden": 245,
+  "open": 251
+ },
+ "generator": "eval2_items_a1/3",
+ "generator_commit": "39e6911120efd26f006c17b0cca1cfaa3babb564",
+ "items_file": "eval/m4/build/tier_a1.jsonl",
+ "items_sha256": "5adc9cb4b555b3e3aea168fd213f86c2939d2fa321799b31514762b4e2cd2f64",
+ "items_total": 496,
+ "outputs": {
+  "hidden": {
+   "note": "encrypted with a random salt: the ciphertext differs on every run; the plaintext (jsonl in the order of the items file) is reproduced exactly",
+   "path": "eval/hidden/tier_a.jsonl.enc",
+   "plaintext_sha256": "5ec21dbb4e63922b24be0f427a3dfb9f0d02f6cf4dae2fa5ed71d48215578c2c",
+   "sha256": "e5bbc50c4bdad30fdc51bcab9a1fdb2bc30f6d5c9c5ab27d88d80bf7211e813a"
+  },
+  "open": {
+   "path": "eval/m4/open/tier_a.jsonl",
+   "sha256": "85244d59b2526abc08755afe57230783d128c9a923b417d0d349bade58fe3dd3"
+  }
+ },
+ "per_failure_class": {
+  "confusable_neighbour": {
+   "hidden": 35,
+   "open": 28,
+   "total": 63
+  },
+  "multi_flag": {
+   "hidden": 20,
+   "open": 20,
+   "total": 40
+  },
+  "near_miss_name": {
+   "hidden": 33,
+   "open": 44,
+   "total": 77
+  },
+  "negation": {
+   "hidden": 24,
+   "open": 28,
+   "total": 52
+  },
+  "not_covered": {
+   "hidden": 5,
+   "open": 8,
+   "total": 13
+  },
+  "plain_lookup": {
+   "hidden": 27,
+   "open": 37,
+   "total": 64
+  },
+  "scope_dependent": {
+   "hidden": 26,
+   "open": 11,
+   "total": 37
+  },
+  "trap_method": {
+   "hidden": 6,
+   "open": 3,
+   "total": 9
+  },
+  "two_facts": {
+   "hidden": 3,
+   "open": 5,
+   "total": 8
+  },
+  "value_type_trap": {
+   "hidden": 30,
+   "open": 30,
+   "total": 60
+  },
+  "version": {
+   "hidden": 7,
+   "open": 8,
+   "total": 15
+  },
+  "wrong_api_version": {
+   "hidden": 4,
+   "open": 2,
+   "total": 6
+  },
+  "wrong_nesting": {
+   "hidden": 6,
+   "open": 3,
+   "total": 9
+  },
+  "wrong_scope": {
+   "hidden": 19,
+   "open": 24,
+   "total": 43
+  }
+ },
+ "per_kind": {
+  "argocd_command": {
+   "hidden": 13,
+   "open": 14,
+   "total": 27
+  },
+  "connect_rest": {
+   "hidden": 14,
+   "open": 14,
+   "total": 28
+  },
+  "error_name": {
+   "hidden": 22,
+   "open": 22,
+   "total": 44
+  },
+  "fix_manifest": {
+   "hidden": 32,
+   "open": 32,
+   "total": 64
+  },
+  "is_real": {
+   "hidden": 19,
+   "open": 20,
+   "total": 39
+  },
+  "name_setting": {
+   "hidden": 98,
+   "open": 99,
+   "total": 197
+  },
+  "version_trap": {
+   "hidden": 7,
+   "open": 8,
+   "total": 15
+  },
+  "write_command": {
+   "hidden": 17,
+   "open": 18,
+   "total": 35
+  },
+  "write_resource": {
+   "hidden": 23,
+   "open": 24,
+   "total": 47
+  }
+ },
+ "rule": "whole families on one side; families with any item exposed:true go open; share per (tier, kind) cell reached with the remaining families (scripts/eval2.py split_families)",
+ "seed": 20261118,
+ "share": 0.5,
+ "smoke": {
+  "note": "60 open mechanical items stratified by kind; built by eval2.smoke_subset",
+  "path": "eval/m4/smoke_ids.json",
+  "seed": 1,
+  "sha256": "cdf41c082688544a77887c981d8f0287ec1f18989fdb3c47fca265b88dfb997d",
+  "smoke_a": 60,
+  "smoke_b": 24,
+  "stratified_counts": {
+   "argocd_command": 3,
+   "connect_rest": 3,
+   "error_name": 5,
+   "fix_manifest": 8,
+   "is_real": 5,
+   "name_setting": 24,
+   "version_trap": 2,
+   "write_command": 4,
+   "write_resource": 6
+  }
+ },
+ "split_command": "scripts/eval2.py split --items eval/m4/build/tier_a1.jsonl --seed 20261118 --share 0.5 --open-out eval/m4/open/tier_a.jsonl --hidden-out eval/hidden/tier_a.jsonl.enc"
+}

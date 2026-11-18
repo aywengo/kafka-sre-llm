@@ -245,15 +245,18 @@ def smoke_subset(items, path, smoke_a, smoke_b, seed, rebuild=False):
 
 def split_families(items, seed, share=0.5):
     """Whole families to the hidden side until the hidden share per (tier, kind) is reached as nearly as
-    families allow. Deterministic in (items, seed, share). Returns (open_items, hidden_items)."""
+    families allow. Deterministic in (items, seed, share). Returns (open_items, hidden_items).
+    A family with any item marked `"exposed": true` (shown to people) is kept on the open side as a whole;
+    the share is then reached with the remaining families."""
     fam = defaultdict(list)
     for it in items:
         fam[it["family"]].append(it)
+    forced_open = {f for f, its in fam.items() if any(it.get("exposed") is True for it in its)}
     cells_total = Counter((it["tier"], it["kind"]) for it in items)
     target = {c: share * n for c, n in cells_total.items()}
     got = Counter()
     hidden = set()
-    for f in sorted(fam, key=lambda f: _order_key(seed, f)):
+    for f in sorted((f for f in fam if f not in forced_open), key=lambda f: _order_key(seed, f)):
         add = Counter((it["tier"], it["kind"]) for it in fam[f])
         before = sum(abs(got[c] - target[c]) for c in add)
         after = sum(abs(got[c] + n - target[c]) for c, n in add.items())
