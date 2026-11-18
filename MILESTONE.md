@@ -5,7 +5,7 @@ Working name "M4"; the release number is decided at the end. Started 2026-11-18,
 release of v3.0.0 and v3.0.1. `GOAL.md` says where the project is going; this file says
 where the current milestone stands.
 
-Last updated: 2026-11-18, night.
+Last updated: 2026-11-18, late night.
 
 ## What this milestone is for
 
@@ -18,9 +18,9 @@ different base model does better.
 
 | # | Criterion | Bar | Status |
 |---|---|---|---|
-| E1 | A new evaluation exists: fresh items for the five task types of `GOAL.md`, a hidden part, mechanical checks, a measured noise level | 300 or more mechanical items, 120 or more judged items, the smallest visible difference stated per tier | first slice built (313 mechanical items, harness, scorer, judge step); waits for the model server |
+| E1 | A new evaluation exists: fresh items for the five task types of `GOAL.md`, a hidden part, mechanical checks, a measured noise level | 300 or more mechanical items, 120 or more judged items, the smallest visible difference stated per tier | mechanical tier built: 496 items, split 251 open and 245 hidden (encrypted); judged tier waits for the judging pilot |
 | E2 | The starting point is measured on it: plain base, base + retrieval at full precision, and the 4-bit model with retrieval, in default and strict mode, all on the same server path | numbers with their sizes; the cost of 4-bit shown inside a margin fixed before the run (5 points on the mechanical tier) | not started |
-| E3 | Every answer is checked before the user sees it | at most 2 invented or wrong items per 10 answers in default mode on fresh questions, **measured by a reading**, with the checker's own counts beside it | checker built; on the 30 labelled errors it catches 7, reports 5 as unverified and cannot see 15 wrong statements; not yet measured on fresh answers |
+| E3 | Every answer is checked before the user sees it | at most 2 invented or wrong items per 10 answers in default mode on fresh questions, **measured by a reading**, with the checker's own counts beside it | checker built and wired into `ask --check` and the service; on the 30 labelled errors it catches 9, reports 3 as unverified and misses 18 (15 are wrong statements it cannot see); not yet measured on fresh answers |
 | E4 | Answers are fast on the 4-bit server path | median under 60 s in default mode on the Mac Studio; first words within 10 s | service and streaming built; retrieval 9.5 s to 4.4 s when kept loaded; not yet measured with a model |
 | E5 | Base model decision | bake-off of the shortlist on the new evaluation; keep or switch recorded | shortlist done |
 
@@ -43,13 +43,13 @@ First slice (needs no downloads; supports the 4-bit decision):
 
 | WP | What | Role (model) | Status | Record |
 |---|---|---|---|---|
-| WP1a | Catalogues of real identifiers from the pinned sources | implementer (sonnet) | **done** 2026-11-18, commit `888333f`: 1,177 Kafka config keys, 1,577 Strimzi field paths, 35 annotations, 28 tools, Argo CD commands | `runs/m4/reports/wp1a_catalogues.md` |
+| WP1a | Catalogues of real identifiers from the pinned sources | implementer (sonnet) | **done** 2026-11-18, commits `888333f` and `39e6911` (completed from 11 MB of pinned source files in `catalogue_sources.yaml`: Strimzi and Argo CD resource definitions, 38 of 43 Kafka tools, the Kubernetes API schema): 1,177 Kafka config keys, 1,577 Strimzi field paths, 35 annotations, 28 tools, Argo CD commands | `runs/m4/reports/wp1a_catalogues.md` |
 | WP1b | Evaluation design and its review | conductor; complex-reviewer (opus) | **reviewed** ("build with these changes", 15 changes, all accepted); design being revised | `agents/m4-evaluation.md`, `runs/m4/reports/evaluation_design_review.md` |
 | S1 | Harness: answer, manifest, pack replay, hidden part, run sizes, report | implementer | **done** (`d0403e3`); run only with a stub model so far | `runs/m4/reports/s1_harness.md` |
-| S2, S3 | Mechanical items (config, Connect REST, Argo CD, error names) and the scorer with identifier precision; catalogue provenance | implementer | **done** (`d0403e3`, rebalanced in `f79671d`): 313 items, plain lookups 18.5 %, a blind guess scores at most 15 % | `runs/m4/reports/s2_s3_tier_a1.md`, `tier_a1_rebalance.md` |
+| S2, S3 | Mechanical items (config, Connect REST, Argo CD, error names) and the scorer with identifier precision; catalogue provenance | implementer | **done** (`39e6911`): 496 items with resources, manifest fixes, commands and version traps; a blind guess scores 11 %; split in `e6b8d8c` | `runs/m4/reports/s2_s3_tier_a1.md`, `tier_a1_rebalance.md` |
 | S4 | Rubric pilot: blind rubrics for 30 questions whose answers have a reader's findings; check of the labels that rest on memory | complex-reviewer, researcher | **done**: 30 rubrics (`eval/m4/pilot/rubrics.jsonl`); 30 distinct labels, 25 confirmed, 5 partly, 0 refuted | `runs/m4/reports/s4a_label_check.md`, `s4b_blind_rubrics.md` |
-| S5 | Judge pilot: does judging point by point repeat better than a mark from 1 to 5 | job-operator; needs the model server | judge step and chain built (`d0b3faa`); **blocked**: the server holds two models another client loaded | `runs/m4/reports/s5_judge_step.md` |
-| S6 | Noise (the reference run twice) and 4-bit against full precision on the same server, with pack replay | job-operator; needs the model server | waits for the Owner (see 4 below) | |
+| S5 | Judge pilot: does judging point by point repeat better than a mark from 1 to 5 | job-operator; needs the model server | first run stopped after 30 minutes (11 to 16 minutes per judge call; progress not flushed, fixed in `4497a6f`). **S5a running**: 16 answers under four judge settings, to choose an affordable one; the full pilot then needs a named setting | `runs/m4/reports/s5_judge_step.md` |
+| S6 | Noise (the reference run twice) and 4-bit against full precision on the same server, with pack replay | job-operator; needs the model server | **queued** behind S5a (`scripts/m4_s6_noise_4bit.sh`, 15 to 30 hours): 5-item gate, then the open half five times | `runs/m4/reports/s6_prep.md` |
 
 After the first slice:
 
@@ -64,7 +64,7 @@ After the first slice:
 | WP3a | Long-running local service that keeps the index and reranker loaded; streaming | - | **done** (`d0b3faa`): loopback only, OpenAI-compatible; about 3.8 GB held when idle |
 | WP3b | Fewer excerpts for simple lookups; measure E4 | WP3a, WP1f | not started |
 | WP4a | Shortlist of base models | - | **done** 2026-11-18 (`runs/m4/reports/base_shortlist.md`) |
-| WP4b | Bake-off on the new evaluation; decision | WP1f, downloads (see 7 below) | not started |
+| WP4b | Bake-off on the new evaluation; decision | WP1f | the four candidates are downloaded, not loaded; whether the server's runtime loads them is unknown |
 | D1 | Find why the server path and the in-process path give different output | - | not started |
 | D2 | The Owner reads ten answers that a model has already read | - | waiting for the Owner |
 
@@ -137,3 +137,12 @@ Decided on 2026-11-18 (see "Decisions"). Still his to do, none blocking:
   no false "invented" finding on 244 answers), the local service with streaming
   (retrieval 9.5 s to 4.4 s). Nothing has run against a real model yet: the model server
   is occupied by another client's models.
+- 2026-11-18, late night: the Owner answered yes to all recommendations. Catalogues
+  completed from pinned source files; mechanical tier grown to 496 items and split;
+  checker wired in; bake-off candidates downloaded (disk at 98 %, 78 GB free); licence
+  check on public questions done (ideas only, by hand, nothing verbatim, private
+  provenance record). The first judging run was stopped: point-by-point judging costs
+  about 7,000 reasoning tokens a call. Running: S5a (judge settings). Queued behind it: S6.
+- Next, in order: read `runs/m4/S5A_JUDGE_SETTINGS.md` and choose the judge setting; S6
+  runs by itself; then the full judging pilot with the chosen setting; then the judged
+  tier and the starting-point measurement on the hidden half (first entry in the ledger).
