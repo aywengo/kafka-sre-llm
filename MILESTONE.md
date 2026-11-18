@@ -48,8 +48,8 @@ First slice (needs no downloads; supports the 4-bit decision):
 | S1 | Harness: answer, manifest, pack replay, hidden part, run sizes, report | implementer | **done** (`d0403e3`); run only with a stub model so far | `runs/m4/reports/s1_harness.md` |
 | S2, S3 | Mechanical items (config, Connect REST, Argo CD, error names) and the scorer with identifier precision; catalogue provenance | implementer | **done** (`39e6911`): 496 items with resources, manifest fixes, commands and version traps; a blind guess scores 11 %; split in `e6b8d8c` | `runs/m4/reports/s2_s3_tier_a1.md`, `tier_a1_rebalance.md` |
 | S4 | Rubric pilot: blind rubrics for 30 questions whose answers have a reader's findings; check of the labels that rest on memory | complex-reviewer, researcher | **done**: 30 rubrics (`eval/m4/pilot/rubrics.jsonl`); 30 distinct labels, 25 confirmed, 5 partly, 0 refuted | `runs/m4/reports/s4a_label_check.md`, `s4b_blind_rubrics.md` |
-| S5 | Judge pilot: does judging point by point repeat better than a mark from 1 to 5 | job-operator; needs the model server | first run stopped after 30 minutes (11 to 16 minutes per judge call; progress not flushed, fixed in `4497a6f`). **S5a running**: 16 answers under four judge settings, to choose an affordable one; the full pilot then needs a named setting | `runs/m4/reports/s5_judge_step.md` |
-| S6 | Noise (the reference run twice) and 4-bit against full precision on the same server, with pack replay | job-operator; needs the model server | **queued** behind S5a (`scripts/m4_s6_noise_4bit.sh`, 15 to 30 hours): 5-item gate, then the open half five times | `runs/m4/reports/s6_prep.md` |
+| S5 | Judge pilot: does judging point by point repeat better than a mark from 1 to 5 | job-operator; needs the model server | **done, NO-GO: 1 of 4 criteria passed** (`runs/m4/S5_JUDGE_PILOT.md`). Judge chosen in S5a: DeepSeek without thinking, with source passages (22 s a call against 691 s). The analysis (`runs/m4/reports/s5_pilot_analysis.md`): the judge repeats well and is cheap, but the score does not rank answers as the reader did, and about 1 in 6 of its error flags outside the reader's labels is real. **The judged tier is stopped until the Owner has seen this** | `runs/m4/reports/s5_judge_step.md` |
+| S6 | Noise (the reference run twice) and 4-bit against full precision on the same server, with pack replay | job-operator; needs the model server | **running** since 2026-11-18 23:47 (`scripts/m4_s6_noise_4bit.sh`): 5-item gate, then the open half five times; about 25 s per answer on the 4-bit model, so 12 to 15 hours | `runs/m4/reports/s6_prep.md` |
 
 After the first slice:
 
@@ -115,6 +115,18 @@ thinking off.
 
 Decided on 2026-11-18 (see "Decisions"). Still his to do, none blocking:
 
+**A failed gate (the judging pilot, 2026-11-18). The judged tier waits for these:**
+
+A. Build the judged tier with the analysis's changes and a second small pilot on fresh
+   items (recommended), or drop it and rely on the mechanical tier plus readings.
+B. Keep tonight's result a no-go and amend the criteria for the second pilot, instead of
+   re-scoring this one into a pass (recommended).
+C. The judge's error flags count toward the bars of `GOAL.md` only after a reader has
+   confirmed them (recommended; about 1 to 3 hours of reviewer time per configuration).
+D. Keep DeepSeek as the judge, with the earlier judge re-judging a 24-item subset on
+   every decision run (recommended).
+E. Review which points are essential on your own questions, about 10 minutes an item.
+
 1. **Fresh real questions with correct answers:** 30 to 50 from real incidents.
 2. **Review of the architecture rubrics** when they exist (without it that part is 15
    items, not 25).
@@ -146,3 +158,7 @@ Decided on 2026-11-18 (see "Decisions"). Still his to do, none blocking:
 - Next, in order: read `runs/m4/S5A_JUDGE_SETTINGS.md` and choose the judge setting; S6
   runs by itself; then the full judging pilot with the chosen setting; then the judged
   tier and the starting-point measurement on the hidden half (first entry in the ledger).
+- 2026-11-18, 23:16: S5a done. DeepSeek without thinking judges in 22 s a call and caught
+  21 of 27 labelled errors in the subset; the earlier judge took 691 s and its thinking
+  cannot be switched off. 23:42: full pilot done in 25 minutes: NO-GO, 1 of 4. 23:47: S6
+  started after the conductor unloaded another client's model from an idle server.
