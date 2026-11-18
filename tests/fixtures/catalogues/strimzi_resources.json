@@ -1,4 +1,4 @@
-{"catalogue": "strimzi_resources", "entries": [
+{"catalogue": "strimzi_resources", "complete": true, "entries": [
  {"kind": "KafkaUser", "api_version": "kafka.strimzi.io/v1", "complete": true, "source": "api_reference", "source_file": "fixture", "pin": "fixture", "paths": {
   "spec": {"type": ["object:KafkaUserSpec"], "declared_in": ["KafkaUser"]},
   "spec.quotas": {"type": ["object:KafkaUserQuotas"], "declared_in": ["KafkaUserSpec"]},

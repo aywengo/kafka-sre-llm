@@ -1,4 +1,4 @@
-{"catalogue": "kafka_cli", "entries": [
+{"catalogue": "kafka_cli", "complete": false, "entries": [
  {"tool": "kafka-streams-application-reset.sh", "complete": true, "pin": "fixture", "source_file": "fixture", "options": {"--dry-run": {"evidence": "options_table", "files": ["fixture"], "seen": 1}, "--application-id": {"evidence": "options_table", "files": ["fixture"], "seen": 1}}},
  {"tool": "kafka-topics.sh", "complete": false, "pin": "fixture", "source_file": "fixture", "options": {"--describe": {"evidence": "seen_in_example", "files": ["fixture"], "seen": 3}, "--bootstrap-server": {"evidence": "seen_in_example", "files": ["fixture"], "seen": 5}}}
 ]}

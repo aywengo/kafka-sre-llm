@@ -203,5 +203,59 @@ class CliTests(unittest.TestCase):
             bc.need("/nonexistent/path/file")
 
 
+ERRORS_HTML = """<table class="data-table"><tbody>
+<tr><th>Error</th>
+<th>Code</th>
+</tr>
+<tr><td>UNKNOWN_SERVER_ERROR</td><td>-1</td><td>False</td><td>The server experienced an unexpected error.</td></tr>
+<tr><td>NOT_ENOUGH_REPLICAS_AFTER_APPEND</td><td>20</td><td>True</td><td>Messages are written, but to <code>fewer</code> in-sync replicas.</td></tr>
+</tbody></table>"""
+
+REST_YAML = """openapi: 3.0.0
+paths:
+  /connectors/{connector}/restart:
+    post:
+      operationId: restartConnector
+      parameters:
+      - in: path
+        name: connector
+      summary: Restart the specified connector
+  /connectors/{connector}/pause:
+    put:
+      operationId: pauseConnector
+      parameters:
+      - in: path
+        name: connector
+      summary: Pause the specified
+        connector
+"""
+
+
+class NewCatalogueParsers(unittest.TestCase):
+    def test_config_entry_has_description_line_and_provenance(self):
+        es = bc.parse_config_html(HTML, "consumer", "f.html", "pin")
+        self.assertEqual(es[0]["provenance"], ["exists"])
+        self.assertTrue(es[0]["description"].startswith("text & more"))
+        self.assertEqual(es[0]["source_line"], 3)
+        self.assertEqual(es[1]["source_line"], 13)
+
+    def test_protocol_errors(self):
+        es = bc.parse_protocol_errors(ERRORS_HTML, "e.html", "pin")
+        self.assertEqual([(e["name"], e["code"], e["retriable"]) for e in es],
+                         [("UNKNOWN_SERVER_ERROR", -1, False), ("NOT_ENOUGH_REPLICAS_AFTER_APPEND", 20, True)])
+        self.assertEqual(es[1]["description"], "Messages are written, but to fewer in-sync replicas.")
+        self.assertEqual([e["source_line"] for e in es], [5, 6])
+        self.assertEqual(es[0]["provenance"], ["exists"])
+
+    def test_connect_rest(self):
+        es = bc.parse_connect_rest(REST_YAML, "c.yaml", "pin")
+        self.assertEqual([(e["method"], e["path"], e["operation_id"]) for e in es],
+                         [("PUT", "/connectors/{connector}/pause", "pauseConnector"),
+                          ("POST", "/connectors/{connector}/restart", "restartConnector")])
+        self.assertEqual([e["source_line"] for e in es], [11, 4])
+        self.assertEqual(es[0]["summary"], "Pause the specified connector")
+        self.assertEqual(es[0]["path_params"], ["connector"])
+
+
 if __name__ == "__main__":
     unittest.main()

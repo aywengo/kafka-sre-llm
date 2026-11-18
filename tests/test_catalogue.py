@@ -90,7 +90,10 @@ class FixtureTests(unittest.TestCase):
 
     def test_annotation(self):
         self.assertEqual(self.c.annotation("strimzi.io/rebalance").status, KNOWN)
-        self.assertEqual(self.c.annotation("strimzi.io/rebalanse").status, UNKNOWN)
+        # the annotations catalogue is "mentioned in the docs", not complete: a miss is never "unknown"
+        r = self.c.annotation("strimzi.io/rebalanse")
+        self.assertEqual(r.status, NOT_COVERED)
+        self.assertIn("strimzi.io/rebalance", r.data["similar"])
         self.assertEqual(self.c.annotation("example.com/foo").status, NOT_COVERED)
 
     def test_annotation_values(self):
@@ -116,6 +119,95 @@ class FixtureTests(unittest.TestCase):
     def test_cli_option_with_value_and_unknown_tool(self):
         self.assertEqual(self.c.cli_option("kafka-topics.sh", "--bootstrap-server=localhost:9092").status, KNOWN)
         self.assertEqual(self.c.cli_option("kafka-nonesuch.sh", "--x").status, NOT_COVERED)
+
+
+class CompletenessTests(unittest.TestCase):
+    """A lookup that would say UNKNOWN in a catalogue or tool that is not complete says NOT_COVERED."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.c = Catalogues.load(FIX)
+
+    def test_complete_flags(self):
+        self.assertTrue(self.c.complete("kafka_config"))
+        self.assertFalse(self.c.complete("strimzi_annotations"))
+        self.assertFalse(self.c.complete("kafka_cli"))
+        self.assertFalse(self.c.complete("argocd"))  # not loaded
+
+    def test_missing_flag_means_incomplete(self):
+        import copy
+        data = copy.deepcopy(self.c.data)
+        del data["kafka_config"]["complete"]
+        del data["strimzi_resources"]["complete"]
+        c = Catalogues(data)
+        self.assertEqual(c.config_key("no.such.key", "consumer").status, NOT_COVERED)
+        self.assertEqual(c.strimzi_type("KafkaConsumerConfig").status, NOT_COVERED)
+        self.assertEqual(c.config_key("max.poll.interval.ms", "consumer").status, KNOWN)
+
+    def test_incomplete_tool_never_unknown_complete_tool_unknown(self):
+        self.assertEqual(self.c.cli_option("kafka-topics.sh", "--unparsed").status, NOT_COVERED)
+        self.assertEqual(self.c.cli_option("kafka-streams-application-reset.sh", "--unparsed").status, UNKNOWN)
+
+    def test_tool_without_complete_flag_is_incomplete(self):
+        import copy
+        data = copy.deepcopy(self.c.data)
+        for e in data["kafka_cli"]["entries"]:
+            e.pop("complete", None)
+        c = Catalogues(data)
+        self.assertEqual(c.cli_option("kafka-streams-application-reset.sh", "--unparsed").status, NOT_COVERED)
+
+    def test_manifest_hash_is_stable_and_follows_content(self):
+        m1, m2 = cat.manifest_for(FIX), cat.manifest_for(FIX)
+        self.assertEqual(m1, m2)
+        self.assertEqual(sorted(m1["files"]), ["kafka_cli.json", "kafka_config.json",
+                                               "strimzi_annotations.json", "strimzi_resources.json"])
+        self.assertEqual(len(m1["catalogue_hash"]), 64)
+        self.assertNotEqual(cat.manifest_for(os.path.join(FIX, "..", "catalogues_ext"))["catalogue_hash"],
+                            m1["catalogue_hash"])
+
+
+EXT = os.path.join(os.path.dirname(__file__), "fixtures", "catalogues_ext")
+
+
+class ErrorRestArgocdTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.c = Catalogues.load(EXT)
+
+    def test_error_name(self):
+        r = self.c.error_name("NOT_ENOUGH_REPLICAS_AFTER_APPEND")
+        self.assertEqual((r.status, r.data["code"]), (KNOWN, 20))
+        r = self.c.error_name("NOT_ENOUGH_REPLICA_AFTER_APPEND")
+        self.assertEqual(r.status, UNKNOWN)
+        self.assertEqual(r.data["similar"], ["NOT_ENOUGH_REPLICAS_AFTER_APPEND"])
+        self.assertEqual(Catalogues.load(FIX).error_name("X").status, NOT_COVERED)  # not loaded
+
+    def test_rest_operation_method_trap(self):
+        self.assertEqual(self.c.rest_operation("POST", "/connectors/orders/restart").status, KNOWN)
+        r = self.c.rest_operation("PUT", "/connectors/orders/restart")
+        self.assertEqual(r.status, UNKNOWN)
+        self.assertEqual(r.data["allowed_methods"], ["POST"])
+
+    def test_rest_operation_placeholders_and_urls(self):
+        for p in ("/connectors/{name}/status", "/connectors/<c>/status", "http://h:8083/connectors/x/status?a=1",
+                  "connectors/x/status/"):
+            self.assertEqual(self.c.rest_operation("get", p).status, KNOWN, p)
+        self.assertEqual(self.c.rest_operation("GET", "/connectors/x/stat").status, UNKNOWN)
+
+    def test_rest_not_complete_is_not_covered(self):
+        import copy
+        data = copy.deepcopy(self.c.data)
+        data["connect_rest"]["complete"] = False
+        c = Catalogues(data)
+        self.assertEqual(c.rest_operation("GET", "/nothing").status, NOT_COVERED)
+        self.assertEqual(c.rest_operation("GET", "/connectors/x/status").status, KNOWN)
+
+    def test_argocd_command_and_flags(self):
+        self.assertEqual(self.c.argocd_command("argocd  app sync").status, KNOWN)
+        self.assertEqual(self.c.argocd_command("argocd app syncc").status, UNKNOWN)
+        self.assertEqual(self.c.cli_option("argocd app sync", "--prune").status, KNOWN)
+        self.assertEqual(self.c.cli_option("argocd app sync", "--server").evidence, "options_table_inherited")
+        self.assertEqual(self.c.cli_option("argocd app sync", "--prunee").status, UNKNOWN)
 
 
 class MissingCatalogueTests(unittest.TestCase):

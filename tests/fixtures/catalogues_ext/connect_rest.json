@@ -1,0 +1,5 @@
+{"catalogue": "connect_rest", "complete": true, "entries": [
+ {"method": "POST", "path": "/connectors/{connector}/restart", "operation_id": "restartConnector", "summary": "Restart the specified connector", "path_params": ["connector"], "source_file": "fixture", "source_line": 1, "pin": "fixture", "provenance": ["exists"]},
+ {"method": "PUT", "path": "/connectors/{connector}/pause", "operation_id": "pauseConnector", "summary": "Pause the specified connector", "path_params": ["connector"], "source_file": "fixture", "source_line": 2, "pin": "fixture", "provenance": ["exists"]},
+ {"method": "GET", "path": "/connectors/{connector}/status", "operation_id": "getConnectorStatus", "summary": "Get the status", "path_params": ["connector"], "source_file": "fixture", "source_line": 3, "pin": "fixture", "provenance": ["exists"]}
+]}

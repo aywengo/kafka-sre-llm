@@ -1,0 +1,4 @@
+{"catalogue": "protocol_errors", "complete": true, "entries": [
+ {"name": "NOT_ENOUGH_REPLICAS_AFTER_APPEND", "code": 20, "retriable": true, "description": "Messages are written to the log, but to fewer in-sync replicas than required.", "source_file": "fixture", "source_line": 1, "pin": "fixture", "provenance": ["exists"]},
+ {"name": "UNKNOWN_TOPIC_OR_PARTITION", "code": 3, "retriable": true, "description": "This server does not host this topic-partition.", "source_file": "fixture", "source_line": 2, "pin": "fixture", "provenance": ["exists"]}
+]}

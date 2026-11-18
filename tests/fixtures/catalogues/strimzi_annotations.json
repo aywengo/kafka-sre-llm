@@ -1,4 +1,4 @@
-{"catalogue": "strimzi_annotations", "entries": [
+{"catalogue": "strimzi_annotations", "complete": false, "entries": [
  {"name": "strimzi.io/rebalance", "kind": "annotation", "values_seen": ["approve", "refresh", "stop"], "source_file": "fixture", "pin": "fixture"},
  {"name": "strimzi.io/kind", "kind": "label", "values_seen": ["Kafka", "KafkaUser"], "source_file": "fixture", "pin": "fixture"},
  {"name": "strimzi.io/pool-name", "kind": "label", "values_seen": [], "source_file": "fixture", "pin": "fixture"}

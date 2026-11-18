@@ -10,6 +10,15 @@ Output: JSON files in work/m4/catalogues/ (git-ignored), one per catalogue:
   argocd.json              argocd CLI (generated reference) and example manifests
   kubernetes.json          kubectl commands and manifest fields seen in the docs examples
 
+  protocol_errors.json     Kafka protocol error names (generated reference, protocol_errors.html)
+  connect_rest.json        Kafka Connect REST interface: method and path (connect_rest.yaml)
+  CATALOGUES.json          manifest: sha256 of every catalogue file and of the whole set
+
+Every entry carries `provenance` (a list: "exists" = schema, source code or generated reference,
+"documented" = seen in documentation prose or an example). Every catalogue carries `complete`;
+in kafka_cli.json every tool does too. Complete means the source is a full, generated list, so an
+identifier that is absent from it does not exist. Anything else is "not covered".
+
 Reads only files already on disk. No network, no git commands, nothing under raw/ is changed.
 Deterministic: running it twice gives byte-identical files. Fails loudly (exit 2) when a
 source file it expects is absent. Pins come from sources.yaml and runs/v3/INDEX_FROZEN.json.
@@ -26,7 +35,10 @@ from pathlib import Path
 
 import yaml
 
-VERSION = "build_catalogues/1"
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from kafka_sre_rag.catalogue import manifest_for  # noqa: E402
+
+VERSION = "build_catalogues/2"
 ROOT = Path(__file__).resolve().parent.parent
 RAW = ROOT / "raw"
 DEFAULT_OUT = ROOT / "work" / "m4" / "catalogues"
@@ -85,13 +97,25 @@ def dump(path, obj):
     path.write_text(json.dumps(obj, indent=1, sort_keys=True, ensure_ascii=False) + "\n")
 
 
-def header(name, pins, used, note):
-    return {
+def header(name, pins, used, note, complete, complete_reason, **extra):
+    h = {
         "catalogue": name,
         "generator": VERSION,
         "note": note,
+        "complete": complete,
+        "complete_reason": complete_reason,
         "sources": {n: pins[n] for n in sorted(used)},
     }
+    h.update(extra)
+    return h
+
+
+def line_of(text, pos):
+    return text.count("\n", 0, pos) + 1
+
+
+PROV_OF_EVIDENCE = {"options_table": ["exists"], "options_table_inherited": ["exists"],
+                    "seen_in_example": ["documented"]}
 
 
 # ------------------------------------------------------------------ kafka_config
@@ -150,7 +174,9 @@ def parse_config_html(text, scope, source_file, pin):
         if not anchors:
             continue
         key = html.unescape(anchors[-1]).strip()
-        e = {"scope": scope, "key": key, "source_file": source_file, "pin": pin}
+        e = {"scope": scope, "key": key, "source_file": source_file, "pin": pin,
+             "source_line": line_of(text, m.start(2)), "provenance": ["exists"]}
+        e["description"] = html.unescape(" ".join(clean(x) for x in re.findall(r"<p>(.*?)</p>", m.group(3), re.S))).strip()
         for k, v in ROW_RE.findall(m.group(3)):
             if k in ROW_FIELDS:
                 e[ROW_FIELDS[k]] = clean(v)
@@ -178,7 +204,10 @@ def build_kafka_config(pins):
     entries.sort(key=lambda e: (e["scope"], e.get("owner") or "", e["key"]))
     out = header("kafka_config", pins, ["apache-kafka-config"],
                  "Complete per scope. Metrics and protocol pages are not catalogued. "
-                 "Prefixed forms (producer.override.*, listener.name.*) are not listed.")
+                 "Prefixed forms (producer.override.*, listener.name.*) are not listed.",
+                 True, "generated configuration reference of Kafka 4.3, one page per scope; "
+                 "connector-specific keys and prefixed forms are not listed, so pass a scope",
+                 versions=["4.3"])
     out["entries"] = entries
     counts = defaultdict(int)
     for e in entries:
@@ -301,7 +330,8 @@ def build_strimzi_resources(pins):
         flatten(types, k, "", {k}, out)
         paths = {}
         for path, r in sorted(out.items()):
-            d = {"type": sorted(r["type"]), "declared_in": sorted(r["declared_in"])}
+            d = {"type": sorted(r["type"]), "declared_in": sorted(r["declared_in"]),
+                 "provenance": ["exists"]}
             if r["enum"]:
                 d["enum"] = sorted(r["enum"])
             if r["required_hint"]:
@@ -320,6 +350,7 @@ def build_strimzi_resources(pins):
                 "not stated in the reference; every apiVersion line of the checked-out docs is v1"),
             "root_type": k,
             "complete": True,
+            "provenance": ["exists"],
             "source": "api_reference",
             "source_file": rel(f),
             "pin": pin,
@@ -330,7 +361,10 @@ def build_strimzi_resources(pins):
                  "NOT on disk (only documentation/ is checked out). required_hint is true when the "
                  "description says 'Required.'; the reference has no machine-readable required list. "
                  "Subtype fields (discriminated by 'type') are merged into one set per path. "
-                 "Paths below an 'open' field (free-form map, e.g. config) are not enumerated.")
+                 "Paths below an 'open' field (free-form map, e.g. config) are not enumerated.",
+                 True, "the API reference is generated from the API classes and lists every property of "
+                 "every type; paths below free-form or external-typed fields are not covered",
+                 versions=["strimzi 1.3.1"])
     out["entries"] = kinds
     total = sum(len(k["paths"]) for k in kinds)
     return out, "%d kinds, %d field paths (%s)" % (
@@ -407,12 +441,14 @@ def build_strimzi_annotations(pins):
             "source_files": sorted(e["files"]),
             "source_file": sorted(e["files"])[0],
             "pin": pin,
+            "provenance": ["documented"],
         })
     out = header("strimzi_annotations", pins, ["strimzi"],
                  "Names with the prefix strimzi.io/ found in the Strimzi documentation. 'kind' is "
                  "decided from the surrounding text and is a heuristic. A name that is absent here "
                  "is not proof of invention: operator-applied labels and annotations are only "
-                 "listed when the docs mention them.")
+                 "listed when the docs mention them.",
+                 False, "names the documentation mentions, not a generated list")
     out["entries"] = out_entries
     return out, "%d names" % len(out_entries)
 
@@ -484,12 +520,14 @@ def finish_tools(tools, pin, complete_when):
     for tool, t in sorted(tools.items()):
         opts = {}
         for opt, o in sorted(t["options"].items()):
-            opts[opt] = {"evidence": o["evidence"], "files": sorted(o["files"]), "seen": o["seen"]}
+            opts[opt] = {"evidence": o["evidence"], "files": sorted(o["files"]), "seen": o["seen"],
+                         "provenance": PROV_OF_EVIDENCE[o["evidence"]]}
         has_table = any(o["evidence"] in ("options_table",) for o in opts.values())
         res.append({
             "tool": tool,
             "complete": complete_when(t, has_table),
             "options": opts,
+            "provenance": sorted({p for o in opts.values() for p in o["provenance"]}) or ["documented"],
             "source_files": sorted({f for o in opts.values() for f in o["files"]}),
             "pin": pin,
         })
@@ -544,7 +582,9 @@ def build_kafka_cli(pins):
         e["source_file"] = e["source_files"][0] if e["source_files"] else None
     out = header("kafka_cli", pins, ["apache-kafka", "strimzi"],
                  "complete is true only for a tool whose full options table is on disk; for the "
-                 "others an option that is not listed is NOT proof that it does not exist.")
+                 "others an option that is not listed is NOT proof that it does not exist.",
+                 False, "only kafka-streams-application-reset.sh has a full options table on disk; "
+                 "every other tool is known from examples. See the per-tool complete flag.")
     out["entries"] = entries
     full = [e["tool"] for e in entries if e["complete"]]
     return out, "%d tools, %d options (%d with an options table: %s)" % (
@@ -609,8 +649,10 @@ def manifest_entries(docs_by_file, pin):
     for (av, kind), e in sorted(kinds.items()):
         res.append({
             "kind": kind, "api_version": av, "complete": False, "source": "example_manifests",
+            "provenance": ["documented"],
             "source_file": sorted(e["files"])[0], "source_files": sorted(e["files"]), "pin": pin,
-            "paths": {p: {"type": sorted(r["type"]), "files": sorted(r["files"])}
+            "paths": {p: {"type": sorted(r["type"]), "files": sorted(r["files"]),
+                          "provenance": ["documented"]}
                       for p, r in sorted(e["paths"].items())},
         })
     return res
@@ -627,10 +669,13 @@ def build_argocd(pins):
         raise MissingSource("no argocd command reference under %s" % cmd_dir)
     need(cmd_dir / "argocd_app_sync.md")
     tools = {}
+    shorts = {}
     for f in cmd_files + srv_files:
         cmd, own, inh = parse_cobra_md(f.read_text())
         if not cmd:
             continue
+        sm = re.search(r"^## .+\n+(.+)$", f.read_text(), re.M)
+        shorts[cmd] = sm.group(1).strip() if sm else ""
         t = tools.setdefault(cmd, {"options": {}})
         for o in own:
             add_opt(tools, cmd, o, "options_table", rel(f))
@@ -639,6 +684,7 @@ def build_argocd(pins):
     cli = finish_tools(tools, pin, lambda t, has_table: True)
     for e in cli:
         e["source_file"] = e["source_files"][0] if e["source_files"] else None
+        e["description"] = shorts.get(e["tool"], "")
     # example manifests
     mf = [need(root / "operator-manual" / n) for n in ("application.yaml", "project.yaml", "applicationset.yaml")]
     docs = []
@@ -652,7 +698,10 @@ def build_argocd(pins):
                  "cli: every command of the generated reference, options complete (own and "
                  "inherited). resources: field paths seen in the fully commented example manifests "
                  "under docs/operator-manual (not a schema; complete=false). The CRD YAML files "
-                 "are not on disk.")
+                 "are not on disk.",
+                 False, "the CLI part is complete (generated cobra reference); the resource part is "
+                 "examples only", complete_parts={"cli": True, "resources": False},
+                 versions=["argo-cd v3.6.1"])
     out["cli"] = cli
     out["resources"] = res
     nopt = len({o for e in cli for o in e["options"]})
@@ -702,11 +751,82 @@ def build_kubernetes(pins):
                  "Only the docs prose (concepts, tasks) is on disk; the API reference, the OpenAPI "
                  "schema and the kubectl reference are not. This catalogue holds what the examples "
                  "show: kinds with the field paths seen, and kubectl sub-commands with the flags "
-                 "seen. complete=false everywhere: a missing item is not proof of invention.")
+                 "seen. complete=false everywhere: a missing item is not proof of invention.",
+                 False, "examples from the docs prose only; no API reference, OpenAPI schema or "
+                 "kubectl reference on disk")
     out["resources"] = res
     out["cli"] = cli
     return out, "%d resource kinds, %d example paths, %d kubectl sub-commands, %d flags seen" % (
         len(res), sum(len(r["paths"]) for r in res), len(cli), sum(len(c["options"]) for c in cli))
+
+
+# ------------------------------------------------------------------ protocol errors
+ERR_ROW_RE = re.compile(r"<tr><td>([A-Z0-9_]+)</td><td>(-?\d+)</td><td>(True|False)</td><td>(.*?)</td></tr>", re.S)
+
+
+def parse_protocol_errors(text, source_file, pin):
+    ents = []
+    for m in ERR_ROW_RE.finditer(text):
+        ents.append({"name": m.group(1), "code": int(m.group(2)), "retriable": m.group(3) == "True",
+                     "description": clean(m.group(4)), "source_file": source_file,
+                     "source_line": line_of(text, m.start()), "pin": pin, "provenance": ["exists"]})
+    return ents
+
+
+def build_protocol_errors(pins):
+    f = need(RAW / "apache-kafka-config" / "content" / "en" / "43" / "generated" / "protocol_errors.html")
+    pin = pin_str(pins, "apache-kafka-config")
+    text = f.read_text()
+    ents = parse_protocol_errors(text, rel(f), pin)
+    rows = text.count("<tr><td>")
+    if not ents or len(ents) != rows:
+        raise MissingSource("protocol_errors.html: parsed %d of %d rows" % (len(ents), rows))
+    ents.sort(key=lambda e: e["code"])
+    out = header("protocol_errors", pins, ["apache-kafka-config"],
+                 "Error names of the Kafka protocol as listed in the generated reference "
+                 "(name, code, retriable, description). Java exception class names are not listed.",
+                 True, "generated protocol reference of Kafka 4.3: every error code the protocol defines",
+                 versions=["4.3"])
+    out["entries"] = ents
+    return out, "%d error names" % len(ents)
+
+
+# ------------------------------------------------------------------ connect rest
+HTTP_METHODS = ("get", "put", "post", "delete", "patch", "head", "options")
+
+
+def parse_connect_rest(text, source_file, pin):
+    doc = yaml.safe_load(text)
+    lines = text.split("\n")
+    ents = []
+    for path, ops in sorted(doc["paths"].items()):
+        pi = next(i for i, l in enumerate(lines) if l == "  %s:" % path)
+        for method in HTTP_METHODS:
+            if method not in ops:
+                continue
+            mi = next(i for i in range(pi + 1, len(lines)) if lines[i] == "    %s:" % method)
+            op = ops[method]
+            ents.append({"method": method.upper(), "path": path, "operation_id": op.get("operationId"),
+                         "summary": " ".join(str(op.get("summary", "")).split()),
+                         "path_params": [p["name"] for p in op.get("parameters", []) if p.get("in") == "path"],
+                         "source_file": source_file, "source_line": mi + 1, "pin": pin,
+                         "provenance": ["exists"]})
+    return ents
+
+
+def build_connect_rest(pins):
+    f = need(RAW / "apache-kafka-config" / "content" / "en" / "43" / "generated" / "connect_rest.yaml")
+    pin = pin_str(pins, "apache-kafka-config")
+    ents = parse_connect_rest(f.read_text(), rel(f), pin)
+    if not ents:
+        raise MissingSource("no operations parsed from %s" % f)
+    out = header("connect_rest", pins, ["apache-kafka-config"],
+                 "Method and path pairs of the Kafka Connect REST interface (OpenAPI generated from the "
+                 "worker's resources).", True,
+                 "generated OpenAPI document of the Connect worker: every path and method it serves",
+                 versions=["4.3"])
+    out["entries"] = ents
+    return out, "%d operations on %d paths" % (len(ents), len({e["path"] for e in ents}))
 
 
 # ------------------------------------------------------------------ main
@@ -717,6 +837,8 @@ BUILDERS = [
     ("kafka_cli", build_kafka_cli, ["apache-kafka", "strimzi"]),
     ("argocd", build_argocd, ["argo-cd"]),
     ("kubernetes", build_kubernetes, ["kubernetes"]),
+    ("protocol_errors", build_protocol_errors, ["apache-kafka-config"]),
+    ("connect_rest", build_connect_rest, ["apache-kafka-config"]),
 ]
 
 
@@ -738,6 +860,9 @@ def main(argv=None):
     for name, (obj, summary) in results:
         dump(out_dir / (name + ".json"), obj)
         print("%-20s %s" % (name + ".json", summary))
+    man = manifest_for(out_dir)
+    dump(out_dir / "CATALOGUES.json", man)
+    print("%-20s catalogue hash %s" % ("CATALOGUES.json", man["catalogue_hash"]))
     return 0
 
 

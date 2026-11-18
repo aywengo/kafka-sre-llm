@@ -29,3 +29,6 @@ runs/v1/*
 !runs/v1/REPORT.md
 data_v1/
 data_resume2/
+
+# generated M4 evaluation items (the open/hidden split is made from these)
+eval/m4/build/

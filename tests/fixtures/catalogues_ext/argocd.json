@@ -1,0 +1,107 @@
+{
+ "catalogue": "argocd",
+ "complete": false,
+ "complete_parts": {
+  "cli": true,
+  "resources": false
+ },
+ "cli": [
+  {
+   "tool": "argocd app",
+   "complete": true,
+   "pin": "fixture",
+   "source_file": "fixture",
+   "description": "group",
+   "options": {
+    "--server": {
+     "evidence": "options_table",
+     "files": [
+      "fixture"
+     ],
+     "seen": 1,
+     "provenance": [
+      "exists"
+     ]
+    }
+   }
+  },
+  {
+   "tool": "argocd",
+   "complete": true,
+   "pin": "fixture",
+   "source_file": "fixture",
+   "description": "group",
+   "options": {
+    "--server": {
+     "evidence": "options_table",
+     "files": [
+      "fixture"
+     ],
+     "seen": 1,
+     "provenance": [
+      "exists"
+     ]
+    }
+   }
+  },
+  {
+   "tool": "argocd app sync",
+   "complete": true,
+   "pin": "fixture",
+   "source_file": "fixture",
+   "description": "Sync an application",
+   "options": {
+    "--prune": {
+     "evidence": "options_table",
+     "files": [
+      "fixture"
+     ],
+     "seen": 1,
+     "provenance": [
+      "exists"
+     ]
+    },
+    "--dry-run": {
+     "evidence": "options_table",
+     "files": [
+      "fixture"
+     ],
+     "seen": 1,
+     "provenance": [
+      "exists"
+     ]
+    },
+    "--server": {
+     "evidence": "options_table_inherited",
+     "files": [
+      "fixture"
+     ],
+     "seen": 1,
+     "provenance": [
+      "exists"
+     ]
+    }
+   }
+  }
+ ],
+ "resources": [
+  {
+   "kind": "Application",
+   "api_version": "argoproj.io/v1alpha1",
+   "complete": false,
+   "source": "example_manifests",
+   "source_file": "fixture",
+   "pin": "fixture",
+   "paths": {
+    "spec": {
+     "type": [
+      "object"
+     ],
+     "files": [
+      "fixture"
+     ]
+    }
+   }
+  }
+ ]
+}
