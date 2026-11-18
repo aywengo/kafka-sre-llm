@@ -124,7 +124,7 @@ class Prompt(unittest.TestCase):
 
     def test_instruction_verbatim_and_no_reference(self):
         design = (ROOT / "agents/m4-evaluation.md").read_text()
-        self.assertIn(ej.JUDGE_INSTRUCTION, design)
+        self.assertTrue(ej.JUDGE_INSTRUCTION_V1 in design or ej.JUDGE_INSTRUCTION_V2 in design)   # the design states the version in use
         system, user = ej.build_prompt(dict(self.item(), rubric=dict(RUBRIC, reference="SECRET ANSWER")), 1, {}, 1000)
         self.assertEqual(system, ej.JUDGE_INSTRUCTION)
         self.assertNotIn("SECRET ANSWER", user)
@@ -476,6 +476,401 @@ class FlushedProgress(unittest.TestCase):
         self.assertGreaterEqual(seen_while_running, 1, out.read_text())
         self.assertTrue(still_running, "the first progress line was only visible after the process ended")
         self.assertEqual(out.read_text().count("[judge]"), 3)
+
+# ---------------------------------------------------------------- version 2
+
+import hashlib  # noqa: E402
+import io  # noqa: E402
+import contextlib  # noqa: E402
+import re  # noqa: E402
+
+CHUNKS = {"c1": {"id": "c1", "path": "raw/a/one.md", "text": "Setting a controls the thing. Default is 5."},
+          "c2": {"id": "c2", "path": "raw/b/two.md", "text": "Never delete the volume while the pod runs."},
+          "c3": {"id": "c3", "path": "raw/c/three.md", "text": "Unrelated passage."}}
+
+
+class FairQuotes(unittest.TestCase):
+    def found(self, quote, text):
+        return ej.quote_found(quote, ej.fair_norm(text))
+
+    def test_formatting_is_ignored_on_both_sides(self):
+        self.assertTrue(self.found("raise `max.poll.interval.ms` to 600000", "You should **raise max.poll.interval.ms** to 600000."))
+        self.assertTrue(self.found("- first step\n- second step", "Steps:\n* first step\n* second step"))
+        self.assertTrue(self.found("2) do this", "Then:\n1. do this now"))
+        self.assertTrue(self.found("kubectl get pods -n kafka", "```bash\nkubectl get pods   -n kafka\n```"))
+        self.assertTrue(self.found("```yaml\nkind: Kafka\n```", "kind: Kafka"))
+        self.assertTrue(self.found("**Note:** the value", "Note: the   value"))
+
+    def test_plain_missing_and_empty_fail(self):
+        self.assertFalse(self.found("restart the broker", "reload the broker"))
+        self.assertFalse(self.found("", "anything"))
+        self.assertFalse(self.found("   ", "anything"))
+        self.assertFalse(self.found("a paraphrase with provided words", "a paraphrase with words"))
+
+    def test_ellipsis_fragments_in_order_at_least_twelve_characters(self):
+        ans = "First we set the partition count to six. Then we wait. Finally verify the leader election result."
+        self.assertTrue(self.found("set the partition count to six ... verify the leader election", ans))
+        self.assertTrue(self.found("set the partition count to six\u2026verify the leader election", ans))
+        self.assertTrue(self.found("set the partition count to six ...", ans))            # trailing ellipsis: one fragment
+        self.assertFalse(self.found("verify the leader election ... set the partition count to six", ans))   # out of order
+        self.assertTrue(self.found("set the partition ... verify the leader election", ans))   # fragments of 17 and 26 characters
+        # a fragment shorter than 12 characters fails even if present and in order
+        self.assertFalse(self.found("set the partition count to six ... Then we", ans))
+        self.assertFalse(self.found("First we ... verify the leader election", ans))
+        # a quote that contains "..." literally in the answer is found as it is
+        self.assertTrue(self.found("kafka-topics.sh ... --describe", "run kafka-topics.sh ... --describe now"))
+
+    def test_the_old_pilot_cache_gives_six_failures_of_443(self):
+        cache = ROOT / "work/m4/pilot/judge_cache.jsonl"
+        if not cache.exists():
+            self.skipTest("work/m4/pilot/judge_cache.jsonl not on this machine (generated, git-ignored)")
+        W = ROOT / "work/v3"
+        sets = {"real_default": W / "ans_rag_real_s1.jsonl", "real_strict": W / "ans_rag_strict.jsonl",
+                "real_v2_own_terms": W / "v2rag/ans_v2_ownexp.jsonl", "real_v2_base_excerpts": W / "v2rag/ans_v2_baseexp.jsonl",
+                "holdout_default": W / "ans_rag_holdout_s1.jsonl", "holdout_strict": W / "strict/ans_rag_holdout_strict.jsonl"}
+        if not all(p.exists() for p in sets.values()):
+            self.skipTest("old answer files not on this machine")
+        out = Path(tempfile.mkdtemp()) / "rescored.jsonl"
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = ej.main(["run", "--rubrics", str(ROOT / "eval/m4/pilot/rubrics.jsonl"),
+                          "--qmap", f"real={ROOT / 'eval/questions_real.jsonl'}", f"holdout={ROOT / 'eval/questions_runbooks_holdout.jsonl'}",
+                          "--chunks", str(W / "chunks_s1.jsonl"), "--source-chars", "12000", "--answers",
+                          *[f"{k}={v}" for k, v in sets.items()], "--judge-model", "DeepSeek-V4.1-Flash-1017-oQ4e-mtp",
+                          "--settings-name", "deepseek-nothink-12k", "--instruction", "v1", "--cache", str(cache),
+                          "--out", str(out), "--rescore"])
+        self.assertEqual(rc, 0)
+        rows = [json.loads(l) for l in out.read_text().splitlines()]
+        self.assertEqual(len(rows), 160)
+        self.assertEqual((sum(r["quote_claims"] for r in rows), sum(r["quote_failed"] for r in rows)), (443, 6))
+
+
+class InstructionVersions(unittest.TestCase):
+    def test_v1_is_unchanged(self):
+        self.assertEqual(hashlib.md5(ej.JUDGE_INSTRUCTION_V1.encode()).hexdigest(), "450b8509430fcf16ce0b1e2fc9afd528")
+        self.assertIs(ej.JUDGE_INSTRUCTION, ej.JUDGE_INSTRUCTION_V1)
+
+    def test_v2_differs_in_exactly_three_places(self):
+        v1, v2 = ej.JUDGE_INSTRUCTION_V1, ej.JUDGE_INSTRUCTION_V2
+        back = (v2.replace(" A definition of a setting is not a recommendation to change it; a default value is not a change.", "")
+                .replace(ej._V2_OTHER, ej._V1_OTHER).replace(ej._V2_FORMAT, ej._V1_FORMAT))
+        self.assertEqual(back, v1)
+        self.assertIn("A definition of a setting is not a recommendation to change it; a default value is not a change.", v2)
+        self.assertIn('List another statement only if a sentence in SOURCE PASSAGES or ANSWER EXCERPTS contradicts it. '
+                      'Quote that sentence in "source_quote". Do not list statements that are absent from them.', v2)
+        self.assertIn('"other_errors":[{"quote":"","source_quote":"","why":""}]', v2)
+        self.assertNotIn("source_quote", v1)
+        self.assertEqual(len([1 for a, b in zip(v1.splitlines(), v2.splitlines()) if a != b]), 3)
+
+    def test_cache_key_v1_as_before_v2_separate(self):
+        it = {"set": "s", "id": "t-1"}
+        old = hashlib.md5("m\x001\x00s\x00t-1\x00SYS\x00USR".encode()).hexdigest()
+        self.assertEqual(ej.cache_key("m", 1, it, "SYS", "USR"), old)
+        self.assertEqual(ej.cache_key("m", 1, it, "SYS", "USR", instruction="v1"), old)
+        self.assertNotEqual(ej.cache_key("m", 1, it, "SYS", "USR", instruction="v2"), old)
+        named = ej.cache_key("m", 1, it, "SYS", "USR", "n1")
+        self.assertNotEqual(ej.cache_key("m", 1, it, "SYS", "USR", "n1", "v2"), named)
+
+    def test_version_in_cache_entry_and_row(self):
+        it = {"set": "s", "id": "t-1", "question": RUBRIC["question"], "answer": ANSWER, "rubric": RUBRIC}
+        cache = Path(tempfile.mkdtemp()) / "c.jsonl"
+        rows, n_new, _ = ej.run([it], [1], ej.stub_judge, "m", {}, 1000, str(cache), say=lambda s: None, instruction="v2")
+        self.assertEqual(rows[0]["instruction"], "v2")
+        self.assertEqual(json.loads(cache.read_text().splitlines()[0])["instruction"], "v2")
+        rows1, n1, _ = ej.run([dict(it)], [1], ej.stub_judge, "m", {}, 1000, str(cache), say=lambda s: None, instruction="v1")
+        self.assertEqual((n_new, n1), (1, 1))          # a v1 judgment is not found under the v2 key
+        self.assertEqual(rows1[0]["instruction"], "v1")
+
+
+class ExcerptsAndPrompt(unittest.TestCase):
+    def item(self, **kw):
+        base = {"set": "s", "id": "t-1", "question": RUBRIC["question"], "answer": ANSWER,
+                "rubric": dict(RUBRIC, covered_chunks=["c3"]), "pack": ["c1", "c2"]}
+        base.update(kw)
+        return base
+
+    def test_v2_has_two_labelled_blocks_v1_has_one(self):
+        s2, u2 = ej.build_prompt(self.item(), 1, CHUNKS, 1000, "v2")
+        self.assertEqual(s2, ej.JUDGE_INSTRUCTION_V2)
+        self.assertIn("SOURCE PASSAGES:\n[c3] raw/c/three.md\nUnrelated passage.", u2)
+        self.assertIn("ANSWER EXCERPTS", u2)
+        self.assertIn("[c1] raw/a/one.md\nSetting a controls the thing.", u2)
+        self.assertIn("[c2] raw/b/two.md", u2)
+        self.assertLess(u2.index("SOURCE PASSAGES"), u2.index("ANSWER EXCERPTS"))
+        self.assertLess(u2.index("ANSWER EXCERPTS"), u2.index("ANSWER TO CHECK"))
+        self.assertIn("about what its excerpts contain or lack is checked against these only", u2)
+        s1, u1 = ej.build_prompt(self.item(), 1, CHUNKS, 1000, "v1")
+        self.assertEqual(s1, ej.JUDGE_INSTRUCTION_V1)
+        self.assertNotIn("ANSWER EXCERPTS", u1)
+        self.assertNotIn("raw/a/one.md", u1)
+
+    def test_no_pack_is_marked_and_zero_source_chars_drops_both_blocks(self):
+        _, u = ej.build_prompt(self.item(pack=None), 1, CHUNKS, 1000, "v2")
+        self.assertIn("ANSWER EXCERPTS", u)
+        self.assertIn("(not available)", u)
+        s0, u0 = ej.build_prompt(self.item(), 1, CHUNKS, 0, "v2")
+        self.assertEqual(s0, ej.JUDGE_INSTRUCTION_V2_NO_SOURCES)
+        self.assertNotIn("ANSWER EXCERPTS", u0)
+        self.assertNotIn("SOURCE PASSAGES", u0)
+        self.assertIn('Leave "other_errors" as an empty list.', s0)
+
+    def test_excerpt_cap_and_unknown_chunk(self):
+        big = {"b": {"id": "b", "path": "p", "text": "X" * 500}}
+        self.assertIn("[...]", ej.excerpt_text(["b"], big, 100))
+        with self.assertRaises(ValueError):
+            ej.excerpt_text(["nope"], CHUNKS, 100)
+
+    def test_reference_only_when_asked(self):
+        _, u = ej.build_prompt(self.item(), 1, CHUNKS, 1000, "v2")
+        self.assertNotIn("REFERENCE ANSWER", u)
+        items, _ = ej.match_items([dict(RUBRIC, reference="THE REFERENCE")], {"x": [{"question": RUBRIC["question"], "text": ANSWER}]},
+                                  {}, with_reference=True)
+        _, u = ej.build_prompt(items[0], 1, CHUNKS, 1000, "v2")
+        self.assertIn("REFERENCE ANSWER:\nTHE REFERENCE", u)
+        self.assertLess(u.index("REFERENCE ANSWER"), u.index("ANSWER TO CHECK"))
+        with self.assertRaises(ValueError):
+            ej.match_items([RUBRIC], {"x": [{"question": RUBRIC["question"], "text": ANSWER}]}, {}, with_reference=True)
+
+    def test_matching_by_id_and_pack_sources(self):
+        rubrics = [dict(RUBRIC, id="p-1"), dict(RUBRIC, id="p-2", question="Other?")]
+        sets = {"A": [{"id": "p-1", "text": "ans one", "pack": ["c1", "c2"]}, {"id": "p-2", "text": "ans two", "pack": None}],
+                "B": [{"question": "Other?", "text": "ans b"}]}
+        packs = {"B": {"Other?": ["c3"]}}
+        items, counts = ej.match_items(rubrics, sets, {}, packs=packs)
+        self.assertEqual(dict(counts), {"A": 2, "B": 1})
+        self.assertEqual([(i["set"], i["id"], i["pack"]) for i in items], [("A", "p-1", ["c1", "c2"]), ("A", "p-2", None), ("B", "p-2", ["c3"])])
+        self.assertEqual(ej.pack_ids_of({"k6": ["x", "y"]}), ["x", "y"])
+        self.assertEqual(ej.pack_ids_of({"pack": [{"id": "z"}]}), ["z"])
+        self.assertIsNone(ej.pack_ids_of({"text": "t"}))
+
+
+class SourceQuoteValidation(unittest.TestCase):
+    ITEM = {"set": "s", "id": "t-1", "question": RUBRIC["question"], "answer": ANSWER, "rubric": RUBRIC,
+            "pack": ["c1", "c2"]}
+
+    def reply(self, other):
+        return {"must": [{"id": i, "verdict": "absent", "quote": ""} for i in ("m1", "m2", "m3", "m4")],
+                "must_not": [{"id": i, "verdict": "absent", "quote": ""} for i in ("n1", "n2")], "other_errors": other}
+
+    def test_other_error_needs_a_source_quote_found_in_what_the_judge_saw(self):
+        it = dict(self.ITEM)
+        ej.prepare_items([it], CHUNKS, 1000, 1000, "v2")
+        j = self.reply([
+            {"quote": "Set a=1 first.", "source_quote": "Default is 5.", "why": "from the excerpt"},          # in ANSWER EXCERPTS
+            {"quote": "raise c to 10", "source_quote": "Setting a  controls the thing", "why": "ws"},          # whitespace
+            {"quote": "lower d", "source_quote": "Setting z controls the thing", "why": "not in anything"},    # dropped
+            {"quote": "lower d", "source_quote": "", "why": "no source quote"},                                # dropped
+            {"quote": "lower d", "why": "no field at all"}])                                                   # dropped
+        entry = {"key": "k", "j": j, "instruction": "v2"}
+        row = ej.result_row(it, 1, entry)
+        self.assertEqual(row["other_errors_n"], 2)
+        self.assertEqual(row["other_dropped"], 3)
+        self.assertEqual(row["judge_errors"].count("source_quote_not_found:other"), 3)
+        self.assertEqual(row["instruction"], "v2")
+        self.assertEqual(row["n_candidates"], 2)
+
+    def test_source_passages_count_too_and_v1_keeps_every_entry(self):
+        it = dict(self.ITEM, rubric=dict(RUBRIC, covered_chunks=["c3"]))
+        ej.prepare_items([it], CHUNKS, 1000, 1000, "v2")
+        j = self.reply([{"quote": "lower d", "source_quote": "Unrelated passage.", "why": "w"}])
+        self.assertEqual(ej.result_row(it, 1, {"key": "k", "j": j, "instruction": "v2"})["other_errors_n"], 1)
+        j1 = self.reply([{"quote": "lower d", "why": "w"}])
+        self.assertEqual(ej.result_row(self.ITEM, 1, {"key": "k", "j": j1})["other_errors_n"], 1)     # no instruction field: v1
+
+    def test_row_quote_checks_use_fair_matching(self):
+        j = self.reply([])
+        j["must"][0] = {"id": "m1", "verdict": "present", "quote": "**Set** `a=1` first. ... then lower d"}
+        row = ej.result_row(self.ITEM, 1, {"key": "k", "j": j})
+        self.assertEqual(row["must"]["m1"]["verdict"], "present")
+        self.assertEqual((row["quote_claims"], row["quote_failed"]), (1, 0))
+
+
+class SupportedEssentialMiss(unittest.TestCase):
+    R = {"id": "t-2", "question": "q",
+         "must": [{"id": "m1", "text": "a", "weight": 2, "first": False, "source": "raw/a/one.md:12-15; raw/z/other.md:3"},
+                  {"id": "m2", "text": "b", "weight": 2, "first": False, "source": "raw/x/none.md:1", "chunks": ["c2"]},
+                  {"id": "m3", "text": "c", "weight": 2, "first": False},
+                  {"id": "m4", "text": "d", "weight": 2, "first": False, "source": "raw/b/two.md:1"},
+                  {"id": "m5", "text": "e", "weight": 1, "first": False, "source": "raw/a/one.md:1"}],
+         "must_not": [], "any_of": [["m3", "m4"]]}
+
+    def test_rules_chunk_path_none_no_pack(self):
+        pack, paths = ["c1"], ["raw/a/one.md"]
+        got = ej.supported_points(self.R, ["m1", "m2", "m3"], pack, paths)
+        self.assertEqual(got, [{"id": "m1", "supported": True, "rule": "path"},
+                               {"id": "m2", "supported": False, "rule": "chunk"},      # chunk id given: the path is not consulted
+                               {"id": "m3", "supported": False, "rule": "none"}])
+        self.assertTrue(ej.supported_points(self.R, ["m2"], ["c2"], ["raw/b/two.md"])[0]["supported"])
+        self.assertEqual(ej.supported_points(self.R, ["m1"], None, None), [{"id": "m1", "supported": False, "rule": "no_pack"}])
+        self.assertEqual(ej.point_paths(self.R["must"][0]), ["raw/a/one.md", "raw/z/other.md"])
+
+    def test_row_flags(self):
+        # m1 absent (weight 2, path in the excerpts): supported. m3 absent but its any_of alternative m4 present: no essential miss.
+        it = {"set": "s", "id": "t-2", "question": "q", "answer": "x y z", "rubric": self.R, "pack": ["c1"], "excerpt_paths": ["raw/a/one.md"]}
+        j = {"must": [{"id": "m1", "verdict": "absent", "quote": ""}, {"id": "m2", "verdict": "absent", "quote": ""},
+                      {"id": "m3", "verdict": "absent", "quote": ""}, {"id": "m4", "verdict": "present", "quote": "x y"},
+                      {"id": "m5", "verdict": "absent", "quote": ""}], "must_not": [], "other_errors": []}
+        row = ej.result_row(it, 1, {"key": "k", "j": j})
+        self.assertEqual([e["id"] for e in row["essential_points"]], ["m1", "m2"])
+        self.assertTrue(row["essential_miss"])
+        self.assertTrue(row["supported_essential_miss"])
+        it2 = dict(it, excerpt_paths=["raw/other.md"])
+        row2 = ej.result_row(it2, 1, {"key": "k", "j": j})
+        self.assertTrue(row2["essential_miss"])
+        self.assertFalse(row2["supported_essential_miss"])      # the sources of m1 and m2 are not among the answer's excerpts
+
+
+class CandidatesAndReview(unittest.TestCase):
+    def row(self, pass_no, must_not_quote, other_quote, sev="wrong"):
+        rub = dict(RUBRIC, must_not=[{"id": "n1", "text": "Says restart", "severity": sev},
+                                     {"id": "n2", "text": "Says delete", "severity": "harmful"}])
+        it = {"set": "s", "id": "t-1", "question": RUBRIC["question"], "answer": "We restart the broker now. Also delete it later. Odd claim here.",
+              "rubric": rub, "pack": ["c1"], "excerpt_paths": ["raw/a/one.md"], "source": "", "excerpts": "Odd claim is false."}
+        j = {"must": [{"id": i, "verdict": "absent", "quote": ""} for i in ("m1", "m2", "m3", "m4")],
+             "must_not": [{"id": "n1", "verdict": "present" if must_not_quote else "absent", "quote": must_not_quote or ""},
+                          {"id": "n2", "verdict": "absent", "quote": ""}],
+             "other_errors": [{"quote": other_quote, "source_quote": "Odd claim is false.", "why": "contradicts the excerpt"}] if other_quote else []}
+        return ej.result_row(it, pass_no, {"key": f"k{pass_no}", "j": j, "instruction": "v2"})
+
+    def test_candidates_are_deduplicated_across_channels_by_overlapping_quotes(self):
+        r = self.row(1, "We restart the broker now.", "restart the broker now")
+        self.assertEqual(r["n_candidates"], 1)
+        c = r["candidates"][0]
+        self.assertEqual(c["channels"], ["must_not", "other_errors"])
+        self.assertEqual(c["severity"], "wrong")
+        self.assertEqual(c["points"], ["n1"])
+        r = self.row(1, "We restart the broker now.", "Odd claim here.")
+        self.assertEqual(r["n_candidates"], 2)
+
+    def test_review_file_merges_passes_and_leaves_decision_fields_empty(self):
+        rows = [self.row(1, "We restart the broker now.", "Odd claim here."), self.row(2, "restart the broker", None)]
+        rev = ej.review_rows(rows)
+        self.assertEqual(len(rev), 2)
+        a = next(x for x in rev if "must_not" in x["channels"])
+        self.assertEqual(a["passes"], [1, 2])
+        self.assertEqual(sorted(a["members"]), [[1, 0], [2, 0]])
+        self.assertEqual((a["confirmed"], a["note"]), ("", ""))
+        self.assertEqual(a["flag_id"], "s:t-1:1")
+        b = next(x for x in rev if x is not a)
+        self.assertEqual(b["passes"], [1])
+
+    def test_confirmed_per_ten_answers(self):
+        rows = []
+        for i in range(1, 5):                           # four answers of the set "s"
+            r = self.row(1, "We restart the broker now.", None, sev="harmful" if i == 1 else "wrong")
+            r["id"] = f"t-{i}"
+            rows.append(r)
+        rev = ej.review_rows(rows)
+        self.assertEqual(len(rev), 4)
+        for x, c in zip(rev, ("yes", "no", "harmful", "")):
+            x["confirmed"] = c
+        m = ej.confirmed_summary(rev, rows)["s"]
+        self.assertEqual((m["answers"], m["flags"], m["undecided"]), (4, 4, 1))
+        self.assertEqual((m["confirmed_wrong"], m["confirmed_harmful"]), (2, 2))     # t-1 yes + harmful rubric; t-3 'harmful'
+        self.assertAlmostEqual(m["wrong_per10"], 5.0)
+        self.assertAlmostEqual(m["harmful_per10"], 5.0)
+
+
+class Measures(unittest.TestCase):
+    def test_per_answer_and_per_ten(self):
+        r1 = CandidatesAndReview().row(1, "We restart the broker now.", "Odd claim here.")
+        r2 = CandidatesAndReview().row(1, None, None)
+        r2["id"] = "t-2"
+        m = ej.measures([r1, r2])["s"][1]
+        self.assertEqual((m["n"], m["candidates"]), (2, 2))
+        self.assertAlmostEqual(m["candidates_per10"], 10.0)
+        self.assertAlmostEqual(m["mean_P"], 0.0)
+        self.assertEqual(m["essential_miss"], 2)
+
+
+class MainSubcommands(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        (self.tmp / "chunks.jsonl").write_text("".join(json.dumps(c) + "\n" for c in CHUNKS.values()))
+        (self.tmp / "items.jsonl").write_text(json.dumps({"id": "p-1", "question": "Why does X fail?", "evidence": "log: boom"}) + "\n")
+        (self.tmp / "rubrics.jsonl").write_text(json.dumps(dict(RUBRIC, id="p-1", question=None)).replace('"question": null,', "") + "\n")
+        (self.tmp / "ans.jsonl").write_text(json.dumps({"id": "p-1", "text": ANSWER, "pack": ["c1", "c2"]}) + "\n")
+
+    def run_main(self, *args):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = ej.main(list(args))
+        return rc, buf.getvalue()
+
+    def test_stub_run_v2_with_items_and_flags_and_confirmed(self):
+        t = self.tmp
+        rc, out = self.run_main("run", "--rubrics", str(t / "rubrics.jsonl"), "--items", str(t / "items.jsonl"), "--chunks", str(t / "chunks.jsonl"),
+                                "--answers", f"x={t / 'ans.jsonl'}", "--stub", "--out", str(t / "res.jsonl"))
+        self.assertEqual(rc, 0, out)
+        self.assertIn("instruction v2: 1 of 1 answers have their own excerpts", out)
+        rows = [json.loads(l) for l in (t / "res.jsonl").read_text().splitlines()]
+        self.assertEqual(len(rows), 2)
+        self.assertEqual({r["instruction"] for r in rows}, {"v2"})
+        rc, out = self.run_main("flags", "--results", str(t / "res.jsonl"), "--out", str(t / "review.jsonl"))
+        self.assertEqual(rc, 0)
+        self.assertIn("wrote 0 candidate errors", out)
+        # a hand-made review file
+        rev = [{"flag_id": "x:p-1:1", "item": "p-1", "set": "x", "passes": [1], "members": [[1, 0]], "channels": ["must_not"],
+                "quotes": ["q"], "severity": "wrong", "reasons": [], "points": ["n1"], "confirmed": "yes", "note": ""}]
+        (t / "review.jsonl").write_text(json.dumps(rev[0]) + "\n")
+        rc, out = self.run_main("confirmed", "--review", str(t / "review.jsonl"), "--results", str(t / "res.jsonl"))
+        self.assertEqual(rc, 0)
+        self.assertIn("| x | 1 | 1 | 0 | 1 | 10.0 | 0 | 0.0 |", out)
+        rev[0]["confirmed"] = "maybe"
+        (t / "review.jsonl").write_text(json.dumps(rev[0]) + "\n")
+        rc, _ = self.run_main("confirmed", "--review", str(t / "review.jsonl"), "--results", str(t / "res.jsonl"))
+        self.assertEqual(rc, 1)
+
+    def test_pack_missing_from_the_index_is_an_error_not_a_silent_skip(self):
+        t = self.tmp
+        (t / "ans.jsonl").write_text(json.dumps({"id": "p-1", "text": ANSWER, "pack": ["zz"]}) + "\n")
+        rc, _ = self.run_main("run", "--rubrics", str(t / "rubrics.jsonl"), "--items", str(t / "items.jsonl"), "--chunks", str(t / "chunks.jsonl"),
+                              "--answers", f"x={t / 'ans.jsonl'}", "--stub")
+        self.assertEqual(rc, 1)
+
+    def test_instruction_option_selects_text(self):
+        t = self.tmp
+        for ins in ("v1", "v2"):
+            rc, out = self.run_main("run", "--rubrics", str(t / "rubrics.jsonl"), "--items", str(t / "items.jsonl"), "--chunks", str(t / "chunks.jsonl"),
+                                    "--answers", f"x={t / 'ans.jsonl'}", "--stub", "--instruction", ins)
+            self.assertEqual(rc, 0)
+            self.assertIn(f"instruction {ins}: ", out)             # the settings line names the version
+            self.assertEqual("own excerpts" in out, ins == "v2")   # v1 does not look at the pack
+
+class ChainScript(unittest.TestCase):
+    SH = ROOT / "scripts/m4_s5b_judge_pilot2.sh"
+
+    def test_syntax_and_executable(self):
+        import os
+        import subprocess
+        self.assertTrue(os.access(self.SH, os.X_OK))
+        self.assertEqual(subprocess.run(["sh", "-n", str(self.SH)]).returncode, 0)
+
+    def test_refuses_to_start_without_items_or_rubrics_and_writes_nothing(self):
+        import subprocess
+        if (ROOT / "eval/m4/pilot2/items.jsonl").exists():
+            self.skipTest("the pilot's items exist: a real start would not be a refusal")
+        before = (ROOT / "runs/v3/HEARTBEAT.md").read_bytes() if (ROOT / "runs/v3/HEARTBEAT.md").exists() else None
+        r = subprocess.run(["sh", str(self.SH)], cwd=ROOT, capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("REFUSED", r.stderr)
+        after = (ROOT / "runs/v3/HEARTBEAT.md").read_bytes() if (ROOT / "runs/v3/HEARTBEAT.md").exists() else None
+        self.assertEqual(before, after)
+        self.assertEqual(subprocess.run(["sh", str(self.SH), "--nonsense"], cwd=ROOT, capture_output=True).returncode, 2)
+
+    def test_dry_run_completes_with_stubs(self):
+        import subprocess
+        need = [ROOT / "work/v3/chunks_s1.jsonl", ROOT / "work/m4/catalogues/CATALOGUES.json", ROOT / "eval/m4/pilot/rubrics.jsonl"]
+        if not all(p.exists() for p in need) or not (ROOT / ".venv/bin/python").exists():
+            self.skipTest("generated inputs (index, catalogues) not on this machine")
+        tmp = tempfile.mkdtemp()
+        r = subprocess.run(["sh", str(self.SH), "--dry-run", "--reference-arm"], cwd=ROOT, capture_output=True, text=True, timeout=900,
+                           env={**__import__("os").environ, "TMPDIR": tmp})
+        self.assertEqual(r.returncode, 0, r.stdout[-2000:] + r.stderr[-2000:])
+        self.assertIn("dry run done", r.stdout)
+        self.assertIn("matched default: 4 answers", r.stdout)
+        self.assertIn("instruction v2: 8 of 8 answers have their own excerpts", r.stdout)
+        self.assertIn("Go or no-go", r.stdout)
 
 
 if __name__ == "__main__":

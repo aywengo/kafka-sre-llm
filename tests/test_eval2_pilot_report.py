@@ -158,6 +158,175 @@ class Fabricated(unittest.TestCase):
         self.assertIn("kappa", buf.getvalue())
         self.assertIn("ICC(2,1)", buf.getvalue())
 
+    def test_same_statement_option_changes_only_the_caught_rule(self):
+        labels = self.labels + [{"item": 3, "question_set": "real", "question": 1, "answer_set": "default",
+                                 "quote": "Also use b.", "verdict": "confirmed"}]    # the judge's flag on this answer is about "restart it"
+        default, _ = pr.build_report(self.rows, self.rubrics, labels, self.old, omissions=[])
+        same, _ = pr.build_report(self.rows, self.rubrics, labels, self.old, omissions=[], same_statement=True)
+        caught = lambda t: next(l for l in t.splitlines() if l.startswith("Caught in"))
+        self.assertIn("Caught in at least one pass: 2 of 3", caught(default))      # items 1 and 3 by the must-not, on the same answer
+        self.assertIn("Caught in at least one pass: 1 of 3", caught(same))         # only item 1 concerns the flagged statement
+        self.assertIn("the same statement", same)
+        # everything outside the labelled-items paragraph is identical
+        cut = lambda t: t.split("### The reader's 30 labelled")[0]
+        self.assertEqual(cut(default), cut(same))
+
+    def test_first_pilot_numbers_on_the_stored_cache(self):
+        res = ROOT / "work/m4/pilot/judge_results_fair.jsonl"
+        if not (res.exists() and (ROOT / "work/v3/judge").exists()):
+            self.skipTest("rescored first-pilot results not on this machine (generated, git-ignored)")
+        rows, rub, lab = pr.rd(res), pr.rd(ROOT / "eval/m4/pilot/rubrics.jsonl"), pr.rd(ROOT / "runs/m4/reports/wp2a_labels_checked.jsonl")
+        caught = lambda t: next(l for l in t.splitlines() if l.startswith("Caught in"))
+        old, _ = pr.build_report(rows, rub, lab, str(ROOT / "work/v3/judge"))
+        same, _ = pr.build_report(rows, rub, lab, str(ROOT / "work/v3/judge"), same_statement=True)
+        self.assertIn("25 of 30 labelled items judged in both passes; in both passes: 21", caught(old))
+        # the analysis found 14 in at least one pass and 10 in both; this overlap rule gives 14 and 11
+        self.assertIn("Caught in at least one pass: 14 of 30", caught(same))
+        self.assertIn("in both passes: 11", caught(same))
+
+# ---------------------------------------------------------------- version 2
+
+R2 = {"id": "q-1", "question": "Why?",
+      "must": [{"id": "m1", "text": "a", "weight": 2, "first": False, "source": "raw/a/one.md:3"},
+               {"id": "m2", "text": "b", "weight": 2, "first": False, "source": "raw/b/two.md:3"},
+               {"id": "m3", "text": "c", "weight": 1, "first": False}],
+      "must_not": [{"id": "n1", "text": "Says restart", "severity": "wrong"}]}
+
+
+def row2(set_name, rid, pass_no, verdicts, n1=None, other=None, pack=("c1",), paths=("raw/a/one.md",), answer=None):
+    ans = answer or "We set a. We set b. We use c. We restart it. Odd claim one. Odd claim two."
+    it = {"set": set_name, "id": rid, "question": "Why?", "answer": ans, "rubric": R2, "pack": list(pack) if pack else None,
+          "excerpt_paths": list(paths), "source": "", "excerpts": "Odd claim one is false. Odd claim two is false."}
+    j = {"must": [{"id": k, "verdict": v, "quote": {"m1": "We set a.", "m2": "We set b.", "m3": "We use c."}[k] if v != "absent" else ""}
+                  for k, v in verdicts.items()],
+         "must_not": [{"id": "n1", "verdict": "present" if n1 else "absent", "quote": n1 or ""}],
+         "other_errors": [{"quote": q, "source_quote": "Odd claim one is false.", "why": "w"} for q in (other or [])]}
+    return ej.result_row(it, pass_no, {"key": f"{set_name}{rid}{pass_no}", "j": j, "instruction": "v2"})
+
+
+class VarianceShare(unittest.TestCase):
+    def test_hand_computed_example(self):
+        # S passes per item. A: (.8,.6) (.4,.4) (.2,0) (1,.8); B: (.5,.5) (.3,.1) (0,0) (.6,.4)
+        # pass means A .7 .4 .1 .9, B .5 .2 0 .5, d = .2 .2 .1 .4, mean .225, sum of squares .0475, Var(d) = .0475 / 3
+        # within-answer variances (x1 - x2)^2 / 2: A .02 0 .02 .02 -> .015; B 0 .02 0 .02 -> .01
+        # judge part = (.015 + .01) / 2 = .0125; share = .0125 / (.0475 / 3) = 15 / 19
+        A = [(.8, .6), (.4, .4), (.2, 0), (1, .8)]
+        B = [(.5, .5), (.3, .1), (0, 0), (.6, .4)]
+        rows = []
+        for name, data in (("A", A), ("B", B)):
+            for i, (p1, p2) in enumerate(data):
+                for p, v in ((1, p1), (2, p2)):
+                    rows.append({"set": name, "id": f"i{i}", "pass": p, "valid_reply": True, "S": v, "P": v})
+        share, var_d, var_j, n = pr.judge_variance_share(rows, "A", "B")
+        self.assertEqual(n, 4)
+        self.assertAlmostEqual(var_d, 0.0475 / 3)
+        self.assertAlmostEqual(var_j, 0.0125)
+        self.assertAlmostEqual(share, 15 / 19)
+        self.assertIsNone(pr.judge_variance_share(rows[:4], "A", "B"))      # fewer than 3 items
+
+    def test_no_judge_noise_gives_zero(self):
+        rows = [{"set": s, "id": f"i{i}", "pass": p, "valid_reply": True, "S": v + (0.3 if s == "A" else 0), "P": 0}
+                for s in "AB" for i, v in enumerate((0.1, 0.5, 0.9)) for p in (1, 2)]
+        self.assertAlmostEqual(pr.judge_variance_share(rows, "A", "B")[0], 0.0)
+
+
+class ReviewerCriteria(unittest.TestCase):
+    def setUp(self):
+        # configuration "d": answer q-1 and q-2; "s": answer q-1. Judge flags: pass 1 on d/q-1: restart (must_not) and odd claim one;
+        # pass 2 on d/q-1: restart only. d/q-2 and s/q-1: no flags.
+        self.rows = []
+        for rid in ("q-1", "q-2"):
+            for p in (1, 2):
+                self.rows.append(row2("d", rid, p, {"m1": "present", "m2": "absent", "m3": "present"},
+                                      n1="We restart it." if rid == "q-1" else None,
+                                      other=["Odd claim one."] if (rid == "q-1" and p == 1) else None))
+        for p in (1, 2):
+            self.rows.append(row2("s", "q-1", p, {"m1": "present", "m2": "present", "m3": "present"}))
+        self.review = ej.review_rows(self.rows)
+
+    def test_review_rows(self):
+        self.assertEqual(len(self.review), 2)
+        self.assertEqual([x["passes"] for x in self.review], [[1, 2], [1]])
+
+    def fill(self, confirmed):
+        for x, c in zip(self.review, confirmed):
+            x["confirmed"] = c
+        return self.review
+
+    def test_precision_and_recall_same_statement_only(self):
+        findings = [{"set": "d", "id": "q-1", "kind": "wrong", "quote": "We restart it."},          # caught in both passes
+                    {"set": "d", "id": "q-1", "kind": "wrong", "quote": "Odd claim one."},          # caught in pass 1 only
+                    {"set": "d", "id": "q-2", "kind": "wrong", "quote": "We use c."},               # a flag elsewhere on the answer: none on q-2
+                    {"set": "s", "id": "q-1", "kind": "wrong", "quote": "We restart it."},          # flags exist on d/q-1, not on s/q-1
+                    {"set": "d", "id": "q-1", "kind": "omission", "point": "m2"}]                   # not a semantic error
+        res, undecided = pr.precision_recall(self.fill(["yes", "no"]), findings)
+        self.assertEqual(undecided, 0)
+        self.assertEqual((res[1]["flags"], res[1]["confirmed"], res[1]["findings"], res[1]["caught"]), (2, 1, 4, 2))
+        self.assertAlmostEqual(res[1]["precision"], 0.5)
+        self.assertAlmostEqual(res[1]["recall"], 0.5)
+        self.assertEqual((res[2]["flags"], res[2]["caught"]), (1, 1))
+        self.assertAlmostEqual(res[2]["precision"], 1.0)
+        self.assertAlmostEqual(res[2]["recall"], 0.25)
+
+    def test_a_finding_names_the_flag(self):
+        findings = [{"set": "d", "id": "q-1", "kind": "wrong", "quote": "totally different wording", "flag": ["d:q-1:2"]}]
+        res, _ = pr.precision_recall(self.fill(["yes", "yes"]), findings)
+        self.assertEqual((res[1]["caught"], res[2]["caught"]), (1, 0))     # flag 2 exists in pass 1 only
+
+    def test_omission_shares(self):
+        # judge: m2 is a supported essential miss on d/q-1 and d/q-2 (pass 1 and 2 each): 4 flags. s/q-1 has none.
+        findings = [{"set": "d", "id": "q-1", "kind": "omission", "point": "m2"},
+                    {"set": "d", "id": "q-2", "kind": "omission", "point": "m1"},       # not flagged by the judge (m1 present)
+                    {"set": "d", "id": "q-2", "kind": "omission", "point": "m3", "supported": False}]    # unsupported: left out
+        rows = [dict(r, essential_points=[{"id": "m2", "supported": True, "rule": "path"}]) if r["set"] == "d" else r for r in self.rows]
+        f1, t1, f2, t2 = pr.omission_shares(rows, findings)
+        self.assertEqual((f1, t1), (0.5, 4))        # 2 omissions x 2 passes; flagged: q-1 in both passes
+        self.assertEqual((f2, t2), (0.5, 4))        # 4 judge flags; confirmed: the two on q-1
+
+    def test_report_waits_for_the_reviewer_and_decides_with_the_files(self):
+        text, nums = pr.build_report_v2(self.rows)
+        self.assertEqual(nums["criteria"]["4 flag precision and recall"], "WAITING")
+        self.assertEqual(nums["criteria"]["5 supported omissions"], "WAITING")
+        self.assertFalse(nums["go"])
+        self.assertIn("**Go or no-go: NO-GO**", text)
+        self.assertIn("wait for the reviewer's files", text)
+        self.assertIn("Candidate errors", text)
+        findings = [{"set": "d", "id": "q-1", "kind": "wrong", "quote": "We restart it."}]
+        text2, nums2 = pr.build_report_v2(self.rows, self.fill(["yes", "no"]), findings)
+        pr_by_pass = nums2["precision_recall"]
+        self.assertAlmostEqual(pr_by_pass[1]["precision"], 0.5)
+        self.assertAlmostEqual(pr_by_pass[1]["recall"], 1.0)
+        self.assertEqual(nums2["criteria"]["4 flag precision and recall"], "PASS")
+        self.assertIn("order of paired answers", text2.lower())
+        self.assertEqual(nums2["criteria"]["5 supported omissions"], "N/A")     # no omission findings and no supported flags: no data
+        _, nums3 = pr.build_report_v2(self.rows, self.fill(["", "no"]), findings)
+        self.assertEqual(nums3["criteria"]["4 flag precision and recall"], "WAITING")     # a flag without a decision
+
+
+class ReportV2Measures(unittest.TestCase):
+    def test_measures_rule_and_reference_arm_apart(self):
+        rows = [row2("d", "q-1", p, {"m1": "absent", "m2": "absent", "m3": "present"}) for p in (1, 2)]
+        rows += [row2("d", "q-2", p, {"m1": "present", "m2": "absent", "m3": "present"}, pack=None, paths=()) for p in (1, 2)]
+        ref = [dict(row2("d_ref", "q-1", 1, {"m1": "present", "m2": "present", "m3": "present"}), reference_given=True)]
+        text, nums = pr.build_report_v2(rows + ref)
+        self.assertIn("Rule used for the essential-miss points: no_pack 2, path 4", text)
+        self.assertIn("Arm with the reference answer", text)
+        self.assertNotIn("d_ref", text.split("## The five criteria")[1])        # not in the criteria
+        m = ej.measures([r for r in rows if r["valid_reply"]])["d"][1]
+        self.assertEqual((m["n"], m["essential_miss"], m["supported_essential_miss"]), (2, 2, 1))     # m1 (path in excerpts) on q-1; m2 on both
+        self.assertAlmostEqual(m["supported_essential_miss_per10"], 5.0)
+
+    def test_main_v2_reads_files(self):
+        tmp = Path(tempfile.mkdtemp())
+        res = tmp / "res.jsonl"
+        res.write_text("".join(json.dumps(r) + "\n" for r in (row2("d", "q-1", p, {"m1": "present", "m2": "absent", "m3": "present"}) for p in (1, 2))))
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = pr.main(["--v2", "--results", str(res)])
+        self.assertEqual(rc, 0)
+        self.assertIn("## The five criteria", buf.getvalue())
+        self.assertIn("Go or no-go", buf.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()
