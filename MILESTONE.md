@@ -5,7 +5,7 @@ Working name "M4"; the release number is decided at the end. Started 2026-11-18,
 release of v3.0.0 and v3.0.1. `GOAL.md` says where the project is going; this file says
 where the current milestone stands.
 
-Last updated: 2026-11-18, evening.
+Last updated: 2026-11-18, night.
 
 ## What this milestone is for
 
@@ -18,10 +18,10 @@ different base model does better.
 
 | # | Criterion | Bar | Status |
 |---|---|---|---|
-| E1 | A new evaluation exists: fresh items for the five task types of `GOAL.md`, a hidden part, mechanical checks, a measured noise level | 300 or more mechanical items, 120 or more judged items, the smallest visible difference stated per tier | first slice being built |
+| E1 | A new evaluation exists: fresh items for the five task types of `GOAL.md`, a hidden part, mechanical checks, a measured noise level | 300 or more mechanical items, 120 or more judged items, the smallest visible difference stated per tier | first slice built (313 mechanical items, harness, scorer, judge step); waits for the model server |
 | E2 | The starting point is measured on it: plain base, base + retrieval at full precision, and the 4-bit model with retrieval, in default and strict mode, all on the same server path | numbers with their sizes; the cost of 4-bit shown inside a margin fixed before the run (5 points on the mechanical tier) | not started |
-| E3 | Every answer is checked before the user sees it | at most 2 invented or wrong items per 10 answers in default mode on fresh questions, **measured by a reading**, with the checker's own counts beside it | not started |
-| E4 | Answers are fast on the 4-bit server path | median under 60 s in default mode on the Mac Studio; first words within 10 s | not started |
+| E3 | Every answer is checked before the user sees it | at most 2 invented or wrong items per 10 answers in default mode on fresh questions, **measured by a reading**, with the checker's own counts beside it | checker built; on the 30 labelled errors it catches 7, reports 5 as unverified and cannot see 15 wrong statements; not yet measured on fresh answers |
+| E4 | Answers are fast on the 4-bit server path | median under 60 s in default mode on the Mac Studio; first words within 10 s | service and streaming built; retrieval 9.5 s to 4.4 s when kept loaded; not yet measured with a model |
 | E5 | Base model decision | bake-off of the shortlist on the new evaluation; keep or switch recorded | shortlist done |
 
 Laptop measurements (the real bar of `GOAL.md`) need a 32 to 36 GB Apple Silicon laptop;
@@ -45,10 +45,10 @@ First slice (needs no downloads; supports the 4-bit decision):
 |---|---|---|---|---|
 | WP1a | Catalogues of real identifiers from the pinned sources | implementer (sonnet) | **done** 2026-11-18, commit `888333f`: 1,177 Kafka config keys, 1,577 Strimzi field paths, 35 annotations, 28 tools, Argo CD commands | `runs/m4/reports/wp1a_catalogues.md` |
 | WP1b | Evaluation design and its review | conductor; complex-reviewer (opus) | **reviewed** ("build with these changes", 15 changes, all accepted); design being revised | `agents/m4-evaluation.md`, `runs/m4/reports/evaluation_design_review.md` |
-| S1 | Harness: answer, manifest, pack replay, hidden part, run sizes, report | implementer | running | `runs/m4/reports/s1_harness.md` |
-| S2, S3 | About 200 mechanical items (config, Connect REST, Argo CD, error names) and the scorer with identifier precision; catalogue provenance | implementer | running | `runs/m4/reports/s2_s3_tier_a1.md` |
-| S4 | Rubric pilot: blind rubrics for 30 questions whose answers have a reader's findings; check of the labels that rest on memory | complex-reviewer, researcher | next | |
-| S5 | Judge pilot: does judging point by point repeat better than a mark from 1 to 5 | job-operator; needs the model server | after S4 | |
+| S1 | Harness: answer, manifest, pack replay, hidden part, run sizes, report | implementer | **done** (`d0403e3`); run only with a stub model so far | `runs/m4/reports/s1_harness.md` |
+| S2, S3 | Mechanical items (config, Connect REST, Argo CD, error names) and the scorer with identifier precision; catalogue provenance | implementer | **done** (`d0403e3`, rebalanced in `f79671d`): 313 items, plain lookups 18.5 %, a blind guess scores at most 15 % | `runs/m4/reports/s2_s3_tier_a1.md`, `tier_a1_rebalance.md` |
+| S4 | Rubric pilot: blind rubrics for 30 questions whose answers have a reader's findings; check of the labels that rest on memory | complex-reviewer, researcher | **done**: 30 rubrics (`eval/m4/pilot/rubrics.jsonl`); 30 distinct labels, 25 confirmed, 5 partly, 0 refuted | `runs/m4/reports/s4a_label_check.md`, `s4b_blind_rubrics.md` |
+| S5 | Judge pilot: does judging point by point repeat better than a mark from 1 to 5 | job-operator; needs the model server | judge step and chain built (`d0b3faa`); **blocked**: the server holds two models another client loaded | `runs/m4/reports/s5_judge_step.md` |
 | S6 | Noise (the reference run twice) and 4-bit against full precision on the same server, with pack replay | job-operator; needs the model server | waits for the Owner (see 4 below) | |
 
 After the first slice:
@@ -58,10 +58,10 @@ After the first slice:
 | WP1c | Remaining mechanical kinds (resources, commands, client code, version traps, valid but wrong, safe order, sizing, not covered) | downloads (see 3 below), S5, S6 | not started |
 | WP1d | Judged tier: scenarios and rubrics, the Owner's questions first | S5 | not started |
 | WP1f | Starting-point measurement (E2) | WP1c, WP1d | not started |
-| WP2a | Labelled test set for the checker: 47 items from the three readings | - | **draft done** by a local-model worker; counts match the reports; quotes to be spot-checked |
-| WP2b | Answer checker in the runtime: flag, then revise. Separate code from the scorer; shares only the catalogues | WP1a, WP2a | not started |
+| WP2a | Labelled test set for the checker: 30 distinct items from the three readings | - | **done**: `runs/m4/reports/wp2a_labels_checked.jsonl` (two local-model runs, verified by counts and against sources) |
+| WP2b | Answer checker in the runtime: flag, then revise. Separate code from the scorer; shares only the catalogues | WP1a, WP2a | library **done** (`a61f818`): zero false "invented" findings on 244 stored answers; wiring into `ask` and the service running; "revise" not started |
 | WP2c | Measure E3 by a reading | WP2b, WP1f | not started |
-| WP3a | Long-running local service that keeps the index and reranker loaded; streaming | - | not started |
+| WP3a | Long-running local service that keeps the index and reranker loaded; streaming | - | **done** (`d0b3faa`): loopback only, OpenAI-compatible; about 3.8 GB held when idle |
 | WP3b | Fewer excerpts for simple lookups; measure E4 | WP3a, WP1f | not started |
 | WP4a | Shortlist of base models | - | **done** 2026-11-18 (`runs/m4/reports/base_shortlist.md`) |
 | WP4b | Bake-off on the new evaluation; decision | WP1f, downloads (see 7 below) | not started |
@@ -99,6 +99,7 @@ thinking off.
 | Retrieval missed the page | at least 5 of 42 holdout questions | one reading |
 | Time per answer, 4-bit through oMLX | median 70.8 s default, 47.2 s strict | 10 questions per mode, Mac Studio |
 | Time per answer, 4-bit through Ollama | median 38.6 s default, 26.7 s strict | 10 questions per mode, different build |
+| Retrieval time, fresh process against running service | median 9.49 s against 4.37 s | 10 questions, real index and reranker, no model |
 | Quality of the 4-bit builds | not measured | - |
 
 ## Decisions
@@ -118,6 +119,9 @@ Recommended answer first in each. None blocks the work now running.
 2. **The hidden part:** yes to half of every tier hidden, decisions taken on the hidden
    half, stored encrypted with the key outside the repository, and at most six looks at it
    in M4, each written down with its decision rule beforehand.
+0. **The model server (blocks S5 and S6 now):** it holds DeepSeek and a Qwen build that
+   another client loaded. Say when it is free, or that they may be unloaded. The judging
+   pilot takes 3.3 to 5.5 hours with the judge model alone.
 3. **Downloads and installs for the catalogues and checks:** yes. Strimzi 1.3.1 resource
    definitions, Kafka 4.3.2 tool source or binary (command flags), the Kubernetes API
    schema, Argo CD 3.6.1 resource definitions, earlier Kafka config pages (for changed
@@ -146,3 +150,9 @@ Recommended answer first in each. None blocks the work now running.
   the judging method is piloted before the judged tier is written, and that the hidden
   part is half, split by family and encrypted. Shortlist back. First slice started:
   harness (S1), first mechanical items and scorer (S2, S3), design revision.
+- 2026-11-18, night: first slice built and pushed: harness, 313 mechanical items with
+  their scorer, the judge step and its chain, 30 blind rubrics, the label check (25 of 30
+  confirmed, 5 partly), the answer checker (7 of the 9 catchable labelled errors caught,
+  no false "invented" finding on 244 answers), the local service with streaming
+  (retrieval 9.5 s to 4.4 s). Nothing has run against a real model yet: the model server
+  is occupied by another client's models.
