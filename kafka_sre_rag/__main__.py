@@ -38,6 +38,9 @@ def build_parser():
         p.add_argument("--model", help="mlx: model directory; openai: model name sent to the server")
         p.add_argument("--adapter", help="mlx only: LoRA adapter directory")
         p.add_argument("--base-url", help="openai: server URL (default: environment variable OMLX_URL)")
+        p.add_argument("--extra-body", type=json.loads, default=None, metavar="JSON",
+                       help="openai: JSON merged into the request body, e.g. "
+                            "'{\"chat_template_kwargs\": {\"thinking\": false}}' to switch thinking off")
         p.add_argument("--sources", action="store_true", help="print the retrieved sources under the answer")
         p.add_argument("--json", action="store_true", help="print one JSON object")
         p.add_argument("--dry-run", action="store_true",
@@ -62,7 +65,8 @@ def make_generator(a):
         from .generators import OpenAIChatGenerator
         if not a.model:
             sys.exit("--model is required for the openai backend")
-        return OpenAIChatGenerator(a.base_url or os.environ.get("OMLX_URL"), a.model)
+        return OpenAIChatGenerator(a.base_url or os.environ.get("OMLX_URL"), a.model,
+                                   extra_body=a.extra_body)
     from .generators import MLXGenerator
     model = a.model or os.environ.get("BASE_PATH")
     if not model:

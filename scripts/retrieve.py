@@ -61,10 +61,15 @@ def scores(question, index_path=CHUNKS):
     return s
 
 
+# Pinned to the revision recorded in kafka_sre_rag/frozen.json (tests/test_reranker_pin.py asserts they match).
+RERANKER_MODEL = "BAAI/bge-reranker-v2-m3"
+RERANKER_REVISION = "953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e"
+
+
 @lru_cache(maxsize=1)
 def reranker():
     from sentence_transformers import CrossEncoder
-    return CrossEncoder("BAAI/bge-reranker-v2-m3", device="cpu", max_length=512)
+    return CrossEncoder(RERANKER_MODEL, revision=RERANKER_REVISION, device="cpu", max_length=512)
 
 
 def rank(question, expansion=None, pool=40, rerank_query=None, chunk_chars=1500, rrf=True, index_path=CHUNKS):
