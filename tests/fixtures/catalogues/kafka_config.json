@@ -1,0 +1,8 @@
+{"catalogue": "kafka_config", "entries": [
+ {"scope": "consumer", "key": "max.poll.interval.ms", "type": "int", "default": "300000 (5 minutes)", "default_value": "300000", "valid_values": "[1,...]", "valid_values_list": null, "importance": "medium", "source_file": "fixture", "pin": "fixture"},
+ {"scope": "connect", "key": "rebalance.timeout.ms", "type": "int", "default": "60000 (1 minute)", "default_value": "60000", "valid_values": "", "valid_values_list": null, "importance": "high", "source_file": "fixture", "pin": "fixture"},
+ {"scope": "sink_connector", "key": "errors.tolerance", "type": "string", "default": "none", "default_value": "none", "valid_values": "[none, all]", "valid_values_list": ["none", "all"], "importance": "medium", "source_file": "fixture", "pin": "fixture"},
+ {"scope": "broker", "key": "log.retention.ms", "type": "long", "default": "null", "default_value": "null", "valid_values": "", "valid_values_list": null, "importance": "high", "update_mode": "cluster-wide", "source_file": "fixture", "pin": "fixture"},
+ {"scope": "broker", "key": "min.insync.replicas", "type": "int", "default": "1", "default_value": "1", "valid_values": "[1,...]", "valid_values_list": null, "importance": "high", "update_mode": "cluster-wide", "source_file": "fixture", "pin": "fixture"},
+ {"scope": "topic", "key": "min.insync.replicas", "type": "int", "default": "1", "default_value": "1", "valid_values": "[1,...]", "valid_values_list": null, "importance": "medium", "source_file": "fixture", "pin": "fixture"}
+]}

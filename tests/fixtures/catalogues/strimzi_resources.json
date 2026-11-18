@@ -1,0 +1,14 @@
+{"catalogue": "strimzi_resources", "entries": [
+ {"kind": "KafkaUser", "api_version": "kafka.strimzi.io/v1", "complete": true, "source": "api_reference", "source_file": "fixture", "pin": "fixture", "paths": {
+  "spec": {"type": ["object:KafkaUserSpec"], "declared_in": ["KafkaUser"]},
+  "spec.quotas": {"type": ["object:KafkaUserQuotas"], "declared_in": ["KafkaUserSpec"]},
+  "spec.quotas.consumerByteRate": {"type": ["integer"], "declared_in": ["KafkaUserQuotas"]},
+  "spec.quotas.producerByteRate": {"type": ["integer"], "declared_in": ["KafkaUserQuotas"]},
+  "spec.authentication.type": {"type": ["string"], "enum": ["scram-sha-512", "tls", "tls-external"], "declared_in": ["KafkaUserTlsClientAuthentication"]},
+  "spec.authorization.acls": {"type": ["array of object:AclRule"], "declared_in": ["KafkaUserAuthorizationSimple"]},
+  "spec.authorization.acls[].host": {"type": ["string"], "declared_in": ["AclRule"]},
+  "spec.template.secret.metadata.labels": {"type": ["map"], "open": true, "declared_in": ["MetadataTemplate"]}}},
+ {"kind": "Kafka", "api_version": "kafka.strimzi.io/v1", "complete": true, "source": "api_reference", "source_file": "fixture", "pin": "fixture", "paths": {
+  "spec.kafka.config": {"type": ["map"], "open": true, "declared_in": ["KafkaClusterSpec"]},
+  "spec.kafka.replicas": {"type": ["integer"], "required_hint": true, "declared_in": ["KafkaClusterSpec"]}}}
+]}
