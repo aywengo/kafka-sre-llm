@@ -1,8 +1,17 @@
 #!/usr/bin/env python3
-"""Generate the first tier A items of the M4 evaluation (slice A1). No model is involved anywhere.
+"""Generate the first tier A items of the M4 evaluation (slice A1, rebalanced). No model is involved anywhere.
 
 Truth comes from the catalogues (work/m4/catalogues, built by scripts/build_catalogues.py), never
 from a model. Kinds: name_setting, is_real, connect_rest, argocd_command, error_name.
+
+Rebalanced mix (version 2 of the generator): plain lookups are the minority; the rest are near-miss
+names (one controlled edit of a real key or error name, checked against every scope), wrong scope and
+scope-dependent defaults, confusable neighbours (similar names, different meanings), value and type
+traps (enumerated values with a plausible invalid one offered, special defaults, update modes),
+Connect REST and Argo CD with method and multi-flag traps, and error names with more than two
+outcomes. The 20 items shown to people in the first version are kept verbatim (EXPOSED_V1, below);
+20 further items chosen by a fixed seed are marked exposed as well (40 in all). The table printed
+at the end gives, for every kind and class, the score of a blind guess.
 
 Output: eval/m4/build/tier_a1.jsonl, one JSON object per line, sorted by id:
   id, tier "A", kind, family, domain, question, checks, reference, sources, versions, template,
@@ -29,6 +38,7 @@ Construction rules (agents: evaluation_design_review.md, changes 7 to 10):
 Usage: .venv/bin/python scripts/eval2_items_a1.py [--catalogues DIR] [--out FILE] [--seed S]
 """
 import argparse
+import difflib
 import glob
 import json
 import random
@@ -43,7 +53,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import eval2_score as sc  # noqa: E402
 from kafka_sre_rag.catalogue import Catalogues, catalogue_hash  # noqa: E402
 
-VERSION = "eval2_items_a1/1"
+VERSION = "eval2_items_a1/2"
 DEFAULT_SEED = "m4-a1-1"
 DEFAULT_OUT = ROOT / "eval" / "m4" / "build" / "tier_a1.jsonl"
 
@@ -52,13 +62,18 @@ FAMILY_CAP = 2  # items of one family inside one template
 JACCARD_T = 0.5
 CONTAIN_T = 0.8
 MIN_TOKENS = 8
-EXPOSED_N = 20
+EXPOSED_N = 20  # the first version's exposed items, kept verbatim (EXPOSED_V1)
+EXPOSED_NEW_N = 20  # chosen by seed from the other items
+MIX_MIN = {"near_miss_name": 0.15, "scope": 0.15, "confusable_neighbour": 0.10, "value_type_trap": 0.10}
+MAX_PLAIN = 0.35
+MAX_GUESS = 0.35
 REAL_SHARE = 0.10  # is_real is at most this share of all items
 OVERLAP_BANDS = ((0.5, "high"), (0.25, "mid"))  # q_in_desc >= 0.5 high, >= 0.25 mid, else low
-CLASS_CAPS = {"near_miss_name": 24, "wrong_scope": 22, "scope_dependent": 12, "trap_method": 12,
-              "not_covered": 8, "confusable_neighbour": 14}
-HARD_FIRST = ("scope_dependent", "wrong_scope", "confusable_neighbour", "near_miss_name", "trap_method",
-              "not_covered")
+CLASS_CAPS = {"near_miss_name": 64, "wrong_scope": 40, "scope_dependent": 40, "trap_method": 12,
+              "not_covered": 10, "confusable_neighbour": 64, "value_type_trap": 56, "two_facts": 12,
+              "multi_flag": 16}
+HARD_FIRST = ("scope_dependent", "wrong_scope", "confusable_neighbour", "near_miss_name", "value_type_trap",
+              "multi_flag", "two_facts", "trap_method", "not_covered")
 ANSWER_NOTE = "Finish with a final line `ANSWER: %s`."
 
 SCOPE_H = {
@@ -213,6 +228,37 @@ class Gen:
         self.drop_reasons = defaultdict(Counter)
         self.cores = set()
         self.drop_examples = []
+        self.id_no = Counter()
+        self.reserved = set()
+        self.chances = {}
+        allent = cats.data["kafka_config"]["entries"]
+        self.all_keys = {e["key"] for e in allent}
+        self.vocab = key_vocab(cats)
+        self.first_segs = sorted({e["key"].split(".")[0] for e in allent})
+        self.by_scope = defaultdict(list)
+        self.by_key = defaultdict(list)
+        self.by_key_all = defaultdict(list)
+        for e in allent:
+            self.by_scope[e["scope"]].append(e)
+            self.by_key_all[e["key"]].append(e)
+            if e["scope"] in SCOPE_H:
+                self.by_key[e["key"]].append(e)
+        self.enum_values = sorted({v for e in allent for v in (e.get("valid_values_list") or []) if VALUE_RE.match(v)})
+        self.err_names = {e["name"] for e in cats.data["protocol_errors"]["entries"]}
+        self.tpl_guess = {}  # template -> (mode, chance): how a blind guess is scored, see item_guess
+        self.pool_modal = {}  # template -> share of the commonest answer among all candidates
+        self.load_exposed()
+
+    def load_exposed(self):
+        """The first version's exposed items, verbatim; they count against the template and family caps."""
+        for row in EXPOSED_V1_ROWS():
+            self.items.append(row)
+            self.reserved.add(row["id"])
+            self.cores.add(row["question"].rsplit("\n\n", 1)[0])
+            self.class_counts[row["failure_class"]] += 1
+            self.template_counts[row["template"]] += 1
+            self.family_counts[row["family"]] += 1
+            self.chances[row["id"]] = LEGACY_CHANCE.get(row["template"], 0.0)
 
     # draft = dict(kind, template, group, domain, failure_class, core, fmt, checks, refs, perturbed,
     #              violates, sources, versions, anchored, desc)
@@ -261,7 +307,10 @@ class Gen:
             self.drop_reasons[kind]["near_duplicate"] += 1
             return False
         ov = overlap(d["core"], d.get("desc"))
-        n = self.template_counts[tpl] + 1
+        n = self.id_no[tpl] + 1
+        while "a1-%s-%03d" % (tpl, n) in self.reserved:
+            n += 1
+        self.id_no[tpl] = n
         item = {
             "id": "a1-%s-%03d" % (tpl, n), "tier": "A", "kind": kind, "family": fam, "domain": d["domain"],
             "question": d["core"] + "\n\n" + d["fmt"], "checks": d["checks"], "reference": ref,
@@ -271,6 +320,7 @@ class Gen:
             "perturbed_reference": d["perturbed"], "perturbed_violates": d["violates"],
         }
         self.items.append(item)
+        self.chances[item["id"]] = d.get("chance", 0.0)
         self.cores.add(d["core"])
         self.class_counts[fc] += 1
         self.template_counts[tpl] += 1
@@ -278,12 +328,33 @@ class Gen:
         st["kept"] += 1
         return True
 
-    def fill(self, drafts, n, fam_cap=FAMILY_CAP):
-        """Keep up to n drafts: shuffled, hard failure classes first, family cap, class caps."""
+    def fill(self, drafts, n, fam_cap=FAMILY_CAP, guess=("pool", 0.0), balance=None, hard_first=True):
+        """Keep up to n drafts: shuffled, hard failure classes first, family cap, class caps.
+
+        guess = (mode, chance) says how a blind guess is scored for this template: "pool" the share of the
+        commonest answer among all candidates (open answers), "kept" the same among the kept items (answers
+        balanced on purpose), "chance" the chance alone; chance is 1 / number of options or 2 ** -options.
+        balance = a function of a draft: the first picks then take the buckets in turn.
+        """
         drafts = list(drafts)
+        if drafts:
+            tpl = drafts[0]["template"]
+            self.tpl_guess[tpl] = guess
+            for d in drafts:
+                d.setdefault("chance", guess[1])
+            share = Counter(canon(d["checks"]) for d in drafts)
+            self.pool_modal[tpl] = max(self.pool_modal.get(tpl, 0.0), max(share.values()) / len(drafts))
         self.rng.shuffle(drafts)
-        order = {c: i for i, c in enumerate(HARD_FIRST)}
-        drafts.sort(key=lambda d: order.get(d["failure_class"], len(order)))
+        if hard_first:
+            order = {c: i for i, c in enumerate(HARD_FIRST)}
+            drafts.sort(key=lambda d: order.get(d["failure_class"], len(order)))
+        if balance:
+            buckets = defaultdict(list)
+            for d in drafts:
+                buckets[balance(d)].append(d)
+            keys = sorted(buckets, key=str)
+            drafts = [buckets[k][i] for i in range(max(len(v) for v in buckets.values())) for k in keys
+                      if i < len(buckets[k])]
         got = 0
         for d in drafts:
             if got >= n:
@@ -310,6 +381,11 @@ def cfg_src(e, fact):
 
 def cfg_versions():
     return {"kafka": "4.3"}
+
+
+def kf(sh):
+    """`Kafka Streams` stays, `producer` becomes `Kafka producer`."""
+    return sh if sh.startswith("Kafka") else "Kafka " + sh
 
 
 def cfg_domain(scope):
@@ -344,7 +420,7 @@ def drafts_key_from_desc(g, variant):
                  "Give the exact key name." % (sh, ex),
             "b": "I'm looking for a Kafka %s setting and all I remember is its description: \"%s\" What is the "
                  "exact name of the setting?" % (sh, ex),
-            "c": "Which Kafka %s config property matches this documentation text (Kafka 4.3)? %s" % (sh, ex),
+            "c": "Which %s config property matches this documentation text (Kafka 4.3)? %s" % (kf(sh), ex),
         }[variant]
         k = e["key"]
         out.append(mk("name_setting", "ns_key_desc_" + variant, cfg_group(e), cfg_domain(e["scope"]), fc, core,
@@ -491,40 +567,16 @@ def real_draft(template, group, domain, fc, core, expected, sources, anchored, d
               anchored_versions or {"kafka": "4.3"}, anchored, desc)
 
 
-def near_misses(g, e, all_keys):
-    """Controlled edits of a real key that are not in the catalogue in any scope: (fake, how)."""
-    out = []
-    segs = re.split(r"(\.)", e["key"])
-    for a, b in SWAPS:
-        for x, y in ((a, b), (b, a)):
-            for i, s in enumerate(segs):
-                if s == x:
-                    fake = "".join(segs[:i] + [y] + segs[i + 1:])
-                    out.append((fake, "swapped word %s -> %s" % (x, y)))
-    for a, b in UNIT_SWAPS:
-        if e["key"].endswith(a):
-            out.append((e["key"][:-len(a)] + b, "wrong unit suffix %s -> %s" % (a, b)))
-    res, seen = [], set()
-    for fake, how in out:
-        if fake in all_keys or fake in seen:
-            continue
-        if g.cats.config_key(fake, e["scope"]).status != "unknown" or g.cats.config_key(fake).status != "unknown":
-            continue
-        seen.add(fake)
-        res.append((fake, how))
-    return res
-
-
 def drafts_real_key(g, want_exists, want_fake):
     ents = [e for e in cfg_entries(g.cats) if e["scope"] in SCOPE_OPTIONS]
-    all_keys = {e["key"] for e in g.cats.data["kafka_config"]["entries"]}
     out_e, out_f = [], []
     for e in ents:
         sh, k = SCOPE_H[e["scope"]], e["key"]
         core = "Is `%s` a real configuration key of the Kafka 4.3 %s configuration?" % (k, sh)
         out_e.append(real_draft("real_key_plain", cfg_group(e), cfg_domain(e["scope"]), "plain_lookup", core, "exists",
                                 [cfg_src(e, "key exists in scope %s" % e["scope"])], True, e["description"]))
-        for fake, how in near_misses(g, e, all_keys)[:1]:
+        fakes = valid_fakes(g, e)
+        for fake, tag, how in ([fakes[g.rng.randrange(len(fakes))]] if fakes else []):
             core = "Is `%s` a real configuration key of the Kafka 4.3 %s configuration?" % (fake, sh)
             out_f.append(real_draft("real_key_plain", cfg_group(e), cfg_domain(e["scope"]), "near_miss_name", core,
                                     "does not exist",
@@ -756,6 +808,23 @@ ARGO_OPS = [
     ("add the cluster of the kubeconfig context `prod-eu` to Argo CD under the name `prod-eu`", "argocd cluster add prod-eu --name prod-eu", "cluster", None),
     ("list all ApplicationSets", "argocd appset list", "appset", None),
     ("get the ApplicationSet `team-apps`", "argocd appset get team-apps", "appset", None),
+    # two or more flags (the flags are checked against the catalogue when the item is built)
+    ("sync `{app}` with pruning, as a dry run", "argocd app sync {app} --prune --dry-run", "app", None),
+    ("sync `{app}` to the Git revision `v1.4.2` and delete the resources that are no longer in Git", "argocd app sync {app} --revision v1.4.2 --prune", "app", None),
+    ("force a sync of `{app}` and return at once, without waiting for it to finish", "argocd app sync {app} --force --async", "app", None),
+    ("preview a sync of `{app}` at the revision `main`, changing nothing", "argocd app sync {app} --dry-run --revision main", "app", None),
+    ("wait until `{app}` is both synced and healthy, for at most 120 seconds", "argocd app wait {app} --sync --health --timeout 120", "app", None),
+    ("list the applications of the project `team-a` as JSON", "argocd app list --project team-a --output json", "app", None),
+    ("get `{app}` as YAML after a hard refresh", "argocd app get {app} --hard-refresh --output yaml", "app", None),
+    ("delete `{app}` without the confirmation prompt, using foreground propagation", "argocd app delete {app} --propagation-policy foreground --yes", "app", None),
+    ("show the diff of `{app}` against the revision `main` after a hard refresh", "argocd app diff {app} --revision main --hard-refresh", "app", None),
+    ("create the application `{app}` from the repository `https://git.example.com/org/repo.git`, path `k8s`, deploying to the cluster `https://kubernetes.default.svc`, namespace `prod`", "argocd app create {app} --repo https://git.example.com/org/repo.git --path k8s --dest-server https://kubernetes.default.svc --dest-namespace prod", "app", None),
+    ("log in to the Argo CD server `argocd.example.com` as user `admin`, over gRPC-Web", "argocd login argocd.example.com --username admin --grpc-web", "login", None),
+    ("roll the application `{app}` back to history ID 5 and prune the resources that were added since", "argocd app rollback {app} 5 --prune", "app", None),
+    ("follow the last 100 log lines of the pods of `{app}`", "argocd app logs {app} --follow --tail 100", "app", None),
+    ("sync only the out-of-sync resources of `{app}` and prune", "argocd app sync {app} --apply-out-of-sync-only --prune", "app", None),
+    ("add the cluster of the kubeconfig context `prod-eu` under the name `prod-eu`, without the confirmation prompt", "argocd cluster add prod-eu --name prod-eu --yes", "cluster", None),
+    ("create the project `team-a` with the description `Team A apps` and the source repository `https://git.example.com/org/repo.git`", "argocd proj create team-a --description 'Team A apps' --src https://git.example.com/org/repo.git", "proj", None),
 ]
 ARGO_TEMPLATES = ["argo_cmd_a", "argo_cmd_b", "argo_cmd_c"]
 
@@ -808,7 +877,8 @@ def drafts_argo(g, template):
                   {"type": "cmdline_spec", "command": cmd, "required_flags": flags, "tokens": toks,
                    "flag_alternatives": alts},
                   {"type": "no_invented_cli", "tool": "argocd"}]
-        d = mk("argocd_command", template, group, "argocd", "wrong_scope" if trap else "plain_lookup", core,
+        fc = "wrong_scope" if trap else "multi_flag" if len(flags) >= 2 else "plain_lookup"
+        d = mk("argocd_command", template, group, "argocd", fc, core,
                "Give the command in a code block; use only `argocd` sub-commands and flags that exist.",
                checks, ["```bash\n%s\n```" % line], "```bash\n%s\n```" % pert, 1, srcs, {"argo-cd": "v3.6.1"}, True,
                entry["description"])
@@ -905,59 +975,677 @@ def drafts_err_mc(g):
     return out
 
 
+# ------------------------------------------------------------------ blind-guess bookkeeping
+def canon(checks):
+    """The canonical answer of an item, used for the share of the commonest answer."""
+    out = []
+    for c in checks:
+        t = c["type"]
+        if t == "answer_equals":
+            out.append(norm_key(c["accepted"][0]))
+        elif t == "answer_set":
+            out.append("|".join(sorted(norm_key(a) for a in c["accepted"])))
+        elif t == "answer_letter":
+            out.append(c["expected"])
+        elif t == "answer_verdict":
+            out.append(c["expected"])
+        elif t == "rest_method":
+            out.append(c["method"])
+        elif t == "rest_path":
+            out.append(c["template"])
+        elif t == "cmdline_spec":
+            out.append(c["command"] + " " + " ".join(sorted(c.get("required_flags", []))))
+    return " / ".join(out)
+
+
+def norm_key(a):
+    return str(a).strip().lower()
+
+
+# Exposed items of templates that carry no per-item chance: the chance of a blind guess, by template.
+LEGACY_CHANCE = {"err_retriable": 0.5, "ns_scope_a": 0.1, "ns_scope_b": 0.1, "ns_type_a": 1 / 9.0, "ns_type_b": 1 / 9.0,
+                 "err_mc": 0.25}
+
+
+def item_guess(g, item, kept_modal):
+    """Score of a blind guess on one item: the larger of the chance over the listed options and the share of the
+    commonest answer (among all candidates for open answers, among the kept items where the answers were
+    balanced on purpose). is_real: the larger of 1/3 and the commonest verdict of the kind."""
+    if item["kind"] == "is_real":
+        return max(1 / 3.0, kept_modal["is_real"])
+    mode = g.tpl_guess.get(item["template"], ("pool", 0.0))[0]
+    base = g.pool_modal.get(item["template"], 0.0) if mode == "pool" else kept_modal.get(item["template"], 0.0) if mode == "kept" else 0.0
+    return max(g.chances.get(item["id"], LEGACY_CHANCE.get(item["template"], 0.0)), base)
+
+
+def kept_modal_shares(items):
+    by = defaultdict(list)
+    for i in items:
+        by[i["template"]].append(canon(i["checks"]))
+        by["is_real"] += [canon(i["checks"])] if i["kind"] == "is_real" else []
+    return {k: (max(Counter(v).values()) / len(v) if v else 0.0) for k, v in by.items()} | \
+        {k: 0.0 for k in ()}
+
+
+# ------------------------------------------------------------------ near-miss edits of key names
+NOUNS = {"partition", "replica", "record", "thread", "message", "connection", "request", "offset", "segment",
+         "listener", "broker", "member", "task", "worker", "retry", "metric", "header", "converter", "transform"}
+UNIT_EDITS = [(".ms", ".seconds"), (".seconds", ".ms"), (".ms", ".sec"), (".ms", ".minutes"), (".bytes", ".kb"),
+              (".bytes", ".mb"), (".hours", ".days"), (".minutes", ".ms"), (".seconds", ".minutes"), (".ms", ".millis")]
+EDIT_GROUPS = {"word": ("word", "order"), "unit": ("unit",), "plural": ("plural",), "drop": ("drop", "prefix")}
+EDIT_PHRASE = {"word": "a swapped word", "order": "swapped word order", "unit": "a wrong unit suffix",
+               "plural": "singular against plural", "drop": "a dropped word", "prefix": "a neighbouring prefix"}
+
+
+def key_vocab(cats):
+    segs = set()
+    for e in cats.data["kafka_config"]["entries"]:
+        segs.update(e["key"].split("."))
+    return segs
+
+
+def key_edits(g, key):
+    """Controlled single edits of a real key: [(fake, tag, how)], not filtered against the catalogue yet."""
+    segs = key.split(".")
+    vocab = g.vocab
+    out = []
+    for i, s in enumerate(segs):
+        for a, b in SWAPS:
+            for x, y in ((a, b), (b, a)):
+                if s == x:
+                    out.append((".".join(segs[:i] + [y] + segs[i + 1:]), "word", "swapped word %s -> %s" % (x, y)))
+        if len(s) >= 4 and s.isalpha():
+            alt = s[:-1] if s.endswith("s") and not s.endswith("ss") else s + "s"
+            if alt in vocab or s in NOUNS:
+                out.append((".".join(segs[:i] + [alt] + segs[i + 1:]), "plural", "singular/plural %s -> %s" % (s, alt)))
+    for i in range(len(segs) - 2):  # adjacent words swapped, the unit at the end stays
+        out.append((".".join(segs[:i] + [segs[i + 1], segs[i]] + segs[i + 2:]), "order",
+                    "swapped word order %s %s" % (segs[i], segs[i + 1])))
+    for a, b in UNIT_EDITS:
+        if key.endswith(a):
+            out.append((key[:-len(a)] + b, "unit", "wrong unit suffix %s -> %s" % (a, b)))
+    if len(segs) >= 4:
+        for i in range(1, len(segs) - 1):
+            out.append((".".join(segs[:i] + segs[i + 1:]), "drop", "dropped word %s" % segs[i]))
+    first = segs[0]
+    for o in g.first_segs:
+        if o != first and len(o) >= 4 and difflib.SequenceMatcher(None, first, o).ratio() >= 0.78:
+            out.append((".".join([o] + segs[1:]), "prefix", "neighbouring prefix %s -> %s" % (first, o)))
+    return out
+
+
+def valid_fakes(g, e, tags=None):
+    """Edits of the real key e that are real keys in no scope (and not in the catalogue by any lookup)."""
+    res, seen = [], set()
+    for fake, tag, how in key_edits(g, e["key"]):
+        if tags and tag not in tags:
+            continue
+        if fake in g.all_keys or fake in seen or fake == e["key"]:
+            continue
+        if g.cats.config_key(fake, e["scope"]).status != "unknown" or g.cats.config_key(fake).status != "unknown":
+            continue
+        seen.add(fake)
+        res.append((fake, tag, how))
+    return res
+
+
+def uniq_excerpt(g, e, avoid=()):
+    ex = excerpt(e["description"])
+    if not ex or e["key"] in ex or e["key"].replace(".", " ") in ex or any(a in ex for a in avoid):
+        return None
+    if sum(1 for o in g.by_scope[e["scope"]] if o["description"].startswith(ex)) != 1:
+        return None
+    return ex
+
+
+def absent_src(e, fake, how):
+    return {"catalogue": "kafka_config", "absent": fake, "edit": how + " of " + e["key"], "file": e["source_file"],
+            "line": None, "fact": "absent from every scope of the complete reference"}
+
+
+def drafts_nm(g, group):
+    """Name the real setting when a teammate's key has one controlled edit."""
+    tags = EDIT_GROUPS[group]
+    out = []
+    for e in cfg_entries(g.cats):
+        fakes = valid_fakes(g, e, tags)
+        if not fakes:
+            continue
+        fake, tag, how = fakes[g.rng.randrange(len(fakes))]
+        ex = uniq_excerpt(g, e, avoid=(fake,))
+        if not ex:
+            continue
+        sh, k = SCOPE_H[e["scope"]], e["key"]
+        core = {
+            "word": "A teammate's %s configuration uses `%s` for the setting described as: \"%s\" What is the "
+                    "exact name of the real setting in the Kafka 4.3 reference?" % (kf(sh), fake, ex),
+            "unit": "I wrote `%s` in a %s config, meaning the setting described as \"%s\" What is the exact "
+                    "key name in the Kafka 4.3 reference?" % (fake, kf(sh), ex),
+            "plural": "In a review of a Kafka 4.3 %s configuration someone wrote `%s` for this setting: \"%s\" Which "
+                      "key name does the reference really use?" % (sh, fake, ex),
+            "drop": "Kafka 4.3 %s configuration: a runbook says to set `%s`, the setting described as \"%s\" Give "
+                    "the exact name the reference uses for it." % (sh, fake, ex),
+        }[group]
+        out.append(mk("name_setting", "ns_nm_" + group, cfg_group(e), cfg_domain(e["scope"]), "near_miss_name", core,
+                      ANSWER_NOTE % "<key>",
+                      [{"type": "answer_line", "format": True},
+                       {"type": "answer_equals", "accepted": [k], "norm": "exact"}],
+                      [ans("The setting meant is `%s`." % k, k)],
+                      ans("The setting is `%s`, as written." % fake, fake), 1,
+                      [cfg_src(e, "key %s has this description" % k), absent_src(e, fake, how)], cfg_versions(),
+                      True, e["description"]))
+    return out
+
+
+# ------------------------------------------------------------------ scope dependent and wrong scope
+def plain_default(dv):
+    return dv is not None and dv.strip() not in ("", '""') and len(dv) <= 30 and "<" not in dv and "\n" not in dv
+
+
+def drafts_sd(g, variant):
+    """The same key in several scopes with different defaults, asked for one named scope."""
+    out = []
+    for e in cfg_entries(g.cats):
+        same = g.by_key[e["key"]]
+        dv = e.get("default_value")
+        if len({x["default_value"] for x in same}) < 2 or not plain_default(dv):
+            continue
+        if e.get("type") in ("class", "password", None):
+            continue
+        others = sorted({x["default_value"] for x in same if x["default_value"] != dv and plain_default(x["default_value"])})
+        if not others:
+            continue
+        sh, k = SCOPE_H[e["scope"]], e["key"]
+        names = ", ".join(SCOPE_H[x["scope"]] for x in same)
+        core = {
+            "a": "The key `%s` appears in several Kafka 4.3 configuration references (%s) and its default is not the "
+                 "same in all of them. What is its default in the %s configuration?" % (k, names, sh),
+            "b": "Someone says `%s` defaults to %s in Kafka. That is the default in another component. What does it "
+                 "default to in the %s configuration of Kafka 4.3?" % (k, others[0], sh),
+            "c": "Which default value does the Kafka 4.3 %s configuration give to `%s`? (Other components, such as %s, "
+                 "use other defaults for the same key.)" % (sh, k, ", ".join(SCOPE_H[x["scope"]] for x in same if x is not e)[:80]),
+        }[variant]
+        forms = default_forms(e)
+        srcs = [cfg_src(e, "default %s in scope %s" % (e["default"], e["scope"]))]
+        srcs += [cfg_src(x, "default %s in scope %s" % (x["default"], x["scope"])) for x in same
+                 if x is not e and x["default_value"] != dv][:2]
+        out.append(mk("name_setting", "sd_default_" + variant, cfg_group(e), cfg_domain(e["scope"]), "scope_dependent",
+                      core, ANSWER_NOTE % "<default value>" + " Give the bare value.",
+                      [{"type": "answer_line", "format": True},
+                       {"type": "answer_equals", "accepted": forms, "norm": "ci"}],
+                      [ans("The default of `%s` in the %s configuration is %s." % (k, sh, f), f) for f in forms],
+                      ans("The default of `%s` is %s." % (k, others[0]), others[0]), 1, srcs, cfg_versions(), True,
+                      e["description"]))
+    return out
+
+
+def drafts_ws_set(g):
+    """In which configurations does a key appear (every one of them must be named)."""
+    out = []
+    seen = set()
+    for e in cfg_entries(g.cats):
+        k = e["key"]
+        if k in seen:
+            continue
+        same = g.by_key[k]
+        scopes = sorted({x["scope"] for x in same})
+        if not set(scopes) <= set(SCOPE_OPTIONS) or not 2 <= len(scopes) <= 4:
+            continue
+        seen.add(k)
+        names = [SCOPE_OPT_NAME[s] for s in scopes]
+        wrong = names[:-1]
+        core = ("In which of the Kafka 4.3 configuration references does the key `%s` appear? Options: %s. Name every "
+                "one that lists it, separated by commas." % (k, SCOPE_OPTION_TEXT))
+        out.append(mk("name_setting", "ws_scopes_set", k.split(".")[0], cfg_domain(scopes[0]), "wrong_scope", core,
+                      ANSWER_NOTE % "<component>, <component>, ...",
+                      [{"type": "answer_line", "format": True}, {"type": "answer_set", "accepted": names}],
+                      [ans("`%s` is listed in: %s." % (k, ", ".join(names)), ", ".join(names)),
+                       ans("`%s` is listed in: %s." % (k, ",".join(names)), ",".join(names))],
+                      ans("`%s` is listed in: %s." % (k, ", ".join(wrong)), ", ".join(wrong)), 1,
+                      [cfg_src(x, "key listed in scope %s" % x["scope"]) for x in same], cfg_versions(), True,
+                      e["description"]))
+    return out
+
+
+SCOPE_OPT_NAME = {s: (s.replace("_", " ") if s.endswith("_connector") else s) for s in SCOPE_OPTIONS}
+
+
+# ------------------------------------------------------------------ confusable neighbours
+def key_neighbours(g, e):
+    """Other keys of the same scope with a similar name (two or more words shared, at most two differing)
+    and a clearly different description."""
+    sa = set(e["key"].split("."))
+    out = []
+    for o in g.by_scope[e["scope"]]:
+        if o["key"] == e["key"] or not o["description"] or not e["description"]:
+            continue
+        sb = set(o["key"].split("."))
+        if len(sa & sb) >= 2 and len(sa ^ sb) <= 2 and jacc(e["description"], o["description"]) < 0.4:
+            out.append(o)
+    return sorted(out, key=lambda o: o["key"])
+
+
+def drafts_cn(g, variant):
+    out = []
+    for e in cfg_entries(g.cats):
+        nb = key_neighbours(g, e)
+        if not nb:
+            continue
+        if variant == "default":
+            nb = [o for o in nb if plain_default(o.get("default_value")) and o["default_value"] != e.get("default_value")]
+            if not nb or not plain_default(e.get("default_value")) or e.get("type") in ("class", "password", None):
+                continue
+        ex = uniq_excerpt(g, e, avoid=[o["key"] for o in nb])
+        if variant != "default" and not ex:
+            continue
+        if variant != "open" and len(nb) < 2:
+            continue  # a choice of three, not a coin flip
+        nb = nb[:2]
+        sh, k = SCOPE_H[e["scope"]], e["key"]
+        opts = [e] + nb
+        g.rng.shuffle(opts)
+        names = ", ".join("`%s`" % o["key"] for o in opts)
+        srcs = [cfg_src(e, "the key asked for")] + [cfg_src(o, "similarly named neighbour %s" % o["key"]) for o in nb]
+        if variant == "open":
+            core = ("The Kafka 4.3 %s configuration has several similarly named settings (for example %s). Which key is "
+                    "described as follows?\n\n> %s\n\nGive the exact key name." % (sh, "`%s`" % nb[0]["key"], ex))
+            nopt, accepted = None, [k]
+            fmt = ANSWER_NOTE % "<key>"
+            ref = ans("That is `%s`, not `%s`." % (k, nb[0]["key"]), k)
+            bad = ans("That is `%s`." % nb[0]["key"], nb[0]["key"])
+        elif variant == "choice":
+            core = "Which of these Kafka 4.3 %s settings is described as follows: %s?\n\n> %s" % (sh, names, ex)
+            fmt = ANSWER_NOTE % "<key>" + " Give one key from the list."
+            ref = ans("That is `%s`." % k, k)
+            bad = ans("That is `%s`." % nb[0]["key"], nb[0]["key"])
+        else:
+            dv = e["default_value"]
+            alt = [o for o in nb if o["default_value"] != dv]
+            core = "Which of %s (settings of the Kafka 4.3 %s configuration) has the default value `%s`?" % (names, sh, dv)
+            fmt = ANSWER_NOTE % "<key>" + " Give one key from the list."
+            ref = ans("That is `%s`." % k, k)
+            bad = ans("That is `%s`." % alt[0]["key"], alt[0]["key"])
+            # a neighbour with the same default would make the answer ambiguous
+            if any(o["default_value"] == dv for o in nb):
+                continue
+        out.append(mk("name_setting", "cn_" + variant, cfg_group(e), cfg_domain(e["scope"]), "confusable_neighbour",
+                      core, fmt, [{"type": "answer_line", "format": True},
+                                  {"type": "answer_equals", "accepted": [k], "norm": "exact"}],
+                      [ref], bad, 1, srcs, cfg_versions(), True, e["description"]))
+        out[-1]["chance"] = 1.0 / len(opts) if variant != "open" else 0.0
+    return out
+
+
+# ------------------------------------------------------------------ value and type traps
+VALUE_RE = re.compile(r"^[\w.\-]+$")
+
+
+def invalid_value(g, vl, key):
+    """A plausible but invalid value: the most similar value taken from another enumerated key."""
+    low = {v.lower() for v in vl}
+    best = (0.0, None)
+    for v in g.enum_values:
+        if v.lower() in low:
+            continue
+        r = max(difflib.SequenceMatcher(None, v.lower(), w.lower()).ratio() for w in vl)
+        if r > best[0] or (r == best[0] and best[1] is not None and v < best[1]):
+            best = (r, v)
+    return best[1] if best[0] >= 0.3 else None
+
+
+def drafts_vt_values(g, variant):
+    out = []
+    for e in cfg_entries(g.cats):
+        vl = e.get("valid_values_list")
+        if not vl or not 2 <= len(vl) <= 6 or not all(VALUE_RE.match(v) and len(v) <= 25 for v in vl):
+            continue
+        bad = invalid_value(g, vl, e["key"])
+        if not bad:
+            continue
+        k, sh = e["key"], SCOPE_H[e["scope"]]
+        if variant == "a":
+            opts = sorted(vl + [bad])
+            core = ("Which of these values are valid for the %s setting `%s` (Kafka 4.3 reference): %s? Name every "
+                    "valid one, separated by commas." % (kf(sh), k, ", ".join(opts)))
+        else:
+            core = ("A colleague set `%s=%s` in a %s configuration. Which values does the Kafka 4.3 reference list "
+                    "as valid for `%s`? Give all of them, separated by commas." % (k, bad, kf(sh), k))
+        item = mk("name_setting", "vt_values_" + variant, cfg_group(e), cfg_domain(e["scope"]), "value_type_trap",
+                  core, ANSWER_NOTE % "<value 1>, <value 2>, ...",
+                  [{"type": "answer_line", "format": True}, {"type": "answer_set", "accepted": vl}],
+                  [ans("`%s` accepts: %s; `%s` is not valid." % (k, ", ".join(vl), bad), ", ".join(vl)),
+                   ans("`%s` accepts: %s." % (k, ",".join(vl)), ",".join(vl))],
+                  ans("`%s` accepts: %s." % (k, ", ".join(vl + [bad])), ", ".join(vl + [bad])), 1,
+                  [cfg_src(e, "valid values %s" % e["valid_values"])], cfg_versions(), True, e["description"])
+        item["chance"] = 2.0 ** -(len(vl) + 1) if variant == "a" else 0.0
+        out.append(item)
+    return out
+
+
+def default_bucket(dv):
+    if dv == "null":
+        return "null"
+    if dv == "-1":
+        return "-1"
+    if dv == "0":
+        return "0"
+    if dv in ('""', ""):
+        return "empty"
+    if re.fullmatch(r"\d{10,}", dv or ""):
+        return "huge"
+    return None
+
+
+UNITS = (".ms", ".seconds", ".bytes", ".minutes", ".hours", ".days")
+
+
+def drafts_vt_default(g, variant):
+    out = []
+    ents = cfg_entries(g.cats)
+    typical = {}
+    for u in UNITS:
+        vals = Counter(e["default_value"] for e in ents if e["key"].endswith(u) and (e.get("default_value") or "").isdigit()
+                       and int(e["default_value"]) > 0)
+        if vals:
+            typical[u] = sorted(vals.items(), key=lambda kv: (-kv[1], kv[0]))[0][0]
+    for e in ents:
+        dv = e.get("default_value")
+        b = default_bucket(dv) if dv is not None else None
+        if b is None or e.get("type") in ("class", "password", None) or "<" in (dv or ""):
+            continue
+        k, sh = e["key"], SCOPE_H[e["scope"]]
+        notation = " Write the value as the reference does: `null`, `-1`, `0`, or \"\" for an empty string or list."
+        forms = default_forms(e) + (["", "empty", "empty string", "empty list"] if b == "empty" else [])
+        if variant == "a":
+            if not e.get("description"):
+                continue
+            core = "What is the default value of the %s setting `%s` in Kafka 4.3?" % (sh, k)
+            bad = "30000" if b != "empty" else "none"
+            bad = bad if bad not in forms else "1"
+            fmt = ANSWER_NOTE % "<default value>" + notation
+        else:
+            unit = next((u for u in UNITS if k.endswith(u)), None)
+            if not unit or unit not in typical or b not in ("null", "-1", "0"):
+                continue
+            bad = typical[unit]
+            core = ("`%s` ends in `%s`, so one would expect a default like %s. What is its actual default in the %s "
+                    "configuration of Kafka 4.3?" % (k, unit, bad, sh))
+            fmt = ANSWER_NOTE % "<default value>" + notation
+        out.append(mk("name_setting", "vt_default_" + variant, cfg_group(e), cfg_domain(e["scope"]), "value_type_trap",
+                      core, fmt, [{"type": "answer_line", "format": True},
+                                  {"type": "answer_equals", "accepted": forms, "norm": "ci"}],
+                      [ans("The default of `%s` is %s." % (k, f), f) for f in forms],
+                      ans("The default of `%s` is %s." % (k, bad), bad), 1,
+                      [cfg_src(e, "default %s" % e["default"])], cfg_versions(), True, e["description"]))
+        out[-1]["bucket"] = b
+    return out
+
+
+def drafts_vt_update(g, variant):
+    out = []
+    ents = [e for e in g.cats.data["kafka_config"]["entries"] if e["scope"] == "broker" and e.get("update_mode")]
+    modes = ["cluster-wide", "per-broker", "read-only"]
+    for e in ents:
+        m, k = e["update_mode"], e["key"]
+        if variant == "a":
+            core = ("What is the dynamic update mode of the Kafka 4.3 broker setting `%s`: `read-only`, `per-broker` or "
+                    "`cluster-wide`?" % k)
+            out.append(mk("name_setting", "vt_update_a", cfg_group(e), "kafka", "value_type_trap", core,
+                          ANSWER_NOTE % "<read-only|per-broker|cluster-wide>",
+                          [{"type": "answer_line", "format": True},
+                           {"type": "answer_equals", "accepted": [m, m.replace("-", " ")], "norm": "ci"}],
+                          [ans("The update mode of `%s` is %s." % (k, m), m)],
+                          ans("The update mode of `%s` is %s." % (k, modes[(modes.index(m) + 1) % 3]),
+                              modes[(modes.index(m) + 1) % 3]), 1,
+                          [cfg_src(e, "update mode %s" % m)], cfg_versions(), True, e["description"]))
+            out[-1]["bucket"] = m
+        else:
+            first = k.split(".")[0]
+            others = []
+            for m2 in modes:
+                if m2 == m:
+                    continue
+                pool = [x for x in ents if x["update_mode"] == m2]
+                pool.sort(key=lambda x: (x["key"].split(".")[0] != first, jacc(x["key"].replace(".", " "), k.replace(".", " ")) * -1, x["key"]))
+                others.append(pool[0])
+            opts = [e] + others
+            g.rng.shuffle(opts)
+            names = ", ".join("`%s`" % o["key"] for o in opts)
+            core = "Which of these Kafka 4.3 broker settings has the dynamic update mode `%s`: %s?" % (m, names)
+            out.append(mk("name_setting", "vt_update_b", cfg_group(e), "kafka", "value_type_trap", core,
+                          ANSWER_NOTE % "<key>" + " Give one key from the list.",
+                          [{"type": "answer_line", "format": True},
+                           {"type": "answer_equals", "accepted": [k], "norm": "exact"}],
+                          [ans("That is `%s`." % k, k)], ans("That is `%s`." % others[0]["key"], others[0]["key"]), 1,
+                          [cfg_src(e, "update mode %s" % m)] + [cfg_src(o, "update mode %s (distractor)" % o["update_mode"]) for o in others],
+                          cfg_versions(), True, e["description"]))
+            out[-1]["bucket"] = m
+            out[-1]["chance"] = 1 / 3.0
+    return out
+
+
+# ------------------------------------------------------------------ errors with more than two outcomes
+ERR_SWAPS = [("NOT", "NO"), ("TOO", "OVER"), ("INVALID", "BAD"), ("UNKNOWN", "MISSING"), ("OUT_OF", "BEYOND"),
+             ("TIMEOUT", "TIMED_OUT"), ("NOT_AVAILABLE", "UNAVAILABLE"), ("LARGE", "BIG"), ("EXCEPTION", "FAILURE"),
+             ("REPLICAS", "REPLICA"), ("PARTITION", "PARTITIONS"), ("EPOCH", "VERSION"), ("OR", "AND"),
+             ("FENCED", "STALE"), ("COORDINATOR", "LEADER"), ("LEADER", "COORDINATOR"), ("GROUP", "MEMBER"),
+             ("DUPLICATE", "REPEATED"), ("REQUEST", "REQUESTS"), ("RECORD", "MESSAGE")]
+
+
+def err_fakes(g, name):
+    """Controlled edits of an error name that are not in the complete error list: [(fake, how)]."""
+    allnames = g.err_names
+    words = name.split("_")
+    out = []
+    padded = "_" + name + "_"
+    for a, b in ERR_SWAPS:  # whole words only
+        if "_%s_" % a in padded:
+            out.append((padded.replace("_%s_" % a, "_%s_" % b, 1).strip("_"), "swapped word %s -> %s" % (a, b)))
+    if len(words) >= 4:
+        for i in range(1, len(words) - 1):
+            out.append(("_".join(words[:i] + words[i + 1:]), "dropped word %s" % words[i]))
+    for i in range(len(words) - 1):
+        out.append(("_".join(words[:i] + [words[i + 1], words[i]] + words[i + 2:]), "swapped word order"))
+    res, seen = [], set()
+    for fake, how in out:
+        if fake == name or fake in allnames or fake in seen or g.cats.error_name(fake).status != "unknown":
+            continue
+        seen.add(fake)
+        res.append((fake, how))
+    return res
+
+
+def name_sim(a, b):
+    sa, sb = set(a.split("_")), set(b.split("_"))
+    return len(sa & sb) / len(sa | sb)
+
+
+def drafts_err_cond(g):
+    pool = err_pool(g, 200)
+    out = []
+    for e in pool:
+        nbs = [o for o in pool if o["name"] != e["name"] and jacc(e["description"], o["description"]) < 0.4
+               and name_sim(e["name"], o["name"]) >= 0.25]
+        nbs.sort(key=lambda o: (-(name_sim(e["name"], o["name"]) + jacc(e["description"], o["description"])), o["name"]))
+        if not nbs:
+            continue
+        o = nbs[0]
+        fe, fo = err_fakes(g, e["name"]), err_fakes(g, o["name"])
+        fakes = []
+        if fe:
+            fakes.append(fe[0])
+        if fo:
+            fakes.append(fo[0])
+        for extra in fe[1:] + fo[1:]:
+            if len(fakes) < 2 and extra not in fakes:
+                fakes.append(extra)
+        if len(fakes) < 2:
+            continue
+        opts = [e["name"], o["name"], fakes[0][0], fakes[1][0]]
+        g.rng.shuffle(opts)
+        letter = "ABCD"[opts.index(e["name"])]
+        wrong = "ABCD"[opts.index(fakes[0][0])]
+        body = "\n".join("%s) `%s`" % ("ABCD"[i], n) for i, n in enumerate(opts))
+        core = ("A Kafka 4.3 broker answers with a protocol error in this situation: \"%s\" Which of these four names is "
+                "the error the protocol reference lists for it?\n\n%s" % (e["description"], body))
+        srcs = [err_src(e, "description of %s" % e["name"]), err_src(o, "real neighbour: %s" % o["name"])]
+        srcs += [{"catalogue": "protocol_errors", "absent": f, "edit": how + " of the real name", "file": e["source_file"],
+                  "line": None, "fact": "absent from the complete error list"} for f, how in fakes]
+        out.append(mk("error_name", "err_cond_mc", e["name"].split("_")[0], "kafka", "near_miss_name", core,
+                      ANSWER_NOTE % "<A|B|C|D>",
+                      [{"type": "answer_line", "format": True}, {"type": "answer_letter", "expected": letter}],
+                      [ans("The error is `%s`." % e["name"], letter)], ans("The error is `%s`." % fakes[0][0], wrong), 1,
+                      srcs, {"kafka": "4.3"}, True, e["description"]))
+        out[-1]["chance"] = 0.25
+    return out
+
+
+def drafts_err_which(g, variant):
+    """Which of four similarly named errors is (not) retriable: exactly one differs from the other three."""
+    errs = [e for e in g.cats.data["protocol_errors"]["entries"] if e["name"] not in ("NONE", "UNKNOWN_SERVER_ERROR")]
+    out = []
+    want = True if variant == "a" else False
+    for e in errs:
+        if e["retriable"] != want:
+            continue
+        others = [o for o in errs if o["retriable"] != want and name_sim(e["name"], o["name"]) > 0]
+        others.sort(key=lambda o: (-name_sim(e["name"], o["name"]), o["name"]))
+        if len(others) < 3:
+            continue
+        others = others[:3]
+        opts = [e] + others
+        g.rng.shuffle(opts)
+        letter = "ABCD"[opts.index(e)]
+        body = "\n".join("%s) `%s`" % ("ABCD"[i], o["name"]) for i, o in enumerate(opts))
+        core = ("Exactly one of these Kafka protocol errors is %s according to the Kafka 4.3 error list. Which one?\n\n%s"
+                % ("marked retriable" if want else "not retriable", body))
+        out.append(mk("error_name", "err_which_" + variant, e["name"].split("_")[0], "kafka", "confusable_neighbour", core,
+                      ANSWER_NOTE % "<A|B|C|D>",
+                      [{"type": "answer_line", "format": True}, {"type": "answer_letter", "expected": letter}],
+                      [ans("`%s` is the one." % e["name"], letter)],
+                      ans("`%s` is the one." % others[0]["name"], "ABCD"[opts.index(others[0])]), 1,
+                      [err_src(e, "retriable %s" % e["retriable"])] +
+                      [err_src(o, "retriable %s (distractor)" % o["retriable"]) for o in others],
+                      {"kafka": "4.3"}, True, e["description"]))
+        out[-1]["chance"] = 0.25
+    return out
+
+
+def drafts_err_name_retr(g):
+    """The error for a described condition, and whether it is retriable: two facts, balanced."""
+    out = []
+    for e in err_pool(g, 400):
+        flag = "retriable" if e["retriable"] else "not retriable"
+        wrong = "not retriable" if e["retriable"] else "retriable"
+        core = ("Which Kafka protocol error does the broker return in this situation: \"%s\" Give the error name as the "
+                "Kafka 4.3 protocol reference lists it, and say whether the list marks it retriable." % e["description"])
+        out.append(mk("error_name", "err_name_retr", e["name"].split("_")[0], "kafka", "two_facts", core,
+                      ANSWER_NOTE % "<ERROR_NAME>, <retriable|not retriable>",
+                      [{"type": "answer_line", "format": True},
+                       {"type": "answer_set", "accepted": [e["name"].lower(), flag]}],
+                      [ans("`%s`, %s." % (e["name"], flag), "%s, %s" % (e["name"], flag))],
+                      ans("`%s`, %s." % (e["name"], wrong), "%s, %s" % (e["name"], wrong)), 1,
+                      [err_src(e, "description and retriable %s of %s" % (e["retriable"], e["name"]))], {"kafka": "4.3"},
+                      True, e["description"]))
+        out[-1]["bucket"] = flag
+    return out
+
+
 # ------------------------------------------------------------------ assembly
 def generate(cats, seed, chash):
     g = Gen(cats, seed, chash)
-    for v, n in (("a", 10), ("b", 10), ("c", 10)):
+    bucket = lambda d: d["bucket"]  # noqa: E731
+    # plain lookups, kept few
+    for v, n in (("a", 5), ("b", 5), ("c", 5)):
         g.fill(drafts_key_from_desc(g, v), n)
-    for v, n in (("a", 10), ("b", 10), ("c", 10)):
+    for v, n in (("a", 5), ("b", 4)):
         g.fill(drafts_default(g, v), n)
-    for v, n in (("a", 8), ("b", 8)):
-        g.fill(drafts_values(g, v), n)
+    for v, n in (("a", 3), ("b", 3)):
+        g.fill(drafts_type(g, v), n, guess=("chance", 1 / 9.0))
     for v, n in (("a", 6), ("b", 6)):
-        g.fill(drafts_type(g, v), n)
-    for v, n in (("a", 6), ("b", 6)):
-        g.fill(drafts_scope(g, v), n)
-    g.fill(drafts_rest(g, "rest_which_a"), 10)
-    g.fill(drafts_rest(g, "rest_which_b"), 10)
+        g.fill(drafts_scope(g, v), n, guess=("chance", 0.1))
+    # near-miss names
+    for grp in ("word", "unit", "plural", "drop"):
+        g.fill(drafts_nm(g, grp), 8)
+    # wrong scope and scope dependent
+    for v, n in (("a", 8), ("b", 8), ("c", 8)):
+        g.fill(drafts_sd(g, v), n)
+    g.fill(drafts_ws_set(g), 8, guess=("pool", 2.0 ** -10))
+    # confusable neighbours
+    for v in ("open", "choice", "default"):
+        g.fill(drafts_cn(g, v), 8, guess=("chance", 0.0))
+    # value and type traps
+    g.fill(drafts_vt_values(g, "a"), 8, guess=("chance", 0.0))
+    g.fill(drafts_vt_values(g, "b"), 6)
+    g.fill(drafts_vt_default(g, "a"), 8, guess=("kept", 0.0), balance=bucket)
+    g.fill(drafts_vt_default(g, "b"), 6, guess=("kept", 0.0), balance=bucket, fam_cap=4)
+    g.fill(drafts_vt_update(g, "a"), 9, guess=("kept", 0.0), balance=bucket, fam_cap=4)
+    g.fill(drafts_vt_update(g, "b"), 9, guess=("chance", 1 / 3.0), balance=bucket)
+    # Connect REST and Argo CD
+    g.fill(drafts_rest(g, "rest_which_a"), 8)
+    g.fill(drafts_rest(g, "rest_which_b"), 8)
     g.fill(drafts_rest(g, "rest_trap"), 10)
     for t in ARGO_TEMPLATES:
-        g.fill(drafts_argo(g, t), 10, fam_cap=6)
-    g.fill(drafts_err_desc(g, "a"), 10)
-    g.fill(drafts_err_desc(g, "b"), 10)
-    g.fill(drafts_err_retriable(g), 10)
-    g.fill(drafts_err_mc(g), 10)
-    # is_real: at most REAL_SHARE of the final items
-    others = len(g.items)
-    budget = int(others * REAL_SHARE / (1 - REAL_SHARE))
-    plan = []
+        ds = drafts_argo(g, t)
+        multi = [d for d in ds if len(d["checks"][1]["required_flags"]) >= 2]
+        g.fill(multi, 4, fam_cap=6)
+        g.fill([d for d in ds if d not in multi], 6, fam_cap=6)
+    # error names
+    g.fill(drafts_err_desc(g, "a"), 4)
+    g.fill(drafts_err_desc(g, "b"), 4)
+    g.fill(drafts_err_mc(g), 4, guess=("chance", 0.25))
+    g.fill(drafts_err_cond(g), 10, guess=("chance", 0.25))
+    g.fill(drafts_err_which(g, "a"), 4, guess=("chance", 0.25))
+    g.fill(drafts_err_which(g, "b"), 4, guess=("chance", 0.25))
+    g.fill(drafts_err_name_retr(g), 8, balance=bucket)
+    # is_real: at most REAL_SHARE of the final items, three verdicts of about the same size
+    others = sum(1 for i in g.items if i["kind"] != "is_real")
+    total_real = int(others * REAL_SHARE / (1 - REAL_SHARE))
+    quota = total_real // 3
+    have = Counter(canon(i["checks"]) for i in g.items if i["kind"] == "is_real")
     ke, kf = drafts_real_key(g, 0, 0)
     se, sw = drafts_real_scope(g)
     ee, ef = drafts_real_error(g)
     re_, rw = drafts_real_rest(g)
     fn, fe = drafts_real_flag_nc(g)
     an = drafts_real_annotation_nc(g)
-    plan = [(ke, 2), (kf, 4), (se, 1), (sw, 3), (ee, 1), (ef, 2), (re_, 1), (rw, 2), (fn, 3), (fe, 1), (an, 1)]
-    total = 0
-    for drafts, n in plan:
-        n = min(n, budget - total)
-        if n > 0 and drafts:
-            total += g.fill(drafts, n, fam_cap=3)
+    plan = {"exists": [(ke, 4), (se, 2), (ee, 2), (re_, 2), (fe, 2)],
+            "does not exist": [(kf, 5), (sw, 3), (ef, 2), (rw, 2)],
+            "not in my sources": [(fn, 7), (an, 3)]}
+    for verdict in ("exists", "does not exist", "not in my sources"):
+        want = quota - have[verdict]
+        for drafts, n in plan[verdict]:
+            n = min(n, want)
+            if n > 0 and drafts:
+                want -= g.fill(drafts, n, fam_cap=3, guess=("pool", 0.0))
     g.items.sort(key=lambda i: i["id"])
-    rng = random.Random("%s|exposed" % seed)
-    for i in rng.sample(range(len(g.items)), min(EXPOSED_N, len(g.items))):
-        g.items[i]["exposed"] = True
+    rng = random.Random("%s|exposed2" % seed)
+    pool = [i for i in g.items if not i["exposed"]]
+    for it in rng.sample(pool, min(EXPOSED_NEW_N, len(pool))):
+        it["exposed"] = True
     return g
+
+
+MIX_NAMES = {"plain_lookup": "plain lookup", "near_miss_name": "near-miss name",
+             "scope": "wrong scope / scope dependent", "confusable_neighbour": "confusable neighbour",
+             "value_type_trap": "value and type trap", "trap_method": "REST method trap",
+             "multi_flag": "Argo CD two or more flags", "two_facts": "error name and retriable",
+             "not_covered": "not in my sources"}
+
+
+def mix_group(fc):
+    return "scope" if fc in ("wrong_scope", "scope_dependent") else fc
 
 
 def tables(g):
     items = g.items
+    n = len(items)
     lines = []
 
     def tab(title, key):
         c = Counter(i[key] for i in items)
-        lines.append("%s:\n%s" % (title, "\n".join("  %-26s %3d" % kv for kv in sorted(c.items()))))
-    lines.append("items: %d  (anchored %d, exposed %d)" % (len(items), sum(i["anchored"] for i in items),
+        lines.append("%s:\n%s" % (title, "\n".join("  %-26s %3d  %5.1f %%" % (k, v, 100.0 * v / n) for k, v in sorted(c.items()))))
+    lines.append("items: %d  (anchored %d, exposed %d)" % (n, sum(i["anchored"] for i in items),
                                                          sum(i["exposed"] for i in items)))
     tab("per kind", "kind")
     tab("per domain", "domain")
@@ -965,19 +1653,82 @@ def tables(g):
     tab("per template", "template")
     tab("per overlap band (question words found in the catalogue description)", "overlap_band")
     lines.append("families: %d" % len({i["family"] for i in items}))
+    # the mix against the targets
+    grp = Counter(mix_group(i["failure_class"]) for i in items)
+    lines.append("mix against the targets:")
+    plain = grp["plain_lookup"] / n
+    lines.append("  %-34s %3d  %5.1f %%  (at most %.0f %%)  %s" % ("plain lookup", grp["plain_lookup"], 100 * plain,
+                                                                  100 * MAX_PLAIN, "met" if plain <= MAX_PLAIN else "NOT MET"))
+    for k, lo in MIX_MIN.items():
+        share = grp[k] / n
+        lines.append("  %-34s %3d  %5.1f %%  (at least %.0f %%)  %s" % (MIX_NAMES[k], grp[k], 100 * share, 100 * lo,
+                                                                       "met" if share >= lo else "NOT MET"))
+    for k in ("trap_method", "multi_flag", "two_facts", "not_covered"):
+        lines.append("  %-34s %3d  %5.1f %%" % (MIX_NAMES[k], grp[k], 100.0 * grp[k] / n))
+    argo = [i for i in items if i["kind"] == "argocd_command"]
+    multi = [i for i in argo if len(i["checks"][1].get("required_flags", [])) >= 2]
+    lines.append("  Argo CD items with two or more required flags: %d of %d = %.0f %% (at least 33 %%)  %s" % (
+        len(multi), len(argo), 100.0 * len(multi) / max(1, len(argo)), "met" if 3 * len(multi) >= len(argo) else "NOT MET"))
+    real = [i for i in items if i["kind"] == "is_real"]
+    verd = Counter(canon(i["checks"]) for i in real)
+    lines.append("  is_real: %d of %d = %.1f %% (at most %.0f %%); verdicts %s" % (
+        len(real), n, 100.0 * len(real) / n, 100 * REAL_SHARE, dict(sorted(verd.items()))))
+    # the score of a blind guess
+    km = kept_modal_shares(items)
+    gs = {i["id"]: item_guess(g, i, km) for i in items}
+    lines.append("score of a blind guess (the better of: chance over the listed options, share of the commonest answer):")
+    for title, key in (("kind", "kind"), ("failure class", "failure_class"), ("template", "template")):
+        by = defaultdict(list)
+        for i in items:
+            by[i[key]].append(gs[i["id"]])
+        lines.append("  per %s:" % title)
+        for k in sorted(by):
+            lines.append("    %-26s %3d items  guess %5.1f %%" % (k, len(by[k]), 100.0 * sum(by[k]) / len(by[k])))
+    overall = sum(gs.values()) / n
+    lines.append("  overall guess over %d items: %.1f %% (limit %.0f %%)  %s" % (
+        n, 100 * overall, 100 * MAX_GUESS, "met" if overall < MAX_GUESS else "NOT MET"))
     lines.append("drop and repair counts per kind (candidates tried / kept / repaired; drops by reason):")
     for kind in sorted(g.stats):
         st = g.stats[kind]
         drops = ", ".join("%s %d" % kv for kv in sorted(g.drop_reasons[kind].items())) or "none"
         lines.append("  %-16s tried %4d  kept %3d  repaired %d  skipped_by_caps %d  dropped: %s" % (
             kind, st["built"], st["kept"], st["repaired"], st["skipped_cap"], drops))
-    real = sum(1 for i in items if i["kind"] == "is_real")
-    lines.append("is_real share: %d of %d = %.1f %% (limit %.0f %%)" % (real, len(items), 100.0 * real / len(items), 100 * REAL_SHARE))
     lines.append("near-duplicate corpus: %d texts from %d files; thresholds Jaccard >= %.2f or containment >= %.2f (both sets >= %d tokens)" % (
         len(g.corpus), len(g.corpus_files), JACCARD_T, CONTAIN_T, MIN_TOKENS))
     mx = max((i["dedup"]["max_jaccard"] for i in items), default=0)
     lines.append("highest Jaccard of a kept item against the corpus: %.3f" % mx)
     return "\n".join(lines)
+
+
+# ------------------------------------------------------------------ the items shown to people in the first version
+# Verbatim rows of the first version's output that were exposed (same ids, same text); they must not change.
+# The generator of that version is gone, so they are kept here, one JSON object per line.
+EXPOSED_V1_TEXT = r'''
+{"anchored": true, "catalogue_hash": "b67627d2bf03ef784ac1d3294527086fe7bf6f7d6e2647d6e758936b4641e6d9", "checks": [{"format": true, "type": "has_command"}, {"command": "argocd app sync", "flag_alternatives": {}, "required_flags": ["--resource"], "tokens": ["billing", ":Service:web"], "type": "cmdline_spec"}, {"tool": "argocd", "type": "no_invented_cli"}], "dedup": {"max_containment": 0.333, "max_jaccard": 0.143, "nearest": "data/train.jsonl"}, "domain": "argocd", "exposed": true, "failure_class": "plain_lookup", "family": "argo_cmd_b:app", "generator": "eval2_items_a1/1", "id": "a1-argo_cmd_b-006", "kind": "argocd_command", "overlap": {"desc_in_q": 0.5, "q_in_desc": 0.133}, "overlap_band": "low", "perturbed_reference": "```bash\nargocd app sync billing :Service:web\n```", "perturbed_violates": 1, "question": "On a CI runner where `argocd` is already logged in, which single command would sync only the Service `web` (core group) of the application `billing`?\n\nGive the command in a code block; use only `argocd` sub-commands and flags that exist.", "reference": "```bash\nargocd app sync billing --resource :Service:web\n```", "seed": "m4-a1-1", "sources": [{"catalogue": "argocd", "entry": "argocd app sync", "fact": "command exists: Sync an application to its target state", "file": "raw/argo-cd/docs/user-guide/commands/argocd_app_sync.md", "line": 3}, {"catalogue": "argocd", "entry": "argocd app sync --resource", "fact": "the command has the flag", "file": "raw/argo-cd/docs/user-guide/commands/argocd_app_sync.md", "line": 62}], "template": "argo_cmd_b", "tier": "A", "versions": {"argo-cd": "v3.6.1"}}
+{"anchored": true, "catalogue_hash": "b67627d2bf03ef784ac1d3294527086fe7bf6f7d6e2647d6e758936b4641e6d9", "checks": [{"format": true, "type": "answer_line"}, {"accepted": ["COORDINATOR_LOAD_IN_PROGRESS"], "norm": "upper_snake", "type": "answer_equals"}], "dedup": {"max_containment": 0.3, "max_jaccard": 0.136, "nearest": "data/train.jsonl"}, "domain": "kafka", "exposed": true, "failure_class": "plain_lookup", "family": "err_desc_a:COORDINATOR", "generator": "eval2_items_a1/1", "id": "a1-err_desc_a-002", "kind": "error_name", "overlap": {"desc_in_q": 1.0, "q_in_desc": 0.333}, "overlap_band": "mid", "perturbed_reference": "This is `SERVER_COORDINATOR_LOAD_IN_PROGRESS`.\nANSWER: SERVER_COORDINATOR_LOAD_IN_PROGRESS", "perturbed_violates": 1, "question": "Which Kafka protocol error does the broker return in this situation: \"The coordinator is loading and hence can't process requests.\" Give the error name as the Kafka protocol reference lists it.\n\nFinish with a final line `ANSWER: <ERROR_NAME>`.", "reference": "This is `COORDINATOR_LOAD_IN_PROGRESS`.\nANSWER: COORDINATOR_LOAD_IN_PROGRESS", "seed": "m4-a1-1", "sources": [{"catalogue": "protocol_errors", "entry": "COORDINATOR_LOAD_IN_PROGRESS", "fact": "description of COORDINATOR_LOAD_IN_PROGRESS", "file": "raw/apache-kafka-config/content/en/43/generated/protocol_errors.html", "line": 22}], "template": "err_desc_a", "tier": "A", "versions": {"kafka": "4.3"}}
+{"anchored": true, "catalogue_hash": "b67627d2bf03ef784ac1d3294527086fe7bf6f7d6e2647d6e758936b4641e6d9", "checks": [{"format": true, "type": "answer_line"}, {"accepted": ["TELEMETRY_TOO_LARGE"], "norm": "upper_snake", "type": "answer_equals"}], "dedup": {"max_containment": 0.353, "max_jaccard": 0.167, "nearest": "work/v3/questions.jsonl"}, "domain": "kafka", "exposed": true, "failure_class": "plain_lookup", "family": "err_desc_b:TELEMETRY", "generator": "eval2_items_a1/1", "id": "a1-err_desc_b-003", "kind": "error_name", "overlap": {"desc_in_q": 1.0, "q_in_desc": 0.588}, "overlap_band": "high", "perturbed_reference": "This is `SERVER_TELEMETRY_TOO_LARGE`.\nANSWER: SERVER_TELEMETRY_TOO_LARGE", "perturbed_violates": 1, "question": "In the Kafka 4.3 protocol error list, which error name goes with this description?\n\n> Client sent a push telemetry request larger than the maximum size the broker will accept.\n\nFinish with a final line `ANSWER: <ERROR_NAME>`.", "reference": "This is `TELEMETRY_TOO_LARGE`.\nANSWER: TELEMETRY_TOO_LARGE", "seed": "m4-a1-1", "sources": [{"catalogue": "protocol_errors", "entry": "TELEMETRY_TOO_LARGE", "fact": "description of TELEMETRY_TOO_LARGE", "file": "raw/apache-kafka-config/content/en/43/generated/protocol_errors.html", "line": 126}], "template": "err_desc_b", "tier": "A", "versions": {"kafka": "4.3"}}
+{"anchored": true, "catalogue_hash": "b67627d2bf03ef784ac1d3294527086fe7bf6f7d6e2647d6e758936b4641e6d9", "checks": [{"format": true, "type": "answer_line"}, {"expected": "D", "type": "answer_letter"}], "dedup": {"max_containment": 0.5, "max_jaccard": 0.162, "nearest": "data/train.jsonl"}, "domain": "kafka", "exposed": true, "failure_class": "plain_lookup", "family": "err_mc:INVALID", "generator": "eval2_items_a1/1", "id": "a1-err_mc-005", "kind": "error_name", "overlap": {"desc_in_q": 1.0, "q_in_desc": 0.194}, "overlap_band": "low", "perturbed_reference": "`INVALID_RECORD` means something else.\nANSWER: A", "perturbed_violates": 1, "question": "Which description matches the Kafka protocol error `INVALID_RECORD` (Kafka 4.3 error list)?\n\nA) The broker rejected this static consumer since another consumer with the same group.instance.id has registered with a different member.id.\nB) The broker received a duplicate sequence number.\nC) The controller has considered the broker registration to be invalid.\nD) This record has failed the validation on broker and hence will be rejected.\n\nFinish with a final line `ANSWER: <A|B|C|D>`.", "reference": "`INVALID_RECORD` means: This record has failed the validation on broker and hence will be rejected.\nANSWER: D", "seed": "m4-a1-1", "sources": [{"catalogue": "protocol_errors", "entry": "INVALID_RECORD", "fact": "description of INVALID_RECORD", "file": "raw/apache-kafka-config/content/en/43/generated/protocol_errors.html", "line": 95}, {"catalogue": "protocol_errors", "entry": "INVALID_REGISTRATION", "fact": "distractor: description of INVALID_REGISTRATION", "file": "raw/apache-kafka-config/content/en/43/generated/protocol_errors.html", "line": 127}, {"catalogue": "protocol_errors", "entry": "FENCED_INSTANCE_ID", "fact": "distractor: description of FENCED_INSTANCE_ID", "file": "raw/apache-kafka-config/content/en/43/generated/protocol_errors.html", "line": 90}, {"catalogue": "protocol_errors", "entry": "DUPLICATE_SEQUENCE_NUMBER", "fact": "distractor: description of DUPLICATE_SEQUENCE_NUMBER", "file": "raw/apache-kafka-config/content/en/43/generated/protocol_errors.html", "line": 54}], "template": "err_mc", "tier": "A", "versions": {"kafka": "4.3"}}
+{"anchored": true, "catalogue_hash": "b67627d2bf03ef784ac1d3294527086fe7bf6f7d6e2647d6e758936b4641e6d9", "checks": [{"format": true, "type": "answer_line"}, {"accepted": ["yes", "true"], "norm": "ci", "type": "answer_equals"}], "dedup": {"max_containment": 0.4, "max_jaccard": 0.091, "nearest": "work/v3/questions.jsonl"}, "domain": "kafka", "exposed": true, "failure_class": "plain_lookup", "family": "err_retriable:NETWORK", "generator": "eval2_items_a1/1", "id": "a1-err_retriable-005", "kind": "error_name", "overlap": {"desc_in_q": 0.0, "q_in_desc": 0.0}, "overlap_band": "low", "perturbed_reference": "The protocol list marks `NETWORK_EXCEPTION` as retriable: no.\nANSWER: no", "perturbed_violates": 1, "question": "According to the Kafka 4.3 protocol error list, is the error `NETWORK_EXCEPTION` retriable? Answer yes or no.\n\nFinish with a final line `ANSWER: yes|no`.", "reference": "The protocol list marks `NETWORK_EXCEPTION` as retriable: yes.\nANSWER: yes", "seed": "m4-a1-1", "sources": [{"catalogue": "protocol_errors", "entry": "NETWORK_EXCEPTION", "fact": "retriable True", "file": "raw/apache-kafka-config/content/en/43/generated/protocol_errors.html", "line": 21}], "template": "err_retriable", "tier": "A", "versions": {"kafka": "4.3"}}
+{"anchored": true, "catalogue_hash": "b67627d2bf03ef784ac1d3294527086fe7bf6f7d6e2647d6e758936b4641e6d9", "checks": [{"format": true, "type": "answer_line"}, {"accepted": ["52428800", "52428800 (50 mebibytes)", "50 mebibytes"], "norm": "ci", "type": "answer_equals"}], "dedup": {"max_containment": 0.625, "max_jaccard": 0.217, "nearest": "data/train.jsonl"}, "domain": "kafka", "exposed": true, "failure_class": "scope_dependent", "family": "ns_default_a:consumer", "generator": "eval2_items_a1/1", "id": "a1-ns_default_a-007", "kind": "name_setting", "overlap": {"desc_in_q": 0.106, "q_in_desc": 0.625}, "overlap_band": "high", "perturbed_reference": "The default of `fetch.max.bytes` is 524288000.\nANSWER: 524288000", "perturbed_violates": 1, "question": "What is the default value of the consumer configuration `fetch.max.bytes` in Kafka 4.3?\n\nFinish with a final line `ANSWER: <default value>`. Give the bare value.", "reference": "The default of `fetch.max.bytes` is 52428800.\nANSWER: 52428800", "seed": "m4-a1-1", "sources": [{"catalogue": "kafka_config", "entry": "consumer/fetch.max.bytes", "fact": "default 52428800 (50 mebibytes)", "file": "raw/apache-kafka-config/content/en/43/generated/consumer_config.html", "line": 263}], "template": "ns_default_a", "tier": "A", "versions": {"kafka": "4.3"}}
+{"anchored": true, "catalogue_hash": "b67627d2bf03ef784ac1d3294527086fe7bf6f7d6e2647d6e758936b4641e6d9", "checks": [{"format": true, "type": "answer_line"}, {"accepted": ["ssl.truststore.password"], "norm": "exact", "type": "answer_equals"}], "dedup": {"max_containment": 0.4, "max_jaccard": 0.138, "nearest": "data/train.jsonl"}, "domain": "connect", "exposed": true, "failure_class": "confusable_neighbour", "family": "ns_key_desc_a:connect", "generator": "eval2_items_a1/1", "id": "a1-ns_key_desc_a-002", "kind": "name_setting", "overlap": {"desc_in_q": 0.8, "q_in_desc": 0.522}, "overlap_band": "high", "perturbed_reference": "The description is the one of `ssl.truststore.password.x`.\nANSWER: ssl.truststore.password.x", "perturbed_violates": 1, "question": "In the Kafka 4.3 Connect worker configuration reference, which key is described as follows?\n\n> The password for the trust store file. If a password is not set, trust store file configured will still be used, but integrity checking is disabled.\n\nGive the exact key name.\n\nFinish with a final line `ANSWER: <key>`.", "reference": "The description is the one of `ssl.truststore.password` in the Connect worker configuration reference.\nANSWER: ssl.truststore.password", "seed": "m4-a1-1", "sources": [{"catalogue": "kafka_config", "entry": "connect/ssl.truststore.password", "fact": "key ssl.truststore.password has this description", "file": "raw/apache-kafka-config/content/en/43/generated/connect_config.html", "line": 203}], "template": "ns_key_desc_a", "tier": "A", "versions": {"kafka": "4.3"}}
+{"anchored": true, "catalogue_hash": "b67627d2bf03ef784ac1d3294527086fe7bf6f7d6e2647d6e758936b4641e6d9", "checks": [{"format": true, "type": "answer_line"}, {"accepted": ["ssl.truststore.type"], "norm": "exact", "type": "answer_equals"}], "dedup": {"max_containment": 0.556, "max_jaccard": 0.179, "nearest": "data/train.jsonl"}, "domain": "mirrormaker", "exposed": true, "failure_class": "confusable_neighbour", "family": "ns_key_desc_b:mirror_connector", "generator": "eval2_items_a1/1", "id": "a1-ns_key_desc_b-004", "kind": "name_setting", "overlap": {"desc_in_q": 1.0, "q_in_desc": 0.625}, "overlap_band": "high", "perturbed_reference": "The description is the one of `ssl.truststore.type.x`.\nANSWER: ssl.truststore.type.x", "perturbed_violates": 1, "question": "I'm looking for a Kafka MirrorMaker 2 connector setting and all I remember is its description: \"The file format of the trust store file. The values currently supported by the default ssl.engine.factory.class are [JKS, PKCS12, PEM].\" What is the exact name of the setting?\n\nFinish with a final line `ANSWER: <key>`.", "reference": "The description is the one of `ssl.truststore.type` in the MirrorMaker 2 connector configuration reference.\nANSWER: ssl.truststore.type", "seed": "m4-a1-1", "sources": [{"catalogue": "kafka_config", "entry": "mirror_connector/ssl.truststore.type", "fact": "key ssl.truststore.type has this description", "file": "raw/apache-kafka-config/content/en/43/generated/mirror_connector_config.html", "line": 393}], "template": "ns_key_desc_b", "tier": "A", "versions": {"kafka": "4.3"}}
+{"anchored": true, "catalogue_hash": "b67627d2bf03ef784ac1d3294527086fe7bf6f7d6e2647d6e758936b4641e6d9", "checks": [{"format": true, "type": "answer_line"}, {"accepted": ["remote.log.delete.on.disable"], "norm": "exact", "type": "answer_equals"}], "dedup": {"max_containment": 0.375, "max_jaccard": 0.136, "nearest": "data/train.jsonl"}, "domain": "kafka", "exposed": true, "failure_class": "plain_lookup", "family": "ns_key_desc_b:topic", "generator": "eval2_items_a1/1", "id": "a1-ns_key_desc_b-007", "kind": "name_setting", "overlap": {"desc_in_q": 0.529, "q_in_desc": 0.529}, "overlap_band": "high", "perturbed_reference": "The description is the one of `remote.log.delete.on.disable.x`.\nANSWER: remote.log.delete.on.disable.x", "perturbed_violates": 1, "question": "I'm looking for a Kafka topic-level setting and all I remember is its description: \"Determines whether tiered data for a topic should be deleted after tiered storage is disabled on a topic.\" What is the exact name of the setting?\n\nFinish with a final line `ANSWER: <key>`.", "reference": "The description is the one of `remote.log.delete.on.disable` in the topic-level configuration reference.\nANSWER: remote.log.delete.on.disable", "seed": "m4-a1-1", "sources": [{"catalogue": "kafka_config", "entry": "topic/remote.log.delete.on.disable", "fact": "key remote.log.delete.on.disable has this description", "file": "raw/apache-kafka-config/content/en/43/generated/topic_config.html", "line": 278}], "template": "ns_key_desc_b", "tier": "A", "versions": {"kafka": "4.3"}}
+{"anchored": true, "catalogue_hash": "b67627d2bf03ef784ac1d3294527086fe7bf6f7d6e2647d6e758936b4641e6d9", "checks": [{"format": true, "type": "answer_line"}, {"accepted": ["group", "group coordinator"], "norm": "ci", "type": "answer_equals"}], "dedup": {"max_containment": 0.5, "max_jaccard": 0.308, "nearest": "data/train.jsonl"}, "domain": "kafka", "exposed": true, "failure_class": "wrong_scope", "family": "ns_scope_a:group", "generator": "eval2_items_a1/1", "id": "a1-ns_scope_a-006", "kind": "name_setting", "overlap": {"desc_in_q": 0.6, "q_in_desc": 0.333}, "overlap_band": "mid", "perturbed_reference": "`streams.assignment.interval.ms` is defined in the producer configuration.\nANSWER: producer", "perturbed_violates": 1, "question": "Which Kafka component's configuration reference lists `streams.assignment.interval.ms` (Kafka 4.3)?\n\nChoose exactly one of: broker, topic, producer, consumer, admin, group, streams, connect, sink connector, source connector. Finish with a final line `ANSWER: <component>`.", "reference": "`streams.assignment.interval.ms` is defined in the group configuration.\nANSWER: group", "seed": "m4-a1-1", "sources": [{"catalogue": "kafka_config", "entry": "group/streams.assignment.interval.ms", "fact": "only scope: group", "file": "raw/apache-kafka-config/content/en/43/generated/group_config.html", "line": 123}], "template": "ns_scope_a", "tier": "A", "versions": {"kafka": "4.3"}}
+{"anchored": true, "catalogue_hash": "b67627d2bf03ef784ac1d3294527086fe7bf6f7d6e2647d6e758936b4641e6d9", "checks": [{"format": true, "type": "answer_line"}, {"accepted": ["broker"], "norm": "ci", "type": "answer_equals"}], "dedup": {"max_containment": 0.667, "max_jaccard": 0.429, "nearest": "data/train.jsonl"}, "domain": "kafka", "exposed": true, "failure_class": "wrong_scope", "family": "ns_scope_b:broker:group", "generator": "eval2_items_a1/1", "id": "a1-ns_scope_b-001", "kind": "name_setting", "overlap": {"desc_in_q": 0.333, "q_in_desc": 0.182}, "overlap_band": "low", "perturbed_reference": "`group.consumer.max.session.timeout.ms` is defined in the producer configuration.\nANSWER: producer", "perturbed_violates": 1, "question": "`group.consumer.max.session.timeout.ms` is a Kafka configuration key. In which configuration reference of Kafka 4.3 is it defined?\n\nChoose exactly one of: broker, topic, producer, consumer, admin, group, streams, connect, sink connector, source connector. Finish with a final line `ANSWER: <component>`.", "reference": "`group.consumer.max.session.timeout.ms` is defined in the broker configuration.\nANSWER: broker", "seed": "m4-a1-1", "sources": [{"catalogue": "kafka_config", "entry": "broker/group.consumer.max.session.timeout.ms", "fact": "only scope: broker", "file": "raw/apache-kafka-config/content/en/43/generated/kafka_config.html", "line": 1301}], "template": "ns_scope_b", "tier": "A", "versions": {"kafka": "4.3"}}
+{"anchored": true, "catalogue_hash": "b67627d2bf03ef784ac1d3294527086fe7bf6f7d6e2647d6e758936b4641e6d9", "checks": [{"format": true, "type": "answer_line"}, {"accepted": ["string"], "norm": "ci", "type": "answer_equals"}], "dedup": {"max_containment": 0.556, "max_jaccard": 0.217, "nearest": "data/train.jsonl"}, "domain": "kafka", "exposed": true, "failure_class": "plain_lookup", "family": "ns_type_a:broker:ssl", "generator": "eval2_items_a1/1", "id": "a1-ns_type_a-006", "kind": "name_setting", "overlap": {"desc_in_q": 0.114, "q_in_desc": 0.444}, "overlap_band": "mid", "perturbed_reference": "`ssl.principal.mapping.rules` has the type int.\nANSWER: int", "perturbed_violates": 1, "question": "What is the configuration type of `ssl.principal.mapping.rules` in the Kafka 4.3 broker configuration reference?\n\nChoose one of: boolean, class, double, int, list, long, password, short, string. Finish with a final line `ANSWER: <type>`.", "reference": "`ssl.principal.mapping.rules` has the type string.\nANSWER: string", "seed": "m4-a1-1", "sources": [{"catalogue": "kafka_config", "entry": "broker/ssl.principal.mapping.rules", "fact": "type string", "file": "raw/apache-kafka-config/content/en/43/generated/kafka_config.html", "line": 3710}], "template": "ns_type_a", "tier": "A", "versions": {"kafka": "4.3"}}
+{"anchored": true, "catalogue_hash": "b67627d2bf03ef784ac1d3294527086fe7bf6f7d6e2647d6e758936b4641e6d9", "checks": [{"format": true, "type": "answer_line"}, {"accepted": ["legacy", "new"], "type": "answer_set"}], "dedup": {"max_containment": 0.375, "max_jaccard": 0.158, "nearest": "data/train.jsonl"}, "domain": "mirrormaker", "exposed": true, "failure_class": "plain_lookup", "family": "ns_values_a:mirror_source", "generator": "eval2_items_a1/1", "id": "a1-ns_values_a-006", "kind": "name_setting", "overlap": {"desc_in_q": 0.167, "q_in_desc": 0.429}, "overlap_band": "mid", "perturbed_reference": "`metric.names.formats` accepts: legacy.\nANSWER: legacy", "perturbed_violates": 1, "question": "Which values does the Kafka MirrorMaker 2 source connector setting `metric.names.formats` accept (Kafka 4.3 reference)? Give all of them, separated by commas.\n\nFinish with a final line `ANSWER: <value 1>, <value 2>, ...`.", "reference": "`metric.names.formats` accepts: legacy, new.\nANSWER: legacy, new", "seed": "m4-a1-1", "sources": [{"catalogue": "kafka_config", "entry": "mirror_source/metric.names.formats", "fact": "valid values [legacy, new]", "file": "raw/apache-kafka-config/content/en/43/generated/mirror_source_config.html", "line": 73}], "template": "ns_values_a", "tier": "A", "versions": {"kafka": "4.3"}}
+{"anchored": true, "catalogue_hash": "b67627d2bf03ef784ac1d3294527086fe7bf6f7d6e2647d6e758936b4641e6d9", "checks": [{"format": true, "type": "answer_line"}, {"accepted": ["source", "target"], "type": "answer_set"}], "dedup": {"max_containment": 0.5, "max_jaccard": 0.211, "nearest": "data/train.jsonl"}, "domain": "mirrormaker", "exposed": true, "failure_class": "plain_lookup", "family": "ns_values_a:mirror_source", "generator": "eval2_items_a1/1", "id": "a1-ns_values_a-008", "kind": "name_setting", "overlap": {"desc_in_q": 0.833, "q_in_desc": 0.333}, "overlap_band": "mid", "perturbed_reference": "`offset-syncs.topic.location` accepts: source.\nANSWER: source", "perturbed_violates": 1, "question": "Which values does the Kafka MirrorMaker 2 source connector setting `offset-syncs.topic.location` accept (Kafka 4.3 reference)? Give all of them, separated by commas.\n\nFinish with a final line `ANSWER: <value 1>, <value 2>, ...`.", "reference": "`offset-syncs.topic.location` accepts: source, target.\nANSWER: source, target", "seed": "m4-a1-1", "sources": [{"catalogue": "kafka_config", "entry": "mirror_source/offset-syncs.topic.location", "fact": "valid values [source, target]", "file": "raw/apache-kafka-config/content/en/43/generated/mirror_source_config.html", "line": 83}], "template": "ns_values_a", "tier": "A", "versions": {"kafka": "4.3"}}
+{"anchored": true, "catalogue_hash": "b67627d2bf03ef784ac1d3294527086fe7bf6f7d6e2647d6e758936b4641e6d9", "checks": [{"format": true, "type": "answer_line"}, {"accepted": ["read_committed", "read_uncommitted"], "type": "answer_set"}], "dedup": {"max_containment": 0.385, "max_jaccard": 0.132, "nearest": "work/v3/questions.jsonl"}, "domain": "kafka", "exposed": true, "failure_class": "plain_lookup", "family": "ns_values_b:group", "generator": "eval2_items_a1/1", "id": "a1-ns_values_b-002", "kind": "name_setting", "overlap": {"desc_in_q": 0.091, "q_in_desc": 0.154}, "overlap_band": "low", "perturbed_reference": "`share.isolation.level` accepts: read_committed.\nANSWER: read_committed", "perturbed_violates": 1, "question": "List every allowed value of `share.isolation.level` in the group coordinator configuration of Kafka 4.3, separated by commas.\n\nFinish with a final line `ANSWER: <value 1>, <value 2>, ...`.", "reference": "`share.isolation.level` accepts: read_committed, read_uncommitted.\nANSWER: read_committed, read_uncommitted", "seed": "m4-a1-1", "sources": [{"catalogue": "kafka_config", "entry": "group/share.isolation.level", "fact": "valid values [read_committed, read_uncommitted]", "file": "raw/apache-kafka-config/content/en/43/generated/group_config.html", "line": 73}], "template": "ns_values_b", "tier": "A", "versions": {"kafka": "4.3"}}
+{"anchored": true, "catalogue_hash": "b67627d2bf03ef784ac1d3294527086fe7bf6f7d6e2647d6e758936b4641e6d9", "checks": [{"format": true, "type": "answer_line"}, {"accepted": ["none", "restart"], "type": "answer_set"}], "dedup": {"max_containment": 0.4, "max_jaccard": 0.211, "nearest": "data/train.jsonl"}, "domain": "mirrormaker", "exposed": true, "failure_class": "plain_lookup", "family": "ns_values_b:mirror_connector", "generator": "eval2_items_a1/1", "id": "a1-ns_values_b-003", "kind": "name_setting", "overlap": {"desc_in_q": 0.208, "q_in_desc": 0.385}, "overlap_band": "mid", "perturbed_reference": "`config.action.reload` accepts: none.\nANSWER: none", "perturbed_violates": 1, "question": "List every allowed value of `config.action.reload` in the MirrorMaker 2 connector configuration of Kafka 4.3, separated by commas.\n\nFinish with a final line `ANSWER: <value 1>, <value 2>, ...`.", "reference": "`config.action.reload` accepts: none, restart.\nANSWER: none, restart", "seed": "m4-a1-1", "sources": [{"catalogue": "kafka_config", "entry": "mirror_connector/config.action.reload", "fact": "valid values [none, restart]", "file": "raw/apache-kafka-config/content/en/43/generated/mirror_connector_config.html", "line": 863}], "template": "ns_values_b", "tier": "A", "versions": {"kafka": "4.3"}}
+{"anchored": true, "catalogue_hash": "b67627d2bf03ef784ac1d3294527086fe7bf6f7d6e2647d6e758936b4641e6d9", "checks": [{"format": true, "type": "answer_line"}, {"accepted": ["broker", "controller"], "type": "answer_set"}], "dedup": {"max_containment": 0.455, "max_jaccard": 0.167, "nearest": "work/v3/questions.jsonl"}, "domain": "kafka", "exposed": true, "failure_class": "plain_lookup", "family": "ns_values_b:broker:process", "generator": "eval2_items_a1/1", "id": "a1-ns_values_b-005", "kind": "name_setting", "overlap": {"desc_in_q": 0.5, "q_in_desc": 0.273}, "overlap_band": "mid", "perturbed_reference": "`process.roles` accepts: broker.\nANSWER: broker", "perturbed_violates": 1, "question": "List every allowed value of `process.roles` in the broker configuration of Kafka 4.3, separated by commas.\n\nFinish with a final line `ANSWER: <value 1>, <value 2>, ...`.", "reference": "`process.roles` accepts: broker, controller.\nANSWER: broker, controller", "seed": "m4-a1-1", "sources": [{"catalogue": "kafka_config", "entry": "broker/process.roles", "fact": "valid values [broker, controller]", "file": "raw/apache-kafka-config/content/en/43/generated/kafka_config.html", "line": 25}], "template": "ns_values_b", "tier": "A", "versions": {"kafka": "4.3"}}
+{"anchored": true, "catalogue_hash": "b67627d2bf03ef784ac1d3294527086fe7bf6f7d6e2647d6e758936b4641e6d9", "checks": [{"format": true, "type": "answer_line"}, {"expected": "does not exist", "type": "answer_verdict"}], "dedup": {"max_containment": 0.5, "max_jaccard": 0.129, "nearest": "work/v3/questions.jsonl"}, "domain": "kafka", "exposed": true, "failure_class": "near_miss_name", "family": "real_error:FENCED", "generator": "eval2_items_a1/1", "id": "a1-real_error-003", "kind": "is_real", "overlap": {"desc_in_q": 0.111, "q_in_desc": 0.125}, "overlap_band": "low", "perturbed_reference": "My answer, based on the sources: exists.\nANSWER: exists", "perturbed_violates": 1, "question": "Is `FENCED_STATE_VERSION` an error name in the Kafka protocol error list (Kafka 4.3)?\n\nAnswer with exactly one of: `exists`, `does not exist`, `not in my sources`. Finish with a final line `ANSWER: <one of the three>`.", "reference": "My answer, based on the sources: does not exist.\nANSWER: does not exist", "seed": "m4-a1-1", "sources": [{"absent": "FENCED_STATE_VERSION", "catalogue": "protocol_errors", "edit": "swapped word EPOCH -> VERSION of FENCED_STATE_EPOCH", "fact": "absent from the complete error list", "file": "raw/apache-kafka-config/content/en/43/generated/protocol_errors.html", "line": null}], "template": "real_error", "tier": "A", "versions": {"kafka": "4.3"}}
+{"anchored": true, "catalogue_hash": "b67627d2bf03ef784ac1d3294527086fe7bf6f7d6e2647d6e758936b4641e6d9", "checks": [{"format": true, "type": "answer_line"}, {"expected": "does not exist", "type": "answer_verdict"}], "dedup": {"max_containment": 0.5, "max_jaccard": 0.161, "nearest": "work/v3/questions.jsonl"}, "domain": "connect", "exposed": true, "failure_class": "near_miss_name", "family": "real_key_plain:connect", "generator": "eval2_items_a1/1", "id": "a1-real_key_plain-003", "kind": "is_real", "overlap": {"desc_in_q": 0.25, "q_in_desc": 0.2}, "overlap_band": "low", "perturbed_reference": "My answer, based on the sources: exists.\nANSWER: exists", "perturbed_violates": 1, "question": "Is `connections.maximum.idle.ms` a real configuration key of the Kafka 4.3 Connect worker configuration?\n\nAnswer with exactly one of: `exists`, `does not exist`, `not in my sources`. Finish with a final line `ANSWER: <one of the three>`.", "reference": "My answer, based on the sources: does not exist.\nANSWER: does not exist", "seed": "m4-a1-1", "sources": [{"absent": "connections.maximum.idle.ms", "catalogue": "kafka_config", "edit": "swapped word max -> maximum of connections.max.idle.ms", "fact": "absent from every scope of the complete reference", "file": "raw/apache-kafka-config/content/en/43/generated/connect_config.html", "line": null}], "template": "real_key_plain", "tier": "A", "versions": {"kafka": "4.3"}}
+{"anchored": true, "catalogue_hash": "b67627d2bf03ef784ac1d3294527086fe7bf6f7d6e2647d6e758936b4641e6d9", "checks": [{"format": true, "type": "answer_line"}, {"method": "PUT", "type": "rest_method"}, {"template": "/connectors/{connector}/pause", "type": "rest_path"}], "dedup": {"max_containment": 0.5, "max_jaccard": 0.25, "nearest": "data/train.jsonl"}, "domain": "connect", "exposed": true, "failure_class": "plain_lookup", "family": "rest_which_a:lifecycle", "generator": "eval2_items_a1/1", "id": "a1-rest_which_a-003", "kind": "connect_rest", "overlap": {"desc_in_q": 0.667, "q_in_desc": 0.167}, "overlap_band": "low", "perturbed_reference": "The Connect REST interface serves this as DELETE /connectors/orders-sink/pause.\nANSWER: DELETE /connectors/orders-sink/pause", "perturbed_violates": 1, "question": "Which HTTP method and path of the Kafka Connect REST interface (Kafka 4.3) would you use to pause the connector `orders-sink`?\n\nFinish with a final line `ANSWER: <METHOD> <path>`. Use the path as the worker serves it, for example with the connector name filled in.", "reference": "The Connect REST interface serves this as PUT /connectors/orders-sink/pause.\nANSWER: PUT /connectors/orders-sink/pause", "seed": "m4-a1-1", "sources": [{"catalogue": "connect_rest", "entry": "PUT /connectors/{connector}/pause", "fact": "operation pauseConnector: Pause the specified connector", "file": "raw/apache-kafka-config/content/en/43/generated/connect_rest.yaml", "line": 311}], "template": "rest_which_a", "tier": "A", "versions": {"kafka": "4.3.2"}}
+'''
+
+
+def EXPOSED_V1_ROWS():
+    return [json.loads(ln) for ln in EXPOSED_V1_TEXT.splitlines() if ln.strip()]
 
 
 def main(argv=None):
