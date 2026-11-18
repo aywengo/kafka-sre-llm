@@ -149,7 +149,7 @@ to build or tune the assistant.
 | Fast enough | Time to a complete answer | Median under 60 s | agreed |
 | Fits | Memory held, network off | The table above | agreed |
 | Helps | Judged score against the same model without the index, per task type | A gain beyond noise on every task type | agreed |
-| Costs little to shrink | Judged score against the full-precision 27B with the same index | Loss within noise, or a stated and accepted loss | agreed |
+| Costs little to shrink | The same evaluation for the shipped quantisation and for the full-precision 27B, same index, same serving path | Loss inside a margin fixed before the run (5 points on the mechanical tier of the M4 evaluation), or a stated and accepted loss | agreed; wording amended 2026-11-18 |
 | Artefacts are valid | Generated manifests and resources checked against pinned schemas; configuration keys against the real key lists; code that compiles | 95 % valid resources, 100 % existing keys | agreed |
 | Honest about gaps | Wrong refusals where the excerpts cover the question | At most 1 in 10 | agreed |
 | Complete | Answers that drop an essential, supported step | At most 1 in 10 | agreed |

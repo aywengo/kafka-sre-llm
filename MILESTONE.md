@@ -109,36 +109,17 @@ thinking off.
 | 2026-11-18 | Order of work: evaluation, then the answer checker, then speed; base-model shortlist in parallel, bake-off after the evaluation exists | Owner |
 | 2026-11-18 | Workers that need no GPU may run on the local model server | Owner |
 | 2026-11-18 | The 15 changes of the design review are accepted into the design; those that are the Owner's are marked as waiting | conductor |
+| 2026-11-18 | **Yes to all recommendations:** the 4-bit model on oMLX is the reference configuration; half of each tier hidden, encrypted, decisions on the hidden half, at most six looks; the downloads and installs for catalogues and checks; loading the 4-bit and full-precision 27B builds for the comparison; `questions_real` becomes a legacy set and the 4-bit bar a margin fixed before the run; public questions may be raw material after a licence check; the four bake-off candidates may be downloaded; other clients' models on the server may be unloaded when it is idle | Owner |
 
 ## Waiting for the Owner
 
-Recommended answer first in each. None blocks the work now running.
+Decided on 2026-11-18 (see "Decisions"). Still his to do, none blocking:
 
-1. **Reference configuration for M4:** yes, the 4-bit base model served by oMLX, default
-   and strict mode.
-2. **The hidden part:** yes to half of every tier hidden, decisions taken on the hidden
-   half, stored encrypted with the key outside the repository, and at most six looks at it
-   in M4, each written down with its decision rule beforehand.
-0. **The model server (blocks S5 and S6 now):** it holds DeepSeek and a Qwen build that
-   another client loaded. Say when it is free, or that they may be unloaded. The judging
-   pilot takes 3.3 to 5.5 hours with the judge model alone.
-3. **Downloads and installs for the catalogues and checks:** yes. Strimzi 1.3.1 resource
-   definitions, Kafka 4.3.2 tool source or binary (command flags), the Kubernetes API
-   schema, Argo CD 3.6.1 resource definitions, earlier Kafka config pages (for changed
-   defaults), the kafka-clients jar and a Python Kafka client with `jsonschema` (to check
-   written code and resources). All Apache-2.0, pinned, kept out of the frozen index.
-4. **Loading the full-precision and the 4-bit 27B builds on the model server for S6:**
-   yes; about 15 to 20 hours of exclusive server time.
-5. **Two wordings:** `AGENTS.md` calls the old 40 questions "the gate set"; they become a
-   legacy set. `GOAL.md` says the cost of 4-bit must be "within noise"; it becomes "inside
-   a margin fixed before the run".
-6. **Questions:** 30 to 50 fresh real questions with correct answers from you; whether
-   public questions (Stack Overflow, share-alike; issue trackers) may be raw material after
-   a licence check; your review of the architecture rubrics (without it that part shrinks
-   from 25 to 15 items).
-7. **Bake-off downloads:** the four candidates above the reference, about 16 GB each.
-8. **A laptop to measure on:** a 32 to 36 GB Apple Silicon laptop.
-9. **D2:** read ten answers yourself.
+1. **Fresh real questions with correct answers:** 30 to 50 from real incidents.
+2. **Review of the architecture rubrics** when they exist (without it that part is 15
+   items, not 25).
+3. **A 32 to 36 GB Apple Silicon laptop** for the fit and speed bars, when the time comes.
+4. **D2:** read ten answers that a model has already read.
 
 ## Log
 

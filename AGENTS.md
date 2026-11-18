@@ -67,6 +67,10 @@ with bulk generation or training. A failed gate stops the stage until the Owner 
 it. The Owner is whoever `CODEOWNERS` names.
 Loading and unloading the three models named below is covered by the Owner's standing go, when no
 other client is active.
+For M4 the Owner's go of 2026-11-18 also covers: loading the 4-bit and the full-precision
+build of the base model and the bake-off candidates of `MILESTONE.md` for measurement runs,
+and unloading models another client left loaded when the server has no active or waiting
+request.
 
 ## Repository map
 
@@ -95,10 +99,19 @@ Commands: `.venv/bin/python -m unittest discover -s tests` (offline, seconds);
   +1.19. A change must keep those tests passing. An adapter is trained on that format.
 - **Generation prompts** carry `PACK_PROMPT_VERSION`; outputs of different versions are never
   mixed, and a version change means a new pilot.
-- **Evaluation sets:** no eval question in any training-data prompt. `questions_real` is the
-  gate set and has been used many times: no prompt or retrieval tuning on it, and say so
-  whenever a conclusion leans on it again. Differences under about 0.2 on 40 questions are
-  noise (the standard error is about 0.2).
+- **Evaluation sets:** no eval question in any training-data prompt. `questions_real` (the
+  old 40) and the 42 runbook-holdout questions are legacy sets: kept for continuity with v3,
+  no longer a gate, no prompt or retrieval tuning on them, and say so whenever a conclusion
+  leans on them. Differences under about 0.2 on 40 questions are noise (the standard error
+  is about 0.2).
+- **The hidden part of the M4 evaluation** (`agents/m4-evaluation.md`) is the gate. Nobody
+  opens its items, the answers to them or per-item results; the harness prints totals only.
+  Every run on it is written in `runs/m4/HIDDEN_LEDGER.md` with its decision rule before
+  the run, at most six in M4. A change prompted by particular open items lists those items
+  and is judged on the hidden part.
+- **The catalogues** (`work/m4/catalogues/`, built by `scripts/build_catalogues.py`) are
+  hashed like the index. The evaluation's scorer and the runtime's answer checker share
+  them and nothing else.
 
 ## Jobs, the GPU and the model server
 
