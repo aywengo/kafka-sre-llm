@@ -169,21 +169,31 @@ says, so a prompt never goes to a proxy; for a server elsewhere on your network,
 
 **Ollama.** Tested with Ollama 0.40.16, which works; 0.14.2 cannot load Qwen3.8 (the library model's own
 metadata says it needs 0.32.12 or later, which was not tested, so the minimum version is not established).
-Pull the base model by its exact name, `ollama pull qwen3.8:27b` (18.2 GB, Apache-2.0). At the time of the
-test this library model is an NVFP4 build on Ollama's MLX runner, not a Q4_K_M GGUF. A Q4_K_M GGUF from the
-Hub, `ollama pull hf.co/lmstudio-community/Qwen3.8-27B-GGUF:Q4_K_M` (17.7 GB, llama.cpp runner), also
-loads and answered through the runtime once, but was not timed. Start the server with a context that holds
-the prompt and the answer: `OLLAMA_CONTEXT_LENGTH=16384 ollama serve` (a prompt is up to about 4,100 tokens
-and the answer up to 2,048). Ollama's documented default is 4,096 on machines under 24 GiB of video memory.
-With that context the two runners behaved differently in the test: the llama.cpp runner enforced it and cut
-an answer off at the limit (finish_reason `length`; a longer prompt got a clear HTTP 400), the MLX runner did
-not enforce it. Do not rely on that; set the context. Check it with `ollama ps` (the CONTEXT column). Then,
-with the exact name that `ollama list` shows:
+Do the steps in this order. First start the server, with a context that holds the prompt and the answer (a
+prompt is up to about 4,100 tokens and the answer up to 2,048). If an Ollama server is already running, stop
+it first, so that the context setting takes effect:
 
 ```bash
+OLLAMA_CONTEXT_LENGTH=16384 ollama serve
+```
+
+Then, in a second terminal, pull the base model by its exact name and ask (`ollama pull` needs the running
+server):
+
+```bash
+ollama pull qwen3.8:27b                     # 18.2 GB, Apache-2.0
+ollama ps                                   # after the first answer: the CONTEXT column shows 16384
 export OMLX_URL=http://localhost:11434/v1
 python -m kafka_sre_rag ask --backend openai --model qwen3.8:27b --extra-body '{"reasoning_effort": "none"}' "How do I check consumer lag?"
 ```
+
+At the time of the test the library model `qwen3.8:27b` is an NVFP4 build on Ollama's MLX runner, not a
+Q4_K_M GGUF. A Q4_K_M GGUF from the Hub, `ollama pull hf.co/lmstudio-community/Qwen3.8-27B-GGUF:Q4_K_M`
+(17.7 GB, llama.cpp runner), also loads and answered through the runtime once, but was not timed. Ollama's
+documented default context is 4,096 on machines under 24 GiB of video memory. With that context the two
+runners behaved differently in the test: the llama.cpp runner enforced it and cut an answer off at the limit
+(finish_reason `length`; a longer prompt got a clear HTTP 400), the MLX runner did not enforce it. Do not
+rely on that; set the context. Use the exact name that `ollama list` shows.
 
 `reasoning_effort: "none"` turns thinking off on Ollama's OpenAI endpoint; `{"think": false}` is ignored
 there. The runtime refuses a model name that `ollama list` does not show: the short alias `qwen3.8`, which
