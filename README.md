@@ -224,6 +224,38 @@ Other options: `--k k3` (3 chunks, shorter prompt), `--json` (one JSON object wi
 sources, search terms, timings and the reasons the run is unmeasured), `--adapter <dir>`
 (mlx only).
 
+### Run as a local service
+
+`ask` starts a process, loads the index, builds the BM25 structures and loads the reranker for every question.
+`serve` does that once and keeps it:
+
+```bash
+# OMLX_URL set as in the server-backend part above
+python -m kafka_sre_rag serve --backend openai --model qwen3.8:27b --extra-body '{"reasoning_effort": "none"}'
+# in another terminal
+python -m kafka_sre_rag ask --service-url http://127.0.0.1:8765 --stream --sources "How do I check consumer lag?"
+curl -s http://127.0.0.1:8765/healthz
+```
+
+The service takes the same model options as `ask` (`--backend`, `--model`, `--adapter`, `--base-url`,
+`--extra-body`, `--max-tokens`, `--mode`, `--k`), fixed at start. It speaks the OpenAI chat format, so a chat
+front end or an editor plug-in can point at `http://127.0.0.1:8765/v1`: `POST /v1/chat/completions` (also with
+`"stream": true`, server-sent events), `GET /v1/models` (`kafka-sre` and `kafka-sre-strict`; a request can also
+carry `"mode": "strict"`) and `GET /healthz` (index hash, reranker revision, backend, model, whether `verify`
+passed at start). The last user message is the question; every request is retrieved and answered on its own and
+no conversation history is sent (the response says so in the `X-Kafka-Sre-History` header and the `kafka_sre`
+field, which also carries the sources and chunk ids). One request at a time reaches the model; the rest wait.
+
+**Loopback only.** The service binds to `127.0.0.1` and refuses any other address; `--allow-non-local` overrides
+that and prints a warning, because `GOAL.md` requires that nothing leaves the machine. Requests whose `Host`
+header is not a loopback name are refused too.
+
+`ask --stream` prints the answer as it is generated, with or without a service, and then the sources; a
+`<think>` block is not shown. The final text is the same as without `--stream`.
+
+Not yet measured: the time to the first words and the total time per answer with a real model through the
+service. Only retrieval was timed without a model (see the work-package report in `runs/m4/reports/`).
+
 ### Modes
 
 - **default:** the prompt that was measured, and the default. Its answers are longer and

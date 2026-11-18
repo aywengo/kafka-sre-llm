@@ -207,3 +207,71 @@ class MLXGenerator:
             if on_token and last.text:
                 on_token(last.text)
         return strip_think(text), last.generation_tokens, last.finish_reason == "length"
+
+
+class ThinkFilter:
+    """Streaming counterpart of strip_think(): feed() the pieces of a reply as they arrive, print what it returns;
+    finish() returns the rest. The concatenation of everything returned equals strip_think(whole reply): no
+    <think>...</think> block, no leading or trailing whitespace. An unterminated <think> is kept, as strip_think
+    keeps it. Text is held back only while it could still be the start of a tag, or is trailing whitespace."""
+    OPEN, CLOSE = "<think>", "</think>"
+
+    def __init__(self):
+        self.buf = ""          # unprocessed input
+        self.inside = False
+        self.started = False   # a non-whitespace character has been emitted
+        self.ws = ""           # whitespace held back (emitted only when more text follows)
+        self.block = ""        # raw text of an open think block (kept if it never closes)
+
+    def _emit(self, text):
+        if not text:
+            return ""
+        if not self.started:
+            text = text.lstrip()
+            if not text:
+                return ""
+        out = self.ws + text.rstrip()
+        tail = text[len(text.rstrip()):]
+        if text.rstrip():
+            self.started = True
+            self.ws = tail
+            return out
+        self.ws += text
+        return ""
+
+    def feed(self, piece):
+        self.buf += piece
+        out = ""
+        while True:
+            tag = self.CLOSE if self.inside else self.OPEN
+            i = self.buf.find(tag)
+            if i >= 0:
+                head, self.buf = self.buf[:i], self.buf[i + len(tag):]
+                if self.inside:
+                    self.block = ""
+                    self.inside = False
+                else:
+                    out += self._emit(head)
+                    self.inside, self.block = True, ""
+                continue
+            # keep a possible partial tag at the end of the buffer
+            keep = 0
+            for n in range(min(len(tag) - 1, len(self.buf)), 0, -1):
+                if tag.startswith(self.buf[-n:]):
+                    keep = n
+                    break
+            head, self.buf = self.buf[:len(self.buf) - keep], self.buf[len(self.buf) - keep:]
+            if self.inside:
+                self.block += head
+            else:
+                out += self._emit(head)
+            return out
+
+    def finish(self):
+        out = ""
+        if self.inside:  # never closed: strip_think leaves the text as it is
+            out = self._emit(self.OPEN + self.block + self.buf)
+        else:
+            out = self._emit(self.buf)
+        self.buf, self.block, self.inside = "", "", False
+        return out

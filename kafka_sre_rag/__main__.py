@@ -5,7 +5,7 @@ import os
 import sys
 
 from . import config
-from .generators import EmptyAnswerError, ServerError
+from .generators import EmptyAnswerError, ServerError, ThinkFilter
 
 DRY_EXPANSION = "consumer group, kafka-consumer-groups.sh, --describe, --group, LAG, max.poll.interval.ms"
 
@@ -56,9 +56,21 @@ def build_parser():
     a = sub.add_parser("ask", help="answer one question")
     a.add_argument("question")
     common(a)
+    a.add_argument("--stream", action="store_true",
+                   help="print the answer as it is generated (a <think> block is not shown); the sources follow")
+    a.add_argument("--service-url", metavar="URL",
+                   help="send the question to a running `serve` (for example http://127.0.0.1:8765) instead of "
+                        "loading the index and the model here; model options are those of the service")
     c = sub.add_parser("chat", help="interactive loop; each turn is retrieved and answered independently "
                                     "(no conversation history is sent; multi-turn is unmeasured)")
     common(c)
+    sv = sub.add_parser("serve", help="long-running local service, OpenAI-compatible, loopback only")
+    common(sv)
+    sv.add_argument("--host", default="127.0.0.1", help="bind address (default 127.0.0.1; loopback only)")
+    sv.add_argument("--port", type=int, default=8765)
+    sv.add_argument("--allow-non-local", action="store_true",
+                    help="allow a bind address that is not loopback (prints a warning; GOAL.md: nothing leaves "
+                         "the machine)")
     sub.add_parser("verify", help="check the index sha256 and the prompt hashes against frozen.json")
     return ap
 
@@ -79,9 +91,114 @@ def make_generator(a):
     return MLXGenerator(model, a.adapter)
 
 
+def print_sources(sources):
+    print("\nSources:")
+    for s in sources:
+        ce = "n/a" if s["ce_score"] is None else f"{s['ce_score']:.3f}"
+        print(f"  [{s['bm25_rank']}] {s['source']} - {s['title'] or s['path'].rsplit('/', 1)[-1]} ({s['path']}) ce={ce}")
+
+
+def ask_service(a):
+    """ask --service-url: one request to a running service; the output is that of a local ask."""
+    import httpx
+    from .generators import is_loopback_host
+    base = a.service_url.rstrip("/")
+    url = base + ("/chat/completions" if base.endswith("/v1") else "/v1/chat/completions")
+    body = {"model": "kafka-sre-strict" if a.mode == "strict" else "kafka-sre", "k": a.k, "stream": bool(a.stream),
+            "messages": [{"role": "user", "content": a.question}]}
+    local = is_loopback_host(base)
+    flt, extra, text = ThinkFilter(), None, ""
+    try:
+        with httpx.Client(timeout=900, trust_env=not local) as c, c.stream("POST", url, json=body) as r:
+            if r.status_code >= 400:
+                r.read()
+                try:
+                    msg = r.json()["error"]["message"]
+                except (ValueError, KeyError, TypeError):
+                    msg = " ".join(r.text.split())[:300]
+                raise ServerError(f"service {base} returned HTTP {r.status_code}: {msg}")
+            if not a.stream:
+                r.read()
+                d = r.json()
+                text, extra = d["choices"][0]["message"]["content"], d["kafka_sre"]
+            else:
+                for line in r.iter_lines():
+                    if not line.startswith("data:") or line[5:].strip() == "[DONE]":
+                        continue
+                    d = json.loads(line[5:])
+                    if "error" in d:
+                        raise ServerError(f"service {base}: {d['error'].get('message')}")
+                    for ch in d.get("choices") or []:
+                        piece = (ch.get("delta") or {}).get("content") or ""
+                        if piece and not a.json:
+                            print(piece, end="", flush=True)
+                        text += piece
+                    extra = d.get("kafka_sre") or extra
+    except httpx.HTTPError as e:
+        raise ServerError(f"cannot reach the service at {base} ({type(e).__name__})") from None
+    if a.json:
+        print(json.dumps({"question": a.question, "text": text, "sources": extra["sources"],
+                          "expansion": extra["expansion"], "timings": extra["timings"],
+                          "measured": extra["measured"], "tokens": extra["tokens"],
+                          "truncated": extra["truncated"], "unmeasured_reasons": extra["unmeasured_reasons"]},
+                         ensure_ascii=False))
+        return
+    banner = config.unmeasured_banner(extra["unmeasured_reasons"])
+    if a.stream:
+        print()
+    sys.stdout.flush()
+    if banner:
+        print(banner, file=sys.stderr)
+    if not a.stream:
+        print(text)
+    if a.sources:
+        print_sources(extra["sources"])
+    if extra["truncated"]:
+        print("(answer cut at max_tokens)", file=sys.stderr)
+
+
+def serve(a, cfg):
+    from . import service
+    if not service.is_loopback_bind(a.host):
+        if not a.allow_non_local:
+            print(f"error: refusing to bind to {a.host!r}: the service answers on the loopback interface only "
+                  "(pass --allow-non-local to override)", file=sys.stderr)
+            return 2
+        print(f"WARNING: binding to {a.host!r}, which is not loopback: anyone who can reach this address can "
+              "send questions and read the retrieved sources. GOAL.md requires that nothing leaves the machine.",
+              file=sys.stderr)
+    verified = False
+    if not a.dry_run:
+        try:
+            config.verify(cfg=cfg)
+            verified = True
+        except config.ConfigError as e:
+            print(e, file=sys.stderr)
+            return 1
+    gen = make_generator(a)
+    svc = service.Service(gen, cfg, mode=a.mode, k=a.k, rerank=not (a.dry_run and a.no_rerank_in_dry_run),
+                          max_tokens=a.max_tokens, verified=verified)
+    print("loading the index, the BM25 structures and the reranker ...", file=sys.stderr, flush=True)
+    secs = svc.warm_up()
+    srv = service.make_server(svc, a.host, a.port, a.allow_non_local)
+    print(f"ready in {secs:.1f} s; listening on http://{a.host}:{srv.server_address[1]}/v1 "
+          f"(models: {', '.join(service.MODELS)})", file=sys.stderr, flush=True)
+    try:
+        srv.serve_forever()
+    except KeyboardInterrupt:
+        print(file=sys.stderr)
+    finally:
+        srv.server_close()
+    return 0
+
+
 def run_one(question, gen, cfg, a):
     from .pipeline import ask
-    stream = None if (a.json or a.dry_run) else (lambda t: print(t, end="", flush=True))
+    flt = ThinkFilter() if getattr(a, "stream", False) and not (a.json or a.dry_run) else None
+    if flt:
+        stream = lambda t: print(flt.feed(t), end="", flush=True)  # noqa: E731
+    else:
+        stream = None if (a.json or a.dry_run) else (lambda t: print(t, end="", flush=True))
     ans = ask(question, gen, cfg, k=a.k, mode=a.mode, on_token=stream,
               rerank=not (a.dry_run and a.no_rerank_in_dry_run), max_tokens=a.max_tokens)
     if a.json:
@@ -91,6 +208,8 @@ def run_one(question, gen, cfg, a):
                          ensure_ascii=False))
         return
     banner = config.unmeasured_banner(ans.unmeasured_reasons)
+    if flt:
+        print(flt.finish(), end="")
     if stream:
         print()  # end the streamed answer's line before the notice
     sys.stdout.flush()
@@ -99,10 +218,7 @@ def run_one(question, gen, cfg, a):
     if not stream:
         print(ans.text)
     if a.sources:
-        print("\nSources:")
-        for s in ans.sources:
-            ce = "n/a" if s["ce_score"] is None else f"{s['ce_score']:.3f}"
-            print(f"  [{s['bm25_rank']}] {s['source']} - {s['title'] or s['path'].rsplit('/', 1)[-1]} ({s['path']}) ce={ce}")
+        print_sources(ans.sources)
     if ans.truncated:
         print("(answer cut at max_tokens)", file=sys.stderr)
 
@@ -123,7 +239,21 @@ def main(argv=None):
         print(f"reranker revision {r['revision']}  local cache: "
               f"{'not found' if r['cached'] is None else ('match' if r['match'] else 'MISMATCH')}")
         return 0
+    if a.cmd == "ask" and a.service_url:
+        if a.dry_run or a.model or a.adapter or a.base_url or a.extra_body or a.max_tokens is not None:
+            print("error: with --service-url the model options are those of the service; "
+                  "do not combine it with --dry-run, --model, --adapter, --base-url, --extra-body, --max-tokens",
+                  file=sys.stderr)
+            return 2
+        try:
+            ask_service(a)
+        except ServerError as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 1
+        return 0
     cfg = config.load()
+    if a.cmd == "serve":
+        return serve(a, cfg)
     if not a.dry_run:  # a real run must be on the frozen index and prompts
         try:
             config.verify(cfg=cfg)
