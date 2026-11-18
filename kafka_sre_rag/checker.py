@@ -1437,3 +1437,9 @@ def render_note(result: CheckResult, max_unverified: int = 5) -> str:
         more = len(groups) - max_unverified
         lines.append("Not checked, no reference covers them: " + ", ".join(shown) + (" and %d more" % more if more > 0 else ""))
     return "\n".join(lines)
+
+
+def checked_count(result: CheckResult) -> int:
+    """How many distinct names were looked up and confirmed (in the excerpts or in a catalogue). Items that were
+    reported, skipped or not covered are not counted. Added for `ask --check`; no decision depends on it."""
+    return sum(1 for i in result.items if i.status in (IN_EXCERPTS, KNOWN))

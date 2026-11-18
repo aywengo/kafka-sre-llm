@@ -84,3 +84,23 @@ def unmeasured_banner(reasons):
     """'UNMEASURED CONFIGURATION' text for a list of override reasons, or '' when there are none."""
     reasons = [r for r in reasons if r]
     return "UNMEASURED CONFIGURATION: " + "; ".join(reasons) if reasons else ""
+
+
+DEFAULT_CATALOGUES = ROOT / "work" / "m4" / "catalogues"
+BUILD_CATALOGUES_HINT = "python scripts/build_catalogues.py"
+
+
+def catalogues_line(directory=None):
+    """The `verify` line about the catalogues of the answer checker. Never raises: a missing directory is
+    reported as 'not built' (the checker is optional)."""
+    d = Path(directory) if directory else DEFAULT_CATALOGUES
+    manifest = d / "CATALOGUES.json"
+    if not d.is_dir() or not manifest.is_file():
+        return "catalogues: not built (python scripts/build_catalogues.py)"
+    try:
+        from .catalogue import manifest_for
+        got = manifest_for(d)["catalogue_hash"]
+        want = json.loads(manifest.read_text(encoding="utf-8")).get("catalogue_hash")
+    except (OSError, ValueError, ImportError):
+        return "catalogues: unreadable (rebuild with python scripts/build_catalogues.py)"
+    return f"catalogues: {'match' if got == want else 'MISMATCH with CATALOGUES.json'}  {got}"

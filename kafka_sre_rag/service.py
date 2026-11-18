@@ -4,11 +4,13 @@ answers OpenAI-style chat requests on the loopback interface. Standard library o
 Every request is retrieved and answered on its own, as `chat` does: no conversation history is sent to the model.
 The steps are those of evalhooks.run_item() (expansion -> retrieval -> answer); prompts and retrieval settings are
 the frozen ones. One request at a time reaches the model (a lock); the others wait."""
+import contextlib
 import ipaddress
 import json
 import threading
 import time
 import uuid
+from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import config, evalhooks, pipeline
@@ -18,6 +20,68 @@ MODEL_DEFAULT = "kafka-sre"
 MODEL_STRICT = "kafka-sre-strict"
 MODELS = (MODEL_DEFAULT, MODEL_STRICT)
 HISTORY_NOTE = "not sent: each request is retrieved and answered on its own (only the last user message is used)"
+
+
+class CatalogueError(RuntimeError):
+    """--check was asked for and the catalogues are not there (the message is one line)."""
+
+
+def catalogue_error(directory):
+    return CatalogueError(f"the answer check needs the catalogues in {directory} (CATALOGUES.json is missing); "
+                          f"build them with: {config.BUILD_CATALOGUES_HINT}")
+
+
+class AnswerChecker:
+    """The answer checker (checker.py) with its catalogues loaded once. check() never touches the answer: it
+    returns a separate note and the structured findings."""
+
+    def __init__(self, directory=None):
+        from . import catalogue
+        from .checker import Checker
+        self.directory = Path(directory) if directory else config.DEFAULT_CATALOGUES
+        if not self.directory.is_dir() or not (self.directory / catalogue.MANIFEST_NAME).is_file():
+            raise catalogue_error(self.directory)
+        t = time.monotonic()
+        self.cats = catalogue.Catalogues.load(self.directory)
+        self.checker = Checker(self.cats)
+        self.catalogue_hash = catalogue.manifest_for(self.directory)["catalogue_hash"]
+        self.load_seconds = time.monotonic() - t
+
+    def check(self, text, chunks):
+        """chunks: the retrieved chunk dicts the answer was written from (their text is the excerpts)."""
+        from . import checker as ck
+        excerpts = [c["text"] for c in chunks if c.get("text")]
+        self.checker._unchecked_now = {}
+        res = self.checker.check(text, excerpts)
+        res.unchecked_kinds = dict(self.checker._unchecked_now)
+        res.catalogue_hash = self.catalogue_hash
+        n = ck.checked_count(res)
+        note = ck.render_note(res)
+        if not note:
+            note = (f"Names in the answer were confirmed against the catalogues ({n} checked, none contradicted)."
+                    if n else "No names in the answer that the catalogues cover (0 checked).")
+        d = res.to_dict()
+        d.pop("items")
+        d.update({"enabled": True, "checked": n, "excerpts": len(excerpts), "note": note})
+        return d
+
+
+@contextlib.contextmanager
+def capture_chunks():
+    """Collect the chunk dicts that retrieval.select() returns while the block runs (pipeline.ask() returns
+    sources without text). Nothing is changed for the caller."""
+    from . import retrieval
+    seen, real = [], retrieval.select
+
+    def capture(*a, **kw):
+        chunks = real(*a, **kw)
+        seen.append(chunks)
+        return chunks
+    retrieval.select = capture
+    try:
+        yield seen
+    finally:
+        retrieval.select = real
 
 
 def is_loopback_bind(host):
@@ -66,6 +130,22 @@ def parse_request(body, default_mode):
     return question, mode, k, bool(body.get("stream"))
 
 
+def parse_check(body, default):
+    """The per-request switch: a boolean field `check` in the request body; absent = `default` (None: the service default)."""
+    if "check" not in body:
+        return default
+    v = body["check"]
+    if not isinstance(v, bool):
+        raise BadRequest("check must be true or false")
+    return v
+
+
+def note_chunks(note):
+    """The note as the content pieces of a streamed answer: a blank line, then one piece per line."""
+    lines = note.split("\n")
+    return ["\n\n" + lines[0]] + ["\n" + l for l in lines[1:]]
+
+
 class _Tee:
     """Wraps the generator for one request. evalhooks.run_item() calls chat() twice (search terms, answer) and
     passes no on_token; the second call gets the streaming callback here. Nothing else is changed."""
@@ -86,12 +166,22 @@ class _Tee:
 
 
 class Service:
-    def __init__(self, gen, cfg=None, *, mode="default", k="k6", rerank=True, max_tokens=None, verified=None):
+    def __init__(self, gen, cfg=None, *, mode="default", k="k6", rerank=True, max_tokens=None, verified=None,
+                 check=False, catalogues=None, checker=None):
         self.gen, self.cfg = gen, cfg or config.load()
+        self.check_default, self.catalogues_dir, self._checker = bool(check), catalogues, checker
+        if check:
+            self.answer_checker()  # fail at start, not at the first request
         self.mode, self.k, self.rerank, self.max_tokens = mode, k, rerank, max_tokens
         self.verified = verified
         self.lock = threading.Lock()
         self.load_seconds = None
+
+    def answer_checker(self):
+        """The loaded AnswerChecker (loaded on first use); raises CatalogueError if the catalogues are missing."""
+        if self._checker is None:
+            self._checker = AnswerChecker(self.catalogues_dir)
+        return self._checker
 
     def warm_up(self):
         """Load the index, the BM25 structures and the reranker (no model call). Returns the seconds taken."""
@@ -109,9 +199,12 @@ class Service:
                 "verify_passed": self.verified, "default_mode": self.mode,
                 "load_seconds": self.load_seconds, "history": HISTORY_NOTE}
 
-    def answer(self, question, mode, k, on_text=None):
+    def answer(self, question, mode, k, on_text=None, check=None):
         """Retrieve and answer one question, one at a time (the lock). Returns (text, extra) where extra is the
-        dict that travels in the response's `kafka_sre` field."""
+        dict that travels in the response's `kafka_sre` field. text is the model's answer, never changed; with
+        check, extra["check"] holds the checker's findings and the note (the caller decides where to show it)."""
+        check = self.check_default if check is None else check
+        checker = self.answer_checker() if check else None  # before the model is called
         from . import retrieval
         with self.lock:
             seen = []
@@ -148,6 +241,8 @@ class Service:
                              "answer_s": sec["answer"]},
                  "measured": not reasons, "unmeasured_reasons": reasons, "tokens": r["tokens"],
                  "truncated": r["truncated"]}
+        if checker:
+            extra["check"] = checker.check(r["text"], chunks)
         return r["text"], extra
 
 
@@ -201,6 +296,7 @@ def make_handler(svc, allow_non_local):
                 n = int(self.headers.get("Content-Length") or 0)
                 body = json.loads(self.rfile.read(n) or b"null")
                 question, mode, k, stream = parse_request(body, svc.mode)
+                check = parse_check(body, None)
             except (ValueError, UnicodeDecodeError) as e:  # BadRequest is a ValueError
                 return self._send_json(400, _error_body(f"bad request: {e}", "invalid_request_error"))
             model = body.get("model") if isinstance(body.get("model"), str) and body.get("model") \
@@ -208,17 +304,21 @@ def make_handler(svc, allow_non_local):
             rid, created = "chatcmpl-" + uuid.uuid4().hex[:24], int(time.time())
             if not stream:
                 try:
-                    text, extra = svc.answer(question, mode, k)
+                    text, extra = svc.answer(question, mode, k, check=check)
+                except CatalogueError as e:
+                    return self._send_json(400, _error_body(str(e), "catalogues_missing"))
                 except EmptyAnswerError as e:
                     return self._send_json(502, _error_body(str(e), "empty_answer"))
                 except ServerError as e:
                     return self._send_json(502, _error_body(str(e), "model_server_error"))
+                # the note is appended after a blank line, so a front end that knows nothing about it shows it
+                shown = text + "\n\n" + extra["check"]["note"] if "check" in extra else text
                 return self._send_json(200, {
                     "id": rid, "object": "chat.completion", "created": created, "model": model,
-                    "choices": [{"index": 0, "message": {"role": "assistant", "content": text},
+                    "choices": [{"index": 0, "message": {"role": "assistant", "content": shown},
                                  "finish_reason": "length" if extra["truncated"] else "stop"}],
                     "usage": {"completion_tokens": extra["tokens"]}, "kafka_sre": extra})
-            self._stream(question, mode, k, model, rid, created)
+            self._stream(question, mode, k, model, rid, created, check)
 
         def _chunk(self, rid, created, model, delta, finish=None, extra=None):
             d = {"id": rid, "object": "chat.completion.chunk", "created": created, "model": model,
@@ -232,7 +332,7 @@ def make_handler(svc, allow_non_local):
             self.wfile.write(f"data: {data}\n\n".encode("utf-8"))
             self.wfile.flush()
 
-        def _stream(self, question, mode, k, model, rid, created):
+        def _stream(self, question, mode, k, model, rid, created, check=None):
             started = []
 
             def begin():  # headers go out with the first token, so an error before it is a plain HTTP error
@@ -253,7 +353,9 @@ def make_handler(svc, allow_non_local):
                     begin()
                     self._write_event(self._chunk(rid, created, model, {"content": piece}))
             try:
-                text, extra = svc.answer(question, mode, k, on_text=on_text)
+                text, extra = svc.answer(question, mode, k, on_text=on_text, check=check)
+            except CatalogueError as e:  # raised before the model is called, so nothing was streamed
+                return self._send_json(400, _error_body(str(e), "catalogues_missing"))
             except (EmptyAnswerError, ServerError) as e:
                 kind = "empty_answer" if isinstance(e, EmptyAnswerError) else "model_server_error"
                 if not started:
@@ -264,6 +366,9 @@ def make_handler(svc, allow_non_local):
                 return
             try:
                 begin()
+                if "check" in extra:  # the last content chunks, before the end marker
+                    for piece in note_chunks(extra["check"]["note"]):
+                        self._write_event(self._chunk(rid, created, model, {"content": piece}))
                 self._write_event(self._chunk(rid, created, model, {},
                                               "length" if extra["truncated"] else "stop", extra))
                 self._write_event("[DONE]")

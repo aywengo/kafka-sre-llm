@@ -4,7 +4,7 @@ import json
 import os
 import sys
 
-from . import config
+from . import config, service
 from .generators import EmptyAnswerError, ServerError, ThinkFilter
 
 DRY_EXPANSION = "consumer group, kafka-consumer-groups.sh, --describe, --group, LAG, max.poll.interval.ms"
@@ -48,6 +48,12 @@ def build_parser():
                             "A reasoning model on the server needs a larger value; the run is then unmeasured")
         p.add_argument("--sources", action="store_true", help="print the retrieved sources under the answer")
         p.add_argument("--json", action="store_true", help="print one JSON object")
+        p.add_argument("--check", action="store_true",
+                       help="check the names in the answer (config keys, fields, flags, errors) against the "
+                            "catalogues of what exists and print a note under the answer; the answer itself and "
+                            "the prompt are not changed. Needs the catalogues (python scripts/build_catalogues.py)")
+        p.add_argument("--catalogues", metavar="DIR", default=None,
+                       help="catalogues for --check (default: work/m4/catalogues)")
         p.add_argument("--dry-run", action="store_true",
                        help="no model: stub generator, prints the exact messages that would be sent")
         p.add_argument("--no-rerank-in-dry-run", action="store_true",
@@ -71,7 +77,9 @@ def build_parser():
     sv.add_argument("--allow-non-local", action="store_true",
                     help="allow a bind address that is not loopback (prints a warning; GOAL.md: nothing leaves "
                          "the machine)")
-    sub.add_parser("verify", help="check the index sha256 and the prompt hashes against frozen.json")
+    v = sub.add_parser("verify", help="check the index sha256 and the prompt hashes against frozen.json; "
+                                      "reports the catalogue hash")
+    v.add_argument("--catalogues", metavar="DIR", default=None, help="default: work/m4/catalogues")
     return ap
 
 
@@ -106,6 +114,8 @@ def ask_service(a):
     url = base + ("/chat/completions" if base.endswith("/v1") else "/v1/chat/completions")
     body = {"model": "kafka-sre-strict" if a.mode == "strict" else "kafka-sre", "k": a.k, "stream": bool(a.stream),
             "messages": [{"role": "user", "content": a.question}]}
+    if a.check:
+        body["check"] = True
     local = is_loopback_host(base)
     flt, extra, text = ThinkFilter(), None, ""
     try:
@@ -136,12 +146,19 @@ def ask_service(a):
                     extra = d.get("kafka_sre") or extra
     except httpx.HTTPError as e:
         raise ServerError(f"cannot reach the service at {base} ({type(e).__name__})") from None
+    check = extra.get("check")
+    if check and text.endswith("\n\n" + check["note"]):  # the service appended the note to the text
+        answer_text = text[:-len("\n\n" + check["note"])]
+    else:
+        answer_text = text
     if a.json:
-        print(json.dumps({"question": a.question, "text": text, "sources": extra["sources"],
-                          "expansion": extra["expansion"], "timings": extra["timings"],
-                          "measured": extra["measured"], "tokens": extra["tokens"],
-                          "truncated": extra["truncated"], "unmeasured_reasons": extra["unmeasured_reasons"]},
-                         ensure_ascii=False))
+        out = {"question": a.question, "text": answer_text, "sources": extra["sources"],
+               "expansion": extra["expansion"], "timings": extra["timings"],
+               "measured": extra["measured"], "tokens": extra["tokens"],
+               "truncated": extra["truncated"], "unmeasured_reasons": extra["unmeasured_reasons"]}
+        if check:
+            out["check"] = check
+        print(json.dumps(out, ensure_ascii=False))
         return
     banner = config.unmeasured_banner(extra["unmeasured_reasons"])
     if a.stream:
@@ -150,14 +167,14 @@ def ask_service(a):
     if banner:
         print(banner, file=sys.stderr)
     if not a.stream:
-        print(text)
+        print(text)  # with --check the service has appended the note after a blank line
     if a.sources:
         print_sources(extra["sources"])
     if extra["truncated"]:
         print("(answer cut at max_tokens)", file=sys.stderr)
 
 
-def serve(a, cfg):
+def serve(a, cfg, checker=None):
     from . import service
     if not service.is_loopback_bind(a.host):
         if not a.allow_non_local:
@@ -177,7 +194,8 @@ def serve(a, cfg):
             return 1
     gen = make_generator(a)
     svc = service.Service(gen, cfg, mode=a.mode, k=a.k, rerank=not (a.dry_run and a.no_rerank_in_dry_run),
-                          max_tokens=a.max_tokens, verified=verified)
+                          max_tokens=a.max_tokens, verified=verified, check=a.check,
+                          catalogues=a.catalogues, checker=checker)
     print("loading the index, the BM25 structures and the reranker ...", file=sys.stderr, flush=True)
     secs = svc.warm_up()
     srv = service.make_server(svc, a.host, a.port, a.allow_non_local)
@@ -192,20 +210,29 @@ def serve(a, cfg):
     return 0
 
 
-def run_one(question, gen, cfg, a):
+def run_one(question, gen, cfg, a, checker=None):
     from .pipeline import ask
     flt = ThinkFilter() if getattr(a, "stream", False) and not (a.json or a.dry_run) else None
     if flt:
         stream = lambda t: print(flt.feed(t), end="", flush=True)  # noqa: E731
     else:
         stream = None if (a.json or a.dry_run) else (lambda t: print(t, end="", flush=True))
-    ans = ask(question, gen, cfg, k=a.k, mode=a.mode, on_token=stream,
-              rerank=not (a.dry_run and a.no_rerank_in_dry_run), max_tokens=a.max_tokens)
+    kw = dict(k=a.k, mode=a.mode, on_token=stream, rerank=not (a.dry_run and a.no_rerank_in_dry_run),
+              max_tokens=a.max_tokens)
+    check = None
+    if checker is None:
+        ans = ask(question, gen, cfg, **kw)
+    else:  # the check runs after the answer is complete, on the excerpts it was written from
+        with service.capture_chunks() as seen:
+            ans = ask(question, gen, cfg, **kw)
+        check = checker.check(ans.text, seen[0] if seen else [])
     if a.json:
-        print(json.dumps({"question": question, "text": ans.text, "sources": ans.sources, "expansion": ans.expansion,
-                          "timings": ans.timings, "measured": ans.measured, "tokens": ans.tokens,
-                          "truncated": ans.truncated, "unmeasured_reasons": ans.unmeasured_reasons},
-                         ensure_ascii=False))
+        out = {"question": question, "text": ans.text, "sources": ans.sources, "expansion": ans.expansion,
+               "timings": ans.timings, "measured": ans.measured, "tokens": ans.tokens,
+               "truncated": ans.truncated, "unmeasured_reasons": ans.unmeasured_reasons}
+        if check is not None:
+            out["check"] = check
+        print(json.dumps(out, ensure_ascii=False))
         return
     banner = config.unmeasured_banner(ans.unmeasured_reasons)
     if flt:
@@ -217,6 +244,8 @@ def run_one(question, gen, cfg, a):
         print(banner, file=sys.stderr)
     if not stream:
         print(ans.text)
+    if check is not None:
+        print("\n" + check["note"])
     if a.sources:
         print_sources(ans.sources)
     if ans.truncated:
@@ -238,6 +267,7 @@ def main(argv=None):
         r = rep["reranker"]
         print(f"reranker revision {r['revision']}  local cache: "
               f"{'not found' if r['cached'] is None else ('match' if r['match'] else 'MISMATCH')}")
+        print(config.catalogues_line(a.catalogues))
         return 0
     if a.cmd == "ask" and a.service_url:
         if a.dry_run or a.model or a.adapter or a.base_url or a.extra_body or a.max_tokens is not None:
@@ -251,9 +281,16 @@ def main(argv=None):
             print(f"error: {e}", file=sys.stderr)
             return 1
         return 0
+    checker = None
+    if a.check:  # before anything slow is loaded
+        try:
+            checker = service.AnswerChecker(a.catalogues)
+        except service.CatalogueError as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 2
     cfg = config.load()
     if a.cmd == "serve":
-        return serve(a, cfg)
+        return serve(a, cfg, checker)
     if not a.dry_run:  # a real run must be on the frozen index and prompts
         try:
             config.verify(cfg=cfg)
@@ -263,7 +300,7 @@ def main(argv=None):
     gen = make_generator(a)
     if a.cmd == "ask":
         try:
-            run_one(a.question, gen, cfg, a)
+            run_one(a.question, gen, cfg, a, checker)
         except EmptyAnswerError as e:
             print(f"error: {e}", file=sys.stderr)
             return 2
@@ -279,7 +316,7 @@ def main(argv=None):
                     break
                 continue
             try:
-                run_one(q, gen, cfg, a)
+                run_one(q, gen, cfg, a, checker)
             except (EmptyAnswerError, ServerError) as e:
                 print(f"error: {e}", file=sys.stderr)
     except (EOFError, KeyboardInterrupt):

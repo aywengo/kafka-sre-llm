@@ -256,6 +256,38 @@ header is not a loopback name are refused too.
 Not yet measured: the time to the first words and the total time per answer with a real model through the
 service. Only retrieval was timed without a model (see the work-package report in `runs/m4/reports/`).
 
+### Checking an answer
+
+```bash
+python scripts/build_catalogues.py        # once: the catalogues of what really exists (work/m4/catalogues/)
+python -m kafka_sre_rag ask --check --sources "How do I check consumer lag?"
+python -m kafka_sre_rag serve --check ...  # the same for every request; or {"check": true} in one request body
+```
+
+After the answer is complete, the checker looks up the names in it (configuration keys and their values, fields of
+Strimzi resources, command-line tools and flags, REST paths, error names, annotations) in the catalogues and in the
+excerpts the answer was written from, and prints a short note under the answer. The note has three kinds of lines:
+
+- `Could not confirm: ...` for a name that does not exist (`invented`: the line gives the nearest real name when there
+  is one) or a real name used wrongly (`wrong_use`: for example a value or an HTTP method the reference does not allow).
+- `Not checked, no reference covers them: ...` for names the catalogues cannot judge (`unverified`). This is
+  information, not an accusation.
+- When there is nothing to report, one line says that the names were confirmed and how many were checked, so that
+  silence is not mistaken for "not checked".
+
+The answer and the prompt are not changed; the note is separate (in `--json` output it is the `check` field with the
+findings and the catalogue hash; the service appends it to the answer text after a blank line, so any chat front end
+shows it, and also returns it in the `kafka_sre` field). `--catalogues DIR` points at another catalogue directory;
+`--check` stops with an error that says how to build them when the directory is missing, and `verify` shows the
+catalogue hash, or `catalogues: not built`.
+
+What it can and cannot do: it catches made-up names and wrong values; it does not catch a wrong statement that uses
+real names. On the 30 errors that readers had found in stored answers (a set the checker's rules were developed on) it
+caught 7, reported 5 as unverified and did not catch 18, of which 15 were wrong statements that use real names and 3
+were names a catalogue could in principle judge but this one does not. It also gave no false `invented` finding on 244
+stored answers, again the set it was developed on. It is not yet measured on fresh answers (see
+`runs/m4/reports/wp2b_checker.md`).
+
 ### Modes
 
 - **default:** the prompt that was measured, and the default. Its answers are longer and
