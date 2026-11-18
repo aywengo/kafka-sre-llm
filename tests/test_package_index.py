@@ -131,6 +131,15 @@ class Packaging(unittest.TestCase):
         r = P.render_readme([chunk("alpha", "raw/alpha/a.md")], "TABLE", cfg)
         self.assertIn("Section 5 of that licence", r)
 
+    def test_front_matter_licence_link_is_an_https_url(self):
+        cfg = {"index": {"sha256": "ab" * 32, "index_path": "work/v3/chunks_s1.jsonl"},
+               "retrieval": {"reranker": {"model": "m/r"}}}
+        r = P.render_readme([chunk("alpha", "raw/alpha/a.md")], "TABLE", cfg)
+        front = r.split("---")[1]
+        self.assertIn("license_link: https://huggingface.co/datasets/", front)
+        self.assertIn(f"license_link: {P.LICENSE_LINK}\n", front)
+        self.assertTrue(P.LICENSE_LINK.endswith("/kafka-sre-docs-index-v3/blob/main/NOTICE"))
+
 
 if __name__ == "__main__":
     unittest.main()

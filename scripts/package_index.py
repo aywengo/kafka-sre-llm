@@ -29,6 +29,10 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 LOCAL_PREFIX = "data/runbooks/runbooks/"
 PLACEHOLDER = "to be filled from SHIP_CHECKS.md"
+# Account of the Hugging Face repositories (the one in the repository links of README.md).
+HF_NAMESPACE = "aywengo"
+HF_DATASET = "kafka-sre-docs-index-v3"
+LICENSE_LINK = f"https://huggingface.co/datasets/{HF_NAMESPACE}/{HF_DATASET}/blob/main/NOTICE"
 
 
 class PackageError(RuntimeError):
@@ -115,7 +119,7 @@ def source_table(chunks, sources, commits):
 README_TEMPLATE = """---
 license: other
 license_name: mixed-apache-2.0-and-cc-by-4.0
-license_link: NOTICE
+license_link: {license_link}
 licenses_included:
   - apache-2.0
   - cc-by-4.0
@@ -209,7 +213,7 @@ def render_readme(chunks, table, cfg, measured=None, headline=None, size=None):
     counts = Counter(c["source"] for c in chunks)
     idx = cfg["index"]
     return README_TEMPLATE.format(
-        chunks=len(chunks), sha=idx["sha256"], table=table,
+        license_link=LICENSE_LINK, chunks=len(chunks), sha=idx["sha256"], table=table,
         local_chunks=counts.get("runbooks", 0), k8s_chunks=counts.get("kubernetes", 0),
         index_path=idx["index_path"], reranker=cfg["retrieval"]["reranker"]["model"],
         measured=measured or PLACEHOLDER, headline=headline or PLACEHOLDER, size=size or PLACEHOLDER)
