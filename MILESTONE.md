@@ -5,7 +5,7 @@ Working name "M4"; the release number is decided at the end. Started 2026-11-18,
 release of v3.0.0 and v3.0.1. `GOAL.md` says where the project is going; this file says
 where the current milestone stands.
 
-Last updated: 2026-11-18, late night.
+Last updated: 2026-11-19, 00:15.
 
 ## What this milestone is for
 
@@ -48,7 +48,7 @@ First slice (needs no downloads; supports the 4-bit decision):
 | S1 | Harness: answer, manifest, pack replay, hidden part, run sizes, report | implementer | **done** (`d0403e3`); run only with a stub model so far | `runs/m4/reports/s1_harness.md` |
 | S2, S3 | Mechanical items (config, Connect REST, Argo CD, error names) and the scorer with identifier precision; catalogue provenance | implementer | **done** (`39e6911`): 496 items with resources, manifest fixes, commands and version traps; a blind guess scores 11 %; split in `e6b8d8c` | `runs/m4/reports/s2_s3_tier_a1.md`, `tier_a1_rebalance.md` |
 | S4 | Rubric pilot: blind rubrics for 30 questions whose answers have a reader's findings; check of the labels that rest on memory | complex-reviewer, researcher | **done**: 30 rubrics (`eval/m4/pilot/rubrics.jsonl`); 30 distinct labels, 25 confirmed, 5 partly, 0 refuted | `runs/m4/reports/s4a_label_check.md`, `s4b_blind_rubrics.md` |
-| S5 | Judge pilot: does judging point by point repeat better than a mark from 1 to 5 | job-operator; needs the model server | **done, NO-GO: 1 of 4 criteria passed** (`runs/m4/S5_JUDGE_PILOT.md`). Judge chosen in S5a: DeepSeek without thinking, with source passages (22 s a call against 691 s). The analysis (`runs/m4/reports/s5_pilot_analysis.md`): the judge repeats well and is cheap, but the score does not rank answers as the reader did, and about 1 in 6 of its error flags outside the reader's labels is real. **The judged tier is stopped until the Owner has seen this** | `runs/m4/reports/s5_judge_step.md` |
+| S5 | Judge pilot: does judging point by point repeat better than a mark from 1 to 5 | job-operator; needs the model server | **done, NO-GO: 1 of 4 criteria passed** (`runs/m4/S5_JUDGE_PILOT.md`). Judge chosen in S5a: DeepSeek without thinking, with source passages (22 s a call against 691 s). The analysis (`runs/m4/reports/s5_pilot_analysis.md`): the judge repeats well and is cheap, but the score does not rank answers as the reader did, and about 1 in 6 of its error flags outside the reader's labels is real. Decided 2026-11-19: build with changes; second pilot being prepared (24 fresh items, both modes, after S6) | `runs/m4/reports/s5_judge_step.md` |
 | S6 | Noise (the reference run twice) and 4-bit against full precision on the same server, with pack replay | job-operator; needs the model server | **running** since 2026-11-18 23:47 (`scripts/m4_s6_noise_4bit.sh`): 5-item gate, then the open half five times; about 25 s per answer on the 4-bit model, so 12 to 15 hours | `runs/m4/reports/s6_prep.md` |
 
 After the first slice:
@@ -110,22 +110,13 @@ thinking off.
 | 2026-11-18 | Workers that need no GPU may run on the local model server | Owner |
 | 2026-11-18 | The 15 changes of the design review are accepted into the design; those that are the Owner's are marked as waiting | conductor |
 | 2026-11-18 | **Yes to all recommendations:** the 4-bit model on oMLX is the reference configuration; half of each tier hidden, encrypted, decisions on the hidden half, at most six looks; the downloads and installs for catalogues and checks; loading the 4-bit and full-precision 27B builds for the comparison; `questions_real` becomes a legacy set and the 4-bit bar a margin fixed before the run; public questions may be raw material after a licence check; the four bake-off candidates may be downloaded; other clients' models on the server may be unloaded when it is idle | Owner |
+| 2026-11-19 | **After the failed judging pilot:** build the judged tier with the analysis's changes and a second small pilot on fresh items; the first pilot stays a no-go and the second gets new criteria fixed beforehand; the judge's error flags count toward the bars of `GOAL.md` only after a reader has confirmed them; DeepSeek stays the judge, with the earlier judge re-judging a 24-item subset on every decision run; the Owner reviews which points are essential on his own questions | Owner |
 
 ## Waiting for the Owner
 
 Decided on 2026-11-18 (see "Decisions"). Still his to do, none blocking:
 
-**A failed gate (the judging pilot, 2026-11-18). The judged tier waits for these:**
-
-A. Build the judged tier with the analysis's changes and a second small pilot on fresh
-   items (recommended), or drop it and rely on the mechanical tier plus readings.
-B. Keep tonight's result a no-go and amend the criteria for the second pilot, instead of
-   re-scoring this one into a pass (recommended).
-C. The judge's error flags count toward the bars of `GOAL.md` only after a reader has
-   confirmed them (recommended; about 1 to 3 hours of reviewer time per configuration).
-D. Keep DeepSeek as the judge, with the earlier judge re-judging a 24-item subset on
-   every decision run (recommended).
-E. Review which points are essential on your own questions, about 10 minutes an item.
+The failed gate of 2026-11-18 (the judging pilot) was decided on 2026-11-19; see "Decisions".
 
 1. **Fresh real questions with correct answers:** 30 to 50 from real incidents.
 2. **Review of the architecture rubrics** when they exist (without it that part is 15
@@ -162,3 +153,6 @@ E. Review which points are essential on your own questions, about 10 minutes an 
   21 of 27 labelled errors in the subset; the earlier judge took 691 s and its thinking
   cannot be switched off. 23:42: full pilot done in 25 minutes: NO-GO, 1 of 4. 23:47: S6
   started after the conductor unloaded another client's model from an idle server.
+- 2026-11-19: the Owner agreed to all five recommendations on the judged tier. Started:
+  fair quote matching and the answer's own excerpts in the judge step; the design changes;
+  24 fresh scenarios with rubrics under the new rubric rules. The second pilot runs after S6.
