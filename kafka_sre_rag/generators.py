@@ -9,6 +9,20 @@ import httpx
 _THINK = re.compile(r"<think>.*?</think>", re.S)
 
 
+class EmptyAnswerError(RuntimeError):
+    """The server returned no answer text (typically a reasoning model that used the whole token budget)."""
+
+
+def _empty_error(max_tokens, truncated, reasoning):
+    cut = "the response was cut off by the token limit (finish_reason length)" if truncated \
+        else "the response was not cut off by the token limit"
+    why = "the response carried reasoning content" if reasoning else "no reasoning content was exposed"
+    return EmptyAnswerError(
+        f"the model returned no answer text: {cut}, {why} (max_tokens {max_tokens}). Remedies: raise the token "
+        "limit with --max-tokens, or turn the model's thinking off with --extra-body "
+        "(for example '{\"chat_template_kwargs\": {\"thinking\": false}}'; the key depends on the model).")
+
+
 def strip_think(text):
     return _THINK.sub("", text).strip()
 
@@ -45,9 +59,14 @@ class OpenAIChatGenerator:
             d = r.json()
             ch = d["choices"][0]
             toks = (d.get("usage") or {}).get("completion_tokens", 0)
-            return strip_think(ch["message"].get("content") or ""), toks, ch.get("finish_reason") == "length"
+            msg = ch["message"]
+            out = strip_think(msg.get("content") or "")
+            trunc = ch.get("finish_reason") == "length"
+            if not out:
+                raise _empty_error(max_tokens, trunc, msg.get("reasoning_content") or msg.get("reasoning"))
+            return out, toks, trunc
         body.update(stream=True, stream_options={"include_usage": True})
-        text, toks, finish = "", 0, None
+        text, toks, finish, reasoning = "", 0, None, False
         with self.client.stream("POST", self.url, json=body, headers=self.headers) as r:
             r.raise_for_status()
             for line in r.iter_lines():
@@ -57,12 +76,17 @@ class OpenAIChatGenerator:
                 if d.get("usage"):
                     toks = d["usage"].get("completion_tokens", toks)
                 for ch in d.get("choices") or []:
-                    piece = (ch.get("delta") or {}).get("content") or ""
+                    delta = ch.get("delta") or {}
+                    reasoning = reasoning or bool(delta.get("reasoning_content") or delta.get("reasoning"))
+                    piece = delta.get("content") or ""
                     if piece:
                         text += piece
                         on_token(piece)
                     finish = ch.get("finish_reason") or finish
-        return strip_think(text), toks, finish == "length"
+        out = strip_think(text)
+        if not out:
+            raise _empty_error(max_tokens, finish == "length", reasoning)
+        return out, toks, finish == "length"
 
 
 class MLXGenerator:

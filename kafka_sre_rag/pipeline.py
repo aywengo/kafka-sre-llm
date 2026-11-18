@@ -27,7 +27,8 @@ def is_reference(gen, cfg):
     return ref["snapshot"] in model or model.rstrip("/").endswith(ref["local_wrapper"].rsplit("/", 1)[-1])
 
 
-def ask(question, gen, cfg=None, *, k="k6", mode="default", index_path=None, on_token=None, rerank=True):
+def ask(question, gen, cfg=None, *, k="k6", mode="default", index_path=None, on_token=None, rerank=True,
+        max_tokens=None):
     cfg = cfg or config.load()
     if mode not in ("default", "strict"):
         raise ValueError(f"mode must be 'default' or 'strict', got {mode!r}")
@@ -43,13 +44,15 @@ def ask(question, gen, cfg=None, *, k="k6", mode="default", index_path=None, on_
         reasons.append("index override")
     if not rerank:
         reasons.append("no reranker")
+    if max_tokens is not None:  # command-line override; the default (frozen) limits stay otherwise
+        reasons.append(f"max_tokens override {max_tokens}")
     t0 = time.monotonic()
-    exp, _, _ = gen.chat(prompts.expand_messages(question), cfg["expansion"]["max_tokens"])
+    exp, _, _ = gen.chat(prompts.expand_messages(question), max_tokens or cfg["expansion"]["max_tokens"])
     t1 = time.monotonic()
     chunks = retrieval.select(question, exp, k=k, index_path=index_path, rerank=rerank)
     t2 = time.monotonic()
     msgs = prompts.answer_messages(question, chunks, strict=(mode == "strict"))
-    text, toks, trunc = gen.chat(msgs, cfg["answer"]["max_tokens"], on_token)
+    text, toks, trunc = gen.chat(msgs, max_tokens or cfg["answer"]["max_tokens"], on_token)
     t3 = time.monotonic()
     sources = [{"source": c["source"], "title": c["title"], "path": c["path"],
                 "bm25_rank": c.get("bm25_rank"), "ce_score": c.get("ce_score")} for c in chunks]

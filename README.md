@@ -99,9 +99,15 @@ python -m kafka_sre_rag ask --backend openai --model <model name on the server> 
 ```
 
 `OMLX_API_KEY` is sent as a bearer token if it is set. The client sends temperature 0 and strips
-a `<think>` block from the reply, but it cannot switch thinking off for you: do that in the
-server. Not yet verified end to end: the server backend has unit tests (a mocked transport)
-but no recorded run against a real server.
+a `<think>` block from the reply, but it cannot switch thinking off for you: pass the model's
+switch with `--extra-body`, for the base model `--extra-body '{"chat_template_kwargs": {"enable_thinking": false}}'`.
+A reasoning model that is left thinking needs a larger `--max-tokens` instead (the run is then
+unmeasured), and when the model returns no answer text the runtime exits with an error that says so.
+The server backend was run end to end as a path check with timing, not a quality measurement: base
+model `mlx-community--Qwen3.8-27B-bf16` (full precision), 3 questions in default and in strict mode,
+77 to 212 s per question in total, thinking off; the search terms, chunk ids and answers differed from
+the mlx-measured files, so the server backend is not a measured configuration. An earlier path check
+with another model (GLM-5.3-Flash-oQ8e-mtp, `--max-tokens 16000`) also produced answers.
 
 `chat` is the same loop, one question at a time. Each turn is retrieved and answered on its
 own; no conversation history is sent, and multi-turn use is not measured.

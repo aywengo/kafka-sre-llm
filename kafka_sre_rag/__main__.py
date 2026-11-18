@@ -5,6 +5,7 @@ import os
 import sys
 
 from . import config
+from .generators import EmptyAnswerError
 
 DRY_EXPANSION = "consumer group, kafka-consumer-groups.sh, --describe, --group, LAG, max.poll.interval.ms"
 
@@ -41,6 +42,9 @@ def build_parser():
         p.add_argument("--extra-body", type=json.loads, default=None, metavar="JSON",
                        help="openai: JSON merged into the request body, e.g. "
                             "'{\"chat_template_kwargs\": {\"thinking\": false}}' to switch thinking off")
+        p.add_argument("--max-tokens", type=int, default=None, metavar="N",
+                       help="token limit for both model calls (default: the frozen limits, 300 and 2048). "
+                            "A reasoning model on the server needs a larger value; the run is then unmeasured")
         p.add_argument("--sources", action="store_true", help="print the retrieved sources under the answer")
         p.add_argument("--json", action="store_true", help="print one JSON object")
         p.add_argument("--dry-run", action="store_true",
@@ -78,7 +82,7 @@ def run_one(question, gen, cfg, a):
     from .pipeline import ask
     stream = None if (a.json or a.dry_run) else (lambda t: print(t, end="", flush=True))
     ans = ask(question, gen, cfg, k=a.k, mode=a.mode, on_token=stream,
-              rerank=not (a.dry_run and a.no_rerank_in_dry_run))
+              rerank=not (a.dry_run and a.no_rerank_in_dry_run), max_tokens=a.max_tokens)
     if a.json:
         print(json.dumps({"question": question, "text": ans.text, "sources": ans.sources, "expansion": ans.expansion,
                           "timings": ans.timings, "measured": ans.measured, "tokens": ans.tokens,
@@ -123,7 +127,11 @@ def main(argv=None):
             return 1
     gen = make_generator(a)
     if a.cmd == "ask":
-        run_one(a.question, gen, cfg, a)
+        try:
+            run_one(a.question, gen, cfg, a)
+        except EmptyAnswerError as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 2
         return 0
     try:  # chat
         while True:
@@ -132,7 +140,10 @@ def main(argv=None):
                 if q:
                     break
                 continue
-            run_one(q, gen, cfg, a)
+            try:
+                run_one(q, gen, cfg, a)
+            except EmptyAnswerError as e:
+                print(f"error: {e}", file=sys.stderr)
     except (EOFError, KeyboardInterrupt):
         print()
     return 0
