@@ -56,6 +56,17 @@ For every "present" or "contradicted" verdict, quote the shortest passage of the
 Then list any other statement in the answer that contradicts the source passages below, with a quote. Do not list statements that are only missing from the sources.
 Reply only with JSON: {"must":[{"id":"","verdict":"present|absent|contradicted","quote":""}],"must_not":[{"id":"","verdict":"present|absent","quote":""}],"other_errors":[{"quote":"","why":""}]}"""
 
+# Without source passages (--source-chars 0) the judge cannot check the answer against them: the sentences about
+# listing statements that contradict the source passages are replaced by an instruction to leave other_errors empty.
+_SRC_SENTENCES = ('Then list any other statement in the answer that contradicts the source passages below, with a quote. '
+                  'Do not list statements that are only missing from the sources.')
+assert _SRC_SENTENCES in JUDGE_INSTRUCTION
+JUDGE_INSTRUCTION_NO_SOURCES = JUDGE_INSTRUCTION.replace(_SRC_SENTENCES, 'Leave "other_errors" as an empty list.')
+
+# Entries of the cache without a "setting" label were made under this setting (GLM oQ8e, thinking on, 32768 tokens, 12000
+# characters of sources); its cache keys are the keys that were in use before settings had names.
+DEFAULT_SETTING = "glm-think-12k"
+
 BUSY_STATUS = (429, 503, 507)
 BUSY_RETRIES, BUSY_WAIT_S = 20, 60
 MUST_VERDICTS = ("present", "absent", "contradicted")
@@ -134,7 +145,8 @@ def point_text(p):
 
 
 def build_prompt(item, pass_no, chunks, cap):
-    """-> (system, user). Pass 2 lists the points (must and must-not) in reverse order."""
+    """-> (system, user). Pass 2 lists the points (must and must-not) in reverse order.
+    cap 0: no source passages at all, no SOURCE PASSAGES block, and the instruction without the sentences about them."""
     r = item["rubric"]
     must, must_not = list(r["must"]), list(r.get("must_not") or [])
     if pass_no == 2:
@@ -144,16 +156,18 @@ def build_prompt(item, pass_no, chunks, cap):
         lines.append(f"EVIDENCE (pasted by the operator):\n{r['evidence'].strip()}")
     lines.append("MUST points:\n" + "\n".join(f"- id {p['id']}: {point_text(p)}" for p in must))
     lines.append("MUST-NOT points:\n" + ("\n".join(f"- id {p['id']}: {point_text(p)}" for p in must_not) or "(none)"))
-    src = item.get("source")
-    if src is None:
-        src = source_text(r, chunks, cap)
-    lines.append("SOURCE PASSAGES:\n" + (src or "(none)"))
+    if cap > 0:
+        src = item.get("source")
+        if src is None:
+            src = source_text(r, chunks, cap)
+        lines.append("SOURCE PASSAGES:\n" + (src or "(none)"))
     lines.append("ANSWER TO CHECK:\n<<<\n" + item["answer"].strip() + "\n>>>")
-    return JUDGE_INSTRUCTION, "\n\n".join(lines)
+    return (JUDGE_INSTRUCTION if cap > 0 else JUDGE_INSTRUCTION_NO_SOURCES), "\n\n".join(lines)
 
 
-def match_items(rubrics, answer_sets, qmap):
-    """Match the answers of each set to the rubrics by question text. -> (items, counts per set)."""
+def match_items(rubrics, answer_sets, qmap, only=None):
+    """Match the answers of each set to the rubrics by question text. -> (items, counts per set).
+    only: optional collection of (set, id) pairs; the other answers are left out."""
     items, counts = [], OrderedDict()
     for name, rows in answer_sets.items():
         by_q = {}
@@ -164,6 +178,8 @@ def match_items(rubrics, answer_sets, qmap):
             q = rubric_question(r, qmap)
             row = by_q.get(norm_ws(q))
             if row is None or not (row.get("text") or "").strip():
+                continue
+            if only is not None and (name, r["id"]) not in only:
                 continue
             items.append({"set": name, "id": r["id"], "question": q, "answer": row["text"], "rubric": r})
             counts[name] += 1
@@ -266,9 +282,14 @@ def validate_reply(rubric, answer, j):
 
 def result_row(item, pass_no, entry):
     """One output row from a cache entry (reply parsed or None)."""
+    usage = entry.get("usage") if isinstance(entry.get("usage"), dict) else None
     base = {"set": item["set"], "id": item["id"], "question": item["question"], "pass": pass_no,
             "answer": item["answer"], "key": entry["key"], "seconds": entry.get("seconds"),
-            "retried": bool(entry.get("retried"))}
+            "retried": bool(entry.get("retried")), "setting": entry.get("setting") or DEFAULT_SETTING,
+            "prompt_chars": entry.get("prompt_chars"), "usage": usage,
+            "completion_tokens": (usage or {}).get("completion_tokens"),
+            "reasoning_chars": entry.get("reasoning_chars"), "finish_reason": entry.get("finish_reason"),
+            "reply_chars": len(entry["reply"]) if isinstance(entry.get("reply"), str) else None}
     j = entry.get("j")
     if not isinstance(j, dict):
         return {**base, "valid_reply": False, "judge_errors": ["invalid_json"]}
@@ -311,7 +332,17 @@ class Judge:
                 r = self.client.post(f"{self.url}/chat/completions", json=body)
                 r.raise_for_status()
                 data = r.json()
-                return data["choices"][0]["message"].get("content") or "", data.get("usage", {}).get("completion_tokens")
+                choice = data["choices"][0]
+                msg = choice["message"]
+                reasoning = None   # length of the reasoning text when the reply carries it in a field of its own
+                for k in ("reasoning_content", "reasoning"):
+                    if k in msg:
+                        reasoning = len(msg[k] or "") if isinstance(msg[k] or "", str) else None
+                        break
+                usage = data.get("usage")
+                meta = {"usage": usage if isinstance(usage, dict) else None, "reasoning_chars": reasoning,
+                        "finish_reason": choice.get("finish_reason")}
+                return msg.get("content") or "", meta
             except (self.httpx.HTTPError, ValueError, KeyError, IndexError, TypeError, AttributeError) as e:
                 what = type(e).__name__   # class and status only: the error text carries the server address
                 code = e.response.status_code if isinstance(e, self.httpx.HTTPStatusError) else None
@@ -329,26 +360,29 @@ class Judge:
                 print(f"  retry after {what}", flush=True)
 
     def __call__(self, system, user):
-        """-> (parsed reply or None, raw content, retried). A reply that is not valid JSON is retried once at temperature 0."""
-        content, _ = self.chat(system, user, self.temperature)
+        """-> (parsed reply or None, raw content, retried, meta of the last call: usage as returned, reasoning_chars,
+        finish_reason; after a retry also first_usage). A reply that is not valid JSON is retried once at temperature 0."""
+        content, meta = self.chat(system, user, self.temperature)
         j = parse_reply(content)
         if j is not None:
-            return j, content, False
-        content2, _ = self.chat(system, user, 0)
-        return parse_reply(content2), content2, True
+            return j, content, False, meta
+        content2, meta2 = self.chat(system, user, 0)
+        return parse_reply(content2), content2, True, {**meta2, "first_usage": meta.get("usage")}
 
 
 def stub_judge(system, user):
     """Dry run: every point absent. Reads the ids from the prompt."""
     must = re.findall(r"^- id (\S+):", user.split("MUST-NOT points:")[0], flags=re.M)
-    mn = re.findall(r"^- id (\S+):", user.split("MUST-NOT points:")[1].split("SOURCE PASSAGES:")[0], flags=re.M)
+    mn = re.findall(r"^- id (\S+):", re.split(r"SOURCE PASSAGES:|ANSWER TO CHECK:", user.split("MUST-NOT points:")[1])[0], flags=re.M)
     j = {"must": [{"id": i, "verdict": "absent", "quote": ""} for i in must],
          "must_not": [{"id": i, "verdict": "absent", "quote": ""} for i in mn], "other_errors": []}
-    return j, json.dumps(j), False
+    return j, json.dumps(j), False, {"usage": {"completion_tokens": 0}, "reasoning_chars": None, "finish_reason": "stub"}
 
 
-def cache_key(model, pass_no, item, system, user):
-    return hashlib.md5(f"{model}\0{pass_no}\0{item['set']}\0{item['id']}\0{system}\0{user}".encode()).hexdigest()
+def cache_key(model, pass_no, item, system, user, setting=DEFAULT_SETTING):
+    """The default setting hashes as before settings had names, so that old cache entries are found."""
+    tail = "" if setting == DEFAULT_SETTING else f"\0{setting}"
+    return hashlib.md5(f"{model}\0{pass_no}\0{item['set']}\0{item['id']}\0{system}\0{user}{tail}".encode()).hexdigest()
 
 
 def load_cache(path, retry_invalid=False):
@@ -363,32 +397,46 @@ def load_cache(path, retry_invalid=False):
     return cache
 
 
-def run(items, passes, judge, model, chunks, cap, cache_path, concurrency=1, retry_invalid=False, calls=True, say=print):
-    """Judge every (item, pass) not in the cache. -> list of result rows in a fixed order."""
-    cache = load_cache(cache_path, retry_invalid)
+def job_keys(items, passes, chunks, cap, model, setting=DEFAULT_SETTING):
+    """-> [(item, pass, system, user, key)] in a fixed order."""
     jobs = []
     for it in items:
         for p in passes:
             system, user = build_prompt(it, p, chunks, cap)
-            jobs.append((it, p, system, user, cache_key(model, p, it, system, user)))
+            jobs.append((it, p, system, user, cache_key(model, p, it, system, user, setting)))
+    return jobs
+
+
+def run(items, passes, judge, model, chunks, cap, cache_path, concurrency=1, retry_invalid=False, calls=True,
+        say=lambda s: print(s, flush=True), setting=DEFAULT_SETTING, write_cache=True):
+    """Judge every (item, pass) not in the cache. -> list of result rows in a fixed order.
+    Every progress line is flushed. write_cache False: the cache is read but not written (dry run)."""
+    cache = load_cache(cache_path, retry_invalid)
+    jobs = job_keys(items, passes, chunks, cap, model, setting)
     lock = threading.Lock()
 
     def do(job):
         it, p, system, user, key = job
         t0 = time.time()
-        j, raw, retried = judge(system, user)
-        entry = {"key": key, "set": it["set"], "id": it["id"], "pass": p, "j": j, "reply": raw if j is None else None,
-                 "retried": retried, "seconds": round(time.time() - t0, 1)}
+        res = judge(system, user)
+        j, raw, retried = res[:3]
+        meta = res[3] if len(res) > 3 and isinstance(res[3], dict) else {}
+        entry = {"key": key, "set": it["set"], "id": it["id"], "pass": p, "setting": setting, "j": j, "reply": raw,
+                 "retried": retried, "seconds": round(time.time() - t0, 1), "prompt_chars": len(system) + len(user),
+                 "usage": meta.get("usage"), "reasoning_chars": meta.get("reasoning_chars"),
+                 "finish_reason": meta.get("finish_reason")}
+        if "first_usage" in meta:
+            entry["first_usage"] = meta["first_usage"]
         with lock:
             cache[key] = entry
-            if cache_path:
+            if cache_path and write_cache:
                 Path(cache_path).parent.mkdir(parents=True, exist_ok=True)
                 with open(cache_path, "a") as f:
                     f.write(json.dumps(entry, ensure_ascii=False) + "\n")
             row = result_row(it, p, entry)
             say(f"[judge] {len(cache)} cached  {it['set']} {it['id']} p{p} valid={row['valid_reply']}"
                 + (f" quotes_failed={row['quote_failed']}/{row['quote_claims']} S={row['S']:.2f}" if row["valid_reply"] else "")
-                + f" {entry['seconds']}s")
+                + f" {entry['seconds']}s tokens={row['completion_tokens']}")
 
     todo = [j for j in jobs if j[4] not in cache]
     if calls and todo:
@@ -446,13 +494,18 @@ def main(argv=None):
     r = sub.add_parser("run", parents=[common], help="judge answers against rubrics")
     r.add_argument("--answers", nargs="+", required=True, metavar="NAME=PATH")
     r.add_argument("--chunks", help="JSONL of chunks (id, text) for rubrics that give covered_chunks")
-    r.add_argument("--source-chars", type=int, default=DEFAULT_SOURCE_CHARS, help="cap on the source passages of one item, in characters")
+    r.add_argument("--source-chars", type=int, default=DEFAULT_SOURCE_CHARS,
+                   help="cap on the source passages of one item, in characters; 0 = no source passages at all")
+    r.add_argument("--settings-name", default=DEFAULT_SETTING,
+                   help="label of the judge settings, stored in each cache entry and in the cache key (the default is the "
+                        "setting of entries that have no label)")
+    r.add_argument("--only", nargs="+", metavar="SET:ID", help="judge only these answers (answer set name and rubric id)")
     r.add_argument("--passes", type=int, nargs="+", default=[1, 2], choices=[1, 2])
     r.add_argument("--cache", help="JSONL of judge replies; written per call and reused on rerun")
     r.add_argument("--out", help="JSONL of validated per-point results and scores, rewritten from the cache at the end")
     r.add_argument("--judge-url", default=None, help="default $OMLX_URL/v1")
     r.add_argument("--judge-model", default="GLM-5.3-Flash-oQ8e-mtp")
-    r.add_argument("--judge-extra-body", type=json.loads, default=None)
+    r.add_argument("--judge-extra-body", type=json.loads, default=None, help="JSON merged into the request as given")
     r.add_argument("--temperature", type=float, default=0.0)
     r.add_argument("--concurrency", type=int, default=3)
     r.add_argument("--retry-invalid", action="store_true", help="redo cached calls whose reply was not valid JSON")
@@ -476,7 +529,21 @@ def main(argv=None):
             ap.error(f"--answers {spec!r}: expected NAME=PATH")
         sets[name] = rd(path)
     chunks = {c["id"]: c for c in rd(a.chunks)} if a.chunks else {}
-    items, counts = match_items(rubrics, sets, qmap)
+    if a.source_chars < 0:
+        ap.error("--source-chars must be 0 or more")
+    only = None
+    if a.only:
+        only = set()
+        for spec in a.only:
+            name, _, rid = spec.partition(":")
+            if not rid or name not in sets:
+                ap.error(f"--only {spec!r}: expected SET:ID with SET one of {list(sets)}")
+            only.add((name, rid))
+    items, counts = match_items(rubrics, sets, qmap, only)
+    if only is not None and {(it["set"], it["id"]) for it in items} != only:
+        missing = sorted(only - {(it["set"], it["id"]) for it in items})
+        print(f"--only: no matched answer for {missing}", file=sys.stderr)
+        return 1
     for name, n in counts.items():
         print(f"matched {name}: {n} answers", flush=True)
     if not items:
@@ -491,7 +558,7 @@ def main(argv=None):
             print("no judge URL: pass --judge-url or set OMLX_URL", file=sys.stderr)
             return 2
         judge = Judge(url, a.judge_model, api_key(), a.judge_extra_body, a.temperature)
-    cache_path = None if a.stub else a.cache
+    cache_path = a.cache   # a dry run reads it (cached entries are reused) and never writes it
     sizes = [len(s) + len(u) for it in items for p in a.passes for s, u in [build_prompt(it, p, chunks, a.source_chars)]]
     n_calls = len(items) * len(a.passes)
     lo, design = estimate(n_calls, a.concurrency)
@@ -499,11 +566,15 @@ def main(argv=None):
           f"(system + user), mean {sum(sizes) // len(sizes)}", flush=True)
     print(f"judge time estimate for {n_calls} calls: {lo:.1f} h (v3 median {SECONDS_PER_CALL_V3_MEDIAN} s per call, "
           f"{a.concurrency} in parallel) to {design:.1f} h (design: {SECONDS_PER_ITEM_DESIGN} s per item)", flush=True)
+    cached = load_cache(cache_path, a.retry_invalid)
+    reused = sum(1 for *_, k in job_keys(items, a.passes, chunks, a.source_chars, a.judge_model, a.settings_name) if k in cached)
+    print(f"settings {a.settings_name}: {reused} of {n_calls} judgments already in the cache", flush=True)
     rows, n_new, n_jobs = run(items, a.passes, judge, a.judge_model, chunks, a.source_chars, cache_path,
-                              a.concurrency, a.retry_invalid, calls=not a.rescore)
+                              a.concurrency, a.retry_invalid, calls=not a.rescore, setting=a.settings_name,
+                              write_cache=not a.stub)
     invalid = sum(not r["valid_reply"] for r in rows)
     print(f"{n_jobs} judgments, {n_new} called now, {len(rows) - invalid} valid replies, {invalid} unscored", flush=True)
-    if a.out and not a.stub:
+    if a.out:
         Path(a.out).parent.mkdir(parents=True, exist_ok=True)
         tmp = a.out + ".tmp"
         Path(tmp).write_text("".join(json.dumps(x, ensure_ascii=False) + "\n" for x in rows))

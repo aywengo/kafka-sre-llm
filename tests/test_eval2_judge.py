@@ -309,5 +309,174 @@ class HttpRun(unittest.TestCase):
         self.assertIn("largest prompt", out)
 
 
+class Instrumented(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.items = [{"set": "s", "id": "t-1", "question": RUBRIC["question"], "answer": ANSWER, "rubric": RUBRIC}]
+
+    def serve(self, message, usage, finish="stop", delay=0.0, bodies=None):
+        import time
+
+        class H(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_POST(self):
+                body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                if bodies is not None:
+                    bodies.append(body)
+                time.sleep(delay)
+                data = json.dumps({"choices": [{"message": message, "finish_reason": finish}], "usage": usage}).encode()
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(lambda: (srv.shutdown(), srv.server_close()))
+        return f"http://127.0.0.1:{srv.server_address[1]}/v1"
+
+    def test_cache_entry_records_usage_reasoning_finish_reply_and_setting(self):
+        usage = {"prompt_tokens": 100, "completion_tokens": 321, "completion_tokens_details": {"reasoning_tokens": 250}}
+        url = self.serve({"content": GOOD, "reasoning_content": "x" * 77}, usage, finish="stop")
+        cache = str(self.tmp / "c.jsonl")
+        said = []
+        ej.run(self.items, [1], ej.Judge(url, "m", "k", {}, 0.0), "m", {}, 1000, cache, say=said.append, setting="s1")
+        e = json.loads(Path(cache).read_text().splitlines()[0])
+        self.assertEqual(e["usage"], usage)
+        self.assertEqual((e["reasoning_chars"], e["finish_reason"], e["setting"]), (77, "stop", "s1"))
+        self.assertEqual(e["reply"], GOOD)
+        s, u = ej.build_prompt(self.items[0], 1, {}, 1000)
+        self.assertEqual(e["prompt_chars"], len(s) + len(u))
+        self.assertIsInstance(e["seconds"], float)
+        self.assertIn("tokens=321", said[0])
+        self.assertRegex(said[0], r"\d+(\.\d+)?s ")
+
+    def test_no_reasoning_field_is_none(self):
+        url = self.serve({"content": GOOD}, {"completion_tokens": 5})
+        cache = str(self.tmp / "c.jsonl")
+        ej.run(self.items, [1], ej.Judge(url, "m", "k", {}, 0.0), "m", {}, 1000, cache, say=lambda s: None)
+        self.assertIsNone(json.loads(Path(cache).read_text())["reasoning_chars"])
+
+    def test_extra_body_passed_as_given(self):
+        bodies = []
+        url = self.serve({"content": GOOD}, {}, bodies=bodies)
+        eb = {"chat_template_kwargs": {"enable_thinking": False}, "max_tokens": 4096}
+        ej.run(self.items, [1], ej.Judge(url, "m", "k", eb, 0.0), "m", {}, 1000, None, say=lambda s: None)
+        self.assertEqual(bodies[0]["chat_template_kwargs"], {"enable_thinking": False})
+        self.assertEqual(bodies[0]["max_tokens"], 4096)
+
+    def test_old_entries_without_new_fields_are_read_and_count_as_default_setting(self):
+        s, u = ej.build_prompt(self.items[0], 1, {}, 1000)
+        old_key = ej.cache_key("m", 1, self.items[0], s, u)        # the key as it was before settings had names
+        import hashlib
+        self.assertEqual(old_key, hashlib.md5(f"m\x001\x00s\x00t-1\x00{s}\x00{u}".encode()).hexdigest())
+        self.assertEqual(old_key, ej.cache_key("m", 1, self.items[0], s, u, ej.DEFAULT_SETTING))
+        self.assertNotEqual(old_key, ej.cache_key("m", 1, self.items[0], s, u, "other"))
+        old = {"key": old_key, "set": "s", "id": "t-1", "pass": 1, "j": json.loads(GOOD), "reply": None, "retried": False,
+               "seconds": 650.0}
+        cache = self.tmp / "old.jsonl"
+        cache.write_text(json.dumps(old) + "\n")
+        calls = []
+        rows, n_new, _ = ej.run(self.items, [1], lambda *a: calls.append(1), "m", {}, 1000, str(cache), say=lambda s: None)
+        self.assertEqual((n_new, calls), (0, []))
+        self.assertEqual((rows[0]["setting"], rows[0]["completion_tokens"], rows[0]["reasoning_chars"]), (ej.DEFAULT_SETTING, None, None))
+        # under another setting name the same answer is judged again, and both entries live in one cache
+        url = self.serve({"content": GOOD}, {"completion_tokens": 9})
+        rows, n_new, _ = ej.run(self.items, [1], ej.Judge(url, "m", "k", {}, 0.0), "m", {}, 1000, str(cache),
+                                say=lambda s: None, setting="nothink")
+        self.assertEqual(n_new, 1)
+        self.assertEqual(len(cache.read_text().splitlines()), 2)
+
+    def test_dry_run_reads_cache_and_does_not_write_it(self):
+        s, u = ej.build_prompt(self.items[0], 1, {}, 1000)
+        cache = self.tmp / "c.jsonl"
+        cache.write_text(json.dumps({"key": ej.cache_key("m", 1, self.items[0], s, u), "set": "s", "id": "t-1", "pass": 1,
+                                     "j": json.loads(GOOD), "seconds": 1.0}) + "\n")
+        before = cache.read_text()
+        rows, n_new, _ = ej.run(self.items, [1, 2], ej.stub_judge, "m", {}, 1000, str(cache), say=lambda s: None, write_cache=False)
+        self.assertEqual(n_new, 1)
+        self.assertEqual(cache.read_text(), before)
+
+    def test_zero_source_chars_means_no_passages_and_no_contradiction_sentence(self):
+        chunks = {"a": {"id": "a", "path": "p/a.md", "text": "SOURCE-TEXT-HERE"}}
+        r = dict(RUBRIC, covered_chunks=["a"])
+        it = dict(self.items[0], rubric=r, source="GIVEN SOURCE")
+        s0, u0 = ej.build_prompt(it, 1, chunks, 0)
+        self.assertNotIn("SOURCE-TEXT-HERE", u0)
+        self.assertNotIn("GIVEN SOURCE", u0)
+        self.assertNotIn("SOURCE PASSAGES", u0)
+        self.assertNotIn("source passages", s0)
+        self.assertNotIn("contradicts the source", s0)
+        self.assertIn("other_errors", s0)
+        self.assertIn("empty list", s0)
+        s1, u1 = ej.build_prompt(self.items[0], 1, chunks, 100)
+        self.assertEqual(s1, ej.JUDGE_INSTRUCTION)
+        self.assertIn("contradicts the source passages", s1)
+        self.assertIn("SOURCE PASSAGES", u1)
+        j, _, _, _ = ej.stub_judge(s0, u0)
+        self.assertEqual(len(j["must"]), 4)
+        self.assertEqual(len(j["must_not"]), 2)
+
+    def test_only_filter_and_settings_label_in_main(self):
+        rub = self.tmp / "r.jsonl"
+        r2 = dict(RUBRIC, id="t-2", question="Other?")
+        rub.write_text(json.dumps(RUBRIC) + "\n" + json.dumps(r2) + "\n")
+        ans = self.tmp / "a.jsonl"
+        ans.write_text(json.dumps({"question": RUBRIC["question"], "text": ANSWER}) + "\n"
+                       + json.dumps({"question": "Other?", "text": ANSWER}) + "\n")
+        import io, contextlib
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = ej.main(["run", "--rubrics", str(rub), "--answers", f"x={ans}", "--stub", "--only", "x:t-2",
+                          "--settings-name", "n1", "--source-chars", "0", "--out", str(self.tmp / "o.jsonl")])
+        self.assertEqual(rc, 0)
+        self.assertIn("matched x: 1 answers", buf.getvalue())
+        rows = [json.loads(l) for l in (self.tmp / "o.jsonl").read_text().splitlines()]
+        self.assertEqual([(r["id"], r["setting"]) for r in rows], [("t-2", "n1"), ("t-2", "n1")])
+
+
+class FlushedProgress(unittest.TestCase):
+    def test_a_line_per_item_reaches_a_redirected_file_before_the_process_ends(self):
+        import os
+        import subprocess
+        import time
+        tmp = Path(tempfile.mkdtemp())
+        rubs, answers = [], []
+        for n in range(1, 4):
+            rubs.append(dict(RUBRIC, id=f"t-{n}", question=f"Question {n}?"))
+            answers.append({"question": f"Question {n}?", "text": ANSWER})
+        (tmp / "r.jsonl").write_text("".join(json.dumps(x) + "\n" for x in rubs))
+        (tmp / "a.jsonl").write_text("".join(json.dumps(x) + "\n" for x in answers))
+
+        def slow(body, n):
+            time.sleep(1.5)
+            return GOOD
+        srv = MockServer(slow)
+        out = tmp / "out.log"
+        try:
+            with open(out, "w") as f:
+                proc = subprocess.Popen(
+                    [sys.executable, str(ROOT / "scripts/eval2_judge.py"), "run", "--rubrics", str(tmp / "r.jsonl"),
+                     "--answers", f"x={tmp / 'a.jsonl'}", "--passes", "1", "--concurrency", "1", "--judge-url", srv.url,
+                     "--cache", str(tmp / "c.jsonl"), "--out", str(tmp / "o.jsonl")],
+                    stdout=f, stderr=subprocess.STDOUT, env={**os.environ, "JUDGE_API_KEY": "k"})
+                seen_while_running = 0
+                deadline = time.time() + 60
+                while proc.poll() is None and time.time() < deadline:
+                    seen_while_running = max(seen_while_running, out.read_text().count("[judge]"))
+                    if seen_while_running >= 1:
+                        break
+                    time.sleep(0.1)
+                still_running = proc.poll() is None
+                proc.wait(timeout=60)
+        finally:
+            srv.close()
+        self.assertGreaterEqual(seen_while_running, 1, out.read_text())
+        self.assertTrue(still_running, "the first progress line was only visible after the process ended")
+        self.assertEqual(out.read_text().count("[judge]"), 3)
+
+
 if __name__ == "__main__":
     unittest.main()
