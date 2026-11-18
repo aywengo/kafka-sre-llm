@@ -331,7 +331,10 @@ How to read it:
   check (3 questions, default mode, bf16 27B, mlx-lm). The project's bar is a median under 60 s
   (`GOAL.md`); it is not met. Strict mode answers are shorter and take less time.
   On the 4-bit server path check (10 questions per mode, large machine): median 70.8 s in default mode
-  (not met), 47.2 s in strict mode.
+  (not met), 47.2 s in strict mode. Through Ollama 0.40.16 (`qwen3.8:27b`, an NVFP4 build on its MLX
+  runner, context 16,384; path check, ten questions per mode): median 38.6 s in default mode and
+  26.7 s in strict mode, with 27 GB the largest memory seen, above the 20 GB bar. Different machine
+  build and quantisation from the oMLX check, so not a comparison of the servers.
 
 ### Prompt modes: default and strict
 
@@ -441,8 +444,14 @@ statement.
   ten questions per mode: median 70.8 s per answer in default mode (65.0 to 88.9 s) and 47.2 s in
   strict mode (36.8 to 64.6 s), about 16.9 GB held by the server's own estimate, 20 of 20 answers
   non-empty and not cut off. It is a path check with timing on a large machine, not a quality
-  measurement and not the reference laptop. Ollama: not yet verified (the Ollama version in the
-  test was too old to load this model architecture).
+  measurement and not the reference laptop. Ollama: 0.14.2 cannot load this model architecture;
+  0.40.16 works (the minimum is not established). With `qwen3.8:27b` (NVFP4 build, Ollama's MLX runner),
+  `reasoning_effort: "none"` and a 16,384 context, ten questions per mode took a median of 38.6 s in
+  default mode (31.0 to 46.1 s) and 26.7 s in strict mode (18.3 to 32.1 s); `ollama ps` showed about 19 GB
+  idle and 27 GB as the largest value seen, above the 20 GB bar of `GOAL.md`. One strict answer was a
+  one-sentence refusal, answers were not repeatable at temperature 0 in one observed case, and quality was
+  not measured. A Q4_K_M GGUF from the Hub loaded and answered once, untimed. The two server paths use
+  different 4-bit builds on a machine that is not the reference laptop, so this is not a comparison.
 - **4-bit MLX, GGUF, llama.cpp, Ollama:** not measured with retrieval. A run with them is
   labelled `UNMEASURED CONFIGURATION`.
 

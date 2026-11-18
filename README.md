@@ -163,8 +163,39 @@ held about 16.9 GB by its own estimate. 20 of 20 answers were non-empty and not 
 path check with timing on a large machine, not a quality measurement and not the reference laptop.
 If the server lists its models, the client checks the `--model` name against the list and stops
 with an error when the server does not have it, instead of letting the server answer with another
-model. Ollama: not yet verified; the Ollama version in the test (0.14.2) was too old to load this
-model architecture.
+model. For a server on the same machine (`localhost`, an address in 127.0.0.0/8, or `::1`) the runtime
+ignores the proxy environment variables (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`), whatever `NO_PROXY`
+says, so a prompt never goes to a proxy; for a server elsewhere on your network, add its host to `NO_PROXY`.
+
+**Ollama.** Tested with Ollama 0.40.16, which works; 0.14.2 cannot load Qwen3.8 (the library model's own
+metadata says it needs 0.32.12 or later, which was not tested, so the minimum version is not established).
+Pull the base model by its exact name, `ollama pull qwen3.8:27b` (18.2 GB, Apache-2.0). At the time of the
+test this library model is an NVFP4 build on Ollama's MLX runner, not a Q4_K_M GGUF. A Q4_K_M GGUF from the
+Hub, `ollama pull hf.co/lmstudio-community/Qwen3.8-27B-GGUF:Q4_K_M` (17.7 GB, llama.cpp runner), also
+loads and answered through the runtime once, but was not timed. Start the server with a context that holds
+the prompt and the answer: `OLLAMA_CONTEXT_LENGTH=16384 ollama serve` (a prompt is up to about 4,100 tokens
+and the answer up to 2,048). Ollama's documented default is 4,096 on machines under 24 GiB of video memory.
+With that context the two runners behaved differently in the test: the llama.cpp runner enforced it and cut
+an answer off at the limit (finish_reason `length`; a longer prompt got a clear HTTP 400), the MLX runner did
+not enforce it. Do not rely on that; set the context. Check it with `ollama ps` (the CONTEXT column). Then,
+with the exact name that `ollama list` shows:
+
+```bash
+export OMLX_URL=http://localhost:11434/v1
+python -m kafka_sre_rag ask --backend openai --model qwen3.8:27b --extra-body '{"reasoning_effort": "none"}' "How do I check consumer lag?"
+```
+
+`reasoning_effort: "none"` turns thinking off on Ollama's OpenAI endpoint; `{"think": false}` is ignored
+there. The runtime refuses a model name that `ollama list` does not show: the short alias `qwen3.8`, which
+Ollama itself resolves, is refused with a message that lists the available names; use `qwen3.8:27b`.
+Path check with timing, not a quality measurement: ten questions per mode with `qwen3.8:27b` and a
+16,384 context, median 38.6 s per answer in default mode (31.0 to 46.1 s) and 26.7 s in strict mode
+(18.3 to 32.1 s). `ollama ps` showed about 19 GB idle and 27 GB as the largest value seen during answers,
+which is above the 20 GB bar in `GOAL.md` (the 27 GB is the largest of about 30 samples, not a measured
+peak). One strict answer was a one-sentence refusal. Answers on this path were not repeatable at
+temperature 0 in one observed case (one strict run of one question gave a 28-token refusal, two further runs
+467 and 528 tokens). Quality was not measured. The machine is not the reference laptop, and the Ollama and
+the oMLX path above use different 4-bit builds, so the figures are not a comparison of the two servers.
 
 `chat` is the same loop, one question at a time. Each turn is retrieved and answered on its
 own; no conversation history is sent, and multi-turn use is not measured.

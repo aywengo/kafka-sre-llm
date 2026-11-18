@@ -3,6 +3,8 @@ Importing this module never loads mlx."""
 import json
 import os
 import re
+import ipaddress
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -30,6 +32,28 @@ def _error_text(r):
     except ValueError:
         pass
     return " ".join(text.split())[:300]
+
+
+_PROXY_VARS = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY")
+
+
+def is_loopback_host(base_url):
+    """True when the URL's host is localhost, an address in 127.0.0.0/8, or ::1."""
+    try:
+        host = (urlsplit(base_url).hostname or "").lower().rstrip(".")
+    except ValueError:
+        return False
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def proxy_configured():
+    """True when a proxy variable is set in the environment (the value is never read out)."""
+    return any(os.environ.get(v) or os.environ.get(v.lower()) for v in _PROXY_VARS)
 
 
 def _empty_error(max_tokens, truncated, reasoning):
@@ -64,12 +88,19 @@ class OpenAIChatGenerator:
         self.headers = {"Authorization": f"Bearer {key}"} if key else {}
         self.models_url = base + ("/models" if base.endswith("/v1") else "/v1/models")
         self.base = base
-        self.client = httpx.Client(transport=transport, timeout=timeout)
+        # A server on this machine is never reached through a proxy: the prompt carries the question and
+        # the retrieved text. For loopback hosts the client ignores the proxy variables and NO_PROXY.
+        self.local = is_loopback_host(base)
+        self.client = httpx.Client(transport=transport, timeout=timeout, trust_env=not self.local)
         self.adapter = None
         self._model_checked = False
 
     def _unreachable(self, e):
-        return ServerError(f"cannot reach {self.base} ({type(e).__name__})")
+        hint = ""
+        if not self.local and proxy_configured():
+            hint = (" - a proxy is configured in the environment; add the server's host to NO_PROXY "
+                    "if it is local to your network")
+        return ServerError(f"cannot reach {self.base} ({type(e).__name__}){hint}")
 
     def _check_status(self, r):
         if r.status_code >= 400:
