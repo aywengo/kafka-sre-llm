@@ -155,6 +155,43 @@ def write(rows, out):
             f.write(json.dumps(r, ensure_ascii=False, sort_keys=False) + "\n")
 
 
+B1_ITEMS = "eval/m4/b1/items.jsonl"
+B1_RUBRICS = "eval/m4/b1/rubrics.jsonl"
+B1_OUT = "work/m5/b1_needs.jsonl"
+B1_HEADER_NOTE = ("Needs of batch B1 (eval/m4/b1): one row per must point with the chunk ids its rubric names, its "
+                  "weight, the rubric's any_of group (list of point ids, or null) and not_indexed. Built by "
+                  "scripts/retrieval_needs.py --b1.")
+
+
+def build_b1(index=INDEX, items=B1_ITEMS, rubrics=B1_RUBRICS):
+    """Point rows of the B1 rubrics. status is mapped (has chunk ids) or not_indexed; the chunk ids are kept as
+    written in the rubric (those absent from the index would show as not_in_index in the funnel)."""
+    check_index_hash(index)
+    kind = {i["id"]: i["kind"] for i in rd(items)}
+    rows = []
+    for r in rd(rubrics):
+        for m in r["must"]:
+            group = next((g for g in r["any_of"] if m["id"] in g), None)
+            rows.append({"row_type": "point", "set": "b1", "item": r["id"], "item_kind": kind[r["id"]],
+                         "point": m["id"], "weight": m["weight"],
+                         "status": "not_indexed" if m.get("not_indexed") else "mapped",
+                         "chunks": list(m["chunks"]), "any_of": group, "not_indexed": bool(m.get("not_indexed"))})
+    return rows
+
+
+def write_b1(rows, out=B1_OUT):
+    p = Path(out)
+    p = p if p.is_absolute() else ROOT / p
+    if p.exists():
+        raise SystemExit(f"{p} exists; not overwritten")
+    p.parent.mkdir(parents=True, exist_ok=True)
+    head = {"row_type": "header", "set": "b1", "note": B1_HEADER_NOTE, "index_sha256": check_index_hash(),
+            "rows": len(rows)}
+    with open(p, "w") as f:
+        for r in [head] + rows:
+            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+
+
 def load_needs(path):
     """Rows of a needs file without the header."""
     return [r for r in rd(path) if r.get("row_type") != "header"]
@@ -162,9 +199,16 @@ def load_needs(path):
 
 def main(argv=None):
     ap = argparse.ArgumentParser()
-    ap.add_argument("--out", default=OUT)
+    ap.add_argument("--out", default=None, help=f"default {OUT}, or {B1_OUT} with --b1")
+    ap.add_argument("--b1", action="store_true", help="build the B1 needs file instead of the development one")
     ap.add_argument("--ids-file", default="runs/m4/reports/wp5_dev_tierA_ids.txt")
     a = ap.parse_args(argv)
+    if a.b1:
+        rows = build_b1()
+        write_b1(rows, a.out or B1_OUT)
+        print(f"wrote {len(rows)} rows (+ header) to {a.out or B1_OUT}")
+        return
+    a.out = a.out or OUT
     rows, info = build(INDEX, a.ids_file)
     write(rows, a.out)
     print(json.dumps(info, indent=1, default=dict))

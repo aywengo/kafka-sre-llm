@@ -57,7 +57,7 @@ After the first slice:
 |---|---|---|---|
 | WP1c | Remaining mechanical kinds (resources, commands, client code, version traps, valid but wrong, safe order, sizing, not covered) | downloads (see 3 below), S5, S6 | not started |
 | WP1d | Judged tier: scenarios and rubrics, the Owner's questions first | first fresh batch B1 | **B1 done 2026-11-19** (`runs/m4/B1_COVERAGE_FINAL.md`, `B1_COVERAGE_BATCH.md`): 30 scenarios, 90 answers, 180 judgments, 60 answers read blind (16 by a second reader). Judge against reader on 158 essential units: kappa 0.86 and 0.78, precision 0.98 and 0.90, recall 0.86 and 0.86 (pass 1, pass 2); supported misses confirmed 14 of 14; unverified 0.6 %; pass-to-pass kappa 0.85; readers' totals 41 and 53 on the shared answers (23 % apart); identifier check 0 false findings. The rubric chunk check before the run was 94.0 % (bar 95 %). Waits for the Owner: the gate, and writing the tier at scale |
-| WP5 | Retrieval and index coverage: candidate index and settings next to the frozen ones, one hidden-half run decides (J6) | J5 | analysis and plan in work |
+| WP5 | Retrieval and index coverage: candidate index and settings next to the frozen ones, one hidden-half run decides (J6) | J5 | plan, funnel tool and runtime profiles done; R2 chosen by its rule; **B1 check (T7) failed 2026-11-19** (`runs/m4/reports/wp5_t7_b1_funnel.md`): indexed must points served 56 to 77 of 166 (+12.7 points, bar +15), 12 of the 56 frozen-served lost (21 %, bar 5 %); T8 and T9 do not run; waits for the Owner (K3) |
 | WP1f | Starting-point measurement (E2) | WP1c, WP1d | not started |
 | WP2a | Labelled test set for the checker: 30 distinct items from the three readings | - | **done**: `runs/m4/reports/wp2a_labels_checked.jsonl` (two local-model runs, verified by counts and against sources) |
 | WP2b | Answer checker in the runtime: flag, then revise. Separate code from the scorer; shares only the catalogues | WP1a, WP2a | library **done** (`a61f818`): zero false "invented" findings on 244 stored answers; wired into `ask --check` and the service; extraction gaps from the pilot reading closed 2026-11-19 (`d0a165e`, `runs/m4/reports/wp2b_extraction_gaps.md`): it now reports 14 of the 16 names in the 48 pilot answers that the catalogues can decide (8 before), with no new "invented" finding on the 244 stored answers; the pilot answers are a development set, so this is not a measurement; "revise" not started |
@@ -136,6 +136,14 @@ not passed. Two decisions:
 - **K2. Writing the judged tier at scale.** About 90 more scenarios to reach 120, the
   Owner's questions first, in batches of 30 with the same writing, second review and chunk
   check. Bulk generation, so the Owner's go. Recommended: yes.
+- **K3. WP5 after the failed B1 check (T7, 2026-11-19).** R2 does not go further; the
+  frozen retrieval stays. Recommended: keep WP5 open for one more candidate that only adds
+  to the frozen pack (the frozen six chunks first, then exact-heading lookup and one more
+  runbook slot up to 10 chunks / 24,000 characters; on the development items +24 points,
+  −0 lost, about +6 s inferred), so it cannot lose a frozen-served point by construction.
+  Its rule is fixed before any look, and its out-of-sample check is the next fresh batch
+  (B2, if K2 is a go), not B1. The candidate index (T4) and its two source decisions wait
+  until then.
 
 **Decided on 2026-11-19, afternoon: the Owner agreed with the recommendations J1 to J6
 below (see "Decisions").** The second judging pilot failed on 2026-11-19 (3 of 5). The analysis (`runs/m4/reports/s5b_pilot2_analysis.md`)
@@ -303,7 +311,7 @@ and J6 come from the mechanical tier and block nothing yet):
   settings hash is recorded here and in `runs/m5/PROFILE_CHOSEN.json` before anyone builds
   or reads the B1 funnel (T7), whose rule is in the plan (indexed must points served +15
   percentage points or more, at most 5 % of the frozen-served points lost).
-- 2026-11-19, 17:50: T5 done (`runs/m4/reports/wp5_t5_profiles.md`): `--profile
+- 2026-11-19, 17:30: T5 done (`runs/m4/reports/wp5_t5_profiles.md`): `--profile
   frozen|r1|r2` on `ask`, `chat`, `serve` and `scripts/eval2.py answer`, frozen the
   default; settings in `kafka_sre_rag/candidate.json`; answers made with r1 or r2 carry the
   profile, its settings hash and `measured: false`. The runtime reproduces all 275 stored
@@ -312,8 +320,17 @@ and J6 come from the mechanical tier and block nothing yet):
   eligible; R1 181 against R2 179 points plus facts (difference 2, below 5), weight-2 49
   each: **R2 chosen**, settings sha256 `34dae8871e23…0e3502`
   (`runs/m5/PROFILE_CHOSEN.json`, recorded 17:25 before the B1 funnel was built).
-- Next, in order: the Owner's K1 and K2; T7 (the B1 funnel, frozen against R2, its rule
-  applied once). For the Owner, not blocking: the essential points of
+- 2026-11-19, 17:37: T7, the B1 funnel, rule applied once: **FAIL on both parts.** The
+  frozen variant reproduced the 30 stored B1 packs exactly. Indexed must points served:
+  frozen 56 of 166 (33.7 %), R2 77 (46.4 %), +12.7 percentage points against the bar of
+  +15; 12 of the 56 frozen-served points lost under R2 (21.4 %, bar 5 %). By kind (frozen,
+  R2, lost): diagnostics 22, 16, 7; debugging 16, 24, 0; configuration 6, 19, 1; coding 7,
+  11, 3; architecture 5, 7, 1. The 18 points outside the index are served by neither. On
+  the development items R2 had gained 34 points and lost 3; out of sample the gain is a
+  third of that and the losses are four times the bar, the early sign of fitting the plan
+  named. B1 has now been looked at for retrieval, so it can no longer serve as the
+  out-of-sample check of any other profile.
+- Next, in order: the Owner's K1, K2 and K3. For the Owner, not blocking: the essential points of
   the six architecture scenarios (b1-10, b1-18, b1-19, b1-20, b1-29, b1-30), and the two
   source decisions for the candidate index (Argo CD command pages, Kafka tool option
   pages). Not blocked by them: the checker's "revise" step (E3), D1, the mechanical tier's

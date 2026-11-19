@@ -88,5 +88,25 @@ class BuiltFileTests(unittest.TestCase):
                 self.assertTrue(r["chunks"], r)
 
 
+class B1Tests(unittest.TestCase):
+    def test_build_b1_counts(self):
+        rows = RN.build_b1()
+        self.assertEqual(len(rows), 184)
+        self.assertEqual(sum(1 for r in rows if r["status"] == "not_indexed"), 18)
+        self.assertTrue(all(r["status"] == "mapped" and r["chunks"] for r in rows if not r["not_indexed"]))
+        self.assertTrue(all(not r["chunks"] for r in rows if r["not_indexed"]))
+        g = [r for r in rows if r["item"] == "b1-16" and r["point"] in ("m2", "m6")]
+        self.assertEqual([r["any_of"] for r in g], [["m2", "m6"], ["m2", "m6"]])
+
+    def test_write_b1_refuses_overwrite(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d) / "n.jsonl"
+            RN.write_b1(RN.build_b1(), out)
+            self.assertEqual(len(RN.load_needs(out)), 184)
+            with self.assertRaises(SystemExit):
+                RN.write_b1([], out)
+
+
 if __name__ == "__main__":
     unittest.main()
