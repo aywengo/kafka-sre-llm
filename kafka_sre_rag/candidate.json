@@ -1,0 +1,39 @@
+{
+ "schema": 1,
+ "note": "Candidate retrieval profiles R1 and R2 (WP5 T5). UNMEASURED: fitted to the development items, never run on the hidden part. The frozen profile stays in frozen.json and is the default. The reranker, BM25 settings, pool and prompts are those of frozen.json.",
+ "index": {
+  "index_path": "work/v3/chunks_s1.jsonl",
+  "sha256": "233c23b0478006a8afae881b83836a226a6af89517256be4d9aac2cc7d500e92",
+  "note": "The frozen index for now. A candidate index (T4) replaces both fields, and then the settings hashes change."
+ },
+ "profiles": {
+  "r1": {
+   "description": "per-term BM25 lists + main BM25 + frozen reranked list, fused by RRF; exact-heading lookup 2; at most 1 runbook; 8 chunks / 20,000 characters",
+   "order": "fusion",
+   "fuse": ["bm25", "terms", "frozen"],
+   "bm25_depth": 200,
+   "per_term_n": 3,
+   "max_terms": 40,
+   "lookup": 2,
+   "lookup_score_depth": 1000,
+   "lookup_max_chunks": 12,
+   "runbook_cap": 1,
+   "k": 8,
+   "max_chars": 20000
+  },
+  "r2": {
+   "description": "per-term BM25 lists + main BM25 fused by RRF, no reranker; exact-heading lookup 2; 8 chunks / 20,000 characters",
+   "order": "fusion",
+   "fuse": ["bm25", "terms"],
+   "bm25_depth": 200,
+   "per_term_n": 3,
+   "max_terms": 40,
+   "lookup": 2,
+   "lookup_score_depth": 1000,
+   "lookup_max_chunks": 12,
+   "runbook_cap": -1,
+   "k": 8,
+   "max_chars": 20000
+  }
+ }
+}

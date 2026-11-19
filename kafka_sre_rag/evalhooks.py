@@ -15,11 +15,13 @@ def chunks_by_ids(ids, index_path=None):
 
 
 def run_item(question, gen, cfg=None, *, k="k6", mode="default", rerank=True, max_tokens=None,
-             pack_ids=None, index_path=None):
+             pack_ids=None, index_path=None, profile="frozen"):
     """One answer. pack_ids None: expansion + retrieval as pipeline.ask(). pack_ids given: no expansion, no
     retrieval; the model gets exactly those chunks in that order. Returns a dict with text, tokens, truncated,
     search_terms (None on replay), pack (chunk ids), seconds {search_terms, retrieval, answer, total}, messages."""
     cfg = cfg or config.load()
+    if pack_ids is not None and profile != "frozen":
+        raise ValueError("a stored pack (pack_ids) is replayed as it is; it is not made by a retrieval profile")
     if mode not in ("default", "strict"):
         raise ValueError(f"mode must be 'default' or 'strict', got {mode!r}")
     t0 = time.monotonic()
@@ -27,7 +29,8 @@ def run_item(question, gen, cfg=None, *, k="k6", mode="default", rerank=True, ma
         from . import retrieval
         exp, _, _ = gen.chat(prompts.expand_messages(question), max_tokens or cfg["expansion"]["max_tokens"])
         t1 = time.monotonic()
-        chunks = retrieval.select(question, exp, k=k, index_path=index_path, rerank=rerank)
+        sel_kw = {} if profile == "frozen" else {"profile": profile}
+        chunks = retrieval.select(question, exp, k=k, index_path=index_path, rerank=rerank, **sel_kw)
     else:
         exp = None
         t1 = time.monotonic()

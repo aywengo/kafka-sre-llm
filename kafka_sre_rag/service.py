@@ -13,7 +13,7 @@ import uuid
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import config, evalhooks, pipeline
+from . import config, evalhooks, pipeline, profiles
 from .generators import EmptyAnswerError, ServerError, ThinkFilter
 
 MODEL_DEFAULT = "kafka-sre"
@@ -167,7 +167,9 @@ class _Tee:
 
 class Service:
     def __init__(self, gen, cfg=None, *, mode="default", k="k6", rerank=True, max_tokens=None, verified=None,
-                 check=False, catalogues=None, checker=None):
+                 check=False, catalogues=None, checker=None, profile="frozen"):
+        profiles.check(profile)
+        self.profile = profile
         self.gen, self.cfg = gen, cfg or config.load()
         self.check_default, self.catalogues_dir, self._checker = bool(check), catalogues, checker
         if check:
@@ -187,14 +189,16 @@ class Service:
         """Load the index, the BM25 structures and the reranker (no model call). Returns the seconds taken."""
         from . import retrieval
         t = time.monotonic()
-        retrieval.select("warm up", "", k=self.k, rerank=self.rerank)
+        retrieval.select("warm up", "", k=self.k, rerank=self.rerank,
+                         **({} if self.profile == "frozen" else {"profile": self.profile}))
         self.load_seconds = time.monotonic() - t
         return self.load_seconds
 
     def health(self):
         ident = getattr(self.gen, "identity", None) or {}
         rr = self.cfg["retrieval"]["reranker"]
-        return {"status": "ok", "index_sha256": self.cfg["index"]["sha256"], "reranker_revision": rr["revision"],
+        extra = profiles.manifest_fields(self.profile)  # {} for frozen
+        return {**extra, "status": "ok", "index_sha256": self.cfg["index"]["sha256"], "reranker_revision": rr["revision"],
                 "backend": ident.get("backend"), "model": ident.get("model"), "adapter": ident.get("adapter"),
                 "verify_passed": self.verified, "default_mode": self.mode,
                 "load_seconds": self.load_seconds, "history": HISTORY_NOTE}
@@ -217,7 +221,7 @@ class Service:
             retrieval.select = capture
             try:
                 r = evalhooks.run_item(question, _Tee(self.gen, on_text), self.cfg, k=k, mode=mode,
-                                       rerank=self.rerank, max_tokens=self.max_tokens)
+                                       rerank=self.rerank, max_tokens=self.max_tokens, profile=self.profile)
             finally:
                 retrieval.select = real_select
         chunks = seen[0] if seen else []
@@ -230,6 +234,8 @@ class Service:
             reasons.append("generator is not the reference model")
         if not self.rerank:
             reasons.append("no reranker")
+        if self.profile != "frozen":
+            reasons.append(profiles.unmeasured_reason(self.profile))
         if self.max_tokens is not None:
             reasons.append(f"max_tokens override {self.max_tokens}")
         sec = r["seconds"]
@@ -241,6 +247,7 @@ class Service:
                              "answer_s": sec["answer"]},
                  "measured": not reasons, "unmeasured_reasons": reasons, "tokens": r["tokens"],
                  "truncated": r["truncated"]}
+        extra.update(profiles.manifest_fields(self.profile))  # nothing added for frozen
         if checker:
             extra["check"] = checker.check(r["text"], chunks)
         return r["text"], extra

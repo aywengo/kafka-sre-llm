@@ -290,7 +290,7 @@ and J6 come from the mechanical tier and block nothing yet):
   `connect.protocol` and `transaction.timeout.ms`. The full funnel (WP5) stalled after 24
   of 275 items (no output for 10 minutes while the reranker scored); stopped, a fix is in
   work.
-- 2026-11-19, 17:25: the full funnel ran after a fix (`6b90a8d`: the guard had killed a
+- 2026-11-19, 17:15: the full funnel ran after a fix (`6b90a8d`: the guard had killed a
   working job whose log was block-buffered): all 275 stored packs replayed exactly; on the
   development set frozen serves 32 of 106 points and 88 of 140 facts, R1 67 and 114, R2 66
   and 113 (the plan's figures; frozen facts 88 against the plan's 87). T5 (runtime
@@ -303,7 +303,17 @@ and J6 come from the mechanical tier and block nothing yet):
   settings hash is recorded here and in `runs/m5/PROFILE_CHOSEN.json` before anyone builds
   or reads the B1 funnel (T7), whose rule is in the plan (indexed must points served +15
   percentage points or more, at most 5 % of the frozen-served points lost).
-- Next, in order: the Owner's K1 and K2; T5, then T6 by the rule above, then T7. For the Owner, not blocking: the essential points of
+- 2026-11-19, 17:50: T5 done (`runs/m4/reports/wp5_t5_profiles.md`): `--profile
+  frozen|r1|r2` on `ask`, `chat`, `serve` and `scripts/eval2.py answer`, frozen the
+  default; settings in `kafka_sre_rag/candidate.json`; answers made with r1 or r2 carry the
+  profile, its settings hash and `measured: false`. The runtime reproduces all 275 stored
+  frozen packs, and its r1 and r2 packs equal the funnel's simulation on 275 of 275 items
+  each; a drift test guards the copied ordering rules. T6 by the rule of 17:15: both
+  eligible; R1 181 against R2 179 points plus facts (difference 2, below 5), weight-2 49
+  each: **R2 chosen**, settings sha256 `34dae8871e23…0e3502`
+  (`runs/m5/PROFILE_CHOSEN.json`, recorded 17:25 before the B1 funnel was built).
+- Next, in order: the Owner's K1 and K2; T7 (the B1 funnel, frozen against R2, its rule
+  applied once). For the Owner, not blocking: the essential points of
   the six architecture scenarios (b1-10, b1-18, b1-19, b1-20, b1-29, b1-30), and the two
   source decisions for the candidate index (Argo CD command pages, Kafka tool option
   pages). Not blocked by them: the checker's "revise" step (E3), D1, the mechanical tier's

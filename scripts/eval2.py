@@ -330,7 +330,7 @@ def listed_model(gen):
 
 
 def build_manifest(a, gen, cfg, items_file, n_items, subset, replay_info):
-    from kafka_sre_rag import pipeline
+    from kafka_sre_rag import pipeline, profiles
     ident = getattr(gen, "identity", {}) or {}
     listing = listed_model(gen)
     commit, dirty = git_info()
@@ -345,7 +345,10 @@ def build_manifest(a, gen, cfg, items_file, n_items, subset, replay_info):
         reasons.append("no reranker")
     if a.max_tokens is not None:
         reasons.append(f"max_tokens override {a.max_tokens}")
-    return {
+    profile = getattr(a, "profile", "frozen")
+    if profile != "frozen":
+        reasons.append(profiles.unmeasured_reason(profile))
+    m = {
         "harness": "eval2", "config": a.config, "backend": ident.get("backend"),
         "model_requested": ident.get("model"),
         "model_echoed": listing.get("id") if listing else None,
@@ -362,6 +365,8 @@ def build_manifest(a, gen, cfg, items_file, n_items, subset, replay_info):
         "replay": replay_info, "hidden": is_hidden(a.out),
         "started": datetime.now(timezone.utc).isoformat(timespec="seconds"), "ended": None,
     }
+    m.update(profiles.manifest_fields(profile))  # nothing is added for the frozen profile
+    return m
 
 
 def run_id(m):
@@ -458,10 +463,14 @@ def cmd_answer(a, out=sys.stdout):
     if a.limit:
         items = items[: a.limit]
         subset = (subset + "+" if subset else "") + f"first:{a.limit}"
-    from kafka_sre_rag import config, evalhooks
+    from kafka_sre_rag import config, evalhooks, profiles
     cfg = config.load()
+    profile = getattr(a, "profile", "frozen")
+    if profile != "frozen" and a.replay_packs:
+        raise EvalError("--profile applies to retrieval; --replay-packs uses stored packs and no retrieval")
     if a.backend != "stub":
         config.verify(cfg=cfg)  # a real run must be on the frozen index and prompts
+        profiles.verify_index(profile)
     replay, replay_info = None, None
     if a.replay_packs:
         if is_hidden(a.replay_packs) != hidden:
@@ -498,7 +507,8 @@ def cmd_answer(a, out=sys.stdout):
         t0 = time.monotonic()
         try:
             r = evalhooks.run_item(full_question(it), gen, cfg, k=a.k, mode=a.mode, rerank=not a.no_rerank,
-                                   max_tokens=a.max_tokens, pack_ids=None if replay is None else replay[it["id"]])
+                                   max_tokens=a.max_tokens, pack_ids=None if replay is None else replay[it["id"]],
+                                   **({} if profile == "frozen" else {"profile": profile}))
             row.update(text=r["text"], tokens=r["tokens"] or None, truncated=r["truncated"],
                        seconds=r["seconds"], search_terms=r["search_terms"], pack=r["pack"])
             consecutive = 0
@@ -649,6 +659,9 @@ def build_parser():
     an.add_argument("--max-tokens", type=int, default=None)
     an.add_argument("--mode", choices=["default", "strict"], default="default")
     an.add_argument("--k", choices=["k6", "k3"], default="k6")
+    an.add_argument("--profile", choices=["frozen", "r1", "r2"], default="frozen",
+                    help="retrieval profile (default frozen); r1 and r2 are unmeasured candidates "
+                         "(kafka_sre_rag/candidate.json) and are recorded in the manifest")
     an.add_argument("--no-rerank", action="store_true", help="BM25 order only (unmeasured)")
     an.add_argument("--catalogue", help="catalogue directory to hash into the manifest")
     an.add_argument("--host-class", default=None, help='free text, for example "Mac Studio"')

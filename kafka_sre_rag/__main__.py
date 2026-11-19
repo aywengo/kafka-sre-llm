@@ -4,7 +4,7 @@ import json
 import os
 import sys
 
-from . import config, service
+from . import config, profiles, service
 from .generators import EmptyAnswerError, ServerError, ThinkFilter
 
 DRY_EXPANSION = "consumer group, kafka-consumer-groups.sh, --describe, --group, LAG, max.poll.interval.ms"
@@ -35,6 +35,9 @@ def build_parser():
 
     def common(p):
         p.add_argument("--k", choices=["k6", "k3"], default="k6")
+        p.add_argument("--profile", choices=list(profiles.PROFILES), default="frozen",
+                       help="retrieval profile: frozen (default, the measured one) or the candidates r1 and r2 "
+                            "(kafka_sre_rag/candidate.json; every answer is marked unmeasured)")
         p.add_argument("--mode", choices=["default", "strict"], default="default")
         p.add_argument("--backend", choices=["mlx", "openai"], default="mlx")
         p.add_argument("--model", help="mlx: model directory; openai: model name sent to the server")
@@ -156,6 +159,7 @@ def ask_service(a):
                "expansion": extra["expansion"], "timings": extra["timings"],
                "measured": extra["measured"], "tokens": extra["tokens"],
                "truncated": extra["truncated"], "unmeasured_reasons": extra["unmeasured_reasons"]}
+        out.update({k: extra[k] for k in ("retrieval_profile", "retrieval_settings_sha256") if k in extra})
         if check:
             out["check"] = check
         print(json.dumps(out, ensure_ascii=False))
@@ -188,12 +192,13 @@ def serve(a, cfg, checker=None):
     if not a.dry_run:
         try:
             config.verify(cfg=cfg)
+            profiles.verify_index(a.profile)
             verified = True
         except config.ConfigError as e:
             print(e, file=sys.stderr)
             return 1
     gen = make_generator(a)
-    svc = service.Service(gen, cfg, mode=a.mode, k=a.k, rerank=not (a.dry_run and a.no_rerank_in_dry_run),
+    svc = service.Service(gen, cfg, mode=a.mode, k=a.k, profile=a.profile, rerank=not (a.dry_run and a.no_rerank_in_dry_run),
                           max_tokens=a.max_tokens, verified=verified, check=a.check,
                           catalogues=a.catalogues, checker=checker)
     print("loading the index, the BM25 structures and the reranker ...", file=sys.stderr, flush=True)
@@ -219,6 +224,12 @@ def run_one(question, gen, cfg, a, checker=None):
         stream = None if (a.json or a.dry_run) else (lambda t: print(t, end="", flush=True))
     kw = dict(k=a.k, mode=a.mode, on_token=stream, rerank=not (a.dry_run and a.no_rerank_in_dry_run),
               max_tokens=a.max_tokens)
+    if a.profile != "frozen":  # the frozen call stays exactly as it was
+        kw["profile"] = a.profile
+        if not a.json:
+            f = profiles.manifest_fields(a.profile)
+            print(f"retrieval profile: {f['retrieval_profile']}  settings sha256: {f['retrieval_settings_sha256']}  "
+                  f"measured: false", flush=True)
     check = None
     if checker is None:
         ans = ask(question, gen, cfg, **kw)
@@ -230,6 +241,7 @@ def run_one(question, gen, cfg, a, checker=None):
         out = {"question": question, "text": ans.text, "sources": ans.sources, "expansion": ans.expansion,
                "timings": ans.timings, "measured": ans.measured, "tokens": ans.tokens,
                "truncated": ans.truncated, "unmeasured_reasons": ans.unmeasured_reasons}
+        out.update(ans.profile_fields)  # nothing for frozen
         if check is not None:
             out["check"] = check
         print(json.dumps(out, ensure_ascii=False))
@@ -270,6 +282,10 @@ def main(argv=None):
         print(config.catalogues_line(a.catalogues))
         return 0
     if a.cmd == "ask" and a.service_url:
+        if a.profile != "frozen":
+            print("error: with --service-url the retrieval profile is that of the service (serve --profile ...)",
+                  file=sys.stderr)
+            return 2
         if a.dry_run or a.model or a.adapter or a.base_url or a.extra_body or a.max_tokens is not None:
             print("error: with --service-url the model options are those of the service; "
                   "do not combine it with --dry-run, --model, --adapter, --base-url, --extra-body, --max-tokens",
@@ -294,6 +310,7 @@ def main(argv=None):
     if not a.dry_run:  # a real run must be on the frozen index and prompts
         try:
             config.verify(cfg=cfg)
+            profiles.verify_index(a.profile)
         except config.ConfigError as e:
             print(e, file=sys.stderr)
             return 1

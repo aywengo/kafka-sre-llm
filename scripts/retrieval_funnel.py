@@ -186,6 +186,8 @@ class CEScorer:
 
 
 # ---------------------------------------------------------------- pure ordering rules
+# DRIFT GUARD: kafka_sre_rag/profiles.py holds a copy of the rules below (select_ranked, rrf, cap_runbooks, Lookup,
+# ranking). tests/test_profiles_drift.py asserts identical packs for r1 and r2; change both files together.
 def select_ranked(ranked, lens, k, max_chars):
     """The selection rule of retrieve.retrieve(): the first k that fit, stop at less than 500 characters of room."""
     out, used = [], 0
