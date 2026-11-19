@@ -113,6 +113,7 @@ thinking off.
 | 2026-11-18 | The 15 changes of the design review are accepted into the design; those that are the Owner's are marked as waiting | conductor |
 | 2026-11-18 | **Yes to all recommendations:** the 4-bit model on oMLX is the reference configuration; half of each tier hidden, encrypted, decisions on the hidden half, at most six looks; the downloads and installs for catalogues and checks; loading the 4-bit and full-precision 27B builds for the comparison; `questions_real` becomes a legacy set and the 4-bit bar a margin fixed before the run; public questions may be raw material after a licence check; the four bake-off candidates may be downloaded; other clients' models on the server may be unloaded when it is idle | Owner |
 | 2026-11-19 | **After the failed judging pilot:** build the judged tier with the analysis's changes and a second small pilot on fresh items; the first pilot stays a no-go and the second gets new criteria fixed beforehand; the judge's error flags count toward the bars of `GOAL.md` only after a reader has confirmed them; DeepSeek stays the judge, with the earlier judge re-judging a 24-item subset on every decision run; the Owner reviews which points are essential on his own questions | Owner |
+| 2026-11-20 | The plain-text leftovers of hidden items are deleted: three tool-result files now, the sealed sessions' transcripts after M4's hidden runs. The two final encrypted files of the Owner's 24 questions are committed (`3e62193`). The Owner has a 32 to 36 GB Apple Silicon laptop and runs the laptop tests himself from a committed plan and scripts, and sends back the outputs | Owner |
 | 2026-11-19 | **Agreed with the recommendations K1 to K6** (see "Waiting for the Owner", kept for the record): the coverage role is confirmed and every later batch needs the rubric chunk check at 95 % before any answer exists (K1); the judged tier is written at scale, the Owner's questions first, in batches of 30 (K2); WP5 stays open for one additive candidate, R3, tested once on B2 by the rule below, fixed before B2 exists (K3); E3: (a) to (g) as recommended, among them the amended wording, a separate grounded default prompt variant with its own pilot, the model patch step R2 kept on only by its rule, and no catalogue change (K4); the not-covered generator may read the frozen index (K5); the Owner's 34 questions are admitted under the working rule for public posts, all hidden, rubrics by sealed sessions, the plain copy out of the repository (K6) | Owner |
 | 2026-11-19 | **After the second failed judging pilot, agreed with all six recommendations J1 to J6:** the judge reports coverage of essential points and forbidden statements only, wrong, invented and harmful rates come from an identifier check plus blind readings, no third pilot of the judge as an error finder, the coverage role is confirmed on a first fresh batch with criteria fixed beforehand (J1); a sealed reader may read hidden-half answers and return totals only, logged in the ledger (J2); a second reader on about a quarter of the answers (J3); a higher answer limit is measured as its own item (J4); the mechanical scorer reports declines beside the unchanged all-pass rate and may read the frozen index (J5); a work package for retrieval and index coverage, built as a candidate next to the frozen index and judged on the hidden half (J6) | Owner |
 
@@ -505,6 +506,17 @@ and J6 come from the mechanical tier and block nothing yet):
   b2-09, b2-10, b2-19, b2-20, b2-29, b2-30; b2-02 (weight of the prevention point), b2-05
   (alternative path), b2-13 (sync termination as a must point); on his own questions also
   oq-047 (one point removed to keep six units).
+- 2026-11-20, 00:00 to 00:30: a3 version 2 failed its second review on one point of
+  mine: redrawing the split put 17 questions that were open in version 1 on the hidden
+  side. Rebuilt as version 3 (`be03953`): anything ever published open is forced open,
+  the hidden side is filled with fresh draws; 148 items, 88 open and 60 hidden; third
+  check running. The B2 chain is committed (`cfec4a9`) and its run started at 23:58
+  (estimate 2.1 to 2.5 h). `CONTRIBUTING.md` added on the Owner's request (`5abc7d0`).
+  The Owner's decisions of 2026-11-20 are in "Decisions"; the laptop test plan and
+  scripts are being written (`agents/laptop-tests.md`, `scripts/laptop_bench.py`).
+  Conductor's decision: the next judged batch (about 36 scenarios) is hidden and written
+  by sealed sessions, because E3 needs at least 60 hidden answers and the hidden judged
+  half holds 24.
 - Next: B2 answered on the server (default and strict, judge, identifier check, the R3
   rule, a first look at the revise step), then its blind readings; the a3 rebuild as
   version 2 with a second review, then T10; the revise step's development run on B1. For the Owner, not blocking: the essential points of
