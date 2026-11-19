@@ -380,6 +380,59 @@ class TestReport(Base):
         self.assertIn("total seconds   n=2 median=2.00 min=1.00 max=3.00 p90=2.80", text)
         self.assertIn("answer tokens   n=2 median=20.00", text)
 
+    def report_text(self, out):
+        buf = io.StringIO()
+        eval2.cmd_report(eval2.build_parser().parse_args(["report", str(out)]), buf)
+        return buf.getvalue()
+
+    def test_free_text_answers_get_the_identifier_totals(self):
+        import eval2_idcheck
+        out = self.tmp / "ft.jsonl"
+        self.run_answer(self.items_file([item(1, tier="B"), item(2, tier="B")]), out)
+        with mock.patch.object(eval2_idcheck, "report_block", return_value="IDCHECK BLOCK") as rb:
+            text = self.report_text(out)
+        self.assertIn("IDCHECK BLOCK", text)
+        rows, hidden = rb.call_args[0]
+        self.assertEqual((len(rows), hidden), (2, False))
+
+    def test_mechanical_answers_keep_their_report_unchanged(self):
+        import eval2_idcheck
+        out = self.tmp / "mech.jsonl"
+        self.run_answer(self.items_file([item(1), item(2), item(3, tier="B")]), out)
+        eval2.write_jsonl(eval2.score_path(out), [{"id": "i001", "all_pass": True, "checks_passed": 1, "checks_total": 1},
+                                                  {"id": "i002", "all_pass": False, "checks_passed": 0, "checks_total": 1}])
+        with mock.patch.object(eval2_idcheck, "report_block", return_value="IDCHECK BLOCK") as rb:
+            text = self.report_text(out)
+        self.assertEqual([r["id"] for r in rb.call_args[0][0]], ["i003"])   # only the row without a tier A score
+        self.assertIn("tier A scored 2  all-pass 1/2", text)
+        eval2.write_jsonl(eval2.score_path(out), [{"id": f"i00{n}", "all_pass": True, "checks_passed": 1, "checks_total": 1} for n in (1, 2, 3)])
+        with mock.patch.object(eval2_idcheck, "report_block", return_value="IDCHECK BLOCK") as rb:
+            text = self.report_text(out)
+        rb.assert_not_called()
+        self.assertNotIn("IDCHECK", text)
+
+    @NEEDS_OPENSSL
+    def test_hidden_file_gets_totals_only(self):
+        import eval2_idcheck
+        out = self.tmp / "ft.jsonl.enc"
+        self.run_answer(self.items_file([item(1, tier="B")], "items.jsonl.enc"), out)
+        with mock.patch.object(eval2_idcheck, "report_block", return_value="TOTALS") as rb:
+            self.report_text(out)
+        self.assertTrue(rb.call_args[0][1])
+        # the real function on a hidden run: totals text, no identifier, no id
+        text = eval2_idcheck.report_block([{"id": "secret-id-7", "text": "run kafka-nosuchtool.sh --x"}], True, str(ROOT / "work/m4/catalogues")) \
+            if (ROOT / "work/m4/catalogues/CATALOGUES.json").exists() else "(hidden: totals only)"
+        self.assertIn("(hidden: totals only)", text)
+        self.assertNotIn("secret-id-7", text)
+        self.assertNotIn("nosuchtool", text)
+
+    def test_missing_catalogues_do_not_fail_the_report(self):
+        import eval2_idcheck
+        out = self.tmp / "ft.jsonl"
+        self.run_answer(self.items_file([item(1, tier="B")]), out)
+        with mock.patch.object(eval2_idcheck, "report_block", side_effect=FileNotFoundError("x")):
+            self.assertIn("identifier check not run", self.report_text(out))
+
     def test_percentile(self):
         self.assertEqual(eval2.pct([1, 2, 3, 4], 50), 2.5)
         self.assertIsNone(eval2.pct([], 50))

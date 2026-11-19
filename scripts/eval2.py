@@ -556,6 +556,22 @@ def outcome_line(rows):
             + f"  (items not in the index {nii})")
 
 
+def P_idcheck_block(rows, score_file, hidden, P):
+    """Identifier totals (scripts/eval2_idcheck.py report_block) for the free-text answers of a file; totals only for a hidden file.
+    Rows that have a tier A score row (a mechanical answer) are left out, so reports of mechanical runs do not change."""
+    a_ids = set()
+    if Path(score_file).exists():
+        a_ids = {s.get("id") for s in read_jsonl(score_file) if "all_pass" in s}
+    free = [r for r in rows if r.get("id") not in a_ids]
+    if not free:
+        return
+    try:
+        import eval2_idcheck                       # scripts/ is on sys.path when this file is run or imported from the tests
+        P(eval2_idcheck.report_block(free, hidden))
+    except Exception as e:                         # no catalogues on this machine: say so, do not fail the report
+        P(f"identifier check not run: {type(e).__name__}")
+
+
 def report_one(path, scores=None, out=sys.stdout):
     hidden = is_hidden(path)
     rows = read_jsonl(path)
@@ -588,6 +604,7 @@ def report_one(path, scores=None, out=sys.stdout):
             P("score file holds no scorable rows")
     else:
         P("no score file")
+    P_idcheck_block(rows, sp, hidden, P)
     P("total seconds   " + summ([r["seconds"]["total"] for r in ok]))
     P("answer tokens   " + summ([r["tokens"] for r in ok if r.get("tokens") is not None]))
     for st in ("search_terms", "retrieval", "answer"):
