@@ -394,7 +394,15 @@ and J6 come from the mechanical tier and block nothing yet):
   incidents. Sealing them into `eval/hidden/tier_b_owner.jsonl.enc` (ids `oq-NNN`, source
   and note kept apart from the question) started; nothing is written from them before K2
   and K6.
-- Next, in order: the Owner's K1 to K6; WP1c T0, T1a and T3, then T5 and T6 (T1b, T2
-  and T4 after the jar downloads). For the Owner, not blocking: the essential points of
+- 2026-11-19, 18:55: the 34 questions are sealed (`eval/hidden/tier_b_owner.jsonl.enc`,
+  ids `oq-002` to `oq-051`, round trip checked; intake script `23c4ec3`; the sealed file
+  is not committed, which is part of K6). WP1c: T1a done (`34d9c2e`; V4 and V8 marked
+  unanchored, so no items are built on them yet). T3 done, scorer `eval2_score/3`, the
+  496 references still 496 of 496 and the perturbed 0 of 496; its follow-up is running
+  (the check reads T1a's table through one function; `strimzi.io/restart` accepts only the
+  documented forms; every oracle rule carries an anchored flag). T1b (jars, sparse Kafka
+  clone, Java API catalogue) and T6 (safe-order and sizing generators) started.
+- Next, in order: the Owner's K1 to K6; WP1c T1b, T3's follow-up and T6, then T5, T2 and
+  T4. For the Owner, not blocking: the essential points of
   the six architecture scenarios (b1-10, b1-18, b1-19, b1-20, b1-29, b1-30). Not blocked:
   D1, the mechanical tier's hidden-half runs.
