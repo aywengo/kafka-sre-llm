@@ -22,7 +22,10 @@ import eval2_items_a3 as asm  # noqa: E402
 
 HAVE = all(p.exists() for p in (ROOT / "work/m4/catalogues", ROOT / "work/m4/catalogues_a3", asm.OPEN_A1, asm.SPLIT_A1))
 SKIP = "the catalogues, the a3 catalogues or the 496 files are not on this machine"
-ALLOW = ("gap",)
+GAP_PRESENT = (ROOT / "scripts" / "eval2_items_a3_gap.py").exists()
+ALLOW = () if GAP_PRESENT else ("gap",)   # the build allows a module to be missing only while it is
+PRESENT_KINDS = {k for m, k in asm.KIND_OF.items() if m not in ALLOW}
+MISSING_KINDS = sorted(k for m, k in asm.KIND_OF.items() if m in ALLOW)
 _state = {}
 
 
@@ -52,7 +55,7 @@ class GeneratorsAndPredecessor(unittest.TestCase):
     def test_every_present_generator_contributes(self):
         r = built()
         kinds = {i["kind"] for i in r["items"]}
-        self.assertEqual(kinds, {"client_code", "valid_but_wrong", "safe_order", "computed_sizing"})
+        self.assertEqual(kinds, PRESENT_KINDS)
         for k in kinds:  # a generator may report a derivation failure and make fewer than the plan; never more
             n = sum(1 for i in r["items"] if i["kind"] == k)
             self.assertTrue(2 * asm.MIN_KIND_ITEMS <= n <= asm.PLAN[k], (k, n))
@@ -148,7 +151,7 @@ class MixAndGuess(unittest.TestCase):
 
     def test_floor_problems_name_the_kind(self):
         few = [{"id": "a3-%d" % i, "kind": "safe_order", "family": "f%d" % i, "template": "t"} for i in range(4)]
-        p = asm.floor_problems(few, ALLOW)
+        p = asm.floor_problems(few, ("gap",))  # explicit: this tests the allow-missing rule, not the build
         self.assertTrue(any(x.startswith("safe_order: 4 items") for x in p))
         self.assertTrue(any("client_code" in x for x in p))
         self.assertFalse(any("not_covered" in x for x in p))
@@ -165,7 +168,7 @@ class ExposureAndSplit(unittest.TestCase):
     def test_exposed_items_two_per_kind_distinct_groups_all_open(self):
         r = built()
         ex = r["exposed"]
-        self.assertEqual(len(ex), 2 * 4)
+        self.assertEqual(len(ex), 2 * len(PRESENT_KINDS))
         by = {i["id"]: i for i in r["items"]}
         for kind in {i["kind"] for i in r["items"]}:
             self.assertEqual(sum(1 for e in ex if by[e]["kind"] == kind), 2)
@@ -291,7 +294,7 @@ class OutputsAndPrinting(unittest.TestCase):
         self.assertEqual(m["items_sha256"], hashlib.sha256(asm.serialise(r["items"]).encode()).hexdigest())
         self.assertEqual(m["items_total"], len(r["items"]))
         self.assertEqual(m["counts"]["open"] + m["counts"]["hidden"], len(r["items"]))
-        self.assertEqual(m["kinds_missing"], ["not_covered"])
+        self.assertEqual(m["kinds_missing"], MISSING_KINDS)
         self.assertEqual(m["predecessor"]["items_sha256"], json.loads(asm.SPLIT_A1.read_text())["items_sha256"])
 
     def test_write_to_a_temporary_folder_encrypts_the_hidden_half_and_never_overwrites(self):
