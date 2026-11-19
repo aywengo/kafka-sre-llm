@@ -300,7 +300,7 @@ class OutputsAndPrinting(unittest.TestCase):
     def test_write_to_a_temporary_folder_encrypts_the_hidden_half_and_never_overwrites(self):
         r = built()
         o, h, m = self.tmp / "open.jsonl", self.tmp / "hidden.jsonl.enc", self.tmp / "SPLIT_A3.json"
-        man = asm.write_outputs(r, o, h, m, self.key)
+        man = asm.write_outputs(r, o, h, m, self.key, external_ok=True)
         self.assertEqual(sorted(p.name for p in self.tmp.iterdir() if p.name != "key"), ["SPLIT_A3.json", "hidden.jsonl.enc", "open.jsonl"])
         self.assertTrue(h.read_bytes().startswith(eval2.MAGIC))
         plain = h.read_bytes()
@@ -312,8 +312,21 @@ class OutputsAndPrinting(unittest.TestCase):
         self.assertEqual(json.loads(m.read_text())["outputs"]["hidden"]["sha256"], eval2.sha256_bytes(plain))
         self.assertEqual(man["outputs"]["hidden"]["sha256"], eval2.sha256_bytes(plain))
         with self.assertRaises(asm.AssemblyError):
-            asm.write_outputs(r, o, self.tmp / "h2.enc", self.tmp / "m2.json", self.key)
+            asm.write_outputs(r, o, self.tmp / "h2.enc", self.tmp / "m2.json", self.key, external_ok=True)
         self.assertFalse((self.tmp / "h2.enc").exists())  # nothing written when one output exists
+
+    def test_manifest_holds_no_absolute_path_and_outside_paths_are_refused(self):
+        r = built()
+        o, h, m = self.tmp / "open.jsonl", self.tmp / "hidden.jsonl.enc", self.tmp / "SPLIT_A3.json"
+        with self.assertRaises(asm.AssemblyError):
+            asm.write_outputs(r, o, h, m, self.key)
+        self.assertEqual([p.name for p in self.tmp.iterdir() if p.name != "key"], [])
+        asm.write_outputs(r, o, h, m, self.key, external_ok=True)
+        for text in (m.read_text(), (ROOT / asm.MANIFEST_PATH).read_text() if (ROOT / asm.MANIFEST_PATH).exists() else ""):
+            self.assertNotIn(str(Path.home()), text)
+            for v in json.loads(text or "{}").get("outputs", {}).values():
+                self.assertFalse(os.path.isabs(v["path"]), v["path"])
+        self.assertEqual(asm.repo_path(ROOT / asm.OPEN_PATH), asm.OPEN_PATH)
 
     def test_nothing_is_written_with_problems(self):
         r = dict(built(), problems=["a floor failed"])

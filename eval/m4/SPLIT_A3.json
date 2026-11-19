@@ -1,0 +1,78 @@
+{
+ "catalogue_hash": "e319653a543211a5366cd1a5734c83ee4d2683c2d41077058369116804a8447e",
+ "catalogue_hash_a3": "1f696466faad70ee2d2cfc8c89872512a27ff813671bd7efc2450c86a84e3f50",
+ "counts": {
+  "exposed": 10,
+  "families_hidden": 60,
+  "families_open": 60,
+  "hidden": 60,
+  "open": 60
+ },
+ "exposed_ids": [
+  "a3-client_admin_create_topic-002",
+  "a3-client_consumer_rebalance_listener-001",
+  "a3-nc_deployment-005",
+  "a3-nc_old_version-001",
+  "a3-order_argo_sync-002",
+  "a3-order_cg_reset-001",
+  "a3-size_follower_traffic-001",
+  "a3-size_page_cache-002",
+  "a3-vbw_default_value-003",
+  "a3-vbw_restart_annotation-001"
+ ],
+ "exposure_seed": "m4-a3-1",
+ "generator": "eval2_items_a3/1",
+ "generator_commit": "b2fb91dedfaaf9940e48f78eee1c707f5be85f01",
+ "grouping": "valid_but_wrong by mechanism (forbidden-key template by resource kind); items with `pair` by it; all other items by their own family",
+ "items_sha256": "d425cdada882b81d1124a6dc49d5d43b03ca7af6326882aa9a67e98eaf036ce3",
+ "items_total": 120,
+ "kinds_missing": [],
+ "outputs": {
+  "hidden": {
+   "items": 60,
+   "note": "encrypted with a random salt: the ciphertext differs on every run; the plaintext (jsonl, sort_keys, in the order of the items) is reproduced exactly",
+   "path": "eval/hidden/tier_a3.jsonl.enc",
+   "plaintext_sha256": "e246d347c52a7a13987d5acfd2ba6960fceedb76f81af42a324b6bb9048b0914",
+   "sha256": "57155c53f1a8ae463dbc34acf8c16c3897916885a7692423e0d73f00d2d2b6f3"
+  },
+  "open": {
+   "items": 60,
+   "path": "eval/m4/open/tier_a3.jsonl",
+   "sha256": "3f160b30fcdb59d3e55e79b86d9a8989e9bbc19011c13e31ed6c4bad35708ea3"
+  }
+ },
+ "per_kind": {
+  "client_code": {
+   "hidden": 12,
+   "open": 12,
+   "total": 24
+  },
+  "computed_sizing": {
+   "hidden": 12,
+   "open": 12,
+   "total": 24
+  },
+  "not_covered": {
+   "hidden": 12,
+   "open": 12,
+   "total": 24
+  },
+  "safe_order": {
+   "hidden": 8,
+   "open": 8,
+   "total": 16
+  },
+  "valid_but_wrong": {
+   "hidden": 16,
+   "open": 16,
+   "total": 32
+  }
+ },
+ "predecessor": {
+  "items": 496,
+  "items_sha256": "5adc9cb4b555b3e3aea168fd213f86c2939d2fa321799b31514762b4e2cd2f64"
+ },
+ "rule": "groups on one side (an item and its control together); families with any item exposed:true go open; share per (tier, kind) cell reached with the remaining groups (eval2_items_a3.split_extend, the method of scripts/eval2.py split_families)",
+ "seed": 20261118,
+ "share": 0.5
+}
