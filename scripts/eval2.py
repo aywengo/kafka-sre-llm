@@ -543,6 +543,19 @@ def score_path(answers):
     return p.with_name(p.stem + ".scores.jsonl")
 
 
+OUTCOMES = ("pass", "correct_decline", "wrong_decline", "wrong", "abstained")
+
+
+def outcome_line(rows):
+    """Totals of the decline outcome (decision J5), beside the all-pass rate: counts only, never ids."""
+    rs = [s for s in rows if "outcome" in s]
+    n = len(rs)
+    cnt = {o: sum(1 for s in rs if s["outcome"] == o) for o in OUTCOMES}
+    nii = sum(1 for s in rs if (s.get("coverage") or {}).get("not_in_index"))
+    return ("outcomes " + "  ".join(f"{o} {cnt[o]}/{n} = {100 * cnt[o] / n:.1f} %" for o in OUTCOMES)
+            + f"  (items not in the index {nii})")
+
+
 def report_one(path, scores=None, out=sys.stdout):
     hidden = is_hidden(path)
     rows = read_jsonl(path)
@@ -567,6 +580,8 @@ def report_one(path, scores=None, out=sys.stdout):
             n = len(a_rows)
             P(f"tier A scored {n}  all-pass {sum(1 for s in a_rows if s['all_pass'])}/{n}  "
               f"checks passed {sum(s['checks_passed'] for s in a_rows)}/{sum(s['checks_total'] for s in a_rows)}")
+        if any("outcome" in s for s in a_rows):
+            P(outcome_line(a_rows))
         if b_rows:
             P(f"tier B scored {len(b_rows)}  mean score {sum(s['score'] for s in b_rows) / len(b_rows):.3f}")
         if not a_rows and not b_rows:

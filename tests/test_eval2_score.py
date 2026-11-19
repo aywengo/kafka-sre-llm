@@ -555,5 +555,141 @@ class GeneratedItemsTests(unittest.TestCase):
         self.assertEqual([r["id"] for r in rows if r["identifiers"].get("unknown")], [])
 
 
+class TestDeclineOutcome(unittest.TestCase):
+    """Decision J5: covering chunks, the decline detector and the four outcomes, on small synthetic items and a
+    synthetic index (no evaluation item, no real index)."""
+
+    @classmethod
+    def setUpClass(cls):
+        rows = [
+            {"id": "k1", "source": "s", "path": "raw/ref/cfg.html", "title": "zz.alpha.ms", "text": "x\n\n## zz.alpha.ms\nThe alpha wait."},
+            {"id": "k2", "source": "s", "path": "raw/ref/cfg.html", "title": "zz.beta.ms", "text": "## zz.beta.ms\nThe beta wait. See zz.alpha.ms."},
+            {"id": "k3", "source": "s", "path": "raw/other.md", "title": "", "text": "Use qq-tool.sh with --frob to frob."},
+            {"id": "k4", "source": "s", "path": "raw/other.md", "title": "", "text": "The qq-tool.sh lists things."},
+            {"id": "k5", "source": "s", "path": "raw/ref/rest.yaml", "title": "POST /widgets", "text": "Rest API: POST /widgets\nmake one"},
+        ]
+        cls.idx = sc.ChunkIndex(rows)
+
+    def cfg_item(self, key="zz.alpha.ms", others=("zz.beta.ms",)):
+        srcs = [{"catalogue": "kafka_config", "entry": "broker/" + k, "file": "raw/ref/cfg.html", "fact": "f"}
+                for k in (key,) + tuple(others)]
+        return {"id": "t-1", "kind": "name_setting", "question": "Which key waits?", "sources": srcs,
+                "checks": [{"type": "answer_line", "format": True},
+                           {"type": "answer_equals", "accepted": [key], "norm": "exact"}]}
+
+    def cmd_item(self):
+        return {"id": "t-2", "kind": "write_command", "question": "Write the qq-tool.sh command to frob.",
+                "sources": [{"catalogue": "kafka_cli", "entry": "qq-tool.sh --frob", "file": "raw_catalogue/x.java", "fact": "f"},
+                            {"catalogue": "kafka_cli", "entry": "qq-tool.sh --zap", "file": "raw_catalogue/x.java", "fact": "f"},
+                            {"catalogue": "kafka_cli", "entry": "qq-tool.sh", "file": "qq-tool.sh", "fact": "f"}],
+                "checks": [{"type": "has_kafka_command", "format": True},
+                           {"type": "kcmd_spec", "tool": "qq-tool.sh", "required_flags": {"--frob": None, "--zap": None}}]}
+
+    def row(self, item, text, passed=False, detail="answer 'x', accepted ['zz.alpha.ms']"):
+        return {"id": item["id"], "all_pass": passed, "results": [] if passed else [{"pass": False, "detail": detail, "type": "t"}]}
+
+    def classify(self, item, text, pack, passed=False, detail="answer 'x', accepted ['zz.alpha.ms']"):
+        cov, cache = sc.item_coverage(item, self.idx)
+        return sc.classify_answer(item, self.row(item, text, passed, detail), text, pack, cache)[0], cov
+
+    def test_covering_chunks_from_sources(self):
+        cov, _ = sc.item_coverage(self.cfg_item(), self.idx)
+        u = {x["label"]: x for x in cov["units"]}
+        self.assertEqual(cov["covering_chunks"], ["k1", "k2"])   # own section plus the chunk that names the key
+        self.assertEqual(u["kafka_config:broker/zz.alpha.ms"]["via"], "strict")
+        self.assertFalse(u["kafka_config:broker/zz.beta.ms"]["decisive"])  # an option beside the answer
+        self.assertFalse(cov["not_in_index"])
+
+    def test_not_in_index_and_given_by_question(self):
+        cov, _ = sc.item_coverage(self.cmd_item(), self.idx)
+        by = {x["label"]: x for x in cov["units"]}
+        self.assertEqual(by["kafka_cli:qq-tool.sh --frob"]["chunks"], 1)
+        self.assertEqual(by["kafka_cli:qq-tool.sh --zap"]["via"], "none")
+        self.assertFalse(by["kafka_cli:qq-tool.sh"]["decisive"])    # the tool is named in the question
+        self.assertTrue(cov["not_in_index"])
+        none = self.cfg_item(key="zz.missing.ms", others=())
+        self.assertTrue(sc.item_coverage(none, self.idx)[0]["not_in_index"])
+
+    def test_outcomes(self):
+        it = self.cfg_item()
+        gap = "The retrieved documentation does not cover the key.\n\nANSWER: The excerpts do not cover this."
+        self.assertEqual(self.classify(it, "ANSWER: zz.alpha.ms", [], passed=True)[0], "pass")
+        self.assertEqual(self.classify(it, "ANSWER: zz.beta.ms", ["k1"])[0], "wrong")
+        self.assertEqual(self.classify(it, gap, ["k1"])[0], "wrong_decline")
+        self.assertEqual(self.classify(it, gap, ["k2"])[0], "wrong_decline")   # names the key
+        self.assertEqual(self.classify(it, gap, ["k3"])[0], "correct_decline")
+        none = self.cfg_item(key="zz.missing.ms", others=())
+        self.assertEqual(self.classify(none, gap, ["k1"], detail="accepted ['zz.missing.ms']")[0], "correct_decline")
+
+    def test_is_real_abstained(self):
+        it = {"id": "t-3", "kind": "is_real", "question": "Is zz.nope.ms a key?", "sources": [
+            {"catalogue": "kafka_config", "absent": "zz.nope.ms", "file": "raw/ref/cfg.html", "fact": "f"}],
+            "checks": [{"type": "answer_line", "format": True}, {"type": "answer_verdict", "expected": "does not exist"}]}
+        self.assertEqual(self.classify(it, "ANSWER: not in my sources", [])[0], "abstained")
+        self.assertEqual(self.classify(it, "ANSWER: exists", [])[0], "wrong")
+        it2 = dict(it, sources=[{"catalogue": "connect_rest", "entry": "POST /widgets", "file": "raw/ref/rest.yaml", "fact": "f"}],
+                   checks=[{"type": "answer_line", "format": True}, {"type": "answer_verdict", "expected": "exists"}])
+        self.assertEqual(self.classify(it2, "ANSWER: not in my sources", ["k5"])[0], "wrong_decline")
+        self.assertEqual(self.classify(it2, "ANSWER: not in my sources", ["k1"])[0], "correct_decline")
+
+    def test_partial_command_gap_on_other_element(self):
+        it = self.cmd_item()
+        d = "closest line 'qq-tool.sh': --zap missing"
+        cmd = "```\nqq-tool.sh --frob\n```"
+        # the gap names --frob but the failed element is --zap: not a decline of that element
+        o, _ = self.classify(it, "The documentation excerpts do not cover --frob.\n" + cmd, [], detail=d)
+        self.assertEqual(o, "wrong")
+        # the gap names the failed element, which is in no chunk: correct decline
+        o, _ = self.classify(it, "The documentation excerpts do not cover --zap.\n" + cmd, [], detail=d)
+        self.assertEqual(o, "correct_decline")
+        # a gap that names no element: undecided, counted as declined
+        o, _ = self.classify(it, "The excerpts do not cover everything asked.\n" + cmd, [], detail=d)
+        self.assertEqual(o, "correct_decline")
+
+    def test_failed_element_named_in_question_is_a_wrong_decline(self):
+        it = {"id": "t-4", "kind": "write_resource", "question": "Give a Widget with `sizeLimit: 3`.",
+              "sources": [{"catalogue": "kubernetes", "entry": "Widget spec.sizeLimit", "file": "raw_catalogue/s.json", "fact": "f"}],
+              "checks": [{"type": "yaml_document", "format": True}]}
+        o, _ = self.classify(it, "The documentation does not cover sizeLimit.\n```yaml\nkind: Widget\n```", [],
+                             detail="spec.sizeLimit missing")
+        self.assertEqual(o, "wrong_decline")
+
+    def test_detector(self):
+        for t in ("The retrieved documentation does not cover the key.", "The excerpts do not contain this value.",
+                  "ANSWER: not in my sources", "No information about it in the provided excerpts.",
+                  "x\n\nANSWER: null", "The value is not mentioned in the provided documentation.",
+                  "I cannot determine this from the excerpts."):
+            self.assertTrue(sc.detect_decline(t)[0], t)
+        for t in ("ANSWER: zz.alpha.ms", "Set `retention.ms` to 1000.", "```bash\nkafka-topics.sh --list\n```",
+                  "The excerpt does not list it for producers, so it is a broker key.\n\nANSWER: broker"):
+            self.assertFalse(sc.detect_decline(t)[0], t)
+
+    def test_all_pass_unchanged_and_summary_counts(self):
+        it = self.cfg_item()
+        answers = [{"id": "t-1", "text": "ANSWER: zz.beta.ms", "pack": ["k1"]}]
+        rows, _, _ = sc.score_files([it], answers, Catalogues.load(fixture_catalogues()))
+        before = json.dumps(rows, sort_keys=True)
+        sc.add_outcomes(rows, [it], answers, self.idx)
+        self.assertEqual(rows[0]["outcome"], "wrong")
+        self.assertFalse(rows[0]["all_pass"])
+        stripped = [{k: v for k, v in r.items() if k not in ("outcome", "declined", "coverage")} for r in rows]
+        self.assertEqual(json.dumps(stripped, sort_keys=True), before)
+        c = sc.outcome_counts(rows, [it])
+        self.assertEqual((c["total"]["n"], c["total"]["wrong"], c["name_setting"]["pass"]), (1, 1, 0))
+        self.assertIn("name_setting", "\n".join(sc.format_outcomes(c)))
+
+    def test_index_hash_is_checked(self):
+        d = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, d, True)
+        idxf, fz = d / "i.jsonl", d / "f.json"
+        idxf.write_text(json.dumps({"id": "a", "path": "p", "title": "", "text": "t"}) + "\n")
+        import hashlib
+        fz.write_text(json.dumps({"sha256": hashlib.sha256(idxf.read_bytes()).hexdigest()}))
+        self.assertEqual(len(sc.ChunkIndex.load(idxf, fz).chunks), 1)
+        fz.write_text(json.dumps({"sha256": "0" * 64}))
+        with self.assertRaises(sc.IndexMismatch):
+            sc.ChunkIndex.load(idxf, fz)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -130,6 +130,26 @@ def load_scores(path):
     return out
 
 
+OUTCOMES = ("pass", "correct_decline", "wrong_decline", "wrong", "abstained")
+
+
+def load_outcomes(path):
+    """{id: outcome} from a score file whose rows carry the decline outcome (decision J5); {} when they do not."""
+    return {r["id"]: r["outcome"] for r in eval2.read_jsonl(path) if "all_pass" in r and "id" in r and r.get("outcome")}
+
+
+def outcome_table(ids, oa, ob, kind=None, only_kind=None):
+    """Paired table of outcomes: matrix[a_outcome][b_outcome] counts, and the marginals of each set. Counts only."""
+    if only_kind is not None:
+        ids = [i for i in ids if kind.get(i) == only_kind]
+    ids = [i for i in ids if i in oa and i in ob]
+    m = {a: {b: 0 for b in OUTCOMES} for a in OUTCOMES}
+    for i in ids:
+        m[oa[i]][ob[i]] += 1
+    return {"n": len(ids), "matrix": m, "a": {o: sum(m[o].values()) for o in OUTCOMES},
+            "b": {o: sum(m[a][o] for a in OUTCOMES) for o in OUTCOMES}}
+
+
 def load_items(path):
     return {it["id"]: it for it in eval2.read_jsonl(path)}
 
@@ -165,6 +185,10 @@ def compare_pair(a_path, b_path, items_path, resamples=DEFAULT_RESAMPLES, seed=1
     res["by_kind"] = by_kind
     differ = [(i, "gain" if sb[i] else "loss", kind[i]) for i in ids if sa[i] != sb[i]]
     res["differ_counts"] = {"gain": sum(1 for d in differ if d[1] == "gain"), "loss": sum(1 for d in differ if d[1] == "loss")}
+    oa, ob = (load_outcomes(a_path), load_outcomes(b_path)) 
+    if oa and ob:
+        res["outcomes"] = outcome_table(ids, oa, ob)
+        res["outcomes_by_kind"] = {k: outcome_table(ids, oa, ob, kind, k) for k in sorted(set(kind.values()))}
     if not hidden:
         res["differ"] = [{"id": i, "direction": d, "kind": k} for i, d, k in differ]
     if answers_a and answers_b:
@@ -206,6 +230,18 @@ def render_pair(res, a_name, b_name, out):
     for k, s in res["by_kind"].items():
         P(f"{k:<18}{s['n']:>5}{pct(s['a_rate']):>9}{pct(s['b_rate']):>9}{100 * s['diff']:>+8.1f}"
           f"{'[%+.1f, %+.1f]' % (100 * s['ci90'][0], 100 * s['ci90'][1]):>20}{s['a_to_b_gain']:>6}{s['a_to_b_loss']:>6}")
+    if "outcomes" in res:
+        ot = res["outcomes"]
+        P()
+        P(f"decline outcome, paired (rows {a_name}, columns {b_name}; counts over {ot['n']} items; all-pass above is unchanged)")
+        P(f"{'':<18}" + "".join(f"{o:>17}" for o in OUTCOMES) + f"{'total':>8}")
+        for a in OUTCOMES:
+            P(f"{a:<18}" + "".join(f"{ot['matrix'][a][b]:>17}" for b in OUTCOMES) + f"{ot['a'][a]:>8}")
+        P(f"{'total':<18}" + "".join(f"{ot['b'][b]:>17}" for b in OUTCOMES) + f"{ot['n']:>8}")
+        P("per kind (counts: " + a_name + " / " + b_name + ")")
+        P(f"{'kind':<18}{'n':>5}" + "".join(f"{o:>17}" for o in OUTCOMES))
+        for k, t in res["outcomes_by_kind"].items():
+            P(f"{k:<18}{t['n']:>5}" + "".join(f"{'%d / %d' % (t['a'][o], t['b'][o]):>17}" for o in OUTCOMES))
     if "answers" in res:
         ai = res["answers"]
         P()

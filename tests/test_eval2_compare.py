@@ -318,5 +318,39 @@ class TestS6Report(Base):
         self.assertAlmostEqual(ids["precision"], 4 / 7)
 
 
+@NEEDS_OPENSSL
+class TestOutcomeTable(Base):
+    def test_outcome_table_paired_and_hidden_has_no_ids(self):
+        items = make_items(6)
+        oc = ["pass", "pass", "wrong", "wrong", "correct_decline", "abstained"]
+        ob = ["pass", "correct_decline", "wrong", "wrong_decline", "correct_decline", "abstained"]
+        def rows(outs):
+            return [dict(r, outcome=o) for r, o in zip(score_rows(items, set()), outs)]
+        for hidden in (False, True):
+            suffix = ".jsonl.enc" if hidden else ".jsonl"
+            a, b, it = self.tmp / ("a" + suffix), self.tmp / ("b" + suffix), self.tmp / ("items" + suffix)
+            eval2.write_jsonl(a, rows(oc))
+            eval2.write_jsonl(b, rows(ob))
+            eval2.write_jsonl(it, items)
+            res = cmp.compare_pair(a, b, it, resamples=50)
+            t = res["outcomes"]
+            self.assertEqual(t["n"], 6)
+            self.assertEqual(t["matrix"]["pass"]["correct_decline"], 1)
+            self.assertEqual(t["matrix"]["wrong"]["wrong_decline"], 1)
+            self.assertEqual(t["a"]["wrong"], 2)
+            buf = io.StringIO()
+            cmp.render_pair(res, "A", "B", buf)
+            text = buf.getvalue()
+            self.assertIn("decline outcome, paired", text)
+            if hidden:
+                for i in items:
+                    self.assertNotIn(i["id"], text)
+                    self.assertNotIn(i["question"], text)
+                self.assertNotIn("i00", json.dumps(res["outcomes"]))
+        # without outcome rows nothing is added
+        eval2.write_jsonl(self.tmp / "c.jsonl", score_rows(items, set()))
+        self.assertNotIn("outcomes", cmp.compare_pair(self.tmp / "c.jsonl", self.tmp / "c.jsonl", self.tmp / "items.jsonl", resamples=50))
+
+
 if __name__ == "__main__":
     unittest.main()

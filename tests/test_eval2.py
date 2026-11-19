@@ -344,6 +344,23 @@ class TestHidden(Base):
         self.assertNotIn("i002", text)
         self.assertNotIn("ZEBRA", text)
 
+    def test_hidden_report_outcome_totals_without_ids(self):
+        items = [item(1, question="ZEBRA one?"), item(2, question="ZEBRA two?")]
+        f, out = self.items_file(items, "h.jsonl.enc"), self.tmp / "ans.jsonl.enc"
+        self.run_answer(f, out)
+        eval2.write_jsonl(eval2.score_path(out), [
+            {"id": "i001", "checks_passed": 2, "checks_total": 3, "all_pass": False, "outcome": "correct_decline",
+             "coverage": {"not_in_index": True}},
+            {"id": "i002", "checks_passed": 3, "checks_total": 3, "all_pass": True, "outcome": "pass", "coverage": {"not_in_index": False}}])
+        buf = io.StringIO()
+        eval2.cmd_report(eval2.build_parser().parse_args(["report", str(out)]), buf)
+        text = buf.getvalue()
+        self.assertIn("all-pass 1/2", text)
+        self.assertIn("correct_decline 1/2 = 50.0 %", text)
+        self.assertIn("items not in the index 1", text)
+        for bad in ("i001", "i002", "ZEBRA"):
+            self.assertNotIn(bad, text)
+
 
 class TestReport(Base):
     def test_open_report_with_scores_errors_timing(self):

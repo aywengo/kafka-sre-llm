@@ -29,7 +29,12 @@ checks: every code-like token that can be classified is looked up in the catalog
 The summary reports known, unknown and not covered. "unknown" comes only from a catalogue (or a
 tool) that is marked complete; everything else is "not covered" and is never called invented.
 
-This scorer shares only the catalogue files and kafka_sre_rag/catalogue.py with anything else. It
+Decline outcome (decision J5): beside the unchanged all-pass rate every answer gets one of pass / correct_decline /
+wrong_decline / wrong / abstained, from the covering chunks of the item in the frozen index (work/v3/chunks_s1.jsonl,
+read-only, its sha256 checked against runs/v3/INDEX_FROZEN.json; a mismatch skips this part) and the answer's pack.
+
+This scorer shares only the catalogue files, kafka_sre_rag/catalogue.py and, for the decline outcome, the frozen
+index file with anything else. It
 does not import from a runtime answer checker, and nothing in kafka_sre_rag/ imports it.
 
 Usage: .venv/bin/python scripts/eval2_score.py --items ITEMS.jsonl --answers ANSWERS.jsonl
@@ -863,6 +868,357 @@ def score_files(items, answers, cats):
     return rows, missing, len([i for i in ans if i not in ids])
 
 
+# ------------------------------------------------------------------ decline outcome (decision J5)
+# Reported beside the all-pass rate, which it never changes. Per item and answer one outcome:
+#   pass              all checks pass
+#   correct_decline   not pass, declined, and the fact the failed check needs is in no chunk of the frozen index
+#                     (or not in the answer's pack)
+#   wrong_decline     not pass, declined, and the excerpts of the pack contained that fact
+#   wrong             not pass, not declined
+#   abstained         is_real only: expected "does not exist", answer declined ("not in my sources")
+# The covering chunks of an item come from the item's own recorded `sources` (the entry of each source, in the file
+# the source names when that file is in the index, else anywhere in the index). Details: runs/m4/reports/j5_decline_outcome.md.
+import hashlib  # noqa: E402
+
+OUTCOMES = ("pass", "correct_decline", "wrong_decline", "wrong", "abstained")
+DEFAULT_INDEX = "work/v3/chunks_s1.jsonl"
+DEFAULT_FROZEN = "runs/v3/INDEX_FROZEN.json"
+UNIT_KINDS = ("write_command", "argocd_command", "write_resource", "fix_manifest")  # the question supplies what it names
+GENERIC_LEAVES = {"apiVersion", "kind", "metadata", "name", "namespace", "spec", "status"}
+
+
+class IndexMismatch(RuntimeError):
+    pass
+
+
+class ChunkIndex:
+    """The frozen index file, read-only: chunks by id and by path."""
+
+    def __init__(self, rows):
+        self.chunks = {r["id"]: r for r in rows}
+        self.by_path = defaultdict(list)
+        for r in rows:
+            self.by_path[r["path"]].append(r)
+        self.rows = rows
+        self.memo = {}
+
+    @classmethod
+    def load(cls, index_path=DEFAULT_INDEX, frozen_path=DEFAULT_FROZEN):
+        """Refuses (IndexMismatch) when the file's sha256 differs from the one recorded in INDEX_FROZEN.json."""
+        want = json.loads(Path(frozen_path).read_text())["sha256"]
+        raw = Path(index_path).read_bytes()
+        got = hashlib.sha256(raw).hexdigest()
+        if got != want:
+            raise IndexMismatch("index %s has sha256 %s, frozen record says %s" % (index_path, got, want))
+        return cls([json.loads(l) for l in raw.decode("utf-8").splitlines() if l.strip()])
+
+
+def _word(tok):
+    return re.compile(r"(?<![\w.-])" + re.escape(tok) + r"(?![\w-]|\.\w)")
+
+
+def _flag(tok):
+    return re.compile(r"(?<![\w-])" + re.escape(tok) + r"(?![\w-])")
+
+
+def _tool(tok):
+    return re.compile(r"(?<![\w-])" + re.escape(re.sub(r"\.sh$", "", tok)) + r"(?:\.sh)?(?![\w-])")
+
+
+def _cmd(cmd):
+    return re.compile(r"(?<![\w-])" + r"\s+".join(re.escape(t) for t in cmd.split()) + r"(?![\w-])")
+
+
+def _in_question(tok, question):
+    return re.search(r"(?<![\w-])" + re.escape(tok) + r"(?![\w-])", question or "") is not None
+
+
+def derive_units(item):
+    """The facts the excerpts must carry for this item, from its recorded sources. A unit:
+    {label, path (file in the index or None), strict: [regex], loose: [regex], tokens: [str] (to match a
+    failed check's detail and a gap statement), decisive: bool}. A unit whose name the question already gives
+    (write and manifest kinds) is not decisive. is_real items keep units only when the verdict expected is
+    `exists`: nothing in the index can cover a name that does not exist."""
+    kind, q = item.get("kind"), item.get("question") or ""
+    expected = next((c.get("expected") for c in item["checks"] if c["type"] == "answer_verdict"), None)
+    if kind == "is_real" and expected != "exists":
+        return []
+    units, seen = [], set()
+    for src in item.get("sources", []):
+        entry, cat = src.get("entry"), src.get("catalogue")
+        if not entry:
+            continue
+        label = "%s:%s" % (cat, entry)
+        if label in seen:
+            continue
+        seen.add(label)
+        u = {"label": label, "path": src.get("file"), "strict": [], "loose": [], "tokens": [], "decisive": True,
+             "heading": None}
+        accepted = [norm_val(a).lower() for c in item["checks"] if c["type"] in ("answer_equals", "answer_set")
+                    for a in c.get("accepted", [])]
+        if cat in ("kafka_config", "kafka_config_history"):
+            key = entry.split("/", 1)[-1]
+            u["heading"] = key
+            u["strict"] = [re.compile(r"(?m)^## " + re.escape(key) + r"\s*$")]
+            u["loose"] = [_word(key)] if key.lower() in accepted else []   # the answer is the key itself
+            u["tokens"] = [key]
+        elif cat == "protocol_errors":
+            u["strict"] = [re.compile(r"(?m)^" + re.escape(entry) + r"\s*$")]
+            u["loose"] = [_word(entry)] if kind == "is_real" else []         # existence: any mention shows it
+            u["tokens"] = [entry]
+        elif cat == "connect_rest":
+            u["heading"] = entry
+            u["loose"] = [re.compile(r"(?<![\w/-])" + r"\s+".join(re.escape(t) for t in entry.split(" ", 1))
+                                     + r"(?![\w/{}-])")] if kind == "is_real" else []
+            u["strict"] = [re.compile(r"(?m)(?:^|: )" + re.escape(entry) + r"\s*$")]
+            u["tokens"] = [entry, entry.split(" ", 1)[-1]]
+        elif cat == "kafka_cli":
+            toks = entry.split()
+            u["path"] = None
+            u["strict"] = [_tool(toks[0])] + ([_flag(toks[1])] if len(toks) > 1 and toks[1].startswith("--") else [])
+            u["tokens"] = [toks[1]] if len(toks) > 1 else [toks[0]]
+            if kind in UNIT_KINDS and all(_in_question(t, q) for t in (toks[0],) + tuple(toks[1:2])):
+                u["decisive"] = False
+        elif cat == "argocd" and entry.startswith("argocd "):
+            toks = entry.split()
+            i = next((n for n, t in enumerate(toks) if t.startswith("--")), len(toks))
+            cmd = " ".join(toks[:i])
+            u["path"] = None
+            u["strict"] = [_cmd(cmd)] + ([_flag(toks[i])] if i < len(toks) else [])
+            u["tokens"] = [toks[i]] if i < len(toks) else [cmd]
+            if kind in UNIT_KINDS and _in_question(cmd, q):
+                u["decisive"] = False
+        elif cat == "strimzi_annotations":
+            u["path"] = None
+            u["strict"] = [re.compile(r"(?<![\w./-])" + re.escape(entry) + r"(?![\w-])")]
+            u["tokens"] = [entry]
+            if kind in UNIT_KINDS and _in_question(entry, q):
+                u["decisive"] = False
+        elif cat in ("kubernetes", "strimzi_resources", "argocd") and " " in entry:
+            kd, path = entry.split(" ", 1)
+            leaf = re.sub(r"\[.*?\]", "", path.split(".")[-1])
+            u["path"] = None
+            u["strict"] = [_word(leaf), re.compile(r"(?<![\w-])" + re.escape(kd) + r"(?![\w-])")]
+            u["tokens"] = [leaf]
+            if kind in UNIT_KINDS and (leaf in GENERIC_LEAVES or _in_question(leaf, q)):
+                u["decisive"] = False
+        else:
+            continue
+        units.append(u)
+    # options listed beside the answer are not what the excerpts must carry: when the answer is one of the
+    # configuration keys of the sources, only that key is decisive
+    accepted = {norm_val(a).lower() for c in item["checks"] if c["type"] in ("answer_equals", "answer_set")
+                for a in c.get("accepted", [])}
+    cfg = [u for u in units if u["label"].startswith("kafka_config:")]
+    hit = [u for u in cfg if u["label"].split("/", 1)[-1].lower() in accepted]
+    if hit:
+        for u in cfg:
+            u["decisive"] = u in hit
+    return units
+
+
+def cover_unit(unit, idx):
+    """Ids of the chunks of the index holding the unit's fact, with how they were found: strict (the entry's own
+    heading or line in the source file; for reference entries the chunks naming the entry are added), mention
+    (only chunks naming the entry), global (the patterns together in any chunk, for a source file that is not
+    in the index), none."""
+    key = (unit["label"], unit["path"])
+    if key in idx.memo:
+        return idx.memo[key]
+    idx.memo[key] = res = _cover_unit(unit, idx)
+    return res
+
+
+def _cover_unit(unit, idx):
+    in_file = idx.by_path.get(unit["path"]) if unit["path"] else None
+    strict = []
+    if in_file:
+        strict = [c["id"] for c in in_file if (unit["heading"] is not None and c.get("title") == unit["heading"])
+                  or all(p.search(c["text"]) for p in unit["strict"])]
+    if unit["loose"]:
+        # the entry's own section, plus every chunk of the index that names the entry: the excerpt then carries
+        # the answer value (a related key, the same key in another scope, an endpoint in an example)
+        mention = [c["id"] for c in idx.rows if all(p.search(c["text"]) for p in unit["loose"])]
+        hit = list(dict.fromkeys(strict + mention))
+        return hit, ("strict" if strict else "mention" if mention else "none")
+    if strict:
+        return strict, "strict"
+    pats = unit["strict"]
+    hit = [c["id"] for c in idx.rows if all(p.search(c["text"]) for p in pats)] if pats else []
+    return hit, ("global" if hit else "none")
+
+
+# -- the decline detector
+_SRC = r"(?:excerpts?|documentation|docs\b|sources?|context|provided (?:text|material|information)|retrieved|reference)"
+_NEG = (r"(?:do(?:es)? not|don'?t|doesn'?t|did not|cannot|can'?t|could not|couldn'?t|unable to|not|no)\s+"
+        r"(?:\w+\s+){0,3}?(?:cover|contain|include|mention|provide|specify|describe|list|state|document|show|say|"
+        r"define|address|explain|identify|find|determine|confirm|verify|name|give|answer|support|have|distinguish|"
+        r"differentiate|clarify|indicate|resolve|settle)")
+GAP_PATTERNS = [
+    re.compile(r"not in (?:my|the) sources?", re.I),
+    re.compile(r"(?:not|never) (?:found|covered|mentioned|documented|listed|specified|included|present|stated|defined)\b"
+               r"[^.\n]{0,40}?\b(?:in|by)\b[^.\n]{0,30}?" + _SRC, re.I),
+    re.compile(r"(?:retrieved|provided) documentation does not cover", re.I),
+    re.compile(r"\b(?:excerpts?|documentation|sources?)\b[^.\n]{0,80}?" + _NEG, re.I),
+    re.compile(r"\b(?:" + _NEG + r")\b[^.\n]{0,100}?" + _SRC, re.I),
+    re.compile(r"\bno (?:information|mention|details?|reference|excerpts?|documentation|text)\b"
+               r"[^.\n]{0,60}?(?:about|on|of|regarding|for|in|that)\b", re.I),
+    re.compile(r"\b(?:cannot|can'?t|could not|unable to)\s+(?:answer|find|determine|provide|confirm|verify|construct|"
+               r"give|write|identify)\b[^.\n]{0,80}?(?:excerpts?|documentation|sources?|provided|given)", re.I),
+    re.compile(r"\bnot covered\b", re.I),
+]
+EMPTY_ANSWER = {"null", "unknown", "n/a", "na", "not specified", "not provided", "not available", "undetermined"}
+
+
+def gap_sentences(text):
+    """Sentences (split at line ends and full stops outside backticks) that state a gap in the excerpts."""
+    out = []
+    for para in re.split(r"\n+", text or ""):
+        for sent in re.split(r"(?<=[.!?])\s+(?=[A-Z*`\"])", para):
+            if any(p.search(sent) for p in GAP_PATTERNS):
+                out.append(sent.strip())
+    return out
+
+
+GAP_VALUE = re.compile(r"^(?:not (?:found|covered|specified|provided|available|mentioned|in)|cannot|can'?t|unable|"
+                       r"no information|insufficient|the (?:provided|retrieved) )", re.I)
+
+
+def detect_decline(text):
+    """(declined, gap_text). With an ANSWER line the answer is a decline when the value itself is empty (null,
+    unknown, ...), says that the sources do not cover it, or is the verdict `not in my sources`: a concrete value
+    beside a remark about another gap is an answer. Without an ANSWER line (a command, a manifest, prose) the
+    answer is a decline when a sentence names a gap in the excerpts or sources (the prompts' form 'The retrieved
+    documentation does not cover X' and its natural variants)."""
+    gaps = gap_sentences(text)
+    v = parse_answer_line(text)
+    if v is not None:
+        nv = norm_val(v).lower()
+        return (nv in EMPTY_ANSWER or norm_verdict(v) == "not in my sources" or bool(GAP_VALUE.search(nv))
+                or any(p.search(v) for p in GAP_PATTERNS)), " ".join(gaps)
+    return bool(gaps), " ".join(gaps)
+
+
+def _mentions(token, text):
+    if not token or not text:
+        return False
+    if token in text:
+        return True
+    bare = token.lstrip("-")
+    return bare != token and bare.replace("-", " ") in text.lower().replace("-", " ")
+
+
+def has_payload(text):
+    """The answer carries something to check besides a gap statement: a code block, or an ANSWER line that
+    is not itself empty or a verdict of not covered."""
+    if FENCE_RE.search(text or ""):
+        return True
+    v = parse_answer_line(text)
+    return v is not None and norm_val(v).lower() not in EMPTY_ANSWER and norm_verdict(v) != "not in my sources" \
+        and not any(p.search(v) for p in GAP_PATTERNS)
+
+
+def classify_answer(item, row, text, pack, idx_cache):
+    """One outcome for a scored row. idx_cache: {unit label: (cover ids, via)} for this item's units."""
+    all_units = derive_units(item)
+    units = [u for u in all_units if u["decisive"]]
+    declined, gap = detect_decline(text or "")
+    failed = [r for r in row["results"] if not r["pass"]]
+    detail = " ".join(r["detail"] for r in failed)
+    rel = [u for u in units if any(_mentions(t, detail) for t in u["tokens"])]
+    given = [u for u in all_units if not u["decisive"] and any(_mentions(t, detail) for t in u["tokens"])]
+    mapped = bool(rel) and len(rel) < len(units)
+    rel_found = bool(rel)
+    rel = rel or units
+    undecided = False
+    if declined and failed and has_payload(text) and mapped:
+        said = [u for u in units if any(_mentions(t, gap) for t in u["tokens"])]
+        if said and not set(u["label"] for u in said) & set(u["label"] for u in rel):
+            declined = False          # the gap statement is about another element than the failed check
+        elif not said:
+            undecided = True          # cannot decide mechanically: counted as declined
+    info = {"declined": declined, "decline_undecided": undecided, "units": len(units),
+            "relevant_units": [u["label"] for u in rel], "via": {u["label"]: idx_cache[u["label"]][1] for u in units}}
+    pack = set(pack or [])
+    in_pack = [bool(set(idx_cache[u["label"]][0]) & pack) for u in rel]
+    info["covering_in_pack"] = any(in_pack)
+    if row["all_pass"]:
+        return "pass", info
+    if not declined:
+        return "wrong", info
+    expected = next((c.get("expected") for c in item["checks"] if c["type"] == "answer_verdict"), None)
+    if item.get("kind") == "is_real" and expected == "does not exist":
+        return "abstained", info
+    if not units or (given and not rel_found):
+        # nothing to look up, or the failed element is one the question itself names: the excerpts were not needed
+        info["no_units_derived" if not units else "failed_element_in_question"] = True
+        return "wrong_decline", info
+    if any(not idx_cache[u["label"]][0] for u in rel):
+        return "correct_decline", info
+    return ("wrong_decline" if all(in_pack) else "correct_decline"), info
+
+
+def item_coverage(item, idx):
+    """Static coverage of an item: per-unit covering chunk ids and how they were found, and not_in_index
+    (some decisive unit is in no chunk of the index; an item without decisive units is never not_in_index)."""
+    units = derive_units(item)
+    cache = {u["label"]: cover_unit(u, idx) for u in units}
+    dec = [u for u in units if u["decisive"]]
+    cover = sorted({c for u in dec for c in cache[u["label"]][0]})
+    return {"units": [{"label": u["label"], "decisive": u["decisive"], "chunks": len(cache[u["label"]][0]),
+                       "via": cache[u["label"]][1]} for u in units],
+            "covering_chunks": cover, "not_in_index": bool(dec) and any(not cache[u["label"]][0] for u in dec),
+            "coverage_derived": bool(dec)}, cache
+
+
+def add_outcomes(rows, items, answers, idx):
+    """Adds to each score row (in place): outcome, declined, coverage. Existing keys are not touched."""
+    by_id = {i["id"]: i for i in items}
+    ans = {a["id"]: a for a in answers if "id" in a and "text" in a}
+    for r in rows:
+        it = by_id[r["id"]]
+        cov, cache = item_coverage(it, idx)
+        a = ans.get(r["id"])
+        if a is None:
+            r["outcome"], r["declined"] = "wrong", False
+            r["coverage"] = dict(cov, missing_answer=True)
+            continue
+        outcome, info = classify_answer(it, r, a["text"], a.get("pack"), cache)
+        r["outcome"], r["declined"] = outcome, info["declined"]
+        r["coverage"] = dict(cov, **{k: v for k, v in info.items() if k not in ("declined", "units")})
+    return rows
+
+
+def outcome_counts(rows, items, field="kind"):
+    by_id = {i["id"]: i for i in items}
+    out = {"total": {o: 0 for o in OUTCOMES}}
+    out["total"]["n"] = 0
+    out["total"]["not_in_index"] = 0
+    for r in rows:
+        if "outcome" not in r:
+            continue
+        for g in ("total", str(by_id[r["id"]].get(field))):
+            d = out.setdefault(g, {"n": 0, "not_in_index": 0, **{o: 0 for o in OUTCOMES}})
+            d["n"] += 1
+            d[r["outcome"]] += 1
+            d["not_in_index"] += bool(r["coverage"]["not_in_index"])
+    for g, d in out.items():
+        d["shares"] = {o: round(d[o] / d["n"], 4) if d["n"] else None for o in OUTCOMES}
+        d["all_pass_rate"] = d["shares"]["pass"]
+    return out
+
+
+def format_outcomes(counts, name=""):
+    """Plain text lines: counts and shares per kind and in total (no item ids)."""
+    L = ["outcomes %s(all-pass rate unchanged = pass share)" % (name + " " if name else "")]
+    L.append("%-18s%5s" % ("kind", "n") + "".join("%17s" % o for o in OUTCOMES) + "%14s" % "not_in_index")
+    for g in sorted(k for k in counts if k != "total") + ["total"]:
+        d = counts[g]
+        L.append("%-18s%5d" % (g, d["n"]) + "".join("%9d (%4.1f%%)" % (d[o], 100 * d["shares"][o]) if d["n"] else "%17s" % "-"
+                                                    for o in OUTCOMES) + "%14d" % d["not_in_index"])
+    return L
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--items", required=True)
@@ -870,6 +1226,9 @@ def main(argv=None):
     ap.add_argument("--scores", help="write the per-item score rows here (jsonl)")
     ap.add_argument("--summary", help="write the summary here (json)")
     ap.add_argument("--catalogues", help="catalogue directory (default work/m4/catalogues)")
+    ap.add_argument("--index", default=DEFAULT_INDEX, help="frozen index file for the decline outcome")
+    ap.add_argument("--frozen", default=DEFAULT_FROZEN, help="record of the frozen index (sha256)")
+    ap.add_argument("--no-outcomes", action="store_true", help="skip the decline outcome (covering chunks need the index)")
     args = ap.parse_args(argv)
     cats = Catalogues.load(args.catalogues)
     items = load_jsonl(args.items)
@@ -877,12 +1236,21 @@ def main(argv=None):
     rows, missing, extra = score_files(items, answers, cats)
     from kafka_sre_rag.catalogue import catalogue_hash
     summ = summarise(rows, items, missing, extra, catalogue_hash(args.catalogues))
+    if not args.no_outcomes:
+        try:
+            add_outcomes(rows, items, answers, ChunkIndex.load(args.index, args.frozen))
+            summ["outcomes"] = outcome_counts(rows, items)
+        except (IndexMismatch, OSError) as e:
+            summ["outcomes"] = {"refused": str(e)}
+            print("outcomes skipped: %s" % e, file=sys.stderr)
     if args.scores:
         Path(args.scores).write_text("".join(json.dumps(r, sort_keys=True, ensure_ascii=False) + "\n" for r in rows))
     text = json.dumps(summ, indent=1, sort_keys=True, ensure_ascii=False)
     if args.summary:
         Path(args.summary).write_text(text + "\n")
     print(text)
+    if "total" in summ.get("outcomes", {}):
+        print("\n".join(format_outcomes(summ["outcomes"])), file=sys.stderr)
     return 0
 
 
