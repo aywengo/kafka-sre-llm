@@ -11,6 +11,10 @@ Output: a score file, one row per item:
         band, with the count and a Wilson 95 % interval. Format failures (no `ANSWER:` line, no
         command line) are counted separately.
 
+Check types of slice a3 (scripts/eval2_checks_a3.py, version 3 of this scorer): semantic_rule (oracles netpol_allows,
+restart_annotation, config_rule, properties_parse, pdb_evicts), cmd_order, number_within, declines, no_invented_value,
+forbidden_keys. Items without them score as before.
+
 Check types of slice A2 (write a resource, fix the manifest, write the command, version trap):
   yaml_document, yaml_one_doc (exactly one document with a kind, of the requested kind and apiVersion),
   yaml_strict (strict validation of that document by Catalogues.validate_resource: an unknown field is a
@@ -55,7 +59,7 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from kafka_sre_rag.catalogue import KNOWN, NOT_COVERED, UNKNOWN, Catalogues  # noqa: E402
 
-VERSION = "eval2_score/2"
+VERSION = "eval2_score/3"
 FORMAT_CHECKS = ("answer_line", "has_command", "yaml_document", "has_kafka_command")
 ANSWER_RE = re.compile(r"^[ \t>*_`#-]*ANSWER[ \t]*(?:\*\*|__)?[ \t]*:[ \t]*(?:\*\*|__)?[ \t]*(.+?)[ \t]*$", re.M)
 
@@ -588,6 +592,12 @@ CHECKS = {
     "kcmd_known_flags": check_kcmd_known_flags,
     "kcmd_constraints": check_kcmd_constraints,
 }
+
+
+# the a3 checks (semantic_rule, cmd_order, number_within, declines, no_invented_value, forbidden_keys): per item, opt-in
+from eval2_checks_a3 import CHECKS_A3  # noqa: E402
+assert not set(CHECKS_A3) & set(CHECKS), "a check name is defined twice"
+CHECKS.update(CHECKS_A3)
 
 
 def run_checks(item, text, cats):
