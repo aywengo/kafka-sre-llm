@@ -401,6 +401,7 @@ class Checker:
         self._error_norm = {_norm(n): n for n in self._errors}
         self._rest_first = {self.cats.rest_segments(e["path"])[0] for e in (self.cats.data["connect_rest"] or {}).get("entries", [])
                             if self.cats.rest_segments(e["path"])}
+        self._api_kinds = set(self._kinds) | {e["kind"] for e in (self.cats.data["argocd"] or {}).get("resources", [])}
         self._unchecked_now: Dict[str, int] = {}
         self._seg_df: Dict[str, int] = {}
         for k in self.cats._config:
@@ -422,6 +423,8 @@ class Checker:
             key = (it.type, it.text, tuple(sorted((k, str(v)) for k, v in it.context.items() if k in ("scope", "tool", "kind", "open"))))
             if key in seen:
                 seen[key].count += 1
+                if it.context.get("sh"):
+                    seen[key].context["sh"] = True   # written with the .sh suffix somewhere
                 continue
             seen[key] = it
         for it in seen.values():
@@ -576,12 +579,21 @@ class Checker:
                 continue
             kind = d["kind"]
             partial = False
+            values_only = False
             if not kind:
                 top = d["entries"][0][0][0]
                 if top in ("spec", "metadata", "status") and len(ctx_kinds) == 1:
                     kind, partial = ctx_kinds[0], True
+                elif top == "spec" and any(sg[:2] == ["spec", "kafka"] for sg, _k, _v, _n in d["entries"]):
+                    # a snippet with no kind that starts at spec.kafka can only be a Kafka resource; only the
+                    # enumerated values in it are checked (nothing else about a snippet is judged without its kind)
+                    kind, values_only = "Kafka", True
                 else:
                     continue
+            if kind in self._api_kinds and d["apiVersion"]:
+                no_api = next((n for sg, k, _v, n in d["entries"] if sg == ["apiVersion"]), d["start"])
+                out.append(Item(d["apiVersion"], "api_version", no_api, "apiVersion: %s" % d["apiVersion"], "fence",
+                                {"kind": kind, "api_version": d["apiVersion"]}))
             if kind not in self._kinds:
                 out += self._yaml_labels_only(d, seg)
                 self._unchecked(kind)
@@ -598,7 +610,13 @@ class Checker:
                     ctx["api_version"] = api
                 line_text = "%s: %s" % (key, val) if val else "%s:" % key
                 if top == "metadata":
-                    out += self._yaml_meta(segs, key, val, no, line_text, kind)
+                    if not values_only:
+                        out += self._yaml_meta(segs, key, val, no, line_text, kind)
+                    continue
+                if values_only:
+                    if self._plain_scalar(val):
+                        out.append(Item("%s=%s" % (normalise_path(path), val), "field_value", no, line_text, "fence",
+                                        dict(ctx, path=normalise_path(path), value=val)))
                     continue
                 # inside a free-form config map?
                 cfg_i = None
@@ -620,11 +638,19 @@ class Checker:
                     out += self._yaml_meta(segs, key, val, no, line_text, kind)
                     continue
                 np_ = normalise_path(path)
+                if self._plain_scalar(val):
+                    vctx = dict(ctx, path=np_, value=val)
+                    out.append(Item("%s=%s" % (np_, val), "field_value", no, line_text, "fence", vctx))
                 if np_ in seen_paths:
                     continue
                 seen_paths.add(np_)
                 out.append(Item(np_, "field_path", no, line_text, "fence", ctx))
         return out
+
+    @staticmethod
+    def _plain_scalar(val: str) -> bool:
+        """A value that is a literal word (not empty, a template, a block, a flow collection or a sentence)."""
+        return bool(val) and not re.search(r"[<>$\s{}\[\]|&*!%@`]", val) and val not in ("~", "null")
 
     def _unchecked(self, kind):
         self._unchecked_now[kind] = self._unchecked_now.get(kind, 0) + 1
@@ -711,8 +737,9 @@ class Checker:
     def _kafka_tool(self, toks, no, sentence, source) -> List[Item]:
         out = []
         tool = toks[0].split("/")[-1]
-        tool = tool if tool.endswith(".sh") else tool + ".sh"
-        out.append(Item(tool, "cli_tool", no, sentence, source, {"tool": tool}))
+        written_sh = tool.endswith(".sh")
+        tool = tool if written_sh else tool + ".sh"
+        out.append(Item(tool, "cli_tool", no, sentence, source, {"tool": tool, "sh": written_sh}))
         entity = None
         for i, t in enumerate(toks[1:], 1):
             if t == "--entity-type" and i + 1 < len(toks):
@@ -875,8 +902,9 @@ class Checker:
         # bare prose tokens
         for m in TOOL_RE.finditer(prose_s):
             t = m.group(1).split("/")[-1]
-            t = t if t.endswith(".sh") else t + ".sh"
-            out.append(Item(t, "cli_tool", no, _sentence_of(line, m.start()), "prose", {"tool": t}))
+            written_sh = t.endswith(".sh")
+            t = t if written_sh else t + ".sh"
+            out.append(Item(t, "cli_tool", no, _sentence_of(line, m.start()), "prose", {"tool": t, "sh": written_sh}))
             last_tool = t
         for m in HTTP_RE.finditer(prose_s):
             out.append(Item("%s %s" % (m.group(1), m.group(2).rstrip(".,;:)")), "http_op", no, _sentence_of(line, m.start()),
@@ -908,6 +936,8 @@ class Checker:
         if last_tool or tool_here:
             tool = last_tool or tool_here
             for m in FLAG_RE.finditer(prose_s):
+                if self._two_tools(line, m.start()):
+                    continue
                 if tool and (last_tool is None or prose_s.find(last_tool.replace(".sh", "")) < m.start()):
                     out.append(Item(m.group(1), "cli_flag", no, _sentence_of(line, m.start()), "prose", {"tool": tool}))
         # `key` = `value` in prose, and alternative values after a key ("to `all` or `class`")
@@ -924,6 +954,23 @@ class Checker:
                 sent = _sentence_of(line, m.start())
                 out += self._alt_items(tok, self._following_values(prose_s_with_code(line, m.end()), False), no, sent, "prose", self._scope_hint(sent, seg))
         return out, last_tool
+
+    @staticmethod
+    def _two_tools(line: str, pos: int) -> bool:
+        """A flag written in prose belongs to a tool only when its sentence (up to a full stop, not a colon) names
+        one tool; with two or more ("`--force` is for `kafka-streams-application-reset.sh`, not for
+        `kafka-consumer-groups.sh`") it is not attributed."""
+        start = 0
+        sentence = line
+        for m in re.finditer(r"[.!?](?=\s)", line):
+            if m.end() <= pos:
+                start = m.end()
+            else:
+                sentence = line[start:m.end()]
+                break
+        else:
+            sentence = line[start:]
+        return len({m.group(1).split("/")[-1].replace(".sh", "") for m in TOOL_RE.finditer(sentence)}) > 1
 
     _FIRST_VALUE = re.compile(r"\s*(?:=|:|\bto\b|\bas\b)\s*`([^`\n]+)`")
     _ALT_VALUE = re.compile(r"\s*\)?\s*(?:,|/|\bor\b|\(or\b|\band\b)\s*`([^`\n]+)`")
@@ -1022,7 +1069,7 @@ class Checker:
         fl = re.match(r"^(--[a-z][a-z0-9-]*)(?:[= ].*)?$", c)
         if fl:
             flag_tool = recent_tool[0] if recent_tool and recent_tool[0] and (no - recent_tool[1] <= 2) else None
-            if flag_tool:
+            if flag_tool and not self._two_tools(line, line.find(c)):
                 its = [Item(fl.group(1), "cli_flag", no, sent, "inline", {"tool": flag_tool})]
                 return its, None
             return out, None
@@ -1153,6 +1200,47 @@ class Checker:
         else:
             it.status = SKIPPED
 
+    # apiVersion and enumerated values of a manifest
+    def _d_api_version(self, it, ex, result):
+        kind, api = it.context["kind"], it.context["api_version"]
+        r = self.cats.served_api_versions(kind, api)
+        if r.known:
+            it.status = KNOWN
+        elif r.unknown:
+            if ex.has(api):
+                it.status = IN_EXCERPTS
+                return
+            it.status = UNKNOWN
+            served = r.data["served"]
+            self._add(result, WRONG_USE, it, "api_version_not_served",
+                      "`%s` is not served for %s by the pinned definitions (%s); served: %s" % (
+                          api, kind, "Strimzi 1.3.1" if r.catalogue == "strimzi_resources" else "Argo CD 3.6.1",
+                          ", ".join("`%s`" % v for v in served)),
+                      "use apiVersion: %s" % served[0], r.catalogue)
+        else:
+            it.status = NOT_COVERED
+
+    def _d_field_value(self, it, ex, result):
+        kind, path, value = it.context["kind"], it.context["path"], it.context["value"]
+        api = it.context.get("api_version")
+        if api and not self.cats.served_api_versions(kind, api).known:
+            it.status = SKIPPED          # the apiVersion is reported; the enum of another version is not judged
+            return
+        enum = self.cats.field_enum(kind, path, api)
+        if not enum:
+            it.status = SKIPPED
+            return
+        if value in enum:
+            it.status = KNOWN
+            return
+        leaf = path.rpartition(".")[2]
+        if ex.has("%s: %s" % (leaf, value)) or ex.has("%s=%s" % (leaf, value)):
+            it.status = IN_EXCERPTS
+            return
+        it.status = UNKNOWN
+        self._add(result, WRONG_USE, it, "field_enum", "`%s` of %s accepts %s, not `%s`" % (
+            path, kind, ", ".join("`%s`" % v for v in enum), value), "use one of: " + ", ".join(enum), "strimzi_resources")
+
     # field paths
     def _api_versions(self, kind):
         return {e["api_version"] for e in self.cats._kinds.get(kind, []) if e.get("api_version")}
@@ -1238,6 +1326,15 @@ class Checker:
         if tool in self.cats.tools():
             it.status = KNOWN
             return
+        if it.context.get("sh"):
+            # written as a script (kafka-x.sh): the CLI catalogue lists every script of Kafka's bin/ (bin_complete)
+            r = self.cats.cli_tool(tool)
+            if r.unknown:
+                it.status = UNKNOWN
+                near = r.data.get("similar") or []
+                self._add(result, INVENTED, it, "tool_unknown", "`%s` is not a script of Kafka's bin/ directory (Kafka 4.3.2; the list of scripts is complete)%s" % (
+                    tool, self._sim(near)), ("did you mean `%s`?" % near[0]) if near else "", r.catalogue)
+                return
         it.status = NOT_COVERED
         near = difflib.get_close_matches(tool, [t for t in self.cats.tools() if t.startswith("kafka-")], n=2, cutoff=0.85)
         self._add(result, UNVERIFIED, it, "tool_not_covered", "`%s` is not among the Kafka tools the documentation shows (the list of tools is not marked complete)%s" % (tool, self._sim(near)),
@@ -1306,7 +1403,9 @@ class Checker:
             it.status = KNOWN
             return
         near = difflib.get_close_matches(norm, list(self._error_norm), n=1, cutoff=0.9)
-        sentence_error = bool(re.search(r"\b(error|errors|exception|raises?|returns?)\b", it.sentence, re.I))
+        # only a sentence that says "error" or "exception" makes an UPPER_SNAKE word an error name; "returns" or "raises"
+        # also precede ordinary enum values (READ_COMMITTED returns ...)
+        sentence_error = bool(re.search(r"\b(error|errors|exception|exceptions)\b", it.sentence, re.I))
         if near and len(norm) >= 12:
             name = self._error_norm[near[0]]
             it.status = UNKNOWN

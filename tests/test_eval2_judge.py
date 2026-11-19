@@ -1049,8 +1049,13 @@ class ChainScript(unittest.TestCase):
                            env={**__import__("os").environ, "TMPDIR": tmp})
         self.assertEqual(r.returncode, 0, r.stdout[-2000:] + r.stderr[-2000:])
         self.assertIn("dry run done", r.stdout)
+        # one near-miss answer per must-not point with a near-miss sentence in the committed rubrics; the probe sets
+        # generic, alt and ref have one answer per item (24 each)
+        rubrics = [json.loads(l) for l in (ROOT / "eval/m4/pilot2/rubrics.jsonl").read_text().splitlines() if l.strip()]
+        n_near = sum(1 for rb in rubrics for pt in rb.get("must_not", []) if pt.get("near_miss"))
+        calls = 96 + (3 * 24 + n_near) + 48
         for line in ("matched default: 24 answers", "matched strict: 24 answers", "instruction v2: 48 of 48 answers have their own excerpts",
-                     "matched probe_nearmiss: 46 answers", "matched default_ref: 24 answers", "judge calls 262 = 96 ", "## Rubric probes",
+                     "matched probe_nearmiss: %d answers" % n_near, "matched default_ref: 24 answers", "judge calls %d = 96 " % calls, "## Rubric probes",
                      "## Sources of the must points", "Go or no-go"):
             self.assertIn(line, r.stdout)
 

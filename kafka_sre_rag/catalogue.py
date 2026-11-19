@@ -586,6 +586,35 @@ class Catalogues:
         self._check_object(paths, kids, "", doc, v, root=True, root_open=bool(e.get("preserve_unknown_root")))
         return Validation(kind, api, True, v, e["source"])
 
+    # API versions the pinned definitions serve (Strimzi and Argo CD only)
+    def served_api_versions(self, kind: str, api_version: str) -> Lookup:
+        """Does the pinned CRD of `kind` (Strimzi 1.3.1, Argo CD 3.6.1) serve `api_version`?
+        KNOWN when served; UNKNOWN (with the served apiVersions in data["served"]) when the group is the
+        kind's group but the version is not served; NOT_COVERED for other kinds and for a kind written
+        with another group (an Application of another project)."""
+        served = sorted({e["api_version"] for e in self._kinds.get(kind, [])
+                         if e.get("complete") and e.get("source") == "crd"
+                         and e.get("_catalogue") in ("strimzi_resources", "argocd")})
+        if not served:
+            return _nc("no complete CRD of %r in the Strimzi or Argo CD catalogue" % kind)
+        group = api_version.rpartition("/")[0]
+        if group not in {v.rpartition("/")[0] for v in served}:
+            return _nc("%s is not the group of %s" % (group or "(core)", kind))
+        cat = next(e["_catalogue"] for e in self._kinds[kind] if e.get("source") == "crd")
+        if api_version in served:
+            return Lookup(KNOWN, "served by the pinned CRD", cat, "crd", (), {"served": served})
+        return Lookup(UNKNOWN, "not served by the pinned CRD", cat, "crd", (), {"served": served})
+
+    def field_enum(self, kind: str, path: str, api_version: Optional[str] = None) -> Optional[List[str]]:
+        """The allowed values of the field `path` of `kind` when the pinned CRD (or OpenAPI schema) lists
+        an enumeration for it; None when it does not (or the kind or path is not in a complete schema)."""
+        e = self.schema_entry(kind, api_version)
+        if e is None:
+            return None
+        info = e["paths"].get(normalise_path(path))
+        enum = info.get("enum") if info else None
+        return [str(v) for v in enum] if enum else None
+
     def kinds_of(self, api_version: str) -> List[str]:
         return sorted(k for k, es in self._kinds.items()
                       if any(x.get("complete") and x.get("source") in SCHEMA_SOURCES and x["api_version"] == api_version
