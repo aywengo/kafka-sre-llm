@@ -118,6 +118,8 @@ class DryRun(unittest.TestCase):
         cls.args = ("--dry-run", "--items", str(PILOT_ITEMS), "--rubrics", str(PILOT_RUBS), "--work", str(cls.work))
         cls.hb = ROOT / "runs/v3/HEARTBEAT.md"
         cls.hb_before = cls.hb.read_bytes() if cls.hb.exists() else None
+        cls.marker = ROOT / "runs/m4/logs/m4_b1_coverage_batch.done"   # a real run may have left one; the dry run must not touch it
+        cls.marker_before = cls.marker.stat().st_mtime_ns if cls.marker.exists() else None
         cls.first = sh(*cls.args)
         cls.second = sh(*cls.args)
 
@@ -172,7 +174,7 @@ class DryRun(unittest.TestCase):
         self.assertTrue(any((self.work / "logs").glob("*.done")))
         hb = ROOT / "runs/v3/HEARTBEAT.md"
         self.assertEqual(self.hb_before, hb.read_bytes() if hb.exists() else None)
-        self.assertFalse((ROOT / "runs/m4/logs/m4_b1_coverage_batch.done").exists())
+        self.assertEqual(self.marker_before, self.marker.stat().st_mtime_ns if self.marker.exists() else None)
 
     def test_second_run_resumes_without_redoing_finished_steps(self):
         r = self.second

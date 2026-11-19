@@ -31,6 +31,7 @@ import json
 import os
 import re
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -118,6 +119,15 @@ def parse_variant(spec):
     return spec, dataclasses.replace(v, **over)
 
 
+def say_flush(*args):
+    """print() that flushes: stdout redirected to a log file is block-buffered, and a guard that watches the log
+    kills a job whose log does not grow (the 2026-11-19 stall was this, not a hang)."""
+    print(*args, flush=True)
+
+
+HEARTBEAT_S = 60               # a scoring call that runs longer prints a progress line this often
+
+
 # ---------------------------------------------------------------- reranker scores with a disk cache
 class CEScorer:
     """Reranker scores keyed by (query, chunk id), appended to a jsonl file as they are computed. `model` is anything
@@ -127,6 +137,7 @@ class CEScorer:
         self.byid, self.path, self._model = chunks_by_id, Path(cache_file), model
         self.chunk_chars, self.batch = chunk_chars, batch_size
         self.mem, self.computed = {}, 0
+        self.say, self.heartbeat = say_flush, HEARTBEAT_S
         if self.path.exists():
             for l in self.path.read_text().splitlines():
                 if l.strip():
@@ -141,7 +152,18 @@ class CEScorer:
 
     def _predict(self, qh, query, ids):
         pairs = [(query, (self.byid[c]["title"] + "\n" + self.byid[c]["text"])[:self.chunk_chars]) for c in ids]
-        sc = self.model.predict(pairs, batch_size=self.batch)
+        done, t0 = threading.Event(), time.time()
+
+        def beat():
+            while not done.wait(self.heartbeat):
+                self.say(f"  scoring {len(pairs)} pairs, still running after {time.time() - t0:.0f}s")
+
+        if self.heartbeat:
+            threading.Thread(target=beat, daemon=True).start()
+        try:
+            sc = self.model.predict(pairs, batch_size=self.batch)   # one call, as retrieve.rank(): same scores
+        finally:
+            done.set()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with open(self.path, "a") as f:
             for c, s in zip(ids, sc):
@@ -428,7 +450,7 @@ def compare_pack(new, old):
     return "content"
 
 
-def replay(states, scorer, say=print):
+def replay(states, scorer, say=say_flush):
     res, detail = collections.Counter(), {}
     for n, (i, st) in enumerate(states.items()):
         t = time.time()
@@ -441,7 +463,7 @@ def replay(states, scorer, say=print):
 
 
 # ---------------------------------------------------------------- the funnel
-def evaluate(ix, needs, states, variants, scorer, say=print):
+def evaluate(ix, needs, states, variants, scorer, say=say_flush):
     """stages[label][(row_type, item, point)] = stage; one line per item."""
     stages = {lab: {} for lab, _ in variants}
     by_item = collections.defaultdict(list)
@@ -522,7 +544,7 @@ def open_scorer(ix, cache_dir=CACHE_DIR, model=None):
     return CEScorer(ix.byid, d / f"ce_{ix.sha[:12]}_1500.jsonl", model=model)
 
 
-def cmd_replay(a, say=print):
+def cmd_replay(a, say=say_flush):
     ix = Index(a.index)
     if not ix.frozen_ok:
         raise SystemExit(f"index sha256 {ix.sha} is not the frozen one in {FROZEN}")
@@ -537,7 +559,7 @@ def cmd_replay(a, say=print):
     return res, detail
 
 
-def cmd_run(a, say=print):
+def cmd_run(a, say=say_flush):
     ix = Index(a.index)
     if not ix.frozen_ok:
         raise SystemExit(f"index sha256 {ix.sha} is not the frozen one in {FROZEN}")

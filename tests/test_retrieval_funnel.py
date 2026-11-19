@@ -171,6 +171,28 @@ class FunnelTests(Base):
         self.assertEqual(detail["a"], "exact")
         self.assertIn(detail["b"], ("order_only", "content"))
 
+    def test_slow_scoring_prints_progress(self):
+        import time
+
+        class Slow(StubModel):
+            def predict(self, pairs, batch_size=8):
+                time.sleep(0.5)
+                return super().predict(pairs, batch_size)
+
+        lines = []
+        sc = RF.CEScorer(self.ix.byid, Path(self.tmp.name) / "slow.jsonl", model=Slow())
+        sc.say, sc.heartbeat = lines.append, 0.1
+        got = sc.scores("alpha word5", self.ix.ids[:6])
+        self.assertGreaterEqual(len(lines), 2)
+        self.assertIn("6 pairs", lines[0])
+        self.assertEqual(got, RF.CEScorer(self.ix.byid, Path(self.tmp.name) / "ref.jsonl", model=StubModel())
+                         .scores("alpha word5", self.ix.ids[:6]))       # the heartbeat does not change scores
+
+    def test_say_flushes(self):
+        with mock.patch("builtins.print") as pr:
+            RF.say_flush("x")
+        pr.assert_called_once_with("x", flush=True)
+
     def test_parse_variant(self):
         lab, v = RF.parse_variant("r2:k=10,chars=24000")
         self.assertEqual((v.k, v.chars, v.lookup, v.fuse), (10, 24000, 2, ("bm25", "terms")))
