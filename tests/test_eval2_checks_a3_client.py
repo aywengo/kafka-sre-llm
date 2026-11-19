@@ -247,6 +247,71 @@ class JavaCallsTests(unittest.TestCase):
         ok, d = cc.check_java_calls({"required": [e]}, jb(code), {})
         self.assertTrue(ok, d)
 
+    # ---- T2b: calls through the interface or superclass a required class implements
+    def test_interface_typed_consumer_passes(self):
+        code = CONSUMER.replace("KafkaConsumer<String, String> consumer", "Consumer<String, String> consumer") \
+                       .replace("import org.apache.kafka.clients.consumer.KafkaConsumer;",
+                                "import org.apache.kafka.clients.consumer.KafkaConsumer;\nimport org.apache.kafka.clients.consumer.Consumer;")
+        ok, d = cc.check_java_calls({"required": [POLL, COMMIT]}, jb(code), {})
+        self.assertTrue(ok, d)
+        ok, d = cc.check_java_call_order({"order": [{"class": KC, "method": "subscribe"}, POLL, COMMIT]}, jb(code), {})
+        self.assertTrue(ok, d)
+        self.assertFalse(cc.check_java_calls({"required": [POLL, COMMIT]}, jb(code.replace("consumer.commitSync();", "")), {})[0])
+        # a wrong signature through the interface still fails
+        bad = code.replace("consumer.commitSync();", "consumer.commitSync(Duration.ofSeconds(5));")
+        self.assertFalse(cc.check_java_calls({"required": [POLL, COMMIT]}, jb(bad), {})[0])
+
+    def test_interface_typed_producer_and_admin_pass(self):
+        prod = """
+import org.apache.kafka.clients.producer.*;
+import java.util.Properties;
+public class P { public static void main(String[] a) {
+    Properties props = new Properties();
+    Producer<String, String> p = new KafkaProducer<>(props);
+    p.send(new ProducerRecord<>("t", "v"));
+    p.flush();
+} }"""
+        ok, d = cc.check_java_calls({"required": [
+            {"class": "org.apache.kafka.clients.producer.KafkaProducer", "method": "send",
+             "params": ["org.apache.kafka.clients.producer.ProducerRecord"]},
+            {"class": "org.apache.kafka.clients.producer.KafkaProducer", "method": "flush"}]}, jb(prod), {})
+        self.assertTrue(ok, d)
+        adm = """
+import org.apache.kafka.clients.admin.*;
+import java.util.*;
+public class A { public static void main(String[] a) throws Exception {
+    Properties props = new Properties();
+    Admin admin = Admin.create(props);
+    admin.createTopics(List.of(new NewTopic("t", 3, (short) 2)));
+} }"""
+        for cls in ("org.apache.kafka.clients.admin.Admin", "org.apache.kafka.clients.admin.AdminClient",
+                    "org.apache.kafka.clients.admin.KafkaAdminClient"):
+            ok, d = cc.check_java_calls({"required": [{"class": cls, "method": "createTopics",
+                                                       "params": ["java.util.Collection"]}]}, jb(adm), {})
+            self.assertTrue(ok, "%s: %s" % (cls, d))
+
+    def test_unrelated_type_with_same_method_name_fails(self):
+        code = """
+import java.time.Duration;
+public class U {
+    static class Fake { Object poll(Duration d) { return null; } void commitSync() {} }
+    public static void main(String[] a) { Fake c = new Fake(); c.poll(Duration.ofMillis(1)); c.commitSync(); }
+}"""
+        ok, d = cc.check_java_calls({"required": [POLL]}, jb(code), {})
+        self.assertFalse(ok)
+        self.assertIn("poll", d)
+        self.assertFalse(cc.check_java_call_order({"order": [POLL, COMMIT]}, jb(code), {})[0])
+        # the other direction: a required interface is not satisfied by a call on its subtype's own method
+        self.assertFalse(cc.check_java_calls({"required": [{"class": "org.apache.kafka.clients.consumer.Consumer",
+                                                            "method": "nosuch"}]}, jb(CONSUMER), {})[0])
+
+    @unittest.skipUnless(HAVE_API, "java_api.json is not built")
+    def test_supertypes_in_the_catalogue(self):
+        self.assertTrue(a3.java_is_subtype(KC, "org.apache.kafka.clients.consumer.Consumer"))
+        self.assertTrue(a3.java_is_subtype("org.apache.kafka.clients.admin.KafkaAdminClient", "org.apache.kafka.clients.admin.Admin"))
+        self.assertFalse(a3.java_is_subtype("org.apache.kafka.clients.consumer.Consumer", KC))
+        self.assertFalse(a3.java_is_subtype(KC, "org.apache.kafka.clients.producer.Producer"))
+
 
 @unittest.skipUnless(HAVE_JAVA, "javac, java or the pinned jars are missing")
 class JavaCallOrderTests(unittest.TestCase):

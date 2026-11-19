@@ -129,6 +129,24 @@ def java_class(fqcn, directory=None):
     return None if j is None else j["classes"].get(fqcn)
 
 
+def java_supertypes(fqcn, directory=None):
+    """All supertypes of a catalogued class (superclasses and interfaces, transitively, sorted; not the class itself).
+    Names outside the jars (java.io.Closeable) are listed but have no record to follow. Empty when unknown."""
+    seen, todo = set(), [fqcn]
+    while todo:
+        c = java_class(todo.pop(), directory)
+        for t in (c or {}).get("supertypes", []):
+            if t not in seen:
+                seen.add(t)
+                todo.append(t)
+    return sorted(seen)
+
+
+def java_is_subtype(sub, sup, directory=None):
+    """True when `sub` is `sup` or one of its subtypes according to the catalogue."""
+    return sub == sup or sup in java_supertypes(sub, directory)
+
+
 def java_methods(fqcn, name, params=None, directory=None):
     """The public methods `name` of the class; `params` (a list of type strings) narrows to one signature."""
     c = java_class(fqcn, directory)

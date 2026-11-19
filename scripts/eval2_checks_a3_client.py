@@ -270,9 +270,20 @@ def _erase(t):
     return t
 
 
-def _entry_matches(e, c):
+def _class_matches(cls, c, directory=None):
+    """The call is on the class `cls`: it is the declaring class or the static type of the receiver, or the call
+    resolved to a supertype of `cls` (an interface or superclass the class implements; `Consumer<K, V> c = new
+    KafkaConsumer<>(..); c.poll(..)` is a call of KafkaConsumer.poll). Subtypes come from the Java catalogue."""
+    if cls in (c["owner"], c["receiver"]):
+        return True
+    if c["name"] == "<init>":
+        return False
+    return any(t != "java.lang.Object" and catalogue_a3.java_is_subtype(cls, t, directory) for t in (c["owner"], c["receiver"]))
+
+
+def _entry_matches(e, c, directory=None):
     cls = e.get("class")
-    if cls and cls not in (c["owner"], c["receiver"]):
+    if cls and not _class_matches(cls, c, directory):
         return False
     if e.get("method") and e["method"] != c["name"]:
         return False
@@ -302,8 +313,9 @@ def check_java_calls(chk, text, cats):
     if bad:
         return bad
     calls = info["calls"]
-    missing = [_describe(e) for e in chk.get("required", []) if not any(_entry_matches(e, c) for c in calls)]
-    present = [_describe(e) for e in chk.get("forbidden", []) if any(_entry_matches(e, c) for c in calls)]
+    d = chk.get("catalogues_a3")
+    missing = [_describe(e) for e in chk.get("required", []) if not any(_entry_matches(e, c, d) for c in calls)]
+    present = [_describe(e) for e in chk.get("forbidden", []) if any(_entry_matches(e, c, d) for c in calls)]
     if missing or present:
         hint = ""
         if info["unresolved"]:
@@ -321,8 +333,8 @@ def ordered_subsequence(entries, calls, matches):
         nxt = next((j for j in range(pos + 1, len(calls)) if matches(e, calls[j])), None)
         if nxt is None:
             anywhere = any(matches(e, c) for c in calls)
-            name = _describe(e) if matches is _entry_matches else str(e.get("name"))
-            return False, ("%s is called, but not after %s" % (name, _describe(entries[i - 1]) if matches is _entry_matches
+            name = _describe(e) if matches is not _py_entry_matches else str(e.get("name"))
+            return False, ("%s is called, but not after %s" % (name, _describe(entries[i - 1]) if matches is not _py_entry_matches
                                                                  else str(entries[i - 1].get("name")))
                            if anywhere and i else "%s is never called" % name)
         pos = nxt
@@ -333,7 +345,8 @@ def check_java_call_order(chk, text, cats):
     info, bad = _java_info(chk, text)
     if bad:
         return bad
-    ok, detail = ordered_subsequence(chk.get("order", []), info["calls"], _entry_matches)
+    d = chk.get("catalogues_a3")
+    ok, detail = ordered_subsequence(chk.get("order", []), info["calls"], lambda e, c: _entry_matches(e, c, d))
     return ok, detail + (_note_errors(info) if ok else "")
 
 

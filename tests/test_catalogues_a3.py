@@ -205,6 +205,17 @@ JAVA = REAL / "java_api.json"
 
 @unittest.skipUnless(JAVA.is_file() and (ROOT / "raw_catalogue" / "maven").is_dir(),
                      "java_api.json not built (jars absent)")
+class HeaderSupertypesTests(unittest.TestCase):
+    def test_extends_and_implements(self):
+        f = bld.header_supertypes
+        self.assertEqual(f(" {"), [])
+        self.assertEqual(f("<K, V> implements a.b.Consumer<K, V> {"), ["a.b.Consumer"])
+        self.assertEqual(f("<K extends java.lang.Comparable<K>, V> extends a.B<K> implements a.C<K, V>, a.D {"),
+                         ["a.B", "a.C", "a.D"])
+        self.assertEqual(f(" extends java.io.Closeable, java.lang.AutoCloseable {"),
+                         ["java.io.Closeable", "java.lang.AutoCloseable"])
+
+
 class JavaApiTests(unittest.TestCase):
     def test_manifest_covers_java_api(self):
         self.assertIn("java_api.json", a3.manifest(REAL)["files"])

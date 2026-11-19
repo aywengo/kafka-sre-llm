@@ -36,7 +36,7 @@ import sys
 import zipfile
 from pathlib import Path
 
-VERSION = "build_catalogues_a3/3"
+VERSION = "build_catalogues_a3/4"
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_OUT = ROOT / "work" / "m4" / "catalogues_a3"
 FILES = ("strimzi_forbidden", "semantic_rules", "java_api", "python_symbols")      # order of the combined hash
@@ -482,6 +482,28 @@ def literal(raw):
     return raw
 
 
+def header_supertypes(tail):
+    """Direct supertypes (erased names as javap prints them, sorted) from the rest of a javap class header, after
+    the class name: '<K, V> extends a.B<K> implements a.C<K, V>, a.D {' gives ['a.B', 'a.C', 'a.D']."""
+    tail = tail.strip()
+    if tail.endswith("{"):
+        tail = tail[:-1].strip()
+    depth = 0
+    if tail.startswith("<"):                          # the class's own type parameters
+        for i, ch in enumerate(tail):
+            depth += (ch == "<") - (ch == ">")
+            if depth == 0:
+                tail = tail[i + 1:].strip()
+                break
+    names = []
+    for part in re.split(r"\b(?:extends|implements)\b", tail):
+        for t in split_top(part, ","):
+            t = re.sub(r"<.*>", "", t).strip()
+            if t:
+                names.append(t)
+    return sorted(set(names))
+
+
 def parse_javap(text):
     """{fqcn: record} for the public classes in javap -public -constants output."""
     classes, cur = {}, None
@@ -495,7 +517,8 @@ def parse_javap(text):
             if "public" in head:
                 name = m.group(2)
                 cur = {"kind": m.group(1), "modifiers": [h for h in head if h in MODS], "constructors": [],
-                       "methods": [], "fields": [], "constants": {}}
+                       "methods": [], "fields": [], "constants": {},
+                       "supertypes": header_supertypes(line[m.end():])}
                 classes[name] = cur
             continue
         if cur is None or not line.startswith("  ") or not line.rstrip().endswith(";"):
