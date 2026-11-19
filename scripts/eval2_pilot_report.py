@@ -538,7 +538,126 @@ def omission_shares(rows, findings):
     return (flagged / trials if trials else float("nan")), trials, (conf / flags if flags else float("nan")), flags
 
 
-def build_report_v2(results, review=None, findings=None, title="Judge pilot 2"):
+def probe_results(rows, rubrics):
+    """Rubric probes (eval2_judge.py gen-probes, judged in one pass): per probe set the expectations met and the ones not met.
+      probe_generic   every must point NOT present (the item's generic answer names nothing specific);
+      probe_alt       every weight-2 point satisfied (present, or a member of its any_of group present) and no must-not present
+                      (the documented correct alternative);
+      probe_ref       every weight-2 point present and no must-not present (the item's reference answer);
+      probe_nearmiss  the targeted must-not point NOT present (reference + that point's near_miss sentence; ids '<item>~<point>').
+    An answer without a valid reply or without a result row leaves its expectations unmet (note 'no valid reply' / 'not judged').
+    -> {set: {"expected": int, "met": int, "unmet": [(item, point, note)], "answers": int}}."""
+    rub = {r["id"]: r for r in rubrics}
+    by = {}
+    for r in rows:
+        by.setdefault(r["set"], {})[r["id"]] = r
+    out = {}
+
+    def quote_of(e):
+        return (e.get("quote") or "")[:100]
+
+    def tally(name, expectations):
+        out[name] = {"expected": len(expectations), "met": sum(1 for _, _, ok, _ in expectations if ok),
+                     "unmet": [(i, p, note) for i, p, ok, note in expectations if not ok],
+                     "answers": len(by.get(name, {}))}
+
+    for name in ("probe_generic", "probe_alt", "probe_ref"):
+        exp, seen_groups = [], set()
+        for rid, rb in rub.items():
+            row = by.get(name, {}).get(rid)
+            groups = ej.groups_of(rb)
+            targets = [("must", p) for p in rb["must"]] if name == "probe_generic" else \
+                [("must", p) for p in rb["must"] if p["weight"] == 2]
+            if name != "probe_generic":
+                targets += [("must_not", p) for p in rb.get("must_not") or []]
+            for kind, p in targets:
+                if row is None or not row.get("valid_reply"):
+                    exp.append((rid, p["id"], False, "not judged" if row is None else "no valid reply"))
+                    continue
+                v = row[kind][p["id"]]
+                if kind == "must_not" or name == "probe_generic":
+                    ok = v["verdict"] != "present"
+                    exp.append((rid, p["id"], ok, "" if ok else f"judge: {v['verdict']}, quote: {quote_of(v)}"))
+                    continue
+                mv = {k: x["verdict"] for k, x in row["must"].items()}
+                grp = next((g for g in groups if p["id"] in g), {p["id"]})
+                if name == "probe_alt" and len(grp) > 1:
+                    # the alternative has to satisfy the essential point through its any_of group: one expectation per group
+                    if (rid, sorted(grp)[0]) in seen_groups:
+                        continue
+                    seen_groups.add((rid, sorted(grp)[0]))
+                    ok = any(mv.get(i) == "present" for i in grp)
+                    exp.append((rid, "+".join(sorted(grp)), ok, "" if ok else "judge: no member of the any_of group present (" + ", ".join(f"{i}: {mv.get(i)}" for i in sorted(grp)) + ")"))
+                    continue
+                ok = mv.get(p["id"]) == "present" or (name == "probe_alt" and any(mv.get(i) == "present" for i in grp))
+                exp.append((rid, p["id"], ok, "" if ok else f"judge: {mv.get(p['id'])}"))
+        tally(name, exp)
+    exp = []
+    for rid, rb in rub.items():
+        for pt in rb.get("must_not") or []:
+            pid = f"{rid}{ej.PROBE_SEP}{pt['id']}"
+            row = by.get("probe_nearmiss", {}).get(pid)
+            if row is None or not row.get("valid_reply"):
+                exp.append((rid, pt["id"], False, "not judged" if row is None else "no valid reply"))
+                continue
+            v = row["must_not"][pt["id"]]
+            ok = v["verdict"] != "present"
+            exp.append((rid, pt["id"], ok, "" if ok else f"judge: present, quote: {quote_of(v)}"))
+    tally("probe_nearmiss", exp)
+    return out
+
+
+PROBE_TEXT = (("probe_generic", "generic answer", "no must point present"),
+              ("probe_alt", "correct alternative", "every essential point satisfied through any_of, no must-not present"),
+              ("probe_ref", "reference answer", "every weight-2 point present, no must-not present"),
+              ("probe_nearmiss", "reference + near-miss sentence", "the targeted must-not point not present"))
+
+
+def probe_section(rows, rubrics):
+    res = probe_results(rows, rubrics)
+    L = ["## Rubric probes", "",
+         "One pass each, judged like any answer (instruction v2, no pack, so ANSWER EXCERPTS is '(not available)'). A point not met is a "
+         "defect of the rubric or of the judge to look at; these are not go or no-go criteria.", ""]
+    for name, what, expect in PROBE_TEXT:
+        r = res[name]
+        L.append(f"- **{name}** ({what}; {r['answers']} answers; expected: {expect}): **{r['met']} of {r['expected']} expectations met**.")
+        for i, p, note in r["unmet"]:
+            L.append(f"  - not met: {i} {p}" + (f" ({note})" if note else ""))
+    L.append("")
+    return L, res
+
+
+def source_section(rubrics, chunks):
+    """How the must points' `source` fields map to the index: by file path against the chunks' `path` (a path that is relative to its
+    source's root gets 'raw/<source>/' in front; the paths of the frozen index already start with raw/ or data/, so the match is
+    exact). Points without a file path in the source ('searched ...', 'inferred', 'not covered') have no source to match and can never
+    be a supported essential miss; neither can points whose only file is a tool source of the catalogues (raw_catalogue/...)."""
+    idx = ej.index_paths_of(chunks)
+    kinds = Counter()
+    ess = Counter()
+    for rb in rubrics:
+        for p in rb["must"]:
+            k = ej.point_source_kind(p, idx)
+            kinds[k] += 1
+            if p["weight"] == 2:
+                ess[k] += 1
+    n, ne = sum(kinds.values()), sum(ess.values())
+    L = ["## Sources of the must points", "",
+         "Matching: the file paths in a point's `source` (the first word of each ';' segment that starts with raw/ or data/, ':lines' removed) "
+         "against the chunks' canonical `path` (the index paths start with raw/ or data/ already, otherwise 'raw/<source>/' is put in "
+         "front); a chunk carries no line numbers, so the match is file level: every chunk of the file counts as a place the point may be.", "",
+         "| source of the point | all must points | weight-2 points |", "|---|---|---|"]
+    for k, label in (("index", "file path with chunks in the index"), ("not_indexed", "raw/ or data/ path without a chunk"),
+                     ("catalogue", "only a raw_catalogue file (tool source, not in the index)"),
+                     ("none", "no file path ('searched', 'inferred', 'not covered')")):
+        L.append(f"| {label} | {kinds[k]} | {ess[k]} |")
+    L.append(f"| total | {n} | {ne} |")
+    L += ["", f"Points that can never be a supported essential miss: {n - kinds['index']} of {n} ({ne - ess['index']} of {ne} with weight 2); "
+          f"of these, {kinds['none']} have no source that is a file path.", ""]
+    return L
+
+
+def build_report_v2(results, review=None, findings=None, title="Judge pilot 2", probes=None, rubrics=None, chunks=None):
     """The second pilot's report: measures, the five criteria, the ordering against the reviewer, the verdict.
     results: result rows (instruction v2); rows given a reference answer (arm 3) are shown apart and left out of the criteria.
     review, findings: the reviewer's files or None. -> (text, numbers)."""
@@ -699,7 +818,15 @@ def build_report_v2(results, review=None, findings=None, title="Judge pilot 2"):
                                    + "".join(f" {k}: no data (N/A), not decided." for k in waiting if cs[k] == "N/A"))
     out(f"**Go or no-go: {'GO' if go else 'NO-GO'}** ({sum(v == 'PASS' for v in cs.values())} of 5 criteria passed, "
         f"{len(failed_c)} failed, {len(waiting)} open).{tail} Not a GO until every criterion has passed.")
-    return "\n".join(L) + "\n", {"kappa": kappa, "variance_share_S": med["S"], "variance_share_P": med["P"], "quote_fail_share": qs,
+    probe_res = None
+    if probes is not None and rubrics is not None:
+        out("")
+        pl, probe_res = probe_section(probes, rubrics)
+        L += pl
+    if rubrics is not None and chunks:
+        out("")
+        L += source_section(rubrics, chunks)
+    return "\n".join(L) + "\n", {"kappa": kappa, "probes": probe_res, "variance_share_S": med["S"], "variance_share_P": med["P"], "quote_fail_share": qs,
                                   "criteria": cs, "go": go, "precision_recall": pr_by_pass}
 
 
@@ -716,9 +843,14 @@ def main(argv=None):
     ap.add_argument("--review", help="--v2: review file of eval2_judge.py flags, with confirmed and note filled in")
     ap.add_argument("--findings", help="--v2: the reviewer's findings per answer (JSONL, see the module docstring)")
     ap.add_argument("--title", default="Judge pilot 2")
+    ap.add_argument("--probes", help="--v2: --out file of eval2_judge.py run on the probe sets (needs --rubrics, the ORIGINAL rubrics file)")
+    ap.add_argument("--chunks", help="--v2: chunk index (JSONL); with --rubrics adds the section on the sources of the must points")
     a = ap.parse_args(argv)
     if a.v2:
-        text, _ = build_report_v2(rd(a.results), rd(a.review) if a.review else None, rd(a.findings) if a.findings else None, a.title)
+        rubs = rd(a.rubrics) if (a.probes or a.chunks) else None
+        chunks = {c["id"]: c for c in rd(a.chunks)} if a.chunks else None
+        text, _ = build_report_v2(rd(a.results), rd(a.review) if a.review else None, rd(a.findings) if a.findings else None, a.title,
+                                  rd(a.probes) if a.probes else None, rubs, chunks)
         sys.stdout.write(text)
         return 0
     om = [(r["set"], r["id"]) for r in rd(a.omissions)] if a.omissions else None

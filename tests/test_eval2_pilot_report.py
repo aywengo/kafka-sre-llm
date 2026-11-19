@@ -328,5 +328,77 @@ class ReportV2Measures(unittest.TestCase):
         self.assertIn("Go or no-go", buf.getvalue())
 
 
+PROBE_RUBRIC = {"id": "r-1",
+                "must": [{"id": "m1", "text": "a", "weight": 2, "first": True, "source": "raw/src/a.md:1"},
+                         {"id": "m2", "text": "b", "weight": 2, "first": False, "source": "raw/src/b.md:1"},
+                         {"id": "m3", "text": "c", "weight": 2, "first": False, "source": "inferred"},
+                         {"id": "m4", "text": "d", "weight": 1, "first": False, "source": "raw_catalogue/t/T.java:1"}],
+                "must_not": [{"id": "n1", "text": "x", "severity": "wrong"}, {"id": "n2", "text": "y", "severity": "harmful"}],
+                "any_of": [["m2", "m3"]]}
+
+
+def prow(set_, rid, must, must_not, valid=True):
+    if not valid:
+        return {"set": set_, "id": rid, "valid_reply": False}
+    return {"set": set_, "id": rid, "valid_reply": True,
+            "must": {k: {"verdict": v, "quote": "q " + k} for k, v in must.items()},
+            "must_not": {k: {"verdict": v, "quote": "q " + k} for k, v in must_not.items()}}
+
+
+ALL_ABSENT = {"m1": "absent", "m2": "absent", "m3": "absent", "m4": "absent"}
+NONE_NOT = {"n1": "absent", "n2": "absent"}
+
+
+class RubricProbes(unittest.TestCase):
+    def test_counts_and_unmet_points_per_probe(self):
+        rows = [
+            prow("probe_generic", "r-1", dict(ALL_ABSENT, m4="present"), NONE_NOT),                      # m4 present: 1 of 4 not met
+            prow("probe_alt", "r-1", dict(ALL_ABSENT, m1="present", m3="present"), dict(NONE_NOT, n2="present")),   # group {m2,m3} via m3; n2 hit
+            prow("probe_ref", "r-1", dict(ALL_ABSENT, m1="present", m2="present"), NONE_NOT),            # m3 (weight 2) absent: not met
+            prow("probe_nearmiss", "r-1~n1", ALL_ABSENT, NONE_NOT),
+            prow("probe_nearmiss", "r-1~n2", ALL_ABSENT, dict(NONE_NOT, n2="present")),
+        ]
+        res = pr.probe_results(rows, [PROBE_RUBRIC])
+        self.assertEqual((res["probe_generic"]["met"], res["probe_generic"]["expected"]), (3, 4))
+        self.assertEqual([(i, p) for i, p, _ in res["probe_generic"]["unmet"]], [("r-1", "m4")])
+        # alt: units m1, the group m2+m3 (met through m3), n1, n2 -> 4 expectations, n2 unmet
+        self.assertEqual((res["probe_alt"]["met"], res["probe_alt"]["expected"]), (3, 4))
+        self.assertEqual([(i, p) for i, p, _ in res["probe_alt"]["unmet"]], [("r-1", "n2")])
+        # ref: weight-2 points m1, m2, m3 present, plus n1, n2 absent -> m3 unmet
+        self.assertEqual((res["probe_ref"]["met"], res["probe_ref"]["expected"]), (4, 5))
+        self.assertEqual([(i, p) for i, p, _ in res["probe_ref"]["unmet"]], [("r-1", "m3")])
+        self.assertEqual((res["probe_nearmiss"]["met"], res["probe_nearmiss"]["expected"]), (1, 2))
+        self.assertEqual([(i, p) for i, p, _ in res["probe_nearmiss"]["unmet"]], [("r-1", "n2")])
+
+    def test_missing_or_invalid_answers_are_unmet_not_skipped(self):
+        res = pr.probe_results([prow("probe_nearmiss", "r-1~n1", {}, {}, valid=False)], [PROBE_RUBRIC])
+        self.assertEqual(res["probe_nearmiss"]["met"], 0)
+        self.assertEqual([n for _, _, n in res["probe_nearmiss"]["unmet"]], ["no valid reply", "not judged"])
+        self.assertEqual(res["probe_generic"]["expected"], 4)
+        self.assertEqual(res["probe_generic"]["met"], 0)
+
+    def test_section_in_the_report_and_not_a_criterion(self):
+        rows = [row2("d", "q-1", p, {"m1": "present", "m2": "absent", "m3": "present"}) for p in (1, 2)]
+        probes = [prow("probe_generic", "r-1", ALL_ABSENT, NONE_NOT)]
+        text, nums = pr.build_report_v2(rows, probes=probes, rubrics=[PROBE_RUBRIC], chunks={"c1": {"id": "c1", "source": "src", "path": "raw/src/a.md", "text": "t"}})
+        self.assertIn("## Rubric probes", text)
+        self.assertIn("**probe_generic** (generic answer; 1 answers; expected: no must point present): **4 of 4 expectations met**", text)
+        self.assertIn("**probe_nearmiss**", text)
+        self.assertNotIn("probe_", text.split("## The five criteria")[1].split("## Rubric probes")[0])
+        self.assertEqual(nums["criteria"].keys(), {"1 kappa", "2 variance share", "3 quote failures", "4 flag precision and recall", "5 supported omissions"})
+        self.assertNotIn("## Rubric probes", pr.build_report_v2(rows)[0])
+
+
+class SourceSection(unittest.TestCase):
+    def test_counts_of_points_without_a_source_to_match(self):
+        chunks = {"c1": {"id": "c1", "source": "src", "path": "raw/src/a.md", "text": "t"},
+                  "c2": {"id": "c2", "source": "src", "path": "b.md", "text": "t"}}          # relative to the source's root
+        text = "\n".join(pr.source_section([PROBE_RUBRIC], chunks))
+        self.assertIn("| file path with chunks in the index | 2 | 2 |", text)       # m1, m2 (b.md becomes raw/src/b.md)
+        self.assertIn("| only a raw_catalogue file (tool source, not in the index) | 1 | 0 |", text)
+        self.assertIn("| no file path ('searched', 'inferred', 'not covered') | 1 | 1 |", text)
+        self.assertIn("Points that can never be a supported essential miss: 2 of 4 (1 of 3 with weight 2); of these, 1 have no source", text)
+
+
 if __name__ == "__main__":
     unittest.main()

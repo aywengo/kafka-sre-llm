@@ -47,6 +47,7 @@ Version 2 of the judge step (runs/m4/reports/s5_pilot_analysis.md, design change
   source_quote          v2: an other-errors entry needs a "source_quote" found in SOURCE PASSAGES or ANSWER EXCERPTS; others are dropped
   --with-reference      adds the rubric's "reference" answer to the judge's input (an arm of its own; off by default)
   flags                 write the candidate errors of a results file to a review file (columns confirmed, note left empty)
+  gen-probes            second pilot: the probe answer sets (generic, correct_alternative, reference, near-miss) and their rubrics file
   confirmed             read a filled review file back: confirmed wrong and harmful items per 10 answers per answer set
 """
 import argparse
@@ -77,13 +78,18 @@ _V1_OTHER = ('Then list any other statement in the answer that contradicts the s
              'Do not list statements that are only missing from the sources.')
 _V2_OTHER = ('List another statement only if a sentence in SOURCE PASSAGES or ANSWER EXCERPTS contradicts it. '
              'Quote that sentence in "source_quote". Do not list statements that are absent from them.')
+_V1_MUSTNOT = ('For each MUST-NOT point, the verdict is "present" if the answer states or recommends it, even in passing or as an alternative, '
+               'and "absent" otherwise. A statement the answer explicitly rejects is "absent".')
+_V2_MUSTNOT = ('For each MUST-NOT point, the verdict is "present" only if the answer states or recommends it and the point\'s "Applies" note, '
+               'if it has one, holds for what the answer says; where a point has no "Applies" note, a statement made in passing or as an '
+               'alternative counts. A statement the answer explicitly rejects, or mentions only to warn against, is "absent".')
 _V1_FORMAT = '"other_errors":[{"quote":"","why":""}]'
 _V2_FORMAT = '"other_errors":[{"quote":"","source_quote":"","why":""}]'
-assert _V1_MUST_END in JUDGE_INSTRUCTION_V1 and _V1_OTHER in JUDGE_INSTRUCTION_V1 and _V1_FORMAT in JUDGE_INSTRUCTION_V1
+assert _V1_MUSTNOT in JUDGE_INSTRUCTION_V1 and _V1_MUST_END in JUDGE_INSTRUCTION_V1 and _V1_OTHER in JUDGE_INSTRUCTION_V1 and _V1_FORMAT in JUDGE_INSTRUCTION_V1
 JUDGE_INSTRUCTION_V2 = (JUDGE_INSTRUCTION_V1
                         .replace(_V1_MUST_END, 'the verdict is "absent". A definition of a setting is not a recommendation to change it; '
                                  'a default value is not a change.\nFor each MUST-NOT point')
-                        .replace(_V1_OTHER, _V2_OTHER).replace(_V1_FORMAT, _V2_FORMAT))
+                        .replace(_V1_MUSTNOT, _V2_MUSTNOT).replace(_V1_OTHER, _V2_OTHER).replace(_V1_FORMAT, _V2_FORMAT))
 INSTRUCTIONS = {"v1": JUDGE_INSTRUCTION_V1, "v2": JUDGE_INSTRUCTION_V2}
 DEFAULT_INSTRUCTION = "v2"   # the command line; the functions below default to "v1" so that old callers are unchanged
 
@@ -252,16 +258,29 @@ def prepare_items(items, chunks, cap, excerpt_cap=DEFAULT_EXCERPT_CHARS, instruc
             it["source"] = source_text(it["rubric"], chunks, cap)
         ids = it.get("pack")
         if ids and "excerpt_paths" not in it:
-            it["excerpt_paths"] = [(chunks[c].get("path") or "") for c in ids if c in chunks]
+            it["excerpt_paths"] = [canon_path(chunks[c]) for c in ids if c in chunks]
+        if chunks and "index_paths" not in it:
+            it["index_paths"] = index_paths_of(chunks)
         if instruction != "v1" and cap > 0 and it.get("excerpts") is None:
             it["excerpts"] = excerpt_text(ids, chunks, excerpt_cap) if ids else None
     return items
 
 
-def point_text(p):
+FIRST_NOTE = "(This must be the main or first recommendation, not one option among several.)"
+
+
+def point_text(p, instruction="v1"):
+    """Text of a point as the judge sees it. A point with first: true. v1 (first pilot, kept as it was): the note is added unless
+    the text already contains 'first' or 'main'. Later versions: the note is added unless the text already says 'must be the main
+    or first recommendation' (a cause point that begins 'Makes the main diagnosis' needs it). A must-not point that gives a
+    'condition' shows it as '(Applies: <condition>)'; its 'near_miss' is never shown (it is a test of the rubric)."""
     t = p["text"].strip()
-    if p.get("first") and "first" not in t.lower() and "main" not in t.lower():
-        t += " (This must be the main or first recommendation, not one option among several.)"
+    if p.get("first"):
+        low = t.lower()
+        if (("first" not in low and "main" not in low) if instruction == "v1" else "must be the main or first recommendation" not in low):
+            t += " " + FIRST_NOTE
+    if (p.get("condition") or "").strip():
+        t += f" (Applies: {p['condition'].strip()})"
     return t
 
 
@@ -281,8 +300,8 @@ def build_prompt(item, pass_no, chunks, cap, instruction="v1", excerpt_cap=DEFAU
     lines = [f"QUESTION:\n{item['question'].strip()}"]
     if r.get("evidence"):
         lines.append(f"EVIDENCE (pasted by the operator):\n{r['evidence'].strip()}")
-    lines.append("MUST points:\n" + "\n".join(f"- id {p['id']}: {point_text(p)}" for p in must))
-    lines.append("MUST-NOT points:\n" + ("\n".join(f"- id {p['id']}: {point_text(p)}" for p in must_not) or "(none)"))
+    lines.append("MUST points:\n" + "\n".join(f"- id {p['id']}: {point_text(p, instruction)}" for p in must))
+    lines.append("MUST-NOT points:\n" + ("\n".join(f"- id {p['id']}: {point_text(p, instruction)}" for p in must_not) or "(none)"))
     if cap > 0:
         src = item.get("source")
         if src is None:
@@ -387,15 +406,69 @@ def essential_points(rubric, must_v):
     return out
 
 
+def canon_path(chunk):
+    """Path of a chunk as the rubrics name files: 'raw/...' or 'data/...' as it is; a path relative to its source's root
+    ('docs/x.md') gets 'raw/<source>/' in front."""
+    p = chunk.get("path") or ""
+    return p if p.startswith(("raw/", "data/")) else f"raw/{chunk.get('source', '')}/{p}"
+
+
+def index_paths_of(chunks):
+    """{canonical file path: [chunk ids]} of the chunk index (cached on the dict object's id for the run)."""
+    key = id(chunks)
+    if _INDEX_CACHE.get("key") != key:
+        m = {}
+        for cid, c in chunks.items():
+            m.setdefault(canon_path(c), []).append(cid)
+        _INDEX_CACHE.update(key=key, map=m)
+    return _INDEX_CACHE["map"]
+
+
+_INDEX_CACHE = {}
+
+
+def _source_tokens(point, prefixes):
+    """First word of each ';'-separated segment of the point's 'source' that starts with one of `prefixes`, without ':lines'.
+    A segment that starts with a word such as 'searched', 'inferred' or 'not covered' names no file."""
+    out = []
+    for seg in (point.get("source") or "").split(";"):
+        words = seg.split()
+        if words and words[0].startswith(prefixes):
+            out.append(re.sub(r":\d[\d,-]*$", "", words[0]))
+    return out
+
+
 def point_paths(point):
-    """Source file paths named in a must point's 'source' field ('raw/x/y.md:12; raw/z.adoc:40-50' -> ['raw/x/y.md', 'raw/z.adoc'])."""
-    return [re.sub(r":\d+(?:-\d+)?$", "", m) for m in re.findall(r"raw/[^\s;,]+", point.get("source") or "")]
+    """Index file paths named in a must point's 'source' ('raw/x/y.md:12; data/z.md:40-50' -> ['raw/x/y.md', 'data/z.md'])."""
+    return _source_tokens(point, ("raw/", "data/"))
 
 
-def supported_points(rubric, point_ids, pack, excerpt_paths):
+def point_catalogue_paths(point):
+    """Tool source files of the catalogues ('raw_catalogue/...'); they are not in the chunk index."""
+    return _source_tokens(point, ("raw_catalogue/",))
+
+
+def point_source_kind(point, index_paths):
+    """'index' (a file path with chunks in the index), 'not_indexed' (a raw/ or data/ path without chunks), 'catalogue'
+    (only a raw_catalogue path), 'none' (no file path at all: 'searched ...', 'inferred', 'not covered')."""
+    paths = point_paths(point)
+    if paths:
+        return "index" if any(x in index_paths for x in paths) else "not_indexed"
+    return "catalogue" if point_catalogue_paths(point) else "none"
+
+
+def point_chunks(point, index_paths):
+    """Chunk ids of the files named in the point's source (file level: the sources carry line numbers of the original file,
+    the chunks do not)."""
+    return sorted({c for x in point_paths(point) for c in index_paths.get(x, [])})
+
+
+def supported_points(rubric, point_ids, pack, excerpt_paths, index_paths=None):
     """For essential-miss points: is the point's source among the answer's own excerpts?
-    Rule: by chunk id when the point gives 'chunks' (ids), otherwise by source file path against the excerpts' paths.
-    -> [{"id", "supported": bool, "rule": "chunk"|"path"|"none"|"no_pack"}]; 'none': the point names neither."""
+    Rule: by chunk id when the point gives 'chunks' (ids), otherwise by source file path against the excerpts' canonical paths.
+    -> [{"id", "supported": bool, "rule": "chunk"|"path"|"none"|"no_pack"|"not_indexed"|"catalogue"}]. 'none': the point names no file;
+    with index_paths given: 'not_indexed' (a raw/ or data/ path that has no chunk in the index) and 'catalogue' (only a
+    raw_catalogue path): such a point can never be a supported miss."""
     pts = {p["id"]: p for p in rubric["must"]}
     out = []
     for pid in point_ids:
@@ -405,7 +478,12 @@ def supported_points(rubric, point_ids, pack, excerpt_paths):
         elif p.get("chunks"):
             out.append({"id": pid, "supported": any(c in set(pack) for c in p["chunks"]), "rule": "chunk"})
         elif point_paths(p):
-            out.append({"id": pid, "supported": any(x in set(excerpt_paths or []) for x in point_paths(p)), "rule": "path"})
+            if index_paths is not None and not any(x in index_paths for x in point_paths(p)):
+                out.append({"id": pid, "supported": False, "rule": "not_indexed"})
+            else:
+                out.append({"id": pid, "supported": any(x in set(excerpt_paths or []) for x in point_paths(p)), "rule": "path"})
+        elif index_paths is not None and point_catalogue_paths(p):
+            out.append({"id": pid, "supported": False, "rule": "catalogue"})
         else:
             out.append({"id": pid, "supported": False, "rule": "none"})
     return out
@@ -527,7 +605,7 @@ def result_row(item, pass_no, entry):
         item["rubric"], item["answer"], j, ins, item.get("source"), item.get("excerpts"))
     must_v = {k: v["verdict"] for k, v in must.items()}
     sc = score_item(item["rubric"], must_v, {k: v["verdict"] for k, v in must_not.items()})
-    ess = supported_points(item["rubric"], essential_points(item["rubric"], must_v), item.get("pack"), item.get("excerpt_paths"))
+    ess = supported_points(item["rubric"], essential_points(item["rubric"], must_v), item.get("pack"), item.get("excerpt_paths"), item.get("index_paths"))
     cands = candidate_errors(item["rubric"], must, must_not, other)
     return {**base, "valid_reply": True, "must": must, "must_not": must_not, "other_errors": other,
             "other_errors_n": len(other), "other_dropped": errors.count("source_quote_not_found:other"),
@@ -710,6 +788,44 @@ def generic_answers(rubrics, qmap):
     return [{"label": "generic", "question": rubric_question(r, qmap), "text": GENERIC_TEMPLATE} for r in rubrics]
 
 
+PROBE_SETS = (("probe_generic", "generic"), ("probe_alt", "correct_alternative"), ("probe_ref", "reference"))
+PROBE_NEARMISS = "probe_nearmiss"
+PROBE_SEP = "~"
+
+
+def make_probes(rubrics, items_by_id):
+    """The probe answer sets of a rubric file (second pilot), built from the rubric only.
+    probe_generic / probe_alt / probe_ref: the rubric's 'generic', 'correct_alternative' and 'reference' answer, one per item.
+    probe_nearmiss: for each must-not point, one answer = the item's reference (whitespace collapsed to one paragraph) with the
+    point's 'near_miss' sentence appended, under the id '<item>~<point>' with a copy of the item's rubric of that id.
+    -> (probe rubrics: the originals with question and evidence filled in, then the near-miss copies; {set: [answer rows]}).
+    Raises ValueError for a rubric without one of the fields (nothing is guessed)."""
+    out_rubrics, sets = [], {name: [] for name, _ in PROBE_SETS}
+    sets[PROBE_NEARMISS] = []
+    near = []
+    for r in rubrics:
+        it = items_by_id.get(r["id"])
+        if it is None:
+            raise ValueError(f"no item for rubric {r['id']}")
+        base = {**r, "question": r.get("question") or it["question"]}
+        if (it.get("evidence") or "").strip() and not base.get("evidence"):
+            base["evidence"] = it["evidence"]
+        out_rubrics.append(base)
+        for name, field in PROBE_SETS:
+            text = (r.get(field) or "").strip()
+            if not text:
+                raise ValueError(f"rubric {r['id']}: no '{field}' for the probe")
+            sets[name].append({"id": r["id"], "label": name, "text": text})
+        for pt in r.get("must_not") or []:
+            nm = (pt.get("near_miss") or "").strip()
+            if not nm or not (r.get("reference") or "").strip():
+                raise ValueError(f"rubric {r['id']}: must-not {pt['id']} has no near_miss, or the rubric has no reference")
+            pid = f"{r['id']}{PROBE_SEP}{pt['id']}"
+            near.append({**base, "id": pid, "probe_of": r["id"]})
+            sets[PROBE_NEARMISS].append({"id": pid, "label": PROBE_NEARMISS, "text": norm_ws(r["reference"]) + " " + norm_ws(nm)})
+    return out_rubrics + near, sets
+
+
 # ---------------------------------------------------------------- measures, review file
 
 def measures(rows):
@@ -825,6 +941,9 @@ def main(argv=None):
     cf.add_argument("--results", nargs="+", required=True)
     g = sub.add_parser("gen-generic", parents=[common], help="write the generic-answer probe file")
     g.add_argument("--out", required=True)
+    gp = sub.add_parser("gen-probes", parents=[common], help="write the probe answer sets and the probe rubrics file (second pilot)")
+    gp.add_argument("--items", required=True, help="JSONL of items (id, question, optional evidence)")
+    gp.add_argument("--out-dir", required=True, help="writes probe_rubrics.jsonl and one <set>.jsonl per probe set here")
     r = sub.add_parser("run", parents=[common], help="judge answers against rubrics")
     r.add_argument("--answers", nargs="+", required=True, metavar="NAME=PATH")
     r.add_argument("--chunks", help="JSONL of chunks (id, text) for rubrics that give covered_chunks")
@@ -885,6 +1004,20 @@ def main(argv=None):
         print(f"wrote {len(rows)} generic answers to {a.out}")
         return 0
 
+    if a.cmd == "gen-probes":
+        try:
+            prubs, psets = make_probes(rubrics, {x["id"]: x for x in rd(a.items)})
+        except ValueError as e:
+            print(str(e), file=sys.stderr)
+            return 1
+        d = Path(a.out_dir)
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "probe_rubrics.jsonl").write_text("".join(json.dumps(x, ensure_ascii=False) + "\n" for x in prubs))
+        for name, rows in psets.items():
+            (d / f"{name}.jsonl").write_text("".join(json.dumps(x, ensure_ascii=False) + "\n" for x in rows))
+        print(f"wrote {len(prubs)} probe rubrics and " + ", ".join(f"{name} {len(rows)}" for name, rows in psets.items()) + f" answers to {d}")
+        return 0
+
     sets = OrderedDict()
     for spec in a.answers:
         name, _, path = spec.partition("=")
@@ -905,7 +1038,7 @@ def main(argv=None):
     if a.items:
         by_id = {x["id"]: x for x in rd(a.items)}
         for rb in rubrics:
-            it = by_id.get(rb["id"])
+            it = by_id.get(rb.get("probe_of") or rb["id"])
             if it is None:
                 ap.error(f"--items {a.items}: no item for rubric {rb['id']}")
             rb.setdefault("question", it["question"])

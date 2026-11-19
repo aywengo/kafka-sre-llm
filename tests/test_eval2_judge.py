@@ -124,7 +124,9 @@ class Prompt(unittest.TestCase):
 
     def test_instruction_verbatim_and_no_reference(self):
         design = (ROOT / "agents/m4-evaluation.md").read_text()
-        self.assertTrue(ej.JUDGE_INSTRUCTION_V1 in design or ej.JUDGE_INSTRUCTION_V2 in design)   # the design states the version in use
+        # the design states the version in use: v1, v2 as it is now (before the Applies sentence was put in) or v2 with it
+        v2_before = ej.JUDGE_INSTRUCTION_V2.replace(ej._V2_MUSTNOT, ej._V1_MUSTNOT)
+        self.assertTrue(any(t in design for t in (ej.JUDGE_INSTRUCTION_V1, v2_before, ej.JUDGE_INSTRUCTION_V2)))
         system, user = ej.build_prompt(dict(self.item(), rubric=dict(RUBRIC, reference="SECRET ANSWER")), 1, {}, 1000)
         self.assertEqual(system, ej.JUDGE_INSTRUCTION)
         self.assertNotIn("SECRET ANSWER", user)
@@ -550,9 +552,13 @@ class InstructionVersions(unittest.TestCase):
         self.assertEqual(hashlib.md5(ej.JUDGE_INSTRUCTION_V1.encode()).hexdigest(), "450b8509430fcf16ce0b1e2fc9afd528")
         self.assertIs(ej.JUDGE_INSTRUCTION, ej.JUDGE_INSTRUCTION_V1)
 
-    def test_v2_differs_in_exactly_three_places(self):
+    def test_v2_differs_in_exactly_four_places(self):
         v1, v2 = ej.JUDGE_INSTRUCTION_V1, ej.JUDGE_INSTRUCTION_V2
-        back = (v2.replace(" A definition of a setting is not a recommendation to change it; a default value is not a change.", "")
+        self.assertIn('For each MUST-NOT point, the verdict is "present" only if the answer states or recommends it and the point\'s "Applies" note, '
+                      'if it has one, holds for what the answer says; where a point has no "Applies" note, a statement made in passing or as an '
+                      'alternative counts. A statement the answer explicitly rejects, or mentions only to warn against, is "absent".', v2)
+        self.assertNotIn("even in passing", v2)
+        back = (v2.replace(ej._V2_MUSTNOT, ej._V1_MUSTNOT).replace(" A definition of a setting is not a recommendation to change it; a default value is not a change.", "")
                 .replace(ej._V2_OTHER, ej._V1_OTHER).replace(ej._V2_FORMAT, ej._V1_FORMAT))
         self.assertEqual(back, v1)
         self.assertIn("A definition of a setting is not a recommendation to change it; a default value is not a change.", v2)
@@ -560,7 +566,7 @@ class InstructionVersions(unittest.TestCase):
                       'Quote that sentence in "source_quote". Do not list statements that are absent from them.', v2)
         self.assertIn('"other_errors":[{"quote":"","source_quote":"","why":""}]', v2)
         self.assertNotIn("source_quote", v1)
-        self.assertEqual(len([1 for a, b in zip(v1.splitlines(), v2.splitlines()) if a != b]), 3)
+        self.assertEqual(len([1 for a, b in zip(v1.splitlines(), v2.splitlines()) if a != b]), 4)
 
     def test_cache_key_v1_as_before_v2_separate(self):
         it = {"set": "s", "id": "t-1"}
@@ -837,6 +843,154 @@ class MainSubcommands(unittest.TestCase):
             self.assertIn(f"instruction {ins}: ", out)             # the settings line names the version
             self.assertEqual("own excerpts" in out, ins == "v2")   # v1 does not look at the pack
 
+RICH = {
+    "id": "r-1",
+    "must": [{"id": "m1", "text": "Makes the main diagnosis that X is held back.", "weight": 2, "first": True, "source": "raw/src/a.md:1-5"},
+             {"id": "m2", "text": "Checks it read-only.", "weight": 2, "first": False,
+              "source": "searched raw/src/dir (no occurrence); inferred"},
+             {"id": "m3", "text": "Runs the tool.", "weight": 1, "first": False,
+              "source": "raw_catalogue/tools/T.java:10-20,30-40"},
+             {"id": "m4", "text": "Aborts.", "weight": 1, "first": True, "source": "inferred; data/rb/x.md:4; raw/src/b.md:2"}],
+    "must_not": [{"id": "n1", "text": "Resets offsets as the fix.", "severity": "harmful",
+                  "condition": "only if recommended as the fix", "near_miss": "NEARMISS-SENTENCE-ONE"},
+                 {"id": "n2", "text": "Deletes records.", "severity": "wrong", "condition": "", "near_miss": "NEARMISS-SENTENCE-TWO"}],
+    "any_of": [["m3", "m4"]], "covered_chunks": ["c1"],
+    "reference": "REFERENCE-TEXT-A.\nSecond line.", "correct_alternative": "ALT-TEXT-A", "generic": "GENERIC-TEXT-A",
+    "note": "NOTE-TEXT", "weights_status": "proposed by the writer",
+}
+RICH_ITEM = {"id": "r-1", "question": "What is going on?", "evidence": "log line one"}
+
+
+class PointRendering(unittest.TestCase):
+    def prompt(self, instruction="v2", with_reference=False, pass_no=1):
+        rb = dict(RICH, question="What is going on?", evidence="log line one")
+        item = {"set": "s", "id": "r-1", "question": rb["question"], "answer": "An answer.", "rubric": rb, "pack": None}
+        if with_reference:
+            item["reference"] = rb["reference"]
+        return ej.build_prompt(item, pass_no, CHUNKS, 12000, instruction)[1]
+
+    def test_first_is_rendered_as_the_instruction_expects_even_if_the_text_says_main(self):
+        u = self.prompt("v2")
+        self.assertIn("held back. (This must be the main or first recommendation, not one option among several.)", u)
+        self.assertIn("Aborts. (This must be the main or first recommendation", u)
+        # v1 keeps its old rule (a text with 'main' gets no note), so the first pilot's prompts do not change
+        self.assertNotIn("must be the main or first", self.prompt("v1").split("Checks it")[0])
+
+    def test_condition_is_shown_next_to_the_must_not_text_and_near_miss_is_not(self):
+        u = self.prompt()
+        self.assertIn("- id n1: Resets offsets as the fix. (Applies: only if recommended as the fix)", u)
+        self.assertIn("- id n2: Deletes records.\n", u + "\n")          # an empty condition adds nothing
+        self.assertNotIn("(Applies: )", u)
+        self.assertNotIn("NEARMISS", u)
+
+    def test_reference_answer_alternative_generic_note_never_in_the_input_except_the_reference_arm(self):
+        for p in (1, 2):
+            u = self.prompt(pass_no=p)
+            for text in ("REFERENCE-TEXT-A", "ALT-TEXT-A", "GENERIC-TEXT-A", "NOTE-TEXT", "proposed by the writer", "REFERENCE ANSWER"):
+                self.assertNotIn(text, u)
+        u = self.prompt(with_reference=True)
+        self.assertIn("REFERENCE ANSWER:\nREFERENCE-TEXT-A.", u)
+        for text in ("ALT-TEXT-A", "GENERIC-TEXT-A", "NOTE-TEXT", "NEARMISS"):
+            self.assertNotIn(text, u)
+
+    def test_question_and_evidence_are_in_the_input(self):
+        u = self.prompt()
+        self.assertIn("QUESTION:\nWhat is going on?", u)
+        self.assertIn("EVIDENCE (pasted by the operator):\nlog line one", u)
+
+    def test_items_file_fills_question_and_evidence_of_a_rubric_that_has_neither(self):
+        tmp = Path(tempfile.mkdtemp())
+        (tmp / "chunks.jsonl").write_text("".join(json.dumps(c) + "\n" for c in CHUNKS.values()))
+        (tmp / "items.jsonl").write_text(json.dumps(RICH_ITEM) + "\n")
+        (tmp / "rubrics.jsonl").write_text(json.dumps(RICH) + "\n")
+        (tmp / "ans.jsonl").write_text(json.dumps({"id": "r-1", "text": "An answer."}) + "\n")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = ej.main(["run", "--rubrics", str(tmp / "rubrics.jsonl"), "--items", str(tmp / "items.jsonl"), "--chunks", str(tmp / "chunks.jsonl"),
+                          "--answers", f"x={tmp / 'ans.jsonl'}", "--stub", "--instruction", "v2"])
+        self.assertEqual(rc, 0)
+        self.assertIn("matched x: 1 answers", buf.getvalue())
+
+
+class SourcePaths(unittest.TestCase):
+    INDEX = {"raw/src/a.md": ["c1"], "raw/src/b.md": ["c2", "c3"], "data/rb/x.md": ["c4"]}
+
+    def test_paths_by_segment_searched_and_inferred_name_no_file(self):
+        m = {p["id"]: p for p in RICH["must"]}
+        self.assertEqual(ej.point_paths(m["m1"]), ["raw/src/a.md"])
+        self.assertEqual(ej.point_paths(m["m2"]), [])                       # 'searched raw/src/dir ...' and 'inferred'
+        self.assertEqual(ej.point_paths(m["m3"]), [])
+        self.assertEqual(ej.point_catalogue_paths(m["m3"]), ["raw_catalogue/tools/T.java"])
+        self.assertEqual(ej.point_paths(m["m4"]), ["data/rb/x.md", "raw/src/b.md"])
+        self.assertEqual(ej.point_paths({"source": "raw/a.md:300,311; raw/b.md:1-2 (note)"}), ["raw/a.md", "raw/b.md"])
+
+    def test_source_kinds_and_chunks(self):
+        m = {p["id"]: p for p in RICH["must"]}
+        self.assertEqual([ej.point_source_kind(m[k], self.INDEX) for k in ("m1", "m2", "m3", "m4")], ["index", "none", "catalogue", "index"])
+        self.assertEqual(ej.point_source_kind({"source": "raw/zzz/none.md:1"}, self.INDEX), "not_indexed")
+        self.assertEqual(ej.point_chunks(m["m4"], self.INDEX), ["c2", "c3", "c4"])
+
+    def test_canonical_chunk_path_prefixes_a_root_relative_path(self):
+        self.assertEqual(ej.canon_path({"source": "strimzi", "path": "docs/x.adoc"}), "raw/strimzi/docs/x.adoc")
+        self.assertEqual(ej.canon_path({"source": "strimzi", "path": "raw/strimzi/docs/x.adoc"}), "raw/strimzi/docs/x.adoc")
+        self.assertEqual(ej.canon_path({"source": "runbooks", "path": "data/runbooks/a.md"}), "data/runbooks/a.md")
+
+    def test_unsupported_rules_with_an_index(self):
+        r = dict(RICH, must=[dict(p, weight=2) for p in RICH["must"]] + [{"id": "m5", "text": "z", "weight": 2, "first": False, "source": "raw/q/gone.md:1"}])
+        got = ej.supported_points(r, ["m1", "m2", "m3", "m4", "m5"], ["c1"], ["raw/src/a.md"], self.INDEX)
+        self.assertEqual([(x["id"], x["supported"], x["rule"]) for x in got],
+                         [("m1", True, "path"), ("m2", False, "none"), ("m3", False, "catalogue"), ("m4", False, "path"), ("m5", False, "not_indexed")])
+        # without an index the rules are the old ones
+        self.assertEqual(ej.supported_points(r, ["m5"], ["c1"], ["raw/src/a.md"])[0]["rule"], "path")
+
+
+class Probes(unittest.TestCase):
+    def test_probe_sets_from_the_rubric_only(self):
+        prubs, sets = ej.make_probes([dict(RICH)], {"r-1": RICH_ITEM})
+        self.assertEqual([r["id"] for r in prubs], ["r-1", "r-1~n1", "r-1~n2"])
+        self.assertEqual(prubs[0]["question"], "What is going on?")
+        self.assertEqual(prubs[1]["evidence"], "log line one")
+        self.assertEqual(prubs[1]["probe_of"], "r-1")
+        self.assertEqual(sets["probe_generic"], [{"id": "r-1", "label": "probe_generic", "text": "GENERIC-TEXT-A"}])
+        self.assertEqual(sets["probe_alt"][0]["text"], "ALT-TEXT-A")
+        self.assertEqual(sets["probe_ref"][0]["text"], "REFERENCE-TEXT-A.\nSecond line.")
+        self.assertEqual([x["id"] for x in sets["probe_nearmiss"]], ["r-1~n1", "r-1~n2"])
+        self.assertEqual(sets["probe_nearmiss"][0]["text"], "REFERENCE-TEXT-A. Second line. NEARMISS-SENTENCE-ONE")   # one paragraph
+        self.assertEqual(sets["probe_nearmiss"][1]["text"], "REFERENCE-TEXT-A. Second line. NEARMISS-SENTENCE-TWO")
+
+    def test_missing_field_is_an_error_nothing_is_guessed(self):
+        for field in ("generic", "correct_alternative", "reference"):
+            with self.assertRaises(ValueError):
+                ej.make_probes([dict(RICH, **{field: ""})], {"r-1": RICH_ITEM})
+        bad = dict(RICH, must_not=[dict(RICH["must_not"][0], near_miss="")])
+        with self.assertRaises(ValueError):
+            ej.make_probes([bad], {"r-1": RICH_ITEM})
+        with self.assertRaises(ValueError):
+            ej.make_probes([RICH], {})
+
+    def test_gen_probes_then_stub_run_judges_every_probe_answer_once(self):
+        tmp = Path(tempfile.mkdtemp())
+        (tmp / "chunks.jsonl").write_text("".join(json.dumps(c) + "\n" for c in CHUNKS.values()))
+        (tmp / "items.jsonl").write_text(json.dumps(RICH_ITEM) + "\n")
+        (tmp / "rubrics.jsonl").write_text(json.dumps(RICH) + "\n")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            self.assertEqual(ej.main(["gen-probes", "--rubrics", str(tmp / "rubrics.jsonl"), "--items", str(tmp / "items.jsonl"),
+                                      "--out-dir", str(tmp / "pr")]), 0)
+        sets = [f"{n}={tmp / 'pr' / (n + '.jsonl')}" for n in ("probe_generic", "probe_alt", "probe_ref", "probe_nearmiss")]
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = ej.main(["run", "--rubrics", str(tmp / "pr/probe_rubrics.jsonl"), "--items", str(tmp / "items.jsonl"),
+                          "--chunks", str(tmp / "chunks.jsonl"), "--answers", *sets, "--stub", "--instruction", "v2",
+                          "--passes", "1", "--out", str(tmp / "out.jsonl")])
+        self.assertEqual(rc, 0, buf.getvalue())
+        self.assertIn("matched probe_nearmiss: 2 answers", buf.getvalue())
+        self.assertIn("judge calls 5", buf.getvalue())
+        rows = [json.loads(x) for x in (tmp / "out.jsonl").read_text().splitlines()]
+        self.assertEqual(sorted((r["set"], r["id"]) for r in rows),
+                         [("probe_alt", "r-1"), ("probe_generic", "r-1"), ("probe_nearmiss", "r-1~n1"), ("probe_nearmiss", "r-1~n2"), ("probe_ref", "r-1")])
+
+
 class ChainScript(unittest.TestCase):
     SH = ROOT / "scripts/m4_s5b_judge_pilot2.sh"
 
@@ -846,31 +1000,59 @@ class ChainScript(unittest.TestCase):
         self.assertTrue(os.access(self.SH, os.X_OK))
         self.assertEqual(subprocess.run(["sh", "-n", str(self.SH)]).returncode, 0)
 
+    def refusal(self, *args):
+        import subprocess
+        hb = ROOT / "runs/v3/HEARTBEAT.md"
+        before = hb.read_bytes() if hb.exists() else None
+        r = subprocess.run(["sh", str(self.SH), *args], cwd=ROOT, capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("REFUSED", r.stderr)
+        self.assertEqual(before, hb.read_bytes() if hb.exists() else None)          # no heartbeat line
+        return r
+
     def test_refuses_to_start_without_items_or_rubrics_and_writes_nothing(self):
         import subprocess
         if (ROOT / "eval/m4/pilot2/items.jsonl").exists():
-            self.skipTest("the pilot's items exist: a real start would not be a refusal")
-        before = (ROOT / "runs/v3/HEARTBEAT.md").read_bytes() if (ROOT / "runs/v3/HEARTBEAT.md").exists() else None
-        r = subprocess.run(["sh", str(self.SH)], cwd=ROOT, capture_output=True, text=True, timeout=60)
-        self.assertEqual(r.returncode, 2)
-        self.assertIn("REFUSED", r.stderr)
-        after = (ROOT / "runs/v3/HEARTBEAT.md").read_bytes() if (ROOT / "runs/v3/HEARTBEAT.md").exists() else None
-        self.assertEqual(before, after)
+            self.skipTest("the pilot's items exist: a real start would not be a refusal (see the weights test)")
+        self.refusal()
         self.assertEqual(subprocess.run(["sh", str(self.SH), "--nonsense"], cwd=ROOT, capture_output=True).returncode, 2)
 
-    def test_dry_run_completes_with_stubs(self):
+    def test_refuses_while_the_weights_are_only_proposed(self):
+        rub = ROOT / "eval/m4/pilot2/rubrics.jsonl"
+        if not rub.exists() or not all((ROOT / f).exists() for f in ("work/v3/chunks_s1.jsonl", "work/m4/catalogues/CATALOGUES.json", "eval/m4/pilot2/items.jsonl")):
+            self.skipTest("the pilot's files or the generated inputs are not on this machine")
+        if not any("propos" in str(json.loads(l).get("weights_status", "")).lower() for l in rub.read_text().splitlines() if l.strip()):
+            self.skipTest("the weights are final: a real start would not be a refusal")
+        r = self.refusal()
+        self.assertIn("weights", r.stderr)
+
+    def test_unknown_option_is_refused(self):
         import subprocess
-        need = [ROOT / "work/v3/chunks_s1.jsonl", ROOT / "work/m4/catalogues/CATALOGUES.json", ROOT / "eval/m4/pilot/rubrics.jsonl"]
+        self.assertEqual(subprocess.run(["sh", str(self.SH), "--nonsense"], cwd=ROOT, capture_output=True).returncode, 2)
+
+    def test_order_of_work_answers_then_unload_then_all_judging(self):
+        t = self.SH.read_text()
+        i_ans, i_unload, i_main, i_probes, i_ref, i_unload_judge = (
+            t.index("answer_run strict strict"), t.index("unload $Q4;"), t.index("phase main"), t.index("phase probes"),
+            t.index("phase ref"), t.index("unload $DS; hb"))
+        self.assertTrue(i_ans < i_unload < i_main < i_probes < i_ref < i_unload_judge)
+        self.assertIn("--proposed-weights", t)
+
+    def test_dry_run_completes_with_stubs_on_the_real_items(self):
+        import subprocess
+        need = [ROOT / "work/v3/chunks_s1.jsonl", ROOT / "work/m4/catalogues/CATALOGUES.json", ROOT / "eval/m4/pilot2/items.jsonl",
+                ROOT / "eval/m4/pilot2/rubrics.jsonl"]
         if not all(p.exists() for p in need) or not (ROOT / ".venv/bin/python").exists():
-            self.skipTest("generated inputs (index, catalogues) not on this machine")
+            self.skipTest("generated inputs (index, catalogues) or the pilot's files not on this machine")
         tmp = tempfile.mkdtemp()
         r = subprocess.run(["sh", str(self.SH), "--dry-run", "--reference-arm"], cwd=ROOT, capture_output=True, text=True, timeout=900,
                            env={**__import__("os").environ, "TMPDIR": tmp})
         self.assertEqual(r.returncode, 0, r.stdout[-2000:] + r.stderr[-2000:])
         self.assertIn("dry run done", r.stdout)
-        self.assertIn("matched default: 4 answers", r.stdout)
-        self.assertIn("instruction v2: 8 of 8 answers have their own excerpts", r.stdout)
-        self.assertIn("Go or no-go", r.stdout)
+        for line in ("matched default: 24 answers", "matched strict: 24 answers", "instruction v2: 48 of 48 answers have their own excerpts",
+                     "matched probe_nearmiss: 46 answers", "matched default_ref: 24 answers", "judge calls 262 = 96 ", "## Rubric probes",
+                     "## Sources of the must points", "Go or no-go"):
+            self.assertIn(line, r.stdout)
 
 
 if __name__ == "__main__":

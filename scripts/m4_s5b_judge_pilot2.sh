@@ -5,29 +5,37 @@
 # passes by DeepSeek without thinking (settings name deepseek-nothink-12k), instruction v2, three calls in parallel. Unattended; it
 # takes the model server, no local GPU.
 # Inputs (written by someone else, the chain refuses to start without them):
-#   eval/m4/pilot2/items.jsonl     24 rows {"id", "question", optional "evidence"}  (tier, kind, family, domain are filled in if missing)
-#   eval/m4/pilot2/rubrics.jsonl   24 rows as eval/m4/pilot/rubrics.jsonl (id = the item's id); optional per row "reference" answer
+#   eval/m4/pilot2/items.jsonl     24 rows {"id", "tier", "kind", "family", "domain", "question", "evidence" (string or null), ...}
+#   eval/m4/pilot2/rubrics.jsonl   24 rows (id = the item's id): must, must_not (with condition and near_miss), any_of, covered_chunks,
+#                                  reference, correct_alternative, generic, weights_status
+#   The chain refuses to start (exit 2) while a rubric's weights_status says the weights are only proposed, unless started with
+#   --proposed-weights (the conductor changes that field when the second reviewer's corrections are in).
 # Steps:
-#   0. waits until none of our chains runs (m4_s6_noise_4bit.sh, m4_s5a_judge_settings.sh, m4_s5_judge_pilot.sh);
+#   0. CPU: inputs and weights_status checked, probe answer sets built from the rubrics (eval2_judge.py gen-probes), planned judge
+#      calls and time printed; then waits until none of our chains runs (m4_s6_noise_4bit.sh, m4_s5a_judge_settings.sh, m4_s5_judge_pilot.sh);
 #   1. server: idle, our judge models (DeepSeek, GLM builds) unloaded, no model of another client loaded; the 4-bit model's name comes
 #      from GET /v1/models (override: M4_Q4_MODEL);
-#   2. answers: default, then strict (scripts/eval2.py answer, resumable, guarded, stall limit 40 min); 24 non-empty rows each, with a pack;
-#   3. unloads the 4-bit model; judging (scripts/eval2_judge.py run --instruction v2, guarded, stall limit 60 min), pass 1 and 2 on the
-#      48 answers, one more round for replies that were not valid JSON; with --reference-arm also pass 1 on the 48 answers with the
-#      rubric's reference answer added (sets default_ref and strict_ref; needs a "reference" in every rubric); unloads the judge;
+#   2. ALL answering first, with the assistant model only: default, then strict (scripts/eval2.py answer, resumable, guarded, stall limit
+#      40 min); 24 non-empty rows each, with a pack. The item's evidence goes to the assistant under a line "Evidence:" (the harness does it);
+#   3. unloads the 4-bit model, so that the judge is never loaded together with it; then ALL judging with the judge only (scripts/eval2_judge.py
+#      run --instruction v2, guarded, stall limit 60 min): the 48 answers in passes 1 and 2; the four probe sets in pass 1 (generic,
+#      correct_alternative, reference, near-miss: 118 answers); with --reference-arm also pass 1 on the 48 answers with the rubric's
+#      reference answer added (sets default_ref and strict_ref); one more round for replies that were not valid JSON; unloads the judge;
 #   4. CPU: the review file of candidate errors (runs/m4/S5B_REVIEW_FLAGS.jsonl) and the report runs/m4/S5B_JUDGE_PILOT2.md
-#      (criteria 1 to 3 are decided; 4, 5 and the ordering wait for the reviewer's review file and findings file; the Owner decides).
+#      (criteria 1 to 3 are decided; 4, 5 and the ordering wait for the reviewer's review file and findings file; the Owner decides;
+#      sections "Rubric probes" and "Sources of the must points" are not criteria).
 # Before every unload the server must have no active or waiting request. Outputs are new files under work/m4/pilot2/.
 # Markers: runs/m4/logs/m4_s5b_judge_pilot2.done or .failed.
-#   scripts/m4_s5b_judge_pilot2.sh [--reference-arm] > runs/m4/logs/m4_s5b_judge_pilot2.out 2>&1 &
-#   scripts/m4_s5b_judge_pilot2.sh --dry-run [--reference-arm]   # stub generator and stub judge on 4 fixture items, no server, no markers,
-#                                                                 # no heartbeat, nothing written outside a temporary directory
-# Running time: answering 48 x 47 to 71 s = 0.6 to 1.0 h; judging 96 to 144 calls, 0.2 to 0.4 h; loads and checks 0.3 h. About 1.1 to 1.7 h.
+#   scripts/m4_s5b_judge_pilot2.sh [--proposed-weights] [--reference-arm] > runs/m4/logs/m4_s5b_judge_pilot2.out 2>&1 &
+#   scripts/m4_s5b_judge_pilot2.sh --dry-run [--reference-arm]   # the REAL items and rubrics, stub generator and stub judge, no server,
+#                                                                 # no markers, no heartbeat, nothing written outside a temporary directory
+# Running time: answering 48 x 47 to 71 s = 0.6 to 1.0 h; judging 214 calls (262 with the reference arm) at 22 s a call, 3 in parallel:
+# 0.4 to 0.5 h; loads and checks 0.3 h. About 1.3 to 1.8 h.
 set -e
-DRY=no; REFARM=no
+DRY=no; REFARM=no; PROPOSED=no
 for arg in "$@"; do case $arg in
-  --dry-run) DRY=yes;; --reference-arm) REFARM=yes;;
-  *) echo "usage: scripts/m4_s5b_judge_pilot2.sh [--dry-run] [--reference-arm]" >&2; exit 2;; esac; done
+  --dry-run) DRY=yes;; --reference-arm) REFARM=yes;; --proposed-weights) PROPOSED=yes;;
+  *) echo "usage: scripts/m4_s5b_judge_pilot2.sh [--dry-run] [--reference-arm] [--proposed-weights]" >&2; exit 2;; esac; done
 IN=eval/m4/pilot2; ITEMS_IN=$IN/items.jsonl; RUBS=$IN/rubrics.jsonl
 W=work/m4/pilot2; L=runs/m4/logs; N=m4_s5b_judge_pilot2; REPORT=runs/m4/S5B_JUDGE_PILOT2.md; REVIEW=runs/m4/S5B_REVIEW_FLAGS.jsonl
 CATS=work/m4/catalogues; CHUNKS=work/v3/chunks_s1.jsonl
@@ -45,6 +53,15 @@ if [ $DRY = no ]; then
   for f in $ITEMS_IN $RUBS; do
     [ "$(wc -l < $f | tr -d ' ')" = "$NEED" ] || { echo "REFUSED: $f has $(wc -l < $f | tr -d ' ') rows, not $NEED; nothing started" >&2; exit 2; }
   done
+  if [ $PROPOSED = no ]; then
+    .venv/bin/python - $RUBS <<'PY' || { echo "REFUSED: the rubrics' weights are only proposed (weights_status); start with --proposed-weights to run anyway; nothing started" >&2; exit 2; }
+import json, sys
+bad = [r["id"] for r in (json.loads(l) for l in open(sys.argv[1]) if l.strip()) if "propos" in str(r.get("weights_status", "")).lower()]
+if bad:
+    print(f"weights_status says proposed in {len(bad)} rubrics (first: {bad[0]})", file=sys.stderr)
+    sys.exit(1)
+PY
+  fi
   export OMLX_URL=${OMLX_URL:-$(cat "$HOME/.config/kafka-sre-llm/omlx_url")}
   export OMLX_API_KEY=${OMLX_API_KEY:-$(cat "$HOME/.config/kafka-sre-llm/judge_key")}
   export JUDGE_API_KEY=$OMLX_API_KEY
@@ -52,7 +69,7 @@ if [ $DRY = no ]; then
   G="scripts/run_guarded.py --heartbeat runs/v3/HEARTBEAT.md --other-retries 2"
 else
   W=$(mktemp -d "${TMPDIR:-/tmp}/m4_s5b_dry.XXXXXX"); L=$W/logs; mkdir -p $L; REPORT=$W/report_from_stub_data.md; REVIEW=$W/review_flags.jsonl
-  G="scripts/run_guarded.py --other-retries 0"; NEED=4
+  G="scripts/run_guarded.py --other-retries 0"
 fi
 
 hb() { [ $DRY = yes ] && return 0; printf '\n### %s — %s\nneeds_human: %s\n' "$(date +%Y-%m-%dT%H:%M:%S%z)" "$1" "${2:-no}" >> runs/v3/HEARTBEAT.md; }
@@ -105,34 +122,41 @@ answer_run() { # NAME MODE: all items, one request at a time
   hb "$N: answers $name done ($NEED rows)"
   status RUNNING no "$N running: answers $name done; markers $L/$N.done / .failed"
 }
-# the judge program; $1 = answer sets (NAME=PATH ...), the rest = further arguments
-judge() { sets=$1; shift
-  .venv/bin/python scripts/eval2_judge.py run --rubrics $JRUBS --items $ITEMS --chunks $CHUNKS --source-chars $SRC --instruction v2 \
-    --answers $sets --judge-model $DS --judge-extra-body "$JEB" --settings-name $SETTING --concurrency 3 "$@"; }
-jguard() { sets=$1; shift # guarded real run: $1 = answer sets, the rest further arguments (round extras)
-  $G --stall-min 60 --log $L/$N.judge.log -- .venv/bin/python scripts/eval2_judge.py run --rubrics $JRUBS --items $ITEMS \
-    --chunks $CHUNKS --source-chars $SRC --instruction v2 --answers $sets --judge-model $DS --judge-extra-body "$JEB" \
-    --settings-name $SETTING --concurrency 3 --judge-url "$OMLX_URL/v1" "$@"; }
+# one judge run: $1 = rubrics file, $2 = answer sets (NAME=PATH ...), the rest = further arguments. Dry run: stub judge, no server.
+jrun() { rubf=$1; sets=$2; shift 2
+  if [ $DRY = yes ]; then
+    .venv/bin/python scripts/eval2_judge.py run --rubrics $rubf --items $ITEMS --chunks $CHUNKS --source-chars $SRC --instruction v2 \
+      --answers $sets --judge-model $DS --judge-extra-body "$JEB" --settings-name $SETTING --concurrency 3 --stub "$@"
+  else
+    $G --stall-min 60 --log $L/$N.judge.log -- .venv/bin/python scripts/eval2_judge.py run --rubrics $rubf --items $ITEMS \
+      --chunks $CHUNKS --source-chars $SRC --instruction v2 --answers $sets --judge-model $DS --judge-extra-body "$JEB" \
+      --settings-name $SETTING --concurrency 3 --judge-url "$OMLX_URL/v1" "$@"
+  fi; }
+UNSCORED=0
+phase() { # NAME RUBRICS SETS EXPECTED_ROWS [run arguments]: up to two rounds (the second redoes replies that were not valid JSON)
+  pn=$1; pr=$2; ps=$3; pexp=$4; shift 4; out=$W/judge_results_$pn.jsonl
+  for round in 1 2; do
+    extra=""; [ $round = 2 ] && extra="--retry-invalid"
+    if [ $DRY = yes ]; then
+      jrun $pr "$ps" "$@" --cache $W/judge_cache.jsonl --out $out $extra > $W/judge.$pn.dry.out 2>&1 || { cat $W/judge.$pn.dry.out; fail "judge dry run $pn failed"; }
+      grep -E '^(matched|instruction|items)' $W/judge.$pn.dry.out
+    else
+      jrun $pr "$ps" "$@" --cache $W/judge_cache.jsonl --out $out $extra || fail "judging $pn round $round failed (see $L/$N.judge.log)"
+    fi
+    bad=$(.venv/bin/python -c 'import json,sys; print(sum(1 for l in open(sys.argv[1]) if l.strip() and not json.loads(l)["valid_reply"]))' $out)
+    echo "$pn round $round: $bad unscored"
+    [ "$bad" = "0" ] && break
+  done
+  UNSCORED=$((UNSCORED + bad))
+  [ "$(rows $out)" = "$pexp" ] || fail "$out has $(rows $out) rows, not $pexp"; }
 
 mkdir -p $W $L runs/m4/reports
 [ $DRY = yes ] || rm -f $L/$N.failed $L/$N.done
 
-# the items for the harness (tier, kind, family, domain filled in) and, in the dry run, 4 fixture items from the first pilot
+# the real items and rubrics, in the dry run too (the dry run replaces only the generator and the judge by stubs)
+ITEMS=$ITEMS_IN; JRUBS=$RUBS
 if [ $DRY = yes ]; then
-  ITEMS=$W/items.jsonl; JRUBS=$W/rubrics.jsonl
-  .venv/bin/python - $ITEMS $JRUBS <<'PY' || { echo "DRY RUN FAILED: fixture"; exit 1; }
-import json, sys
-qs = [json.loads(l)["question"] for l in open("eval/questions_real.jsonl") if l.strip()]
-rubs = [json.loads(l) for l in open("eval/m4/pilot/rubrics.jsonl") if l.strip()]
-keep = [r for r in rubs if r["id"] in ("real-1", "real-3", "real-5", "real-31")]
-with open(sys.argv[1], "w") as f, open(sys.argv[2], "w") as g:
-    for r in keep:
-        q = qs[int(r["id"].split("-")[1]) - 1]
-        f.write(json.dumps({"id": r["id"], "question": q}) + "\n")
-        g.write(json.dumps({**r, "question": q, "reference": "Fixture reference answer for " + r["id"]}) + "\n")
-PY
-else
-  ITEMS=$ITEMS_IN; JRUBS=$RUBS
+  for f in $ITEMS $JRUBS $CHUNKS; do [ -s $f ] || { echo "DRY RUN FAILED: input $f is missing or empty"; exit 1; }; done
 fi
 HITEMS=$W/items_harness.jsonl
 .venv/bin/python - $ITEMS $HITEMS <<'PY' || fail "could not build the harness items file"
@@ -142,7 +166,14 @@ with open(sys.argv[2], "w") as f:
     for r in rows:
         if not r.get("id") or not r.get("question"):
             sys.exit("item without id or question")
-        f.write(json.dumps({"tier": "B", "kind": "open", "family": r["id"], "domain": "pilot2", **r}, ensure_ascii=False) + "\n")
+        # the harness wants strings for tier, kind, family and domain; the pilot's domain is a list: joined, the list kept as "domains"
+        row = {"tier": "B", "kind": "open", "family": r["id"], "domain": "pilot2", **r}
+        if isinstance(row["domain"], list):
+            row["domains"], row["domain"] = row["domain"], ",".join(map(str, row["domain"])) or "pilot2"
+        for k in ("tier", "kind", "family", "domain"):
+            if not isinstance(row[k], str) or not row[k]:
+                sys.exit(f"item {r['id']}: {k} is not a non-empty string")
+        f.write(json.dumps(row, ensure_ascii=False) + "\n")
 PY
 .venv/bin/python - $ITEMS $JRUBS $REFARM <<'PY' || fail "items and rubrics do not match (same ids, same order) or a rubric has no reference for --reference-arm"
 import json, sys
@@ -155,8 +186,17 @@ if sys.argv[3] == "yes" and not all((r.get("reference") or "").strip() for r in 
 PY
 .venv/bin/python -m kafka_sre_rag verify > /dev/null || fail "kafka_sre_rag verify failed (frozen index, prompts or reranker revision)"
 
+# probe answer sets from the rubrics (generic, correct_alternative, reference, near-miss), and the plan
+PD=$W/probes; PRUBS=$PD/probe_rubrics.jsonl
+.venv/bin/python scripts/eval2_judge.py gen-probes --rubrics $JRUBS --items $ITEMS --out-dir $PD || fail "probe sets could not be built from the rubrics"
+PSETS="probe_generic=$PD/probe_generic.jsonl probe_alt=$PD/probe_alt.jsonl probe_ref=$PD/probe_ref.jsonl probe_nearmiss=$PD/probe_nearmiss.jsonl"
+NPROBE=$(cat $PD/probe_generic.jsonl $PD/probe_alt.jsonl $PD/probe_ref.jsonl $PD/probe_nearmiss.jsonl | wc -l | tr -d ' ')
+CALLS_MAIN=$((NEED * 2 * 2)); CALLS_REF=0; [ $REFARM = yes ] && CALLS_REF=$((NEED * 2))
+CALLS=$((CALLS_MAIN + NPROBE + CALLS_REF))
+echo "planned: $((NEED * 2)) answers ($NEED items x default, strict); judge calls $CALLS = $CALLS_MAIN (48 answers x 2 passes) + $NPROBE (probe sets, 1 pass) + $CALLS_REF (reference arm, 1 pass); at 22 s a call, 3 in parallel: about $((CALLS * 22 / 3 / 60)) minutes"
+
 if [ $DRY = yes ]; then
-  echo "dry run in $W (stub generator, stub judge, $NEED fixture items; real inputs $ITEMS_IN and $RUBS present: $([ -s $ITEMS_IN ] && [ -s $RUBS ] && echo yes || echo no))"
+  echo "dry run in $W (real items and rubrics, stub generator, stub judge)"
   Q4=Qwen3.8-27B-4bit
 else
   hb "$N: waiting until none of m4_s6_noise_4bit.sh, m4_s5a_judge_settings.sh, m4_s5_judge_pilot.sh runs, then the server check"
@@ -164,8 +204,8 @@ else
   until ! pgrep -f "$CHAINS_RE" >/dev/null; do sleep 60; done
   api /v1/models > $W/models.json 2>/dev/null || true
   Q4=${M4_Q4_MODEL:-$(.venv/bin/python scripts/eval2_compare.py pick-model --kind q4 < $W/models.json)} || fail "4-bit model not listed by the server (or ambiguous)"
-  hb "$N: started; 4-bit model $Q4; $NEED items in default and strict mode, then judge $DS (instruction v2, settings $SETTING)$([ $REFARM = yes ] && echo ', with the reference arm')"
-  status RUNNING no "$N running: answers (48), then judging; markers $L/$N.done / .failed"
+  hb "$N: started; 4-bit model $Q4; $NEED items in default and strict mode, then judge $DS (instruction v2, settings $SETTING; $CALLS judge calls planned)$([ $REFARM = yes ] && echo ', with the reference arm')$([ $PROPOSED = yes ] && echo '; WEIGHTS ONLY PROPOSED (--proposed-weights)')"
+  status RUNNING no "$N running: answers (48), then judging ($CALLS calls); markers $L/$N.done / .failed"
   n=0
   until [ "$(busy)" = "0" ] && [ -z "$(foreign)" ]; do
     sleep 30; n=$((n+1))
@@ -175,60 +215,42 @@ else
   hb "$N: DeepSeek and the GLM builds unloaded if they were loaded; the 4-bit model loads on the first request"
 fi
 
-# 2. answers
+# 2. answers: everything the assistant model has to do comes first
 answer_run default default
 answer_run strict strict
 SETS="default=$W/ans_default.jsonl strict=$W/ans_strict.jsonl"
 SETS_REF="default_ref=$W/ans_default.jsonl strict_ref=$W/ans_strict.jsonl"
 [ $DRY = yes ] || { unload $Q4; hb "$N: answering finished, $Q4 unloaded; the judge $DS loads on the first request"; }
 
-# 3. judging
-if [ $DRY = yes ]; then
-  judge "$SETS" --stub --passes 1 2 --out $W/judge_results_main.jsonl > $W/judge.dry.out 2>&1 || { cat $W/judge.dry.out; fail "judge dry run failed"; }
-  grep -E '^(matched|instruction|items)' $W/judge.dry.out
-  [ "$(grep -c '^matched' $W/judge.dry.out)" = "2" ] && [ "$(rows $W/judge_results_main.jsonl)" = "$((NEED * 4))" ] || fail "judge dry run: answers not matched or rows missing"
-  cp $W/judge_results_main.jsonl $W/judge_results.jsonl
-  if [ $REFARM = yes ]; then
-    judge "$SETS_REF" --stub --passes 1 --with-reference --out $W/judge_results_ref.jsonl > $W/judge_ref.dry.out 2>&1 || { cat $W/judge_ref.dry.out; fail "reference arm dry run failed"; }
-    cat $W/judge_results_ref.jsonl >> $W/judge_results.jsonl
-  fi
-else
-  for round in 1 2; do
-    extra=""; [ $round = 2 ] && extra="--retry-invalid"
-    jguard "$SETS" --passes 1 2 --cache $W/judge_cache.jsonl --out $W/judge_results_main.jsonl $extra || fail "judging round $round failed (see $L/$N.judge.log)"
-    bad=$(.venv/bin/python -c 'import json,sys; print(sum(1 for l in open(sys.argv[1]) if l.strip() and not json.loads(l)["valid_reply"]))' $W/judge_results_main.jsonl)
-    echo "round $round: $bad unscored"
-    [ "$bad" = "0" ] && break
-  done
-  [ "$(rows $W/judge_results_main.jsonl)" = "$((NEED * 4))" ] || fail "$W/judge_results_main.jsonl has $(rows $W/judge_results_main.jsonl) rows, not $((NEED * 4)) ($((NEED * 2)) answers x 2 passes)"
-  cp $W/judge_results_main.jsonl $W/judge_results.jsonl.tmp
-  if [ $REFARM = yes ]; then
-    jguard "$SETS_REF" --passes 1 --with-reference --cache $W/judge_cache.jsonl --out $W/judge_results_ref.jsonl --retry-invalid || fail "reference arm failed (see $L/$N.judge.log)"
-    [ "$(rows $W/judge_results_ref.jsonl)" = "$((NEED * 2))" ] || fail "$W/judge_results_ref.jsonl has $(rows $W/judge_results_ref.jsonl) rows, not $((NEED * 2))"
-    cat $W/judge_results_ref.jsonl >> $W/judge_results.jsonl.tmp
-  fi
-  mv $W/judge_results.jsonl.tmp $W/judge_results.jsonl
-  unload $DS
-  hb "$N: judging finished, $DS unloaded ($bad unscored judgments)"
+# 3. judging: the judge only; the 48 answers in two passes, the probe sets and the optional reference arm in one pass
+phase main $JRUBS "$SETS" $((NEED * 4)) --passes 1 2
+cp $W/judge_results_main.jsonl $W/judge_results.jsonl.tmp
+phase probes $PRUBS "$PSETS" $NPROBE --passes 1
+if [ $REFARM = yes ]; then
+  phase ref $JRUBS "$SETS_REF" $((NEED * 2)) --passes 1 --with-reference
+  cat $W/judge_results_ref.jsonl >> $W/judge_results.jsonl.tmp
 fi
+mv $W/judge_results.jsonl.tmp $W/judge_results.jsonl
+[ $DRY = yes ] || { unload $DS; hb "$N: judging finished, $DS unloaded ($UNSCORED unscored judgments)"; }
 
 # 4. the review file and the report (CPU)
 .venv/bin/python scripts/eval2_judge.py flags --results $W/judge_results_main.jsonl --out $REVIEW || fail "review file failed"
-.venv/bin/python scripts/eval2_pilot_report.py --v2 --results $W/judge_results.jsonl --title "Judge pilot 2" > $REPORT.tmp || fail "pilot report failed"
+.venv/bin/python scripts/eval2_pilot_report.py --v2 --results $W/judge_results.jsonl --rubrics $JRUBS --chunks $CHUNKS \
+  --probes $W/judge_results_probes.jsonl --title "Judge pilot 2" > $REPORT.tmp || fail "pilot report failed"
 { cat $REPORT.tmp; cat <<EOF
 
 ## Files and what waits
 
-- Judge results: \`$W/judge_results.jsonl\` (answers: \`$W/ans_default.jsonl\`, \`$W/ans_strict.jsonl\`; judge cache \`$W/judge_cache.jsonl\`).
+- Judge results: \`$W/judge_results.jsonl\`, probe sets \`$W/judge_results_probes.jsonl\` (answers: \`$W/ans_default.jsonl\`, \`$W/ans_strict.jsonl\`; judge cache \`$W/judge_cache.jsonl\`).
 - Review file of candidate errors, one row per candidate, for the reviewer to fill in \`confirmed\` (yes, harmful, no, unclear) and \`note\`: \`$REVIEW\`.
 - The reviewer's findings per answer (JSONL; format in the docstring of \`scripts/eval2_pilot_report.py\`), written blind to the configuration.
-- When both are in: \`.venv/bin/python scripts/eval2_pilot_report.py --v2 --results $W/judge_results.jsonl --review <filled review file> --findings <findings file>\`
+- When both are in: \`.venv/bin/python scripts/eval2_pilot_report.py --v2 --results $W/judge_results.jsonl --rubrics $JRUBS --chunks $CHUNKS --probes $W/judge_results_probes.jsonl --review <filled review file> --findings <findings file>\`
   decides criteria 4 and 5 and gives the ordering; \`.venv/bin/python scripts/eval2_judge.py confirmed --review <filled review file> --results $W/judge_results_main.jsonl\`
   gives confirmed wrong and harmful items per 10 answers per mode.
 EOF
 } > $REPORT.tmp2 && mv $REPORT.tmp2 $REPORT && rm -f $REPORT.tmp
 if [ $DRY = yes ]; then
-  sed -n '1,12p;/^## Result/,$p' $REPORT | cut -c1-220
+  sed -n '1,12p;/^## Result/,$p' $REPORT | grep -v '^  - not met' | cut -c1-260
   echo "dry run done: report from stub data in $REPORT, review file $REVIEW ($(rows $REVIEW) rows)"
   exit 0
 fi
