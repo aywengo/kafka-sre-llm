@@ -514,6 +514,11 @@ quants (Q4_K_M, Q5_K_M, Q8_0).
 Start with a small run end to end (a few hundred examples, 200 iters) to shake out the
 pipeline before the long runs.
 
+## Contributing
+
+Proven runbooks and remediations of real incidents are most welcome. Open an issue or a
+discussion first; see [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## Licence
 
 The code in this repository is licensed under the Apache License 2.0 (see `LICENSE`).
