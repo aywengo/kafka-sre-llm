@@ -6,6 +6,9 @@
   java_api(directory=None)                  (T1b) the Java API of the pinned kafka-clients / kafka-streams jars
   java_class(fqcn), java_methods(fqcn, name, params=None), java_constant(fqcn, name),
   client_config_names(scope)                lookups in it; None / [] / {} when absent
+  python_symbols(directory=None)            (T2) public names of the pinned confluent-kafka wheel, or None
+  py_module_names(module), py_class(fq), py_method(fq, name), py_config_properties()
+                                            lookups in it; None / {} / [] when absent
 
 A key is forbidden under a config path when it equals a forbidden key, or starts with a forbidden prefix
 and is not an exception. An exception equals the key, or ends with "." and is a prefix of the key; an
@@ -21,7 +24,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_DIR = ROOT / "work" / "m4" / "catalogues_a3"
-FILES = ("strimzi_forbidden", "semantic_rules", "java_api")
+FILES = ("strimzi_forbidden", "semantic_rules", "java_api", "python_symbols")
 
 _loaded = {}
 
@@ -146,3 +149,40 @@ def client_config_names(scope, directory=None):
     """{config name: {constant, source, line}} for scope consumer, producer, admin, streams or common."""
     j = java_api(directory)
     return {} if j is None else j["client_config_names"].get(scope, {})
+
+
+# ------------------------------------------------------------------ Python client symbols (T2), additive
+def python_symbols(directory=None):
+    """The python_symbols.json table (confluent-kafka wheel), or None when it was not built."""
+    d = Path(directory or DEFAULT_DIR)
+    if not (d / "python_symbols.json").is_file():
+        return None
+    return _read(d, "python_symbols")
+
+
+def py_module_names(module, directory=None):
+    """The public names of a module ('confluent_kafka', 'confluent_kafka.admin', ...), or None when unknown."""
+    p = python_symbols(directory)
+    m = None if p is None else p["modules"].get(module)
+    return None if m is None else m["names"]
+
+
+def py_class(fq, directory=None):
+    """{'members': [...], 'methods': {name: {params, pos_only, var_pos, var_kw, src} or None}} of a class, or None."""
+    p = python_symbols(directory)
+    return None if p is None else p["classes"].get(fq)
+
+
+def py_method(fq, name, directory=None):
+    """The signature record of a method of a class (None when the class or the method is unknown, or the
+    signature is not known: the record is then {} for a known method without a signature)."""
+    c = py_class(fq, directory)
+    if c is None or name not in c["members"]:
+        return None
+    return c["methods"].get(name) or {}
+
+
+def py_config_properties(directory=None):
+    """The librdkafka configuration property names the wheel accepts (sorted list), or [] when absent."""
+    p = python_symbols(directory)
+    return [] if p is None else p["config_properties"]

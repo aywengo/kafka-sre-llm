@@ -12,6 +12,11 @@ Output: work/m4/catalogues_a3/ (git-ignored), separate from work/m4/catalogues/ 
                            pinned kafka-clients and kafka-streams jars, read with javap; the client config
                            names (ConsumerConfig.*_CONFIG ...) with their string values; skipped, with a
                            message, when the jars or the sparse clone are not fetched (scripts/fetch_maven_jars.py)
+  python_symbols.json      (T2) the public names of the pinned confluent-kafka wheel (modules, classes, their
+                           methods with parameter names) and the librdkafka configuration property names its
+                           compiled table accepts; read by importing the wheel in a THROWAWAY venv outside the
+                           repository (env CK_PYTHON or --ck-python, the venv's python); skipped, with a message,
+                           when the wheel or that python is absent
   MANIFEST.json            sha256 of each file and the combined hash
 
 Every entry cites file and line, and the build re-reads that line and fails (exit 2) if the text does
@@ -24,16 +29,17 @@ Usage: .venv/bin/python scripts/build_catalogues_a3.py [--out DIR]
 import argparse
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
 import zipfile
 from pathlib import Path
 
-VERSION = "build_catalogues_a3/2"
+VERSION = "build_catalogues_a3/3"
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_OUT = ROOT / "work" / "m4" / "catalogues_a3"
-FILES = ("strimzi_forbidden", "semantic_rules", "java_api")      # order of the combined hash
+FILES = ("strimzi_forbidden", "semantic_rules", "java_api", "python_symbols")      # order of the combined hash
 MANIFEST_NAME = "MANIFEST.json"
 
 DOC = "raw/strimzi/documentation"
@@ -600,6 +606,157 @@ def build_java():
             "clone_commit": fj.COMMIT, "classes": classes, "client_config_names": cfg}
 
 
+# ------------------------------------------------------------------ Python client symbols (T2)
+PYPI_DIR = ROOT / "raw_catalogue" / "pypi"
+CK_WHEEL = {
+    "file": "confluent_kafka-2.16.1-cp313-cp313-macosx_13_0_arm64.whl",
+    "bytes": 4507494,
+    "sha256": "c3bc184e79395eee26ffe73c9a041b5c68dd38ee1f90e0e7fffba89e02ab2ce0",
+    "version": "2.16.1",
+    "url": "https://files.pythonhosted.org/packages/96/9f/74347d6b48b36a8e610384ff660a4ddb4840cb09032d3e47d7cf89a16789/"
+           "confluent_kafka-2.16.1-cp313-cp313-macosx_13_0_arm64.whl",
+    "uploaded": "2026-10-28T05:36:58Z",
+    "licence": "Apache-2.0 (LICENSE file of the wheel; PyPI classifier Apache Software License)",
+    "why": "newest final release uploaded at least 14 days before 2026-11-19 (2.16.2 is of 2026-11-18, 4.4.0b1 is a beta)",
+}
+CK_SUBMODULES = ("confluent_kafka.admin", "confluent_kafka.error", "confluent_kafka.serialization",
+                 "confluent_kafka.schema_registry", "confluent_kafka.avro", "confluent_kafka.cimpl")
+
+# Run with `python -I -c` inside the throwaway venv. It imports the package (a C extension and its Python files; no
+# user code), lists names, reads parameter names with inspect or from the wheel's cimpl.pyi, and tests candidate
+# property names against librdkafka's own configuration parser by building a Producer from {name: ""}: the parser
+# answers "No such configuration property" for a name it does not know, and anything else for a name it knows.
+PY_DUMP = r"""
+import ast, importlib, inspect, json, os, re, sys, types
+import confluent_kafka as ck
+pkgdir = os.path.dirname(ck.__file__)
+subs = %(subs)r
+out = {"modules": {}, "classes": {}, "unavailable_modules": {}}
+
+def public(name):
+    if name.startswith("__"):
+        return False
+    return not name.startswith("_") or name.lstrip("_").replace("_", "").isupper()
+
+pyi = {}
+pyi_path = os.path.join(pkgdir, "cimpl.pyi")
+if os.path.isfile(pyi_path):
+    for node in ast.parse(open(pyi_path, encoding="utf-8").read()).body:
+        if isinstance(node, ast.ClassDef):
+            for f in node.body:
+                if isinstance(f, ast.FunctionDef):
+                    a = f.args
+                    names = [x.arg for x in a.posonlyargs + a.args + a.kwonlyargs if x.arg not in ("self", "cls")]
+                    k = (node.name, f.name)
+                    prev = pyi.get(k, {"params": [], "var_pos": False, "var_kw": False})   # @overload: union
+                    pyi[k] = {"params": prev["params"] + [x for x in names if x not in prev["params"]], "pos_only": [], "src": "pyi",
+                              "var_pos": prev["var_pos"] or a.vararg is not None,
+                              "var_kw": prev["var_kw"] or a.kwarg is not None}
+
+def sig(cls, name, attr):
+    try:
+        s = inspect.signature(attr)
+    except (TypeError, ValueError):
+        return pyi.get((cls.__name__, name))
+    names, posonly, vp, vk = [], [], False, False
+    for p in s.parameters.values():
+        if p.name in ("self", "cls"):
+            continue
+        if p.kind == p.VAR_POSITIONAL:
+            vp = True
+        elif p.kind == p.VAR_KEYWORD:
+            vk = True
+        elif p.kind == p.POSITIONAL_ONLY:
+            posonly.append(p.name)
+        else:
+            names.append(p.name)
+    return {"params": names, "pos_only": posonly, "var_pos": vp, "var_kw": vk, "src": "inspect"}
+
+def record_module(modname, mod):
+    names = sorted(n for n in dir(mod) if public(n) and not isinstance(getattr(mod, n, None), types.ModuleType))
+    out["modules"][modname] = {"names": names}
+    for n in names:
+        obj = getattr(mod, n, None)
+        if inspect.isclass(obj) and ((getattr(obj, "__module__", "") or "").startswith("confluent_kafka")
+                                     or getattr(obj, "__module__", "") == "cimpl"):
+            members, methods = [], {}
+            for m in sorted(dir(obj)):
+                if not public(m):
+                    continue
+                try:
+                    a = inspect.getattr_static(obj, m)
+                except AttributeError:
+                    continue
+                members.append(m)
+                if callable(a) or isinstance(a, (staticmethod, classmethod)):
+                    raw = a.__func__ if isinstance(a, (staticmethod, classmethod)) else a
+                    methods[m] = sig(obj, m, raw)
+            out["classes"][modname + "." + n] = {"members": members, "methods": methods}
+
+record_module("confluent_kafka", ck)
+for sm in subs:
+    try:
+        m = importlib.import_module(sm)
+    except Exception as e:
+        out["unavailable_modules"][sm] = type(e).__name__ + ": " + str(e)[:120]
+        continue
+    record_module(sm, m)
+
+cands = set()
+tok = re.compile(rb"[a-z][a-z0-9_.]{1,63}")
+for f in (os.path.join(pkgdir, ".dylibs", "librdkafka.dylib"), *[os.path.join(pkgdir, x) for x in os.listdir(pkgdir) if x.endswith(".so")]):
+    if os.path.isfile(f):
+        for m in tok.finditer(open(f, "rb").read()):
+            cands.add(m.group(0).decode())
+props = []
+for c in sorted(cands):
+    try:
+        ck.Producer({c: ""})
+    except ck.KafkaException as e:
+        if "No such configuration property" not in str(e):
+            props.append(c)
+    except BaseException:
+        props.append(c)
+    else:
+        props.append(c)
+out["config_properties"] = props
+out["candidates_tested"] = len(cands)
+out["version"] = ck.version()
+out["librdkafka"] = ck.libversion()[0]
+out["python"] = "%%d.%%d.%%d" %% sys.version_info[:3]
+sys.stdout.write(json.dumps(out, sort_keys=True))
+"""
+
+
+def build_python(ck_python):
+    """The Python client symbol list, or None when the wheel or the throwaway venv's python is not given."""
+    whl = PYPI_DIR / CK_WHEEL["file"]
+    if not whl.is_file() or not ck_python:
+        return None
+    data = whl.read_bytes()
+    if len(data) != CK_WHEEL["bytes"] or hashlib.sha256(data).hexdigest() != CK_WHEEL["sha256"]:
+        raise BuildError("%s: size or sha256 differs from the pin" % whl.name)
+    if not Path(ck_python).is_file():
+        raise BuildError("ck python %s does not exist" % ck_python)
+    r = subprocess.run([str(ck_python), "-I", "-c", PY_DUMP % {"subs": CK_SUBMODULES}], capture_output=True, text=True,
+                       timeout=600, stdin=subprocess.DEVNULL)
+    if r.returncode:
+        raise BuildError("symbol dump failed: " + r.stderr.strip()[-300:])
+    d = json.loads(r.stdout)
+    if d["version"] != CK_WHEEL["version"]:
+        raise BuildError("the venv has confluent-kafka %s, the pin is %s" % (d["version"], CK_WHEEL["version"]))
+    if not d["config_properties"]:
+        raise BuildError("no configuration property names found")
+    return {"schema": 1, "builder": VERSION, "package": "confluent-kafka", "version": d["version"],
+            "librdkafka": d["librdkafka"], "python": d["python"],
+            "wheel": {k: CK_WHEEL[k] for k in ("file", "bytes", "sha256", "url", "uploaded", "licence", "why")},
+            "config_properties_source": "names found in the strings of librdkafka.dylib and cimpl.so and accepted by "
+                                        "librdkafka's configuration parser (Producer({name: ''}) does not answer "
+                                        "'No such configuration property'); candidates tested: %d" % d["candidates_tested"],
+            "modules": d["modules"], "classes": d["classes"], "unavailable_modules": d["unavailable_modules"],
+            "config_properties": d["config_properties"]}
+
+
 # ------------------------------------------------------------------ verify every cited line
 def verify_semantic(sem):
     def check(a):
@@ -635,6 +792,8 @@ def manifest_for(directory):
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--out", default=str(DEFAULT_OUT))
+    ap.add_argument("--ck-python", default=os.environ.get("CK_PYTHON"),
+                    help="python of the throwaway venv holding the pinned confluent-kafka wheel (env CK_PYTHON)")
     a = ap.parse_args(argv)
     out = Path(a.out)
     try:
@@ -642,6 +801,7 @@ def main(argv=None):
         sem = build_semantic()
         verify_semantic(sem)
         jav = build_java()
+        pys = build_python(a.ck_python)
     except BuildError as e:
         print("build_catalogues_a3: FAILED: %s" % e, file=sys.stderr)
         return 2
@@ -654,6 +814,12 @@ def main(argv=None):
               sum(len(v) for v in jav["client_config_names"].values())))
     else:
         print("java_api   SKIPPED: jars or sparse clone not fetched (scripts/fetch_maven_jars.py --clone)")
+    if pys is not None:
+        (out / "python_symbols.json").write_text(dumps(pys), encoding="utf-8")
+        print("python_symbols  confluent-kafka %s: %d modules, %d classes, %d config properties"
+              % (pys["version"], len(pys["modules"]), len(pys["classes"]), len(pys["config_properties"])))
+    else:
+        print("python_symbols  SKIPPED: wheel in raw_catalogue/pypi/ or --ck-python / CK_PYTHON missing")
     man = manifest_for(out)
     (out / MANIFEST_NAME).write_text(dumps(man), encoding="utf-8")
     for k, e in forb["resources"].items():

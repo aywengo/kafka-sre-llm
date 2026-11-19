@@ -245,5 +245,77 @@ class JavaApiTests(unittest.TestCase):
                 self.assertIn(a["quote"], text)
 
 
+PYSYM_FIXTURE = {"schema": 1, "version": "9.9.9", "modules": {"m": {"names": ["A", "f"]}},
+                 "classes": {"m.A": {"members": ["go", "stop", "X"],
+                                     "methods": {"go": {"params": ["a"], "pos_only": [], "var_pos": False, "var_kw": False},
+                                                 "stop": None}}},
+                 "config_properties": ["acks", "group.id"]}
+
+
+class PythonSymbolReaderTests(unittest.TestCase):
+    def test_reader_on_fixture(self):
+        with tempfile.TemporaryDirectory() as t:
+            (Path(t) / "python_symbols.json").write_text(json.dumps(PYSYM_FIXTURE))
+            self.assertEqual(a3.py_module_names("m", t), ["A", "f"])
+            self.assertIsNone(a3.py_module_names("nope", t))
+            self.assertEqual(a3.py_method("m.A", "go", t)["params"], ["a"])
+            self.assertEqual(a3.py_method("m.A", "stop", t), {})          # known method, signature unknown
+            self.assertIsNone(a3.py_method("m.A", "gone", t))
+            self.assertIsNone(a3.py_class("m.B", t))
+            self.assertEqual(a3.py_config_properties(t), ["acks", "group.id"])
+            self.assertIn("python_symbols.json", a3.manifest(t)["files"])
+
+    def test_absent_table_reads_as_none(self):
+        with tempfile.TemporaryDirectory() as t:
+            self.assertIsNone(a3.python_symbols(t))
+            self.assertIsNone(a3.py_class("m.A", t))
+            self.assertEqual(a3.py_config_properties(t), [])
+            self.assertNotIn("python_symbols.json", a3.manifest(t)["files"])
+
+    def test_build_refuses_a_wheel_that_differs_from_the_pin(self):
+        with tempfile.TemporaryDirectory() as t:
+            (Path(t) / bld.CK_WHEEL["file"]).write_bytes(b"not a wheel")
+            old = bld.PYPI_DIR
+            bld.PYPI_DIR = Path(t)
+            try:
+                with self.assertRaises(bld.BuildError):
+                    bld.build_python(sys.executable)
+                self.assertIsNone(bld.build_python(None))
+            finally:
+                bld.PYPI_DIR = old
+
+    def test_pin_is_a_release_at_least_14_days_old(self):
+        self.assertEqual(bld.CK_WHEEL["version"], "2.16.1")
+        self.assertTrue(bld.CK_WHEEL["uploaded"] < "2026-11-05")
+
+
+PYSYM = REAL / "python_symbols.json"
+
+
+@unittest.skipUnless(PYSYM.is_file(), "python_symbols.json not built")
+class PythonSymbolRealTests(unittest.TestCase):
+    def test_manifest_covers_it_and_verifies(self):
+        self.assertIn("python_symbols.json", a3.manifest(REAL)["files"])
+        self.assertTrue(a3.verify(REAL))
+
+    def test_pinned_wheel_recorded(self):
+        p = a3.python_symbols(REAL)
+        self.assertEqual(p["version"], "2.16.1")
+        self.assertEqual(p["wheel"]["sha256"], bld.CK_WHEEL["sha256"])
+        self.assertIn("Apache", p["wheel"]["licence"])
+
+    def test_names_methods_and_properties(self):
+        self.assertIn("Consumer", a3.py_module_names("confluent_kafka", REAL))
+        self.assertIn("AdminClient", a3.py_module_names("confluent_kafka.admin", REAL))
+        self.assertNotIn("Consumr", a3.py_module_names("confluent_kafka", REAL))
+        self.assertIn("poll", a3.py_class("confluent_kafka.Consumer", REAL)["members"])
+        self.assertIsNone(a3.py_method("confluent_kafka.Consumer", "pol", REAL))
+        self.assertIn("asynchronous", a3.py_method("confluent_kafka.Consumer", "commit", REAL)["params"])
+        props = a3.py_config_properties(REAL)
+        for k in ("bootstrap.servers", "enable.auto.commit", "group.id", "auto.offset.reset", "acks"):
+            self.assertIn(k, props)
+        self.assertNotIn("enable.auto.commits", props)
+
+
 if __name__ == "__main__":
     unittest.main()

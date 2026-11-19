@@ -831,3 +831,8 @@ CHECKS_A3 = {
     "no_invented_value": check_no_invented_value,
     "forbidden_keys": check_forbidden_keys,
 }
+
+# WP1c T2: the client-code checks (Java and Python) live in eval2_checks_a3_client.py
+from eval2_checks_a3_client import CHECKS_A3_CLIENT as _CLIENT  # noqa: E402
+assert not set(_CLIENT) & set(CHECKS_A3), "a client check clashes with an a3 check"
+CHECKS_A3.update(_CLIENT)
