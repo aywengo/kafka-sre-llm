@@ -467,7 +467,7 @@ and J6 come from the mechanical tier and block nothing yet):
   exists. The plain copy of the Owner's questions moved out of the repository after its
   hash was checked against the sealed copy. Started: WP1c T7 (not covered) and the tool
   for sealed sessions (`scripts/sealed_io.py`).
-- 2026-11-19, 21:00 to 23:00: WP1c T7 and T8 done: the a3 set built and split (`584fe6e`):
+- 2026-11-19, 20:00 to 21:35: WP1c T7 and T8 done: the a3 set built and split (`584fe6e`):
   120 items, 60 open and 60 hidden; the mechanical tier now has 616 items; on the union
   the near-miss, scope and value/type floors are missed (12.5, 13.0, 9.7 %), reported as
   decided; independent review T9 running. R3 built (`d3d12ea`, hash `d0225486…`). The rule
