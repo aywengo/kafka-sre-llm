@@ -56,7 +56,7 @@ After the first slice:
 | WP | What | Depends on | Status |
 |---|---|---|---|
 | WP1c | Remaining mechanical kinds (resources, commands, client code, version traps, valid but wrong, safe order, sizing, not covered) | downloads (see 3 below), S5, S6 | resources, manifest fixes, commands and version traps were built in slice A2; plan for the other five 2026-11-19 (`runs/m4/reports/wp1c_plan.md`): 120 items by templates and programmatic checks, no model, in a separate generator and separate files, so the 496 items and their split stay byte-identical; 11 to 15 worker-days. **Done 2026-11-19:** T0 to T6 and the T8 code (tables, Java catalogue from the 4.3.2 jars, scorer checks `eval2_score/3`, Java and Python client checks, generators: 24 client code, 32 valid but wrong, 16 safe order, 24 sizing; assembly and grouped split, dry run only). T7 and the real T8 run done (`584fe6e`). **T9 review (2026-11-19, `runs/m4/reports/wp1c_t9_review.md`): do not use until fixed.** Structure sound (rebuild identical, 120 references pass, 453 perturbed fail, kubeconform, javac and absence records agree), but the checks reject correct answers in client code (exact overloads; try-with-resources; 10 of 18 Java perturbations are correct code) and not covered (correct declines fail), accept too-broad fixes in three valid-but-wrong oracles, one safe-order template follows a doc page the pinned tool contradicts, one hidden gap is in the index. **Fix round started** (version 2 of the a3 set: changed items get new ids, split and exposure drawn again, a3 files replaced; no answer to an a3 item exists and no hidden look was used; every template on both sides, pairs kept together, so no brief change), then the rebuild, a T9 re-check, T10 |
-| WP1d | Judged tier: scenarios and rubrics, the Owner's questions first | first fresh batch B1 | **Writing at scale (K2) since 2026-11-19, evening**: B2 (30 open) in second review; the Owner's 24 (hidden, sealed) in completion. **B1 done 2026-11-19** (`runs/m4/B1_COVERAGE_FINAL.md`, `B1_COVERAGE_BATCH.md`): 30 scenarios, 90 answers, 180 judgments, 60 answers read blind (16 by a second reader). Judge against reader on 158 essential units: kappa 0.86 and 0.78, precision 0.98 and 0.90, recall 0.86 and 0.86 (pass 1, pass 2); supported misses confirmed 14 of 14; unverified 0.6 %; pass-to-pass kappa 0.85; readers' totals 41 and 53 on the shared answers (23 % apart); identifier check 0 false findings. The rubric chunk check before the run was 94.0 % (bar 95 %). Waits for the Owner: the gate, and writing the tier at scale |
+| WP1d | Judged tier: scenarios and rubrics, the Owner's questions first | first fresh batch B1 | **Writing at scale (K2) since 2026-11-19, evening**: B2 (30 open) written, reviewed and committed (`0b522b3`), chunk check 98.0 %; the Owner's 24 (hidden, sealed) final, chunk check 96.9 %; 54 of the about 90 further scenarios exist. **B1 done 2026-11-19** (`runs/m4/B1_COVERAGE_FINAL.md`, `B1_COVERAGE_BATCH.md`): 30 scenarios, 90 answers, 180 judgments, 60 answers read blind (16 by a second reader). Judge against reader on 158 essential units: kappa 0.86 and 0.78, precision 0.98 and 0.90, recall 0.86 and 0.86 (pass 1, pass 2); supported misses confirmed 14 of 14; unverified 0.6 %; pass-to-pass kappa 0.85; readers' totals 41 and 53 on the shared answers (23 % apart); identifier check 0 false findings. The rubric chunk check before the run was 94.0 % (bar 95 %). Waits for the Owner: the gate, and writing the tier at scale |
 | WP5 | Retrieval and index coverage: candidate index and settings next to the frozen ones, one hidden-half run decides (J6) | J5 | plan, funnel tool and runtime profiles done; R2 chosen by its rule; **B1 check (T7) failed 2026-11-19** (`runs/m4/reports/wp5_t7_b1_funnel.md`): indexed must points served 56 to 77 of 166 (+12.7 points, bar +15), 12 of the 56 frozen-served lost (21 %, bar 5 %); T8 and T9 do not run; waits for the Owner (K3) |
 | WP1f | Starting-point measurement (E2) | WP1c, WP1d | not started |
 | WP2a | Labelled test set for the checker: 30 distinct items from the three readings | - | **done**: `runs/m4/reports/wp2a_labels_checked.jsonl` (two local-model runs, verified by counts and against sources) |
@@ -484,8 +484,29 @@ and J6 come from the mechanical tier and block nothing yet):
   the three architecture items (oq-002, oq-012, oq-026; in oq-012 two of his proposed
   points were left out, one over the six-unit limit, one with no pinned source). He may
   read his own hidden items; the conductor does not.
-- Next: B2 changes applied and its chunk check (95 %), then B2 committed and answered on
-  the server (default and strict, and R3 for the funnel); the Owner's 24 to their count;
-  WP1c T9 and T10; the revise module, then its development run on B1. For the Owner, not blocking: the essential points of
+- 2026-11-19, 21:40 to 23:10: a usage limit stopped five workers at about 21:45; all were
+  resumed after 21:50 from their saved state. WP1c T9 (independent review): the a3 set
+  is not to be used until fixed (see the WP1c row); three fix workers, two done, then a
+  rebuild as version 2 and a second review. The revise module is in (`8d72de7`). B2:
+  three second reviewers accepted all thirty with 190 changes; the independent chunk
+  count found 139 of 150 points (92.7 %, under the bar), a completion step followed, and
+  a fresh recount gives 146 of 149 (98.0 %; partial b2-04 m5, b2-07 m1, b2-11 m1); B2
+  committed before any answer exists (`0b522b3`). The Owner's 24: a sealed completion
+  and a sealed independent count, twice: 119 of 129 (92.2 %), then 123 of 127 (96.9 %;
+  partial oq-036 m1, oq-049 m3 and m4, oq-050 m2); final files
+  `eval/hidden/tier_b_owner_{items,rubrics}_final3.jsonl.enc`, counts in
+  `runs/m4/OWNER_CHUNK_CHECK.json`. The chunk helper drops chunk text between `<--` and
+  `-->` (`scripts/eval2_judge.py:955`, found on b2-26); not fixed yet.
+- For the Owner: (1) plain text of hidden rubric and chunk text was saved by the harness
+  in three tool-result files of this session (outside the repository), and every sealed
+  session's transcript holds what it decrypted; nobody reads them; deleting them is his
+  call. (2) Whether the sealed Owner files are committed like `tier_a.jsonl.enc`
+  (recommended: the two final3 files only). (3) Review list on B2: architecture items
+  b2-09, b2-10, b2-19, b2-20, b2-29, b2-30; b2-02 (weight of the prevention point), b2-05
+  (alternative path), b2-13 (sync termination as a must point); on his own questions also
+  oq-047 (one point removed to keep six units).
+- Next: B2 answered on the server (default and strict, judge, identifier check, the R3
+  rule, a first look at the revise step), then its blind readings; the a3 rebuild as
+  version 2 with a second review, then T10; the revise step's development run on B1. For the Owner, not blocking: the essential points of
   the six architecture scenarios (b1-10, b1-18, b1-19, b1-20, b1-29, b1-30). Not blocked:
   D1, the mechanical tier's hidden-half runs.
