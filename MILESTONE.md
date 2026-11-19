@@ -290,8 +290,20 @@ and J6 come from the mechanical tier and block nothing yet):
   `connect.protocol` and `transaction.timeout.ms`. The full funnel (WP5) stalled after 24
   of 275 items (no output for 10 minutes while the reranker scored); stopped, a fix is in
   work.
-- Next, in order: the Owner's K1 and K2; the funnel fix and the full funnel, then the
-  retrieval profiles (WP5 T5, T6). For the Owner, not blocking: the essential points of
+- 2026-11-19, 17:25: the full funnel ran after a fix (`6b90a8d`: the guard had killed a
+  working job whose log was block-buffered): all 275 stored packs replayed exactly; on the
+  development set frozen serves 32 of 106 points and 88 of 140 facts, R1 67 and 114, R2 66
+  and 113 (the plan's figures; frozen facts 88 against the plan's 87). T5 (runtime
+  profiles R1 and R2 next to the frozen one) started. **T6 rule, fixed now, before T5's
+  runtime check** (the simulated figures above were known when it was written): a profile
+  is eligible only if its runtime packs equal the funnel's simulation on the 275 items, or
+  the differences are explained and change no count by more than 1; R1 is chosen only if
+  its points plus facts served exceed R2's by at least 5 and it serves at least as many
+  weight-2 points; otherwise R2 (no reranker, about 5 s faster). The chosen profile's
+  settings hash is recorded here and in `runs/m5/PROFILE_CHOSEN.json` before anyone builds
+  or reads the B1 funnel (T7), whose rule is in the plan (indexed must points served +15
+  percentage points or more, at most 5 % of the frozen-served points lost).
+- Next, in order: the Owner's K1 and K2; T5, then T6 by the rule above, then T7. For the Owner, not blocking: the essential points of
   the six architecture scenarios (b1-10, b1-18, b1-19, b1-20, b1-29, b1-30), and the two
   source decisions for the candidate index (Argo CD command pages, Kafka tool option
   pages). Not blocked by them: the checker's "revise" step (E3), D1, the mechanical tier's
