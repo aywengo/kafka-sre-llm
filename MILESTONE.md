@@ -5,7 +5,7 @@ Working name "M4"; the release number is decided at the end. Started 2026-11-18,
 release of v3.0.0 and v3.0.1. `GOAL.md` says where the project is going; this file says
 where the current milestone stands.
 
-Last updated: 2026-11-19, 14:15.
+Last updated: 2026-11-19, 14:40.
 
 ## What this milestone is for
 
@@ -56,7 +56,8 @@ After the first slice:
 | WP | What | Depends on | Status |
 |---|---|---|---|
 | WP1c | Remaining mechanical kinds (resources, commands, client code, version traps, valid but wrong, safe order, sizing, not covered) | downloads (see 3 below), S5, S6 | not started |
-| WP1d | Judged tier: scenarios and rubrics, the Owner's questions first | S5 | not started |
+| WP1d | Judged tier: scenarios and rubrics, the Owner's questions first | first fresh batch B1 | role changed 2026-11-19 (J1); code and design amendment in work; then batch B1 |
+| WP5 | Retrieval and index coverage: candidate index and settings next to the frozen ones, one hidden-half run decides (J6) | J5 | analysis and plan in work |
 | WP1f | Starting-point measurement (E2) | WP1c, WP1d | not started |
 | WP2a | Labelled test set for the checker: 30 distinct items from the three readings | - | **done**: `runs/m4/reports/wp2a_labels_checked.jsonl` (two local-model runs, verified by counts and against sources) |
 | WP2b | Answer checker in the runtime: flag, then revise. Separate code from the scorer; shares only the catalogues | WP1a, WP2a | library **done** (`a61f818`): zero false "invented" findings on 244 stored answers; wired into `ask --check` and the service; extraction gaps from the pilot reading closed 2026-11-19 (`d0a165e`, `runs/m4/reports/wp2b_extraction_gaps.md`): it now reports 14 of the 16 names in the 48 pilot answers that the catalogues can decide (8 before), with no new "invented" finding on the 244 stored answers; the pilot answers are a development set, so this is not a measurement; "revise" not started |
@@ -111,6 +112,7 @@ thinking off.
 | 2026-11-18 | The 15 changes of the design review are accepted into the design; those that are the Owner's are marked as waiting | conductor |
 | 2026-11-18 | **Yes to all recommendations:** the 4-bit model on oMLX is the reference configuration; half of each tier hidden, encrypted, decisions on the hidden half, at most six looks; the downloads and installs for catalogues and checks; loading the 4-bit and full-precision 27B builds for the comparison; `questions_real` becomes a legacy set and the 4-bit bar a margin fixed before the run; public questions may be raw material after a licence check; the four bake-off candidates may be downloaded; other clients' models on the server may be unloaded when it is idle | Owner |
 | 2026-11-19 | **After the failed judging pilot:** build the judged tier with the analysis's changes and a second small pilot on fresh items; the first pilot stays a no-go and the second gets new criteria fixed beforehand; the judge's error flags count toward the bars of `GOAL.md` only after a reader has confirmed them; DeepSeek stays the judge, with the earlier judge re-judging a 24-item subset on every decision run; the Owner reviews which points are essential on his own questions | Owner |
+| 2026-11-19 | **After the second failed judging pilot, agreed with all six recommendations J1 to J6:** the judge reports coverage of essential points and forbidden statements only, wrong, invented and harmful rates come from an identifier check plus blind readings, no third pilot of the judge as an error finder, the coverage role is confirmed on a first fresh batch with criteria fixed beforehand (J1); a sealed reader may read hidden-half answers and return totals only, logged in the ledger (J2); a second reader on about a quarter of the answers (J3); a higher answer limit is measured as its own item (J4); the mechanical scorer reports declines beside the unchanged all-pass rate and may read the frozen index (J5); a work package for retrieval and index coverage, built as a candidate next to the frozen index and judged on the hidden half (J6) | Owner |
 
 ## Waiting for the Owner
 
@@ -118,8 +120,8 @@ Decided on 2026-11-18 (see "Decisions"). Still his to do, none blocking:
 
 The failed gate of 2026-11-18 (the judging pilot) was decided on 2026-11-19; see "Decisions".
 
-**Open, blocking the judged tier (WP1d) and everything behind it:** the second judging
-pilot failed on 2026-11-19 (3 of 5). The analysis (`runs/m4/reports/s5b_pilot2_analysis.md`)
+**Decided on 2026-11-19, afternoon: the Owner agreed with the recommendations J1 to J6
+below (see "Decisions").** The second judging pilot failed on 2026-11-19 (3 of 5). The analysis (`runs/m4/reports/s5b_pilot2_analysis.md`)
 found that the recall bar was out of reach with what the judge is shown (a perfect judge
 would reach about 0.68 against the bar of 0.7), that judge and readers do agree on which
 essential points an answer misses (kappa 0.75 and 0.73, found after the fact), and that
@@ -233,6 +235,17 @@ and J6 come from the mechanical tier and block nothing yet):
   in a `KafkaConnector` but not skipped; no open item uses it, the hidden half was not
   looked at. To fix when the remaining mechanical kinds are generated (WP1c), not before:
   a change to the pool would reshuffle the existing items.
-- Next: the Owner's decisions J1 to J6. Not blocked by them: the load test, the checker's
+- 2026-11-19, 14:40: the Owner agreed with J1 to J6. Started, all on CPU: the decline
+  outcome in the mechanical scorer (J5); the judge step's coverage role with support by
+  chunk ids, unverified verdicts and the report for the first fresh batch (J1); the
+  evaluation's identifier check for free-text answers (J1); the amendment of
+  `agents/m4-evaluation.md`; the analysis of where retrieval loses the needed passage and
+  the plan for the retrieval work package (J6).
+- Next, in order: review and push the four changes; write the first fresh batch (about
+  30 open scenarios, rubrics with chunk ids, second reviewer; the Owner's questions go
+  first if any are in the inbox by then); run it on the model server (default, strict,
+  default with a 4,096-token limit), judge, identifier check, blind reading with a second
+  reader on a quarter; go or no-go on the coverage role. In parallel: the retrieval
+  work package from its plan. Not blocked by them: the load test, the checker's
   extraction gaps the pilot showed (the pilot items behind them are listed in the analysis
   and go into the change's record), D1, the mechanical tier's hidden-half runs.
