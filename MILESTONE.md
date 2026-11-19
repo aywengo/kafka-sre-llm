@@ -66,7 +66,7 @@ After the first slice:
 | WP3b | Fewer excerpts for simple lookups; measure E4 | WP3a, WP1f | not started |
 | WP4a | Shortlist of base models | - | **done** 2026-11-18 (`runs/m4/reports/base_shortlist.md`) |
 | WP4b | Bake-off on the new evaluation; decision | WP1f | the four candidates are downloaded and load-tested 2026-11-19 (`runs/m4/reports/bakeoff_load_test.md`): all four load and answer on the server; median answer on 3 questions 8.0 s (Gemma 4 26B-A4B), 9.5 s (GLM-4.7-Flash), 35 s (Gemma 4 31B), 54 s (Granite 4.2 30B), against 35 s for the reference; quality not measured |
-| D1 | Find why the server path and the in-process path give different output | - | not started |
+| D1 | Find why the server path and the in-process path give different output | - | **answered 2026-11-19** (`runs/m4/reports/d1_code_reading.md`, `d1_paths.md`): on 20 open items with the same excerpts and the same full-precision weights, 13 of 20 answers byte-identical and the pass result equal on 20 of 20; the prompt tokens are equal, so the template is not the cause; the 7 differences start at a near-tie word inside matching text (numerics of the two execution paths; whether the server's multi-token prediction or its kernels, not separated). The in-process path stays a continuity check on outcomes, not on bytes |
 | D2 | The Owner reads ten answers that a model has already read | - | waiting for the Owner |
 
 Workers on local models: bounded reading and extraction go to `.claude/local-worker.sh`
@@ -419,7 +419,10 @@ and J6 come from the mechanical tier and block nothing yet):
   47 hidden, two runs identical; on the union of 591 the near-miss and scope floors are
   missed at 13.0 % and 13.5 %, reported as the plan foresaw). Commits `8604d83`,
   `635f7d1`, `704508f`, `be585d2`. D1 started as a code reading on a local model.
+- 2026-11-19, night: D1 answered (see its row): 13 of 20 answers byte-identical between
+  the in-process and server paths, pass result equal on 20 of 20, prompt tokens equal;
+  the rest is numerics. No model loaded or unloaded on the server.
 - Next, in order: the Owner's K1 to K6; after K5, WP1c T7, then the real T8 run, T9
-  (review) and T10. D1 code reading. For the Owner, not blocking: the essential points of
+  (review) and T10. For the Owner, not blocking: the essential points of
   the six architecture scenarios (b1-10, b1-18, b1-19, b1-20, b1-29, b1-30). Not blocked:
   D1, the mechanical tier's hidden-half runs.
