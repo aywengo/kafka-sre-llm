@@ -161,6 +161,9 @@ Rules added on 2026-11-19 from the readers' remarks on the second pilot:
 - alternatives that are equally correct go into an any_of group, not into separate points;
 - a point that rests on a source outside the index is allowed but marked as such; it
   tests retrieval coverage, not the answer, and is never "supported" (see below).
+- how B1's second reviewers read two of these rules, recorded before any answer existed:
+  "3 to 6 must points" counts units, an any_of group once; in the chunk check, a point
+  whose fact is an order the sources imply but do not state counts as partial.
 
 Answers are scored alone, not head to head. Each must point carries a weight: 2 if it is
 essential, otherwise 1. Each must-not point has a severity: *wrong* or *harmful*. Per item:
@@ -281,7 +284,10 @@ Reading protocol:
 1. The reader is blind to the configuration (mode, model, limit) of every answer.
 2. Stage 1, the reader's own findings, before it sees anything from the judge or a second
    reader. Each finding has a kind: *wrong*, *invented*, *harmful* or *omission* (an
-   omission names the rubric point id and `supported`, by the rule above); a `minor` mark
+   omission names the rubric point id and `supported`, by the rule above; a point counts
+   as stated by the same standard as in the judge's instruction, so that both count the
+   same thing: explicit and specific enough to act on, named as in the point, first where
+   the point says first, not contradicted elsewhere); a `minor` mark
    (true or false); a verbatim quote from the answer; and the source file and lines. A
    statement the sources do not settle is not counted; it is listed as "could not
    verify".

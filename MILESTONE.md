@@ -235,20 +235,20 @@ and J6 come from the mechanical tier and block nothing yet):
   in a `KafkaConnector` but not skipped; no open item uses it, the hidden half was not
   looked at. To fix when the remaining mechanical kinds are generated (WP1c), not before:
   a change to the pool would reshuffle the existing items.
-- 2026-11-19, 14:40: the Owner agreed with J1 to J6. Started, all on CPU: the decline
+- 2026-11-19, about 13:00: the Owner agreed with J1 to J6. Started, all on CPU: the decline
   outcome in the mechanical scorer (J5); the judge step's coverage role with support by
   chunk ids, unverified verdicts and the report for the first fresh batch (J1); the
   evaluation's identifier check for free-text answers (J1); the amendment of
   `agents/m4-evaluation.md`; the analysis of where retrieval loses the needed passage and
   the plan for the retrieval work package (J6).
-- 2026-11-19, evening: built and pushed for J1 and J5: the judge step's coverage role
+- 2026-11-19, 13:55: built and pushed for J1 and J5: the judge step's coverage role
   (`ca1ae42`, `ab7920a`), the scorer's decline outcomes (`21ac50e`: on the 251 open items
   default has 194 pass, 3 correct declines, 52 wrong; strict has 174 pass, 41 correct
   declines, 10 wrong declines, 21 wrong; the split is fitted to the open half), the
   evaluation's identifier check (`970e8c5`: 8.3 nonexistent identifiers per 10 pilot
   answers in default mode and 1.7 in strict, all 43 findings verified), the amended design
   (`agents/m4-evaluation.md`), the run chain and the blinding tool (`6e75ae9`).
-- 2026-11-19, night: batch B1 written, reviewed and pushed before any answer exists
+- 2026-11-19, 14:17: batch B1 written, reviewed and pushed before any answer exists
   (`91e2b34`, `c02b429`): 30 scenarios, six per task type, 184 must points, 79 essential
   units, 74 must-not points; three second reviewers accepted all thirty with 189 changes.
   Criterion 2, first half: an independent count of all 166 points with chunk ids found the
@@ -258,7 +258,7 @@ and J6 come from the mechanical tier and block nothing yet):
 - Next, in order: when the run is done, build the blind bundles (second reader on a
   quarter, seed 20261119), two readers read default and strict, unblind, run the coverage
   report; bring the Owner the six criteria with criterion 2's first half already missed
-  by two points. In parallel: the retrieval work package from its plan. For the Owner,
+  by about one point (94.0 % against 95 %). In parallel: the retrieval work package from its plan. For the Owner,
   not blocking: the essential points of the six architecture scenarios (b1-10, b1-18,
   b1-19, b1-20, b1-29, b1-30). Not blocked by them: the load test, the checker's
   extraction gaps the pilot showed (the pilot items behind them are listed in the analysis
