@@ -366,8 +366,11 @@ and J6 come from the mechanical tier and block nothing yet):
   catalogue hash unchanged. These B1 answers are development data for the checker now. The
   pilot invented totals in `wp2b_extraction_gaps.md` (13 and 6) were from an intermediate
   run; the committed code gives 11 and 5 (corrected there).
-- Next, in order: the Owner's K1, K2, K3 and K4. For the Owner, not blocking: the essential points of
-  the six architecture scenarios (b1-10, b1-18, b1-19, b1-20, b1-29, b1-30), and the two
-  source decisions for the candidate index (Argo CD command pages, Kafka tool option
-  pages). Not blocked by them: the checker's "revise" step (E3), D1, the mechanical tier's
-  hidden-half runs.
+- 2026-11-19, 18:17: WP1c planned (`runs/m4/reports/wp1c_plan.md`) and started on CPU
+  (T0 download check, T1a tables, T3 scorer checks). Conductor decisions on the plan: no
+  model in the generators; the Strimzi forbidden keys are fixed in the new pools only; the
+  hidden half grows through a new file; the mix floors apply to each build on its own.
+- Next, in order: the Owner's K1 to K5; WP1c T0, T1a and T3, then T5 and T6 (T1b, T2
+  and T4 after the jar downloads). For the Owner, not blocking: the essential points of
+  the six architecture scenarios (b1-10, b1-18, b1-19, b1-20, b1-29, b1-30). Not blocked:
+  D1, the mechanical tier's hidden-half runs.
