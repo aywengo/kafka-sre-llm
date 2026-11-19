@@ -185,6 +185,30 @@ not passed. Two decisions:
   construction; a loss means a bug). On a pass, the hidden-half run of J6 decides; on a
   fail, WP5 closes with the frozen retrieval. B1 is development data for R3 and decides
   nothing.
+- **The rule for E3 and the revise step (K4), fixed on 2026-11-19 before any fresh answer
+  exists** (from `runs/m4/reports/wp2b_revise_design.md` section 7, with K4). Run once on
+  the hidden judged half after E2, as one row of `runs/m4/HIDDEN_LEDGER.md`: E2's stored
+  4-bit default answers and packs go through the revise step (no regeneration), and a
+  sealed reader reads the final answers and returns totals only. (1) Configuration: the
+  4-bit reference model on the server path, the retrieval E2 used, default mode, the
+  answer limit of E2, first-pass prompts unchanged; the manifest records the checker
+  version, the catalogue hash, the revise prompt hash and settings. (2) The E3 figure:
+  the first reader's non-minor wrong + invented + harmful statements in the final
+  answers per 10 answers, 90 % interval by a bootstrap over items, harmful counted
+  separately; a statement marked "not confirmed" counts; minor statements are reported
+  beside it and not counted; a second reader on 25 % of the answers, and if the two
+  readers' totals differ by more than 30 % the reading is not used. (3) E3 is met if the
+  rate is at most 2.0 per 10 and harmful is 0, on at least 60 answers; otherwise it is
+  reported as not met, with the gap. (4) The model patch step (R2) stays on by default
+  with `--check` only if all hold: errors removed minus errors introduced at least 1.0
+  per 10 (read line by line against E2's reading of the same answer); no new harmful
+  statement; no new invented identifier; judge essential-miss units no worse by more
+  than 1.0 per 10; added time at most 10 s median and 25 s at the 90th percentile.
+  (5) Reported beside it: the share of answers revised, the patches the re-check
+  rejected, the checker's counts before and after, the time. B1, the second pilot, the
+  244 stored answers, the 30 labelled errors and the open mechanical half are
+  development data for the revise step. A first look on B2 (open) is allowed and
+  decides nothing.
 - **K6. The Owner's 34 questions** (`eval/m4/inbox/owner_questions.yaml`, 2026-11-19).
   The file calls them reconstructions of public incidents, so by the brief they are
   source 3 (public questions), not source 1. Recommended: (a) admit them under the working
