@@ -37,7 +37,7 @@ class Vbw(unittest.TestCase):
 
     def test_counts(self):
         self.assertEqual(len(g.generate.dropped), 0)
-        self.assertEqual(len(self.items), 32)
+        self.assertEqual(len(self.items), 41)   # 32, minus the dropped V6 fault, plus the 10 draws of round 2 (N1, N2)
         self.assertEqual(len({i["id"] for i in self.items}), len(self.items))
         for t in {i["template"] for i in self.items}:
             n = [i for i in self.items if i["template"] == t]
@@ -153,18 +153,48 @@ class FixRound2(unittest.TestCase):
         return sc.yaml.safe_dump(d, sort_keys=False)
 
     def test_ids_version_and_pairs(self):
-        self.assertEqual(g.VERSION, "eval2_items_a3_vbw/2")
+        self.assertEqual(g.VERSION, "eval2_items_a3_vbw/3")
         for it in self.items:
-            self.assertIn("-v2-", it["id"])
+            self.assertRegex(it["id"], r"-v[23]-\d+$")
             self.assertTrue(it["pair"].startswith("vbw:"), it["id"])
             self.assertEqual(it["generator"], g.VERSION)
         for tpl in {i["template"] for i in self.items}:
             items = self.of(tpl)
             for c in [i for i in items if i["vbw"]["role"] == "control"]:
                 self.assertTrue(any(w["pair"] == c["pair"] and w["vbw"]["role"] == "wrong" for w in items), c["id"])
+        for tpl in ("vbw_netpol_from", "vbw_restart_annotation", "vbw_default_value", "vbw_pdb_no_eviction"):
+            self.assertEqual(len({i["pair"] for i in self.of(tpl)}), 3, tpl)  # a, b and the new pair c of round 2
+        for tpl in ("vbw_heartbeat_session", "vbw_min_isr_replicas"):
+            self.assertEqual(len({i["pair"] for i in self.of(tpl)}), 2, tpl)
+
+    def test_round_2_every_template_has_two_controls_in_two_groups_n2(self):
+        """A control on each side needs two groups that each hold a control (the split puts a group on one side)."""
         for tpl in ("vbw_netpol_from", "vbw_restart_annotation", "vbw_default_value", "vbw_heartbeat_session",
-                    "vbw_min_isr_replicas", "vbw_pdb_no_eviction"):
-            self.assertEqual(len({i["pair"] for i in self.of(tpl)}), 2, tpl)  # two groups, so two sides are possible
+                    "vbw_min_isr_replicas", "vbw_pdb_no_eviction", "vbw_forbidden_key"):
+            ctl_pairs = {i["pair"] for i in self.of(tpl) if i["vbw"]["role"] == "control"}
+            self.assertGreaterEqual(len(ctl_pairs), 2, tpl)
+            for c in [i for i in self.of(tpl) if i["vbw"]["role"] == "control"]:
+                self.assertTrue(any(w["pair"] == c["pair"] and w["vbw"]["role"] == "wrong" for w in self.of(tpl)), c["id"])
+
+    def test_round_2_the_draws_are_new_entries_and_one_old_fault_is_dropped(self):
+        v3 = [i for i in self.items if "-v3-" in i["id"]]
+        self.assertEqual(sorted(i["template"] for i in v3), sorted(
+            ["vbw_netpol_from"] * 2 + ["vbw_restart_annotation"] * 2 + ["vbw_default_value"] * 2 + ["vbw_pdb_no_eviction"] * 2
+            + ["vbw_heartbeat_session", "vbw_min_isr_replicas"]))
+        self.assertEqual(len({i["family"] for i in self.items}), len(self.items))
+        # the dropped fault keeps its number free: version-2 ids stay what they were
+        self.assertNotIn("a3-vbw_min_isr_replicas-v2-003", {i["id"] for i in self.items})
+        self.assertIn("a3-vbw_min_isr_replicas-v2-004", {i["id"] for i in self.items})
+        # the new V6 control joins the pair of the kept fault; the new V5 control the pair of the two published faults
+        self.assertEqual({i["pair"] for i in v3 if i["template"] == "vbw_min_isr_replicas"}, {"vbw:V6:b"})
+        self.assertEqual({i["pair"] for i in v3 if i["template"] == "vbw_heartbeat_session"}, {"vbw:V5:b"})
+        for i in v3:
+            self.assertEqual(i["generator"], g.VERSION)
+
+    def test_round_2_n8_the_plugin_version_item_carries_a_note(self):
+        it = next(i for i in self.items if i["family"].endswith("KafkaConnector:connector.plugin.version"))
+        self.assertIn("spec.version", it["note"])
+        self.assertEqual(sum(1 for i in self.items if "note" in i), 1)
 
     def test_v1_four_probes_and_the_reviewers_wrong_fixes(self):
         for it in self.of("vbw_netpol_from"):
@@ -305,7 +335,7 @@ class Gating(unittest.TestCase):
         items = g.generate(catalogues_a3_dir=str(d), dedup=False)
         v8 = [i for i in items if i["vbw"]["mechanism"] == "V8"]
         self.assertEqual(len(v8), 4)
-        self.assertEqual(len(items), 32)  # FK gives up four places
+        self.assertEqual(len(items), 41)  # FK gives up four places
 
     def test_v4_picked_up_when_both_anchors_flip(self):
         def edit(m):

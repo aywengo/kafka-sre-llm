@@ -58,7 +58,7 @@ class GeneratorsAndPredecessor(unittest.TestCase):
         self.assertEqual(kinds, PRESENT_KINDS)
         for k in kinds:  # a generator may report a derivation failure and make fewer than the plan; never more
             n = sum(1 for i in r["items"] if i["kind"] == k)
-            self.assertTrue(2 * asm.MIN_KIND_ITEMS <= n <= asm.PLAN[k], (k, n))
+            self.assertTrue(2 * asm.MIN_KIND_ITEMS <= n and asm.PLAN[k] <= n, (k, n))   # the plan and the draws of round 2
         self.assertEqual([i["id"] for i in r["items"]], [i["id"] for i in sorted(r["items"], key=lambda i: (asm.MODULES.index(
             {v: k for k, v in asm.KIND_OF.items()}[i["kind"]]), i["id"]))])
 
@@ -176,7 +176,8 @@ class ExposureAndSplit(unittest.TestCase):
         self.assertEqual({i["id"] for i in r["items"] if i["exposed"]}, set(ex))
         open_ids = {i["id"] for i in r["open"]}
         self.assertTrue(set(ex) <= open_ids)
-        self.assertEqual(asm.choose_exposed(r["items"]), ex)
+        # drawn among the items of the open side by publication
+        self.assertEqual(asm.choose_exposed(asm.split_by_publication(r["items"], r["published"])[0]), ex)
 
     def test_embedded_rows_win_and_must_match(self):
         r = built()
@@ -191,7 +192,7 @@ class ExposureAndSplit(unittest.TestCase):
 
     def test_split_is_deterministic_and_covers_every_item_once(self):
         r = built()
-        op, hd = asm.split_extend(r["items"])
+        op, hd, _ = asm.split_by_publication(r["items"], r["published"])
         self.assertEqual([i["id"] for i in op], [i["id"] for i in r["open"]])
         self.assertEqual([i["id"] for i in hd], [i["id"] for i in r["hidden"]])
         ids = [i["id"] for i in r["open"]] + [i["id"] for i in r["hidden"]]
@@ -242,9 +243,10 @@ class ExposureAndSplit(unittest.TestCase):
         self.assertIn("t1", problems[0])
         self.assertEqual(sorted(t for t, _, _, _ in one), ["t1", "t2", "t3"])
 
-    def test_the_seed_labels_and_version_are_those_of_version_2(self):
-        self.assertEqual(asm.VERSION, "eval2_items_a3/2")
-        self.assertNotEqual(asm.SEED, "m4-a3-1")
+    def test_the_seed_labels_and_version_are_those_of_version_3(self):
+        self.assertEqual(asm.VERSION, "eval2_items_a3/3")
+        self.assertEqual(asm.SEED, "m4-a3-3")
+        self.assertNotIn(asm.SEED, ("m4-a3-1", "m4-a3-2"))
         self.assertNotEqual(asm.SPLIT_SEED, asm.OLD_SPLIT_SEED)
 
     def test_manifest_records_file_hashes_not_a_commit_and_what_it_replaces(self):
@@ -253,8 +255,14 @@ class ExposureAndSplit(unittest.TestCase):
         self.assertEqual(set(m["generator_files_sha256"]), set(asm.GENERATOR_FILES))
         for n, h in m["generator_files_sha256"].items():
             self.assertEqual(h, hashlib.sha256((ROOT / "scripts" / n).read_bytes()).hexdigest())
-        self.assertEqual(m["replaces"]["items_sha256"], "d425cdada882b81d1124a6dc49d5d43b03ca7af6326882aa9a67e98eaf036ce3")
-        self.assertEqual(m["generator"], "eval2_items_a3/2")
+        self.assertEqual([(x["generator"], x["items_sha256"]) for x in m["replaces"]], [
+            ("eval2_items_a3/1", "d425cdada882b81d1124a6dc49d5d43b03ca7af6326882aa9a67e98eaf036ce3"),
+            ("eval2_items_a3/2", "62bbed2411bd2cd5c544841898aa6433ba1455da0d0bffb9f0d067c6b38fa9d8")])
+        self.assertEqual(m["generator"], "eval2_items_a3/3")
+        self.assertEqual(m["split"], "by publication")
+        self.assertEqual(m["published_open"]["path"], asm.PUBLISHED_PATH)
+        self.assertEqual(m["published_open"]["sha256"], asm.sha(asm.record_text(built()["published"].record)))
+        self.assertEqual(m["published_open"]["versions"], ["eval2_items_a3/1", "eval2_items_a3/2"])
 
     def test_each_kind_has_enough_items_and_families_on_each_side(self):
         r = built()
@@ -303,11 +311,153 @@ class ExposureAndSplit(unittest.TestCase):
 
     def test_prior_group_on_both_sides_is_refused(self):
         r = built()
-        g = next(k for k in {asm.group_of(i) for i in r["items"]} if k.startswith("pair:"))
+        g = next(k for k in sorted({asm.group_of(i) for i in r["items"]})
+                 if k.startswith("pair:") and sum(1 for i in r["items"] if asm.group_of(i) == k) >= 2)
         pair = [i for i in r["items"] if asm.group_of(i) == g]
         prior = {"open": [pair[0]["id"]], "hidden": [pair[1]["id"]]}
         with self.assertRaises(asm.AssemblyError):
             asm.split_extend(r["items"], prior=prior)
+
+
+@unittest.skipUnless(HAVE, SKIP)
+class PublishedOpenFiles(unittest.TestCase):
+    """Round 2, N1: nothing that was ever in an open file is hidden."""
+
+    @classmethod
+    def git_rows(cls):
+        rows = [asm.git_rows(c, p) for _, c, p in asm.PUBLISHED_SOURCES]
+        if any(r is None for r in rows):
+            raise unittest.SkipTest("the earlier open files are not in git here")
+        return rows
+
+    def test_the_record_is_the_hash_list_of_both_open_files(self):
+        rows = self.git_rows()
+        rec = json.loads((ROOT / asm.PUBLISHED_PATH).read_text())
+        self.assertEqual([v["generator"] for v in rec["versions"]], ["eval2_items_a3/1", "eval2_items_a3/2"])
+        for v, part in zip(rec["versions"], rows):
+            self.assertEqual(len(part), 60)
+            self.assertEqual([(i["id"], i["question_sha256"]) for i in v["items"]], [(r["id"], asm.q_sha(r["question"])) for r in part])
+        self.assertEqual((ROOT / asm.PUBLISHED_PATH).read_text(), asm.record_text(asm.published_record()))   # the file is what the code writes
+        self.assertNotIn(str(Path.home()), (ROOT / asm.PUBLISHED_PATH).read_text())
+
+    def test_no_hidden_item_equals_or_nearly_equals_a_published_open_item_counts_only(self):
+        rows = self.git_rows()
+        r = built()
+        pub = [x for part in rows for x in part]
+        texts = {asm.norm_text(x["question"]) for x in pub}
+        fams = {x["family"] for x in pub}
+        toks = [asm.a1.tokens(asm.core_of(x)) for x in pub]
+        equal = same_family = near = 0
+        for h in r["hidden"]:
+            equal += asm.norm_text(h["question"]) in texts
+            same_family += h["family"] in fams
+            t = asm.a1.tokens(asm.core_of(h))
+            near += any(len(t & u) / len(t | u) >= asm.LEAK_JACCARD for u in toks)
+        self.assertEqual((equal, same_family, near), (0, 0, 0))
+        self.assertEqual(len(r["hidden"]), 60)
+        self.assertEqual([i for i in r["hidden"] if r["published"].match(i)], [])
+
+    def test_every_published_item_that_is_built_again_is_open_with_its_whole_group(self):
+        rows = self.git_rows()
+        r = built()
+        pub_text = {asm.norm_text(x["question"]) for part in rows for x in part}
+        side = {i["id"]: "o" for i in r["open"]}
+        side.update({i["id"]: "h" for i in r["hidden"]})
+        again = [i for i in r["items"] if asm.norm_text(i["question"]) in pub_text]
+        self.assertGreaterEqual(len(again), 60)       # the 60 open items of version 2 are built again
+        self.assertTrue(all(side[i["id"]] == "o" for i in again))
+        by = {}
+        for i in r["items"]:
+            by.setdefault(asm.group_of(i), set()).add(side[i["id"]])
+        self.assertTrue(all(len(v) == 1 for v in by.values()))
+
+    def test_unchanged_open_items_of_version_2_keep_their_id_and_text(self):
+        rows = self.git_rows()
+        by = {i["id"]: i for i in built()["items"]}
+        for x in rows[1]:
+            if x["id"] in by:
+                self.assertEqual(by[x["id"]]["question"], x["question"], x["id"])
+        self.assertGreaterEqual(sum(1 for x in rows[1] if x["id"] in by), 50)
+
+    def test_a_changed_question_under_an_old_id_is_refused(self):
+        r = built()
+        pub = r["published"]
+        some = r["items"][0]
+        clash = {**some, "id": next(iter(pub.id_hashes)), "question": "A new question that no open file had. " * 3}
+        self.assertTrue(asm.published_problems([clash], pub))
+        self.assertEqual(asm.published_problems([some], pub), [])
+
+    def test_the_rule_names_equal_same_entry_and_same_words(self):
+        rows = self.git_rows()
+        rec = asm.published_record()
+        pub = asm.Published(rec, [x for part in rows for x in part])
+        x = rows[0][0]
+        same = {k: x[k] for k in ("id", "family", "question")}
+        self.assertEqual(pub.match({**same, "id": "a3-n-001", "family": "new:family"}), "same question")
+        self.assertEqual(pub.match({**same, "id": "a3-n-002", "question": "Another text altogether, with other words.", "family": x["family"]}), "same entry")
+        words = {"id": "a3-n-003", "family": "new:family2", "question": " ".join(reversed(asm.core_of(x).split()))}
+        self.assertEqual(pub.match(words), "same words")           # the same words in another order
+        self.assertIsNone(pub.match({"id": "a3-n-004", "family": "new:family3", "question": "A question about nothing that was ever asked before in any file."}))
+        # without the texts only the hash list is left, and it still finds an equal question
+        only_hash = asm.Published(rec, None)
+        self.assertEqual(only_hash.match({**same, "family": "new:family"}), "same question")
+        self.assertIsNone(only_hash.match({**same, "question": same["question"] + " extra words", "family": x["family"]}))
+
+    def test_a_record_that_differs_from_git_stops_the_build(self):
+        self.git_rows()
+        rec = json.loads((ROOT / asm.PUBLISHED_PATH).read_text())
+        rec["versions"][1]["items"][0]["question_sha256"] = "0" * 64
+        with tempfile.TemporaryDirectory() as d:
+            f = Path(d) / "A3_PUBLISHED_OPEN.json"
+            f.write_text(json.dumps(rec))
+            with self.assertRaises(asm.AssemblyError):
+                asm.load_published(f)
+            self.assertIsNotNone(asm.load_published(f, use_git=False))       # without git the list alone is used
+        with self.assertRaises(asm.AssemblyError):
+            asm.load_published(Path(d) / "missing.json")
+
+    def test_write_published_never_overwrites_and_writes_nothing_else(self):
+        with mock.patch("sys.stderr", new_callable=__import__("io").StringIO):
+            self.assertEqual(asm.main(["--write-published"]), 2)         # the record exists
+        self.assertEqual((ROOT / asm.PUBLISHED_PATH).read_text(), asm.record_text(asm.published_record()))
+
+    def test_the_split_has_the_counts_and_sides_the_plan_asks_for(self):
+        r = built()
+        self.assertEqual(asm.hidden_count_problems(r["hidden"], ALLOW), [])
+        for kind, n in asm.PLAN.items():
+            self.assertEqual(sum(1 for i in r["hidden"] if i["kind"] == kind), n // 2, kind)
+            self.assertGreaterEqual(sum(1 for i in r["open"] if i["kind"] == kind), n // 2, kind)
+        self.assertEqual(asm.template_sides(r["open"], r["hidden"])[0], [])
+        self.assertEqual({i["template"] for i in r["open"]}, {i["template"] for i in r["hidden"]})   # every template on both sides
+        self.assertEqual(asm.pair_problems(r["open"], r["hidden"]), [])
+        self.assertEqual(r["problems"], [])
+
+    def test_every_valid_but_wrong_template_has_a_works_control_on_each_side_n2(self):
+        r = built()
+        self.assertEqual(asm.control_sides(r["open"], r["hidden"]), [])
+        for t in {i["template"] for i in r["items"] if i["kind"] == "valid_but_wrong"}:
+            for its in (r["open"], r["hidden"]):
+                self.assertTrue(any(i["template"] == t and i["failure_class"] == "valid_control" for i in its), t)
+        # the check itself
+        mk = lambda t, fc: {"template": t, "failure_class": fc, "kind": "valid_but_wrong"}  # noqa: E731
+        self.assertEqual(len(asm.control_sides([mk("t", "valid_but_wrong")], [mk("t", "valid_control")])), 1)
+        self.assertEqual(asm.control_sides([mk("t", "valid_control")], [mk("t", "valid_control")]), [])
+
+    def test_the_hidden_counts_check_names_the_kind(self):
+        self.assertTrue(any(x.startswith("safe_order: 0 hidden") for x in asm.hidden_count_problems([], ())))
+        self.assertFalse(any("not_covered" in x for x in asm.hidden_count_problems([], ("gap",))))
+
+    def test_the_report_gives_counts_of_moved_and_new_items_and_the_maxima_and_no_text(self):
+        r = built()
+        text = asm.report(r, ALLOW)
+        self.assertIn("open items that were not in the version-2 open file", text)
+        self.assertIn("new draws (ids -v3- and 2xx) per template", text)
+        self.assertIn("hidden against the published open items (60 hidden)", text)
+        m = asm.manifest_of(r)
+        self.assertEqual(sum(m["fresh_items"].values()), 29)             # 6 client, 4 not-covered, 3 order, 6 sizing, 10 valid-but-wrong
+        self.assertEqual(sum(m["published_matches"].values()), len(r["open"]))
+        for h in r["hidden"]:
+            self.assertNotIn(h["question"][:60], text)
 
 
 @unittest.skipUnless(HAVE, SKIP)

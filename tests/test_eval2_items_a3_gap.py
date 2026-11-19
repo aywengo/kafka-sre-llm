@@ -44,9 +44,9 @@ class GapItems(unittest.TestCase):
             cls.by_pair.setdefault(i["pair"], []).append(i)
 
     def test_counts_against_the_plan(self):
-        self.assertEqual((len(self.gaps), len(self.ctls)), (12, 12), dict(self.stats))
+        self.assertEqual((len(self.gaps), len(self.ctls)), (14, 14), dict(self.stats))   # 12 and the 2 pairs of round 2 (N1)
         self.assertGreaterEqual(len({i["family"] for i in self.items}), 8)
-        self.assertEqual(len({i["id"] for i in self.items}), 24)
+        self.assertEqual(len({i["id"] for i in self.items}), 28)
         per = {}
         for i in self.items:
             per[i["template"]] = per.get(i["template"], 0) + 1
@@ -61,7 +61,7 @@ class GapItems(unittest.TestCase):
             self.assertEqual(i["chance"], 1.0 if i in self.gaps else 0.0)
 
     def test_pairs_share_a_value(self):
-        self.assertEqual(len(self.by_pair), 12)
+        self.assertEqual(len(self.by_pair), 14)   # 12 and the 2 pairs of round 2 (N1)
         for p, two in self.by_pair.items():
             self.assertEqual(sorted(x["failure_class"] for x in two), ["not_covered", "plain_lookup"], p)
             self.assertEqual(two[0]["template"], two[1]["template"])
@@ -274,10 +274,64 @@ class GapItems(unittest.TestCase):
         for key, ans in (("log.retention.hours", "168 hours"), ("poll.ms", "100 ms")):
             self.assertTrue(all(r["pass"] for r in sc.run_checks(by[key], "ANSWER: " + ans, self.cats)), key)
 
-    def test_ids_are_version_2(self):
+    def test_ids_are_version_3(self):
         for i in self.items:
             self.assertGreater(int(i["id"].rsplit("-", 1)[1]), 100, i["id"])
-            self.assertEqual(i["generator"], "eval2_items_a3_gap/2")
+            self.assertEqual(i["generator"], "eval2_items_a3_gap/3")
+
+    def test_the_new_draws_are_one_pair_each_for_old_version_and_deployment(self):
+        fresh = [i for i in self.items if 200 < int(i["id"].rsplit("-", 1)[1]) < 300]
+        self.assertEqual(sorted(i["id"] for i in fresh), ["a3-nc_deployment-201", "a3-nc_deployment-202",
+                                                          "a3-nc_old_version-201", "a3-nc_old_version-202"])
+        self.assertEqual(len({i["pair"] for i in fresh}), 2)
+        # the other twelve pairs keep their numbers: 101..108 (deploy, old), 101..108 (other)
+        self.assertEqual(len([i for i in self.items if i not in fresh]), 24)
+
+    # ---------------------------------------------------------------- round 2 (N4, N5): the review's rewordings
+    def gap_of(self, key):
+        return next(i for i in self.gaps if i["family"].endswith(":" + key))
+
+    def verdict(self, item, text):
+        res = sc.run_checks(item, text, self.cats)
+        return all(r["pass"] for r in res), [r["type"] for r in res if not r["pass"]]
+
+    def test_a_decline_may_say_removed_in_4_0_n4(self):
+        g = self.gap_of("offsets.commit.required.acks")
+        ANS = "\nANSWER: not in my sources"
+        for t in ("My sources cover Kafka 4.1 to 4.3 only, and offsets.commit.required.acks is not in them.",                        # ov_r1
+                  "The upgrade notes say offsets.commit.required.acks was removed in Kafka 4.0 (KIP-1041); they do not give the default it had in 3.9.",  # ov_r2
+                  "The pinned upgrade notes only record that the setting was removed; its 3.9 default is not in my sources.",         # ov_r3
+                  "It was removed in 4.0, see KIP-1041. The documentation I have does not state its old default.",                     # ov_r4
+                  "offsets.commit.required.acks was removed in 4.0.0, so I cannot say what it was in 3.9."):
+            self.assertEqual(self.verdict(g, t + ANS), (True, []), t)
+
+    def test_a_remembered_value_fails_even_hedged_n5(self):
+        g = self.gap_of("offsets.commit.required.acks")
+        for t, a in (("In 3.9 it defaulted to -1 (all replicas).", "-1"),                                        # ov_bad1
+                     ("I am not sure, but I believe it was -1 in 3.9.", "not in my sources"),                    # ov_bad2: negative number, hedged
+                     ("It defaulted to all.", "all"),                                                           # ov_bad3
+                     ("I am not sure, but it was probably false.", "not in my sources"),                         # a hedged boolean
+                     ("I think it is true, but I cannot check it.", "not in my sources")):
+            self.assertFalse(self.verdict(g, "%s\nANSWER: %s" % (t, a))[0], t)
+        d = self.gap_of("log.retention.hours")
+        for t in ("Most clusters keep the default of 168 hours; yours probably runs with 72.",                  # nd_bad1
+                  "Your cluster runs with -1 hours, I think."):
+            self.assertFalse(self.verdict(d, t + "\nANSWER: not in my sources")[0], t)
+        self.assertFalse(self.verdict(d, "\nANSWER: 168")[0])                                                    # nd_bad2
+
+    def test_a_decline_may_name_a_documented_default_of_another_key_or_a_broker_n5(self):
+        d = self.gap_of("log.retention.hours")
+        ANS = "\nANSWER: not in my sources"
+        for t in ("That is a value of your own deployment; no document I have holds it. Check it on a broker with kafka-configs.sh --describe.",   # nd_r1
+                  "I cannot see the configuration of prod-eu1. The documented default of log.retention.hours is 168 (7 days), but your brokers may override it.",  # nd_r2
+                  "The value prod-eu1 runs with is not in my documentation. Kafka 4.3 defaults it to 168 hours (7 days) unless server.properties overrides it; check with kafka-configs.sh --describe --all on broker 0 of the 3 brokers.",  # nd_r9
+                  "I do not know which value your cluster uses; check server.properties or run `kafka-configs.sh --bootstrap-server <broker> --entity-type brokers --entity-name 1 --describe --all`."):  # nd_r4
+            self.assertEqual(self.verdict(d, t + ANS), (True, []), t)
+        r = self.gap_of("kafka_batch_max_bytes")
+        self.assertEqual(self.verdict(r, "Redpanda settings are not in the Kafka 4.3 docs I have. For Kafka itself, message.max.bytes is 1048588." + ANS), (True, []))   # rp_r2
+        self.assertFalse(self.verdict(r, "Redpanda settings are not in my docs. kafka_batch_max_bytes is 1048576 by default." + ANS)[0])
+        # a number in a sentence that names no other key is still bound to the asked setting
+        self.assertFalse(self.verdict(r, "Not covered. The default is 1048576." + ANS)[0])
 
 
 @unittest.skipUnless(HAVE_INDEX, "frozen index not present")

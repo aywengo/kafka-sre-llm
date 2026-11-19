@@ -406,6 +406,83 @@ WRONG = [("ad_r1", "admin.createTopics(List.of(topic))", "admin.createTopics(top
          ("su_r1", "streams.start();", "", "java_calls")]
 
 
+def _by_id():
+    return {i["id"]: i for i in built()[0]}
+
+
+@unittest.skipUnless(NEED, "catalogues, the open file, and the jars or the Python symbol list are missing")
+class Round2Tests(unittest.TestCase):
+    """WP1c fix round 2: N1 (variants for the hidden side), N3 (the value of `asynchronous`), a callback by position."""
+
+    PCC = """```python
+from confluent_kafka import Consumer
+
+c = Consumer({"bootstrap.servers": "kafka:9092", "group.id": "billing", "enable.auto.commit": False})
+c.subscribe(["orders"])
+try:
+    while True:
+        msg = c.poll(1.0)
+        if msg is None or msg.error():
+            continue
+        print(msg.value())
+        c.commit(message=msg, %s)
+finally:
+    c.close()
+```"""
+
+    def test_the_variants_for_the_hidden_side_are_new_entries_with_their_own_numbers(self):
+        v3 = [i for i in built()[0] if "-v3-" in i["id"] and i["template"] != "client_py_consumer_commit"]
+        self.assertEqual(sorted(i["template"] for i in v3), [
+            "client_admin_create_topic", "client_consumer_assign_seek", "client_consumer_commit_async",
+            "client_consumer_rebalance_listener", "client_producer_idempotent", "client_py_producer_idempotent"][:6 if HAVE_JAVA else 1])
+        for i in v3:
+            self.assertTrue(i["id"].endswith("-v3-001"), i["id"])
+        fam = {i["family"] for i in built()[0]}
+        self.assertEqual(len(fam), len(built()[0]))
+        # the Java task and its Python restatement share the new variant: one split group
+        j = next(i for i in v3 if i["template"] == "client_producer_idempotent")
+        p = next(i for i in v3 if i["template"] == "client_py_producer_idempotent")
+        self.assertEqual(j["pair"], p["pair"])
+
+    def test_the_commit_item_changed_in_round_2_has_new_ids(self):
+        ids = sorted(i["id"] for i in built()[0] if i["template"] == "client_py_consumer_commit")
+        self.assertEqual(ids, ["a3-client_py_consumer_commit-v3-001", "a3-client_py_consumer_commit-v3-002"])
+        self.assertTrue(all(i["id"].startswith("a3-client_py_consumer_commit-v3-") for i in built()[0] if i["template"] == "client_py_consumer_commit"))
+
+    def test_asynchronous_must_be_false_n3(self):
+        it = next(i for i in built()[0] if i["template"] == "client_py_consumer_commit")
+        calls = next(c for c in it["checks"] if c["type"] == "py_calls")
+        self.assertIn({"name": "asynchronous", "value": False}, calls["required"][2]["kwargs"])
+        self.assertTrue(all(r["pass"] for r in _score(it, it["reference"])))
+        for arg, ok in (("asynchronous=False", True), ("asynchronous=True", False)):          # pcc_r1, pcc_bad3
+            res = _score(it, self.PCC % arg)
+            self.assertEqual(all(r["pass"] for r in res), ok, (arg, [r for r in res if not r["pass"]]))
+        self.assertFalse(all(r["pass"] for r in _score(it, self.PCC % "")))                     # pcc_bad1
+
+    def test_a_callback_by_position_passes_the_idempotent_item(self):
+        it = next(i for i in built()[0] if i["template"] == "client_py_producer_idempotent")
+        text = """```python
+from confluent_kafka import Producer
+
+def report(err, msg):
+    if err is not None:
+        print("failed:", err)
+
+p = Producer({"bootstrap.servers": "%s", "enable.idempotence": True, "acks": "all"})
+for i in range(%s):
+    p.produce("%s", str(i), str(i), -1, report)
+    p.poll(0)
+p.flush()
+```"""
+        q = it["question"]
+        import re as _re
+        topic = _re.search(r"topic `([^`]+)`", q).group(1)
+        bs = _re.search(r"on `([^`]+)`", q).group(1)
+        n = _re.search(r"sends (\d+) messages", q).group(1)
+        res = _score(it, text % (bs, n, topic))
+        self.assertTrue(all(r["pass"] for r in res), [r for r in res if not r["pass"]])
+
+
 def _score(item, text):
     import eval2_score as sc
     from kafka_sre_rag.catalogue import Catalogues
@@ -551,13 +628,16 @@ class ApplyOpTests(unittest.TestCase):
 class ItemTests(unittest.TestCase):
     def test_counts_against_the_plan(self):
         nj, npy = len(by_lang("java")), len(by_lang("python"))
+        fj = sum(len(t.get("fresh", [])) for t in gen.JAVA_TEMPLATES)      # round 2 (N1): the variants for the hidden side
+        fp = sum(len(t.get("fresh", [])) for t in gen.PY_TEMPLATES)
+        self.assertEqual((fj, fp), (5, 1))
         print("\nclient items: %d Java (plan %d), %d Python (plan %d)" % (nj, gen.PLAN["java"], npy, gen.PLAN["python"]))
         if HAVE_JAVA:
-            self.assertEqual(nj, gen.PLAN["java"])
+            self.assertEqual(nj, gen.PLAN["java"] + fj)
         else:
             self.assertEqual(nj, 0)
         if HAVE_PY:
-            self.assertEqual(npy, gen.PLAN["python"])
+            self.assertEqual(npy, gen.PLAN["python"] + fp)
 
     def test_every_reference_passes_every_check(self):
         from kafka_sre_rag.catalogue import Catalogues
@@ -627,10 +707,10 @@ class ItemTests(unittest.TestCase):
             self.assertTrue(it["anchored"])
             self.assertEqual(it["not_in_index"], gen.not_in_index(
                 next(t for t in gen.JAVA_TEMPLATES + gen.PY_TEMPLATES if t["template"] == it["template"]), it["language"]))
-            self.assertTrue(it["id"].startswith("a3-%s-v2-" % it["template"]))
+            self.assertRegex(it["id"], r"^a3-%s-v[23]-\d{3}$" % it["template"])
             self.assertNotIn("concrete class", it["question"])
             self.assertEqual(it["generator"], gen.VERSION)
-            self.assertEqual(gen.VERSION, "eval2_items_a3_client/2")
+            self.assertEqual(gen.VERSION, "eval2_items_a3_client/3")
             self.assertEqual(it["seed"], gen.DEFAULT_SEED)
             self.assertEqual(it["perturbed_reference"], it["perturbed"][0]["text"])
             self.assertEqual(sum(1 for c in it["checks"] if c.get("format")), 1)

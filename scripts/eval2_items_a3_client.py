@@ -47,6 +47,8 @@ variant of its paired template (consumer commit -> client_consumer_commit_sync, 
 transaction -> client_producer_transaction; the parameter sets are the same), so each Python item shares its `pair` with
 exactly one Java item; Java items without a Python restatement have a pair of their own. T8 keeps a pair on one side.
 
+Version 3 (fix round 2): N1 adds `fresh` variants for six templates (ids `-v3-001`; the phrasing stream continues after the others,
+so the existing items keep their text); N3 makes the Python commit entry fix `asynchronous=False` (its two items get `-v3-` ids).
 Deterministic: one random stream per template (Random("seed|template"); the catalogue hash is recorded, not seeded), no set iteration.
 `generate()` returns the items and writes no file. Run: .venv/bin/python scripts/eval2_items_a3_client.py
 """
@@ -66,10 +68,10 @@ import eval2_score as sc  # noqa: E402
 from kafka_sre_rag import catalogue_a3  # noqa: E402
 from kafka_sre_rag.catalogue import Catalogues, catalogue_hash, default_dir  # noqa: E402
 
-VERSION = "eval2_items_a3_client/2"
+VERSION = "eval2_items_a3_client/3"
 DEFAULT_SEED = "m4-a3-1"
 KIND = "client_code"
-PLAN = {"java": 18, "python": 6}
+PLAN = {"java": 18, "python": 6}   # the base items; version 3 adds the `fresh` variants (5 Java, 1 Python)
 
 JAVA_NOTE = ("Give one complete Java source file in a single ```java code block. It must compile against kafka-clients "
              "4.3.2 (and kafka-streams 4.3.2 where Streams is used) with no other library.")
@@ -538,6 +540,7 @@ JAVA_TEMPLATES = [
               "a failed commit."),
      "variants": [("shipments", {"cls": "ShipmentReader", "topic": "shipments", "group": "tracking", "bs": "kafka:9092"}),
                   ("audit", {"cls": "AuditConsumer", "topic": "audit-log", "group": "compliance", "bs": "kafka-bootstrap:9092"})],
+     "fresh": [("refunds", {"cls": "RefundWatcher", "topic": "refund-requests", "group": "support", "bs": "broker-3:9095"})],
      "anchors": CONSUMER_ANCHORS[:4] + [
          anchor(KC, 1125, "This is an asynchronous call and will not block. Any errors encountered are either passed to the callback",
                 "commitAsync reports errors only through its callback")],
@@ -558,6 +561,8 @@ JAVA_TEMPLATES = [
                                  "seek": "seekToBeginning", "where": "beginning"}),
                   ("end", {"cls": "TailReader", "topic": "metrics", "part": "2", "bs": "broker-1:9093",
                            "seek": "seekToEnd", "where": "end"})],
+     "fresh": [("replay-late", {"cls": "AuditReplay", "topic": "audit-trail", "part": "1", "bs": "broker-3:9095",
+                           "seek": "seekToBeginning", "where": "beginning"})],
      "anchors": [anchor(KC, 221, 'props.setProperty("bootstrap.servers"', "the client is configured with bootstrap.servers"),
                  anchor(KC, 352, "Configure <code>enable.auto.commit=false</code>", "enable.auto.commit=false when the application keeps its position"),
                  anchor(KC, 835, "Manually assign a list of partitions to this consumer", "assign gives the partitions without a group"),
@@ -580,6 +585,7 @@ JAVA_TEMPLATES = [
               "poll loop it commits asynchronously after each batch."),
      "variants": [("inventory", {"cls": "InventoryReader", "topic": "inventory", "group": "stock-sync", "bs": "kafka:9092"}),
                   ("payments", {"cls": "PaymentConsumer", "topic": "payments", "group": "ledger", "bs": "broker-2:9094"})],
+     "fresh": [("sensors", {"cls": "SensorConsumer", "topic": "sensor-readings", "group": "telemetry", "bs": "broker-3:9095"})],
      "anchors": CONSUMER_ANCHORS[:4] + [
          anchor(KC, 363, "For example, when partitions are taken from a consumer the consumer will want to commit its offset",
                 "commit in the rebalance listener"),
@@ -604,6 +610,7 @@ JAVA_TEMPLATES = [
               "explicitly, acks set to all) and flushes the producer before it exits."),
      "variants": [("ticks", {"cls": "TickProducer", "topic": "ticks", "n": "100", "bs": "kafka:9092"}),
                   ("invoices", {"cls": "InvoiceSender", "topic": "invoices", "n": "25", "bs": "broker-1:9093"})],
+     "fresh": [("sensors", {"cls": "SensorSender", "topic": "sensor-readings", "n": "40", "bs": "broker-3:9095"})],
      "anchors": [anchor(KP, 198, 'props.put("bootstrap.servers"', "the producer is configured with bootstrap.servers"),
                  anchor(KP, 165, "From Kafka 3.0, the <code>enable.idempotence</code> configuration defaults to true.",
                         "enable.idempotence is the setting of the idempotent producer"),
@@ -678,6 +685,8 @@ JAVA_TEMPLATES = [
                                 "ret": "604800000", "cleanup": "delete"}),
                   ("compacted", {"cls": "CompactedTopicSetup", "topic": "customers-compacted", "parts": "3", "rf": "3",
                                  "bs": "broker-1:9093", "ret": "86400000", "cleanup": "compact"})],
+     "fresh": [("scratch", {"cls": "ScratchTopicSetup", "topic": "scratch-events", "parts": "3", "rf": "2", "bs": "broker-3:9095",
+                  "ret": "3600000", "cleanup": "delete"})],
      "anchors": [anchor(KA, 104, "The {@code bootstrap.servers} config", "the admin client is configured with bootstrap.servers"),
                  anchor(KA, 88, "CreateTopicsResult result = admin.createTopics(Collections.singleton(", "createTopics creates the topic"),
                  anchor(KA, 90, ".configs(Collections.singletonMap(TopicConfig.CLEANUP_POLICY_CONFIG", "topic configs go through NewTopic.configs"),
@@ -733,13 +742,14 @@ JAVA_TEMPLATES = [
 
 PY_TEMPLATES = [
     {"template": "client_py_consumer_commit", "pair_with": "client_consumer_commit_sync", "source": PY_COMMIT, "domain": "kafka",
+     "id_version": "v3",   # round 2 (N3): the kwargs check compares the value, so the checks of its items changed
      "task": ("consumes the topic `{topic}` as consumer group `{group}` from `{bs}` with auto commit turned off; for every "
               "message it processes it and only then commits that message's offset synchronously."),
      "variants": [("orders", {"topic": "orders", "group": "billing", "bs": "kafka:9092"}),
                   ("clicks", {"topic": "page-clicks", "group": "analytics", "bs": "broker-1:9093"})],
      "anchors": CONSUMER_ANCHORS,
      "calls": [{"name": "subscribe", "class": "Consumer"}, {"name": "poll", "class": "Consumer"},
-               {"name": "commit", "class": "Consumer", "kwargs": ["asynchronous"]}],
+               {"name": "commit", "class": "Consumer", "kwargs": [{"name": "asynchronous", "value": False}]}],
      "order": [{"name": "subscribe", "class": "Consumer"}, {"name": "poll", "class": "Consumer"},
                {"name": "commit", "class": "Consumer"}],
      "require_import": ["Consumer"],
@@ -755,6 +765,7 @@ PY_TEMPLATES = [
               "explicitly, acks set to all), with a delivery callback on every message, and flushes before it exits."),
      "variants": [("ticks", {"topic": "ticks", "n": "100", "bs": "kafka:9092"}),
                   ("invoices", {"topic": "invoices", "n": "25", "bs": "broker-1:9093"})],
+     "fresh": [("sensors", {"topic": "sensor-readings", "n": "40", "bs": "broker-3:9095"})],
      "anchors": [anchor(KP, 198, 'props.put("bootstrap.servers"', "the producer is configured with bootstrap.servers"),
                  anchor(KP, 165, "From Kafka 3.0, the <code>enable.idempotence</code> configuration defaults to true.",
                         "enable.idempotence is the setting of the idempotent producer"),
@@ -920,7 +931,7 @@ def not_in_index(tpl, lang):
 
 
 # ============================================================== one item
-def build_item(tpl, lang, variant_key, params, n, rng, cats, chash, chash_a3, corpus, stats, verify):
+def build_item(tpl, lang, variant_key, params, n, rng, cats, chash, chash_a3, corpus, stats, verify, ver=None):
     name = tpl["template"]
     fail = lambda why: stats.update(["derivation_failed:%s:%s: %s" % (name, variant_key, why)])  # noqa: E731
     # anchors: every cited phrase is on its cited line
@@ -1008,7 +1019,7 @@ def build_item(tpl, lang, variant_key, params, n, rng, cats, chash, chash_a3, co
                       "violates": next(i for i, c in enumerate(checks) if c["type"] == primary[kind]),
                       "fails": sorted(tpl.get("fails", {}).get(kind, fails[kind]))})
     item = {
-        "id": "a3-%s-v2-%03d" % (name, n), "tier": "A", "kind": KIND, "family": "%s:%s" % (name, variant_key),
+        "id": "a3-%s-%s-%03d" % (name, ver or tpl.get("id_version", "v2"), n), "tier": "A", "kind": KIND, "family": "%s:%s" % (name, variant_key),
         "domain": tpl["domain"], "language": lang, "question": question, "checks": checks, "reference": ref,
         "sources": [{"catalogue": "pinned_text", "entry": name, "fact": a["phrase"], "file": a["file"], "line": a["line"],
                      "requires": a["requires"]} for a in tpl["anchors"]] + [
@@ -1129,6 +1140,17 @@ def generate_with_stats(cats=None, seed=DEFAULT_SEED, corpus=None, verify=True, 
                 for variant_key, params in tpl["variants"]:
                     n += 1
                     item = build_item(tpl, lang, variant_key, params, n, rng, cats, chash, chash_a3, corpus, stats, verify)
+                    if item is None:
+                        n -= 1
+                        continue
+                    item["seed"] = seed
+                    items.append(item)
+                # round 2 (N1): further variants for the hidden side; their own numbers (v3), drawn after the others
+                # (the phrasing stream continues, so the items above keep their text)
+                n = 0
+                for variant_key, params in tpl.get("fresh", []):
+                    n += 1
+                    item = build_item(tpl, lang, variant_key, params, n, rng, cats, chash, chash_a3, corpus, stats, verify, ver="v3")
                     if item is None:
                         n -= 1
                         continue

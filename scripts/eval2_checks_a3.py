@@ -757,7 +757,7 @@ def check_number_within(chk, text, cats):
 
 
 # =============================================================== declines, no_invented_value
-VERSION_OR_NUM_RE = re.compile(r"(?<![\w.-])\d[\d,]*(?:\.\d+)*(?![\w-])")
+VERSION_OR_NUM_RE = re.compile(r"(?<![\w.-])-?\d[\d,]*(?:\.\d+)*(?![\w-])")  # a negative number counts (round 2, N5)
 
 
 def check_declines(chk, text, cats):
@@ -766,10 +766,21 @@ def check_declines(chk, text, cats):
 
 
 PINNED_VERSIONS = ("4.1", "4.2", "4.3", "4.3.2")  # Kafka documentation pins of sources.yaml; a decline may name them
+# the version numbers of the premise section of the 4.0 upgrade notes ("Notable changes in 4.0.0"): a decline may say
+# that a key "was removed in 4.0" (round 2, N4)
+PREMISE_VERSIONS = ("4.0", "4.0.0")
+_HEDGE_RE = re.compile(r"\b(?:probably|likely|presumably|perhaps|maybe|possibly|i (?:believe|think|guess|recall|remember|suspect)|"
+                       r"i'd (?:say|guess)|if i remember|as far as i (?:know|recall)|should be|might be|may be|most clusters|"
+                       r"typically|usually)\b", re.I)
+_BOOL_RE = re.compile(r"\b(true|false)\b", re.I)
+_KEYLIKE_RE = re.compile(r"(?<![\w.-])[a-z][a-z0-9_]*(?:\.[a-z0-9_]+)+(?![\w.-])")
+_FILE_SUFFIXES = (".sh", ".properties", ".json", ".yaml", ".yml", ".md", ".txt", ".xml", ".jar", ".java", ".py")
+_COUNT_RE = re.compile(r"\b(?:brokers?|nodes?|replicas?)\s+(?:id\s+)?\d+(?:\s+of\s+the\s+\d+(?:\s+(?:brokers?|nodes?|replicas?))?)?"
+                       r"|\b\d+\s+(?:brokers?|nodes?|replicas?)\b", re.I)
 _CMD_RE = re.compile(r"^\$?\s*(?:\S*/)?(?:kafka-[\w-]+|connect-[\w-]+|kubectl|argocd|oc|helm|curl|jq|grep|cat)(?:\.sh)?(?=\s|$)")
 _SETTER_RE = re.compile(r"--(?:add-config(?:-file)?|alter|config|delete-config|override|set|property|producer-property|"
                         r"consumer-property)\b|(?<=\s)(?!-)[\w.]+=\S+")
-_BIND_RE = re.compile(r"\b(?:is|are|was|were|equals?|defaults?|set to|sets|uses?|runs? with|value)\b|=", re.I)
+_BIND_RE = re.compile(r"\b(?:is|are|was|were|equals?|defaults?|defaulted|set to|sets|uses?|runs? with|value)\b|=", re.I)
 _GLOSS_RE = re.compile(r"(\d[\d,.]*)(\s*[A-Za-z]{0,12})?\s*\([^()\n]*\)")
 
 
@@ -811,17 +822,30 @@ def check_no_invented_value(chk, text, cats):
     if sc.has_payload(body):
         bad.append("an answer value or code block")
     allowed = {str(x) for x in chk.get("allowed_numbers", [])} | {str(x) for x in chk.get("default_numbers", [])} \
-        | set(chk.get("pinned_versions", PINNED_VERSIONS))
+        | set(chk.get("pinned_versions", PINNED_VERSIONS)) | set(PREMISE_VERSIONS)
     prose = sc.FENCE_RE.sub("", body)
     prose = _GLOSS_RE.sub(lambda m: m.group(0) if m.group(1).strip(",") not in allowed else m.group(1) + (m.group(2) or ""), prose)
     asked = [_alnum(a) for a in chk.get("asked", []) if _alnum(a)]
     nums = []
+    flags = []
     for sent in re.split(r"\n+|(?<=[.!?])\s+(?=[A-Z`])", prose):
-        found = [n for n in VERSION_OR_NUM_RE.findall(sent) if n.strip(",") not in allowed]
-        if found and (_BIND_RE.search(sent) or any(a in _alnum(sent) for a in asked)):
+        names_asked = any(a in _alnum(sent) for a in asked)
+        # a sentence that gives the documented value of a different key (and does not name the asked setting) says
+        # nothing about the asked one (round 2, N5)
+        others = [t for t in _KEYLIKE_RE.findall(sent) if _alnum(t) not in asked and not t.endswith(_FILE_SUFFIXES)]
+        if others and not names_asked:
+            continue
+        sent_n = _COUNT_RE.sub(" ", sent)          # "broker 0 of the 3 brokers" is a count or an id, not a value
+        found = [n for n in VERSION_OR_NUM_RE.findall(sent_n) if n.strip(",") not in allowed]
+        if found and (_BIND_RE.search(sent) or names_asked):
             nums += found
+        bools = {b.lower() for b in _BOOL_RE.findall(sent)}
+        if len(bools) == 1 and _HEDGE_RE.search(sent) and (names_asked or _BIND_RE.search(sent) or re.search(r"\bit\b", sent, re.I)):
+            flags += sorted(bools)                 # a hedged "probably false" is still a value
     if nums:
         bad.append("number(s) %s bound to the asked setting" % sorted(set(nums))[:5])
+    if flags:
+        bad.append("hedged value %s for the asked setting" % sorted(set(flags)))
     allowed_ids = set(chk.get("allowed_identifiers", []))
     unk = [r["token"] for r in sc.classify_identifiers(text, cats)["unknown"] if r["token"] not in allowed_ids]
     if unk:

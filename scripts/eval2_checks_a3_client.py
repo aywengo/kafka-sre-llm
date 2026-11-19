@@ -350,8 +350,8 @@ def ordered_subsequence(entries, calls, matches):
         nxt = next((j for j in range(pos + 1, len(calls)) if matches(e, calls[j])), None)
         if nxt is None:
             anywhere = any(matches(e, c) for c in calls)
-            name = _describe(e) if matches is not _py_entry_matches else str(e.get("name"))
-            return False, ("%s is called, but not after %s" % (name, _describe(entries[i - 1]) if matches is not _py_entry_matches
+            name = _describe(e) if not getattr(matches, "py", False) else str(e.get("name"))
+            return False, ("%s is called, but not after %s" % (name, _describe(entries[i - 1]) if not getattr(matches, "py", False)
                                                                  else str(entries[i - 1].get("name")))
                            if anywhere and i else "%s is never called" % name)
         pos = nxt
@@ -485,6 +485,16 @@ def check_py_syntax(chk, text, cats):
     return True, "%d python block%s parse" % (len(bl), "" if len(bl) == 1 else "s")
 
 
+_NOLIT = object()       # an argument that is not a literal: its value is not known
+
+
+def _literal(node):
+    try:
+        return ast.literal_eval(node)
+    except (ValueError, SyntaxError, TypeError, MemoryError, RecursionError):
+        return _NOLIT
+
+
 class PyInfo(ast.NodeVisitor):
     """Imports, calls in evaluation order, receiver classes of simple variables, configuration dicts."""
 
@@ -610,7 +620,9 @@ class PyInfo(ast.NodeVisitor):
             self.visit(k.value)
         rec = {"line": n.lineno, "nargs": len([a for a in n.args if not isinstance(a, ast.Starred)]),
                "star": any(isinstance(a, ast.Starred) for a in n.args),
-               "kwargs": [k.arg for k in n.keywords if k.arg], "dstar": any(k.arg is None for k in n.keywords)}
+               "kwargs": [k.arg for k in n.keywords if k.arg], "dstar": any(k.arg is None for k in n.keywords),
+               "kwvals": {k.arg: _literal(k.value) for k in n.keywords if k.arg},
+               "argvals": [_literal(a) for a in n.args if not isinstance(a, ast.Starred)]}
         f = n.func
         if isinstance(f, ast.Attribute):
             rec["name"] = f.attr
@@ -707,7 +719,26 @@ def check_py_imports(chk, text, cats):
     return True, "imports from confluent_kafka exist in the %s symbol list" % catalogue_a3.python_symbols(d)["version"]
 
 
-def _py_entry_matches(e, c):
+def _same_literal(got, want):
+    """A literal equals the wanted value, with the type (False is not 0)."""
+    return got is not _NOLIT and type(got) is type(want) and got == want
+
+
+def _py_param_index(e, names, d):
+    """The lowest position of any of `names` in the parameter list the symbol list gives for the entry's method, or None
+    (no class, no method or no such parameter)."""
+    cls = e.get("class")
+    if not cls:
+        return None
+    sig = catalogue_a3.py_method(cls if "." in cls else "confluent_kafka." + cls, e.get("name"), d)
+    if not sig:
+        return None
+    params = list(sig.get("pos_only", [])) + list(sig.get("params", []))
+    idx = [params.index(n) for n in names if n in params]
+    return min(idx) if idx else None
+
+
+def _py_entry_matches(e, c, d=None):
     if e.get("name") and e["name"] != c["name"]:
         return False
     cls = e.get("class")
@@ -722,11 +753,32 @@ def _py_entry_matches(e, c):
                 return False
     if e.get("min_args") is not None and c["nargs"] < e["min_args"] and not c["star"]:
         return False
+    # kwargs: a name, a list of alternative names, or {"name": name-or-list, "value": v} (the value the task fixes).
+    # A parameter also counts when it is given by position where the symbol list gives its position.
     for k in e.get("kwargs", []):
-        names = k if isinstance(k, list) else [k]
-        if not any(n in c["kwargs"] for n in names) and not c["dstar"]:
+        spec = k if isinstance(k, dict) else {"name": k}
+        names = spec["name"] if isinstance(spec["name"], list) else [spec["name"]]
+        has_value = "value" in spec
+        given = [n for n in names if n in c["kwargs"]]
+        if given:
+            if has_value and not any(_same_literal(c["kwvals"].get(n), spec["value"]) for n in given):
+                return False
+            continue
+        idx = _py_param_index(e, names, d)
+        if idx is not None and not c["star"] and idx < c["nargs"]:
+            if has_value and not _same_literal(c["argvals"][idx], spec["value"]):
+                return False
+            continue
+        if not c["dstar"]:
             return False
     return True
+
+
+def _py_matcher(d):
+    def match(e, c):
+        return _py_entry_matches(e, c, d)
+    match.py = True
+    return match
 
 
 def _py_describe(e):
@@ -769,13 +821,13 @@ def check_py_calls(chk, text, cats):
         return bad
     problems = []
     for e in chk.get("required", []):
-        if not any(_py_entry_matches(e, c) for c in info.calls):
+        if not any(_py_entry_matches(e, c, d) for c in info.calls):
             problems.append("missing call %s" % _py_describe(e))
     for e in chk.get("forbidden", []):
-        if any(_py_entry_matches(e, c) for c in info.calls):
+        if any(_py_entry_matches(e, c, d) for c in info.calls):
             problems.append("forbidden call %s present" % _py_describe(e))
     if chk.get("order"):
-        ok, detail = ordered_subsequence(chk["order"], info.calls, _py_entry_matches)
+        ok, detail = ordered_subsequence(chk["order"], info.calls, _py_matcher(d))
         if not ok:
             problems.append(detail)
     if chk.get("unknown_methods", True):

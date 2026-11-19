@@ -485,6 +485,31 @@ class DeclineTests(Base):
         self.bad(c, "ANSWER: not in my sources\nIt is probably 7 days.", "number")
         self.bad(c, "ANSWER: not in my sources\n```properties\nlog.retention.hours=168\n```", "code block")
 
+    def test_round_2_premise_versions_negative_numbers_hedges_and_other_keys(self):
+        c = {"type": "no_invented_value", "allowed_numbers": ["3.9"], "asked": ["offsets.commit.required.acks"]}
+        D = "\nANSWER: not in my sources"
+        # N4: the version numbers of the premise section are no value
+        self.ok(c, "The upgrade notes say offsets.commit.required.acks was removed in Kafka 4.0 (KIP-1041)." + D)
+        self.ok(c, "It was removed in 4.0.0, so I cannot give its 3.9 default." + D)
+        self.bad(c, "It was removed in 4.1.5, so it is 4.1.5 now." + D, "number")
+        # N5: a negative number is a number, a hedged value is a value
+        self.bad(c, "I am not sure, but I believe it was -1 in 3.9." + D, "number")
+        self.bad(c, "It defaulted to -1 (all replicas)." + D, "number")
+        self.bad(c, "I am not sure, but it was probably false." + D, "hedged value")
+        self.bad(c, "I think it is true." + D, "hedged value")
+        self.ok(c, "Whether it is true or false is not in my sources." + D)            # both words: a question, not a value
+        self.ok(c, "My sources do not say; the KIP-1041 text does not give a default." + D)   # KIP-1041 is no number
+        # a sentence that gives the documented default of another key says nothing about the asked key
+        self.ok(c, "offsets.commit.required.acks is not covered. For Kafka itself, message.max.bytes is 1048588." + D)
+        self.bad(c, "offsets.commit.required.acks is 1048588 and message.max.bytes is 2." + D, "number")   # both named: bound to the asked key
+        self.bad(c, "The default is 1048588." + D, "number")                              # no other key named
+        self.bad(c, "Check kafka-configs.sh; it is 5 there." + D, "number")             # a file name is no other key
+        # an id or a count of brokers is no value
+        d = {"type": "no_invented_value", "asked": ["prod-eu1", "log.retention.hours"]}
+        self.ok(d, "prod-eu1 is not documented; check with kafka-configs.sh --describe --all on broker 0 of the 3 brokers." + D)
+        self.ok(d, "Ask one of the 3 brokers of prod-eu1; it is not in my sources." + D)
+        self.bad(d, "prod-eu1 runs with 3 for log.retention.hours." + D, "number")
+
     def test_numbers_of_the_question_are_allowed(self):
         c = {"type": "no_invented_value", "allowed_numbers": ["3.5"]}
         self.ok(c, "ANSWER: not in my sources\nThe default in Kafka 3.5 is not covered.")

@@ -28,10 +28,10 @@ class SizingItems(unittest.TestCase):
         cls.items, cls.stats = gen.generate_with_stats(cls.cats)
 
     def test_count_classes_families(self):
-        self.assertEqual(len(self.items), 24, dict(self.stats))
+        self.assertEqual(len(self.items), 30, dict(self.stats))   # 24 and the 6 draws of round 2 (N1)
         self.assertEqual({i["failure_class"] for i in self.items}, {"arith_only", "rule_from_docs"})
         self.assertGreaterEqual(len({i["family"] for i in self.items}), 8)
-        self.assertEqual(len({i["id"] for i in self.items}), 24)
+        self.assertEqual(len({i["id"] for i in self.items}), 30)
         for t in {i["template"] for i in self.items}:
             self.assertLessEqual(sum(1 for i in self.items if i["template"] == t), 10)
 
@@ -76,7 +76,21 @@ class SizingItems(unittest.TestCase):
 
     def test_changed_items_have_new_ids(self):
         self.assertTrue(all(i["id"].endswith(("-101", "-102", "-103")) for i in self.items if i["template"] == "size_page_cache"))
-        self.assertTrue(all(i["generator"] == "eval2_items_a3_sizing/2" for i in self.items))
+        self.assertTrue(all(i["generator"] == "eval2_items_a3_sizing/3" for i in self.items))
+
+    def test_the_new_draws_have_their_own_numbers_and_the_others_keep_theirs(self):
+        fresh = [i for i in self.items if i["id"].rsplit("-", 1)[1].startswith("2")]
+        self.assertEqual(sorted(i["id"] for i in fresh), [
+            "a3-size_disk_rf-201", "a3-size_heartbeat-201", "a3-size_heartbeat-202", "a3-size_k8s_quantity-201",
+            "a3-size_retention_ms-201", "a3-size_streams_cache-201"])
+        others = sorted(i["id"] for i in self.items if i not in fresh)
+        self.assertEqual(others[:3], ["a3-size_disk_rf-001", "a3-size_disk_rf-002", "a3-size_disk_rf-003"])
+        self.assertEqual(len(others), 24)
+        # a draw is another entry, never a published one: its family names its own parameters
+        self.assertEqual(len({i["family"] for i in self.items}), 30)
+        # a one-digit number is no token of the near-duplicate matcher, so a retention draw uses two digits
+        r = next(i for i in fresh if i["template"] == "size_retention_ms")
+        self.assertIn("21 days", r["question"])
 
     def test_every_formula_cites_an_existing_line_with_the_phrase(self):
         for i in self.items:

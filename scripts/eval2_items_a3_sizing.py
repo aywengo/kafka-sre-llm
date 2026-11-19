@@ -16,6 +16,7 @@ fail `number_within`; a template or parameter set where one of these does not ho
 Candidates with no pinned passage for their formula (consumer catch-up time from lag and rates; partitions needed
 for a target throughput) are counted and skipped, not filled in by hand.
 
+Version 3 (fix round 2, N1): `fresh` parameter sets for six templates, ids from 201; the existing items are unchanged.
 Deterministic: one random stream per template (seed|catalogue hash|template), only for the phrasing; no set iteration.
 `generate()` returns the items and writes no file. Run: .venv/bin/python scripts/eval2_items_a3_sizing.py
 """
@@ -34,10 +35,12 @@ import eval2_score as sc  # noqa: E402
 from eval2_checks_a3 import check_number_within  # noqa: E402
 from kafka_sre_rag.catalogue import Catalogues, catalogue_hash, default_dir  # noqa: E402
 
-VERSION = "eval2_items_a3_sizing/2"
+VERSION = "eval2_items_a3_sizing/3"
 # Version 2 (review finding M2): a rule-of-thumb item whose reference is a rounded estimate takes a 3 % tolerance (a
 # rounded "12 GiB" for 11.72 is 2.4 % off; the nearest perturbation is 6.9 % off). Its items get new numbers (101...).
 V2_ID_BASE = {"size_page_cache": 100}
+# Version 3 (round 2, N1): further parameter sets for the hidden side (`fresh`): never in an open file, numbers from 201.
+FRESH_ID_BASE = 200
 DEFAULT_SEED = "m4-a3-1"
 KIND = "computed_sizing"
 F = Fraction
@@ -154,20 +157,22 @@ def t_cache(p):
 TEMPLATES = [
     {"id": "size_disk_rf", "klass": "arith_only", "domain": "kafka", "unit": "GiB", "tol": 0.01, "fn": t_disk,
      "anchor": (CFG_STREAMS, 1636, "more storage space as well (3x with the replication factor of 3)"),
-     "params": [(5, 3, 3, 6), (12, 2, 3, 4), (2, 7, 2, 3)]},
+     "params": [(5, 3, 3, 6), (12, 2, 3, 4), (2, 7, 2, 3)], "fresh": [(8, 4, 3, 5)]},
     {"id": "size_page_cache", "klass": "rule_from_docs", "domain": "kafka", "unit": "GiB", "tol": 0.03, "fn": t_pagecache,
      "anchor": (HW, 31, "assuming you want to be able to buffer for 30 seconds and compute your memory need as write_throughput*30"),
      "params": [(120,), (400,), (75,)]},
     {"id": "size_heartbeat", "klass": "rule_from_docs", "domain": "kafka", "unit": "ms", "tol": 0, "fn": t_heartbeat,
      "anchor": (CONSUMER_CFG, 64, "typically should be set no higher than 1/3 of that value"),
-     "params": [(45000,), (18000,), (90000,)]},
+     "params": [(45000,), (18000,), (90000,)], "fresh": [(27000,), (120000,)]},
     {"id": "size_retention_ms", "klass": "arith_only", "domain": "kafka", "unit": "ms", "tol": 0, "fn": t_retention,
      "anchor": (TOPIC_CFG, 315, "604800000 (7 days)"),
      "params": [(3, "days", 86400000, ("hours as days", F(1, 24))), (36, "hours", 3600000, ("minutes as hours", F(1, 60))),
-                (14, "days", 86400000, ("hours as days", F(1, 24)))]},
+                (14, "days", 86400000, ("hours as days", F(1, 24)))],
+     "fresh": [(21, "days", 86400000, ("hours as days", F(1, 24)))]},
     {"id": "size_k8s_quantity", "klass": "rule_from_docs", "domain": "kubernetes", "unit": "bytes", "tol": 0, "fn": t_quantity,
      "anchor": (K8S_RES, 184, "power-of-two equivalents: Ei, Pi, Ti, Gi"),
-     "params": [("512Mi", 512 * 2 ** 20), ("2Gi", 2 * 2 ** 30), ("750M", 750 * 10 ** 6)]},
+     "params": [("512Mi", 512 * 2 ** 20), ("2Gi", 2 * 2 ** 30), ("750M", 750 * 10 ** 6)],
+     "fresh": [("4Gi", 4 * 2 ** 30)]},
     {"id": "size_follower_traffic", "klass": "arith_only", "domain": "kafka", "unit": "MiB/s", "tol": 0.01, "fn": t_follower,
      "anchor": (DESIGN, 287, "Followers consume messages from the leader just as a normal Kafka consumer would"),
      "params": [(20, 3), (45, 4), (8, 5)]},
@@ -176,7 +181,7 @@ TEMPLATES = [
      "params": [(10, 12), (50, 6), (4, 24)]},
     {"id": "size_streams_cache", "klass": "rule_from_docs", "domain": "kafka", "unit": "MiB", "tol": 0.01, "fn": t_cache,
      "anchor": (STREAMS_CFG, 294, "statestore cache across all threads"),
-     "params": [(64, 8), (10, 2), (200, 4)]},
+     "params": [(64, 8), (10, 2), (200, 4)], "fresh": [(96, 6)]},
 ]
 
 # no pinned passage states these formulas: counted and skipped
@@ -191,7 +196,7 @@ PHRASINGS = ["{q}", "Quick sizing question. {q}", "For capacity planning: {q}"]
 FORMAT_NOTE = "Finish with a final line `ANSWER: <number> <unit>`."
 
 
-def build_item(tpl, params, n, cats, chash, seed, rng, corpus, stats):
+def build_item(tpl, params, n, cats, chash, seed, rng, corpus, stats, fresh=False):
     ok, why = order.verify_anchor(*tpl["anchor"])
     if not ok:
         stats["derivation_failed:%s: anchor: %s" % (tpl["id"], why)] += 1
@@ -207,7 +212,7 @@ def build_item(tpl, params, n, cats, chash, seed, rng, corpus, stats):
     perts = [{"label": lab, "kind": kind, "text": "Worked out with the stated rule.\nANSWER: %s" % ans(val, u),
               "violates": 1, "check": "number_within"} for lab, kind, val, u in slips]
     item = {
-        "id": "a3-%s-%03d" % (tpl["id"], n + V2_ID_BASE.get(tpl["id"], 0)), "tier": "A", "kind": KIND, "family": "%s:%s" % (tpl["id"], "-".join(str(x) for x in params)),
+        "id": "a3-%s-%03d" % (tpl["id"], n + (FRESH_ID_BASE if fresh else V2_ID_BASE.get(tpl["id"], 0))), "tier": "A", "kind": KIND, "family": "%s:%s" % (tpl["id"], "-".join(str(x) for x in params)),
         "domain": tpl["domain"], "question": core + "\n\n" + FORMAT_NOTE,
         "checks": [{"type": "answer_line", "format": True}, chk],
         "reference": "Worked out with the stated rule.\nANSWER: %s" % ans(v, unit),
@@ -248,6 +253,14 @@ def generate_with_stats(cats=None, seed=DEFAULT_SEED, corpus=None):
         for params in tpl["params"]:
             n += 1
             item = build_item(tpl, params, n, cats, chash, seed, rng, corpus, stats)
+            if item is None:
+                n -= 1
+                continue
+            items.append(item)
+        n = 0
+        for params in tpl.get("fresh", []):
+            n += 1
+            item = build_item(tpl, params, n, cats, chash, seed, rng, corpus, stats, fresh=True)
             if item is None:
                 n -= 1
                 continue

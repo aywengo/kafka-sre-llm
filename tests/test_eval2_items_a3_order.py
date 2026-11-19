@@ -20,6 +20,10 @@ SNIPPET = ("import sys, json; sys.path.insert(0, %r); import eval2_items_a3_orde
            "print(json.dumps(g.generate(), sort_keys=True))" % str(ROOT / "scripts"))
 
 
+def gen_fresh(i):
+    return gen.FRESH_ID_BASE < int(i["id"].rsplit("-", 1)[1]) < gen.FRESH_ID_BASE + 100
+
+
 @unittest.skipUnless(HAVE, "catalogues or raw/ not present")
 class OrderItems(unittest.TestCase):
     @classmethod
@@ -28,7 +32,7 @@ class OrderItems(unittest.TestCase):
         cls.items, cls.stats = gen.generate_with_stats(cls.cats)
 
     def test_count_and_families(self):
-        self.assertEqual(len(self.items), 16, dict(self.stats))
+        self.assertEqual(len(self.items), 19, dict(self.stats))   # 16 and the 3 draws of round 2 (N1)
         self.assertGreaterEqual(len({i["family"] for i in self.items}), 8)
         self.assertLessEqual(max(sum(1 for i in self.items if i["template"] == t) for t in {i["template"] for i in self.items}), 10)
 
@@ -102,7 +106,8 @@ class OrderItems(unittest.TestCase):
 
     # ---------------------------------------------------------------- WP1c fix F3 (B2, S1, S2): review rewordings
     def item(self, tpl, k=0):
-        return [i for i in self.items if i["template"] == tpl][k]
+        """The k-th item of the template among the items that are not new draws (sorted by id)."""
+        return [i for i in self.items if i["template"] == tpl and not gen_fresh(i)][k]
 
     def passes(self, item, text):
         res = sc.run_checks(item, text, self.cats)
@@ -111,9 +116,24 @@ class OrderItems(unittest.TestCase):
     def test_changed_templates_have_new_ids(self):
         for t in gen.V2_CHANGED:
             for i in self.items:
-                if i["template"] == t:
+                if i["template"] == t and not gen_fresh(i):
                     self.assertGreater(int(i["id"].rsplit("-", 1)[1]), 100, i["id"])
-        self.assertTrue(all(i["generator"] == "eval2_items_a3_order/2" for i in self.items))
+        for t in gen.V3_CHANGED:      # round 2 (N6, N7): the checks changed again, new numbers from 301
+            for i in self.items:
+                if i["template"] == t and not gen_fresh(i):
+                    self.assertGreater(int(i["id"].rsplit("-", 1)[1]), 300, i["id"])
+        self.assertTrue(all(i["generator"] == "eval2_items_a3_order/3" for i in self.items))
+        # the items of the other templates keep their version-2 numbers
+        self.assertEqual(sorted(i["id"] for i in self.items if i["template"] in ("order_cg_reset", "order_shg_reset", "order_sg_reset", "order_app_reset") and not gen_fresh(i)),
+                         ["a3-order_app_reset-001", "a3-order_app_reset-002", "a3-order_cg_reset-001", "a3-order_cg_reset-002",
+                          "a3-order_cg_reset-003", "a3-order_sg_reset-001", "a3-order_sg_reset-002", "a3-order_sg_reset-003",
+                          "a3-order_shg_reset-001", "a3-order_shg_reset-002"])
+
+    def test_the_new_draws_have_their_own_numbers_and_entries(self):
+        fresh = [i for i in self.items if gen_fresh(i)]
+        self.assertEqual(sorted(i["template"] for i in fresh), ["order_app_reset", "order_argo_sync", "order_reassign"])
+        self.assertTrue(all(i["id"].endswith("-201") for i in fresh))
+        self.assertEqual(len({i["family"] for i in self.items}), len(self.items))
 
     def test_sg_delete_offsets_follows_the_tool_source(self):
         i = self.item("order_sg_delete_offsets")
@@ -129,6 +149,26 @@ class OrderItems(unittest.TestCase):
         self.assertTrue(any("kafka-streams-group-sh.md" in s["file"] for s in i["sources"] if s["file"]))
         self.assertIn("StreamsGroupCommandOptions.java:60-61, 235-236", i["note"])
         self.assertIn("dry-run", i["note"])
+
+    def test_sg_delete_offsets_review2_rewordings_n6(self):
+        i = self.item("order_sg_delete_offsets")
+        t = "bin/kafka-streams-groups.sh --bootstrap-server kafka:9092 "
+        g = "orders-streams"
+        desc, dele = "%s--describe --group %s --offsets" % (t, g), "%s--delete-offsets --group %s --all-input-topics" % (t, g)
+        block = lambda *l: "```bash\n%s\n```" % "\n".join(l)  # noqa: E731
+        # pass: sgd_r1, the default sub-action (describe without --offsets), a delete scoped by --input-topic
+        self.assertTrue(self.passes(i, block(desc, dele))[0])
+        self.assertTrue(self.passes(i, block("%s--describe --group %s" % (t, g), dele))[0])                       # sgd_default
+        self.assertTrue(self.passes(i, block(desc, "%s--delete-offsets --group %s --input-topic orders --input-topic payments" % (t, g)))[0])  # sgd_topics
+        # fail: --delete (the group), --execute, delete before describe, no topic scope, --offsets with --members
+        self.assertFalse(self.passes(i, block(desc, "%s--delete --group %s" % (t, g)))[0])                         # sgd_bad_delete
+        self.assertFalse(self.passes(i, block(desc, dele + " --execute"))[0])                                        # sgd_bad_exec
+        self.assertFalse(self.passes(i, block(dele, desc))[0])                                                        # sgd_bad_order
+        self.assertFalse(self.passes(i, block(desc, "%s--delete-offsets --group %s" % (t, g)))[0])                 # sgd_bad_notopic
+        self.assertFalse(self.passes(i, block("%s--describe --offsets --members --group %s" % (t, g), dele))[0])   # sgd_bad_mutex
+        self.assertFalse(self.passes(i, block("%s--describe --members --group %s" % (t, g), dele))[0])
+        # no group on the describe line: the tool refuses it
+        self.assertFalse(self.passes(i, block("%s--describe --offsets" % t, dele))[0])
 
     def test_tool_rule_is_enforced_in_the_generator(self):
         spec = dict(next(x for x in gen.specs() if x["template"] == "order_sg_delete_offsets"))
@@ -159,8 +199,30 @@ class OrderItems(unittest.TestCase):
                      "```bash\nargocd app sync %s\nargocd app diff %s\n```" % (a, a)):
             self.assertFalse(self.passes(i, text)[0], text)
 
+    def test_reassign_checks_the_throttle_and_the_reference_saves_the_plan_n7(self):
+        i = [x for x in self.items if x["family"].endswith(":throttle")][0]
+        self.assertIn("50000000", i["question"])
+        bs = "bin/kafka-reassign-partitions.sh --bootstrap-server kafka:9092 "
+        gen_ = "%s--topics-to-move-json-file move-orders.json --broker-list \"4,5,6\" --generate" % bs
+        ex = "%s--reassignment-json-file bigger-cluster.json --execute" % bs
+        ver = "%s--reassignment-json-file bigger-cluster.json --verify" % bs
+        block = lambda *l: "```bash\n%s\n```" % "\n".join(l)  # noqa: E731
+        self.assertTrue(self.passes(i, block(gen_, "# copy the proposed JSON into bigger-cluster.json", ex + " --throttle 50000000", ver))[0])   # ra_ok1
+        self.assertFalse(self.passes(i, block(gen_, ex + " --throttle 5000", ver))[0])     # ra_bad_throttle: the wrong value
+        self.assertFalse(self.passes(i, block(gen_, ex, ver))[0])                           # ra_bad_nothrottle
+        self.assertFalse(self.passes(i, block(gen_, ex + " --throttle 50000000"))[0])      # ra_bad_noverify
+        self.assertFalse(self.passes(i, block(gen_ + " --disable-rack-aware", ex + " --throttle 50000000", ver))[0])   # ra_bad_rack
+        # the reference saves the plan file that the execute and verify lines use, and passes
+        gline = i["reference"].split("\n")[1]
+        self.assertIn("--generate", gline)
+        self.assertTrue(gline.endswith("> bigger-cluster.json"), gline)
+        # the plain item asks for no throttle: none is required, and none is checked
+        j = [x for x in self.items if x["family"].endswith(":plain")][0]
+        self.assertNotIn("--throttle", j["reference"])
+        self.assertTrue(j["reference"].split("\n")[1].endswith("> expand-cluster-reassignment.json"))
+
     def test_reassign_asks_to_generate_the_plan(self):
-        i = self.item("order_reassign")
+        i = [x for x in self.items if x["family"].endswith(":plain")][0]
         self.assertIn("Generate the plan and save it as", i["question"])
         self.assertNotIn("is saved in", i["question"])
         bs = "bin/kafka-reassign-partitions.sh --bootstrap-server kafka:9092 "

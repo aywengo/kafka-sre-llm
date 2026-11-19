@@ -22,6 +22,8 @@ Perturbed orders, one of each per item (`perturbed`: label, text, check):
 Candidates without an ordering passage in the pinned text (describe before alter for kafka-topics and
 kafka-configs; the preview of `kafka-streams-groups.sh --delete`) are counted as skipped, not filled in.
 
+Version 3 (fix round 2): N6 and N7 changed the checks of order_sg_delete_offsets and order_reassign (new ids from 301); N1 adds one
+parameter set (`fresh`, ids from 201) each for order_app_reset, order_argo_sync and order_reassign, for the hidden side.
 Deterministic: one random stream per template, seeded with seed|catalogue hash|template; no set iteration.
 `generate()` returns the items and writes no file. Run: .venv/bin/python scripts/eval2_items_a3_order.py
 """
@@ -39,14 +41,20 @@ import eval2_score as sc  # noqa: E402
 from eval2_checks_a3 import check_cmd_order  # noqa: E402
 from kafka_sre_rag.catalogue import KNOWN, Catalogues, catalogue_hash, default_dir  # noqa: E402
 
-VERSION = "eval2_items_a3_order/2"
+VERSION = "eval2_items_a3_order/3"
 DEFAULT_SEED = "m4-a3-1"
 BS = "kafka:9092"
 KIND = "safe_order"
 # Version 2: the items of these templates changed (their steps or their wording), so their numbers start at 101 and
 # no version-1 id is reused.
-V2_CHANGED = ("order_sg_delete_offsets", "order_argo_sync", "order_reassign")
+V2_CHANGED = ("order_argo_sync",)
 V2_ID_BASE = 100
+# Version 3 (round 2, N6 and N7): the checks of these templates changed again, so their numbers start at 301 and no
+# earlier id is reused. The `fresh` specs (round 2, N1: items for the hidden side that were never in an open file) have
+# their own numbers from 201.
+V3_CHANGED = ("order_sg_delete_offsets", "order_reassign")
+V3_ID_BASE = 300
+FRESH_ID_BASE = 200
 FORMAT_NOTE = ("Give the commands in the order they should be run, in one code block, one command per line; "
                "use only options that exist for the tool.")
 
@@ -167,8 +175,12 @@ def specs():
             "limit": "Keep the group: it must not be deleted.",
             "safe": [("--describe", None), ("--offsets", None), ("--group", "{g}")],
             "mutate": [("--delete-offsets", None), ("--group", "{g}"), ("--all-input-topics", None)],
-            "safe_step": {"flags_all": ["--describe", "--offsets"]},
-            "mutate_step": {"flags_all": ["--delete-offsets"], "flags_forbidden": ["--dry-run", "--execute"]},
+            # N6: --offsets is the default sub-action (StreamsGroupCommandOptions.java:51-52), so describing the group is the
+            # safe step; --members and --state describe something else (they exclude --offsets, lines 250-253); the delete
+            # step needs --group and one scope (lines 261-263)
+            "safe_step": {"flags_all": ["--describe", "--group"], "flags_forbidden": ["--members", "--state"]},
+            "mutate_step": {"flags_all": ["--delete-offsets", "--group"], "flags_any": ["--all-input-topics", "--input-topic"],
+                            "flags_forbidden": ["--dry-run", "--execute"]},
             "flags": ["--describe", "--offsets", "--delete-offsets", "--group", "--all-input-topics", "--delete"],
             "note": ("The doc page kafka-streams-group-sh.md (lines 35, 114, 165) says to preview with --dry-run before every "
                      "mutating operation, but the pinned tool source accepts --dry-run and --execute only with --reset-offsets "
@@ -209,8 +221,11 @@ def specs():
                 " with the data movement throttled to {v} bytes per second" if thr else ""),
             "limit": "Keep the rack-aware replica assignment.",
             "safe": [("--generate", None), ("--topics-to-move-json-file", "{f}"), ("--broker-list", "{b}")],
+            "safe_suffix": " > {r}",   # N7: the generate line saves the plan file that the execute and verify lines use
             "mutate": exe, "verify": [("--verify", None), ("--reassignment-json-file", "{r}")],
-            "safe_step": {"flags_all": ["--generate"]}, "mutate_step": {"flags_all": ["--execute"]},
+            "safe_step": {"flags_all": ["--generate"]},
+            # N7: the question asks for this throttle, so the execute step checks it
+            "mutate_step": {"flags_all": ["--execute"], **({"values": {"--throttle": params["v"]}} if thr else {})},
             "verify_step": {"flags_all": ["--verify"]},
             "flags": ["--generate", "--topics-to-move-json-file", "--broker-list", "--execute", "--reassignment-json-file",
                       "--verify", "--disable-rack-aware"] + (["--throttle"] if thr else []),
@@ -248,7 +263,65 @@ def specs():
             "anchors": [anchor(DOC_ARGO, 49, "Preview apply without affecting cluster"),
                         anchor(DOC_ARGO_DIFF, 5, "Perform a diff against the target and live state.")],
         })
+    # --- round 2 (N1): one further parameter set for each of three templates; never in an open file, so they can be hidden
+    s += [dict(x, fresh=True) for x in fresh_specs()]
     return s
+
+
+def fresh_specs():
+    out = []
+    for params in ({"a": "stock-sync", "t": "stock-levels"},):
+        out.append({
+            "template": "order_app_reset", "group": "kafka-streams-application-reset:%s" % params["a"],
+            "tool": "kafka-streams-application-reset.sh", "domain": "kafka", "params": params, "forbidden": "--force",
+            "forbidden_role": "mutate",
+            "task": "reset the Kafka Streams application `{a}` to the beginning of its input topic `{t}` (all instances are stopped)",
+            "limit": "Do not use `--force`.",
+            "safe": [("--application-id", "{a}"), ("--input-topics", "{t}"), ("--dry-run", None)],
+            "mutate": [("--application-id", "{a}"), ("--input-topics", "{t}")],
+            "safe_step": {"flags_all": ["--application-id", "--dry-run"]},
+            "mutate_step": {"flags_all": ["--application-id"], "flags_forbidden": ["--dry-run"]},
+            "flags": ["--application-id", "--input-topics", "--dry-run", "--force"],
+            "anchors": [anchor(DOC_RESET, 65, "run this once with `--dry-run` to preview your changes before making them")],
+        })
+    for params in ({"a": "payments-api"},):
+        out.append({
+            "template": "order_argo_sync", "group": "argocd-app-sync:%s" % params["a"], "tool": "argocd", "domain": "argocd",
+            "params": params, "forbidden": "--prune", "forbidden_role": "mutate", "argocd": "argocd app sync",
+            "task": "sync the Argo CD application `{a}`, after checking what the sync would do without changing the cluster",
+            "limit": "Do not prune resources.",
+            "safe": "argocd app sync {a} --dry-run", "mutate": "argocd app sync {a}",
+            "safe_step": {"words": ["app", "sync"], "flags_all": ["--dry-run"]},
+            "safe_alt_steps": [{"words": ["app", "diff"]}],
+            "mutate_step": {"words": ["app", "sync"], "flags_forbidden": ["--dry-run"], "flags_forbidden_true": ["--prune"]},
+            "forbidden_bool": True,
+            "flags": ["--dry-run", "--prune"],
+            "anchors": [anchor(DOC_ARGO, 49, "Preview apply without affecting cluster"),
+                        anchor(DOC_ARGO_DIFF, 5, "Perform a diff against the target and live state.")],
+        })
+    for params in ({"f": "move-ledger.json", "b": "7,8", "r": "ledger-plan.json", "v": "20000000"},):
+        exe = [("--execute", None), ("--reassignment-json-file", "{r}"), ("--throttle", "{v}")]
+        anchors = [anchor(DOC_OPS, 348, "the tool generates a candidate reassignment"),
+                   anchor(DOC_OPS, 349, "the tool kicks off the reassignment of partitions"),
+                   anchor(DOC_OPS, 350, "the tool verifies the status of the reassignment"),
+                   anchor(DOC_OPS, 605, "the throttle will be removed via the --verify command")]
+        out.append({
+            "template": "order_reassign", "group": "kafka-reassign-partitions:throttle:%s" % params["r"].split(".")[0],
+            "tool": "kafka-reassign-partitions.sh", "domain": "kafka", "params": params,
+            "forbidden": "--disable-rack-aware", "forbidden_role": "safe", "verify": True,
+            "task": "move all partitions of the topics listed in `{f}` to the brokers {b} with the data movement throttled to {v} bytes per second, and confirm that the move has finished. Generate the plan and save it as `{r}`",
+            "limit": "Keep the rack-aware replica assignment.",
+            "safe": [("--generate", None), ("--topics-to-move-json-file", "{f}"), ("--broker-list", "{b}")],
+            "safe_suffix": " > {r}",
+            "mutate": exe, "verify": [("--verify", None), ("--reassignment-json-file", "{r}")],
+            "safe_step": {"flags_all": ["--generate"]},
+            "mutate_step": {"flags_all": ["--execute"], "values": {"--throttle": params["v"]}},
+            "verify_step": {"flags_all": ["--verify"]},
+            "flags": ["--generate", "--topics-to-move-json-file", "--broker-list", "--execute", "--reassignment-json-file",
+                      "--verify", "--disable-rack-aware", "--throttle"],
+            "anchors": anchors,
+        })
+    return out
 
 
 # Candidates the pinned text gives no ordering passage for: counted and skipped (reason printed).
@@ -267,7 +340,7 @@ def lines_for(spec, role, p, extra=()):
     ln = spec[role]
     if spec.get("argocd"):
         return ln.format(**p) + (" " + " ".join(extra) if extra else "")
-    return kline(spec["tool"], ln, p, extra)
+    return kline(spec["tool"], ln, p, extra) + (spec["safe_suffix"].format(**p) if role == "safe" and spec.get("safe_suffix") else "")
 
 
 def steps_for(spec):
@@ -381,7 +454,7 @@ def build_item(spec, cats, chash, seed, n, rng, corpus, stats):
         stats["dropped:near_duplicate:%s" % spec["template"]] += 1
         return None
     item = {
-        "id": "a3-%s-%03d" % (spec["template"], n + (V2_ID_BASE if spec["template"] in V2_CHANGED else 0)), "tier": "A", "kind": KIND, "family": "%s:%s" % (spec["template"], spec["group"]),
+        "id": "a3-%s-%03d" % (spec["template"], n), "tier": "A", "kind": KIND, "family": "%s:%s" % (spec["template"], spec["group"]),
         "domain": spec["domain"], "question": question, "checks": checks, "reference": block(ref),
         "sources": [{"catalogue": "pinned_text", "entry": spec["template"], "fact": a["phrase"], "file": a["file"],
                      "line": a["line"]} for a in spec["anchors"]] + [
@@ -448,10 +521,12 @@ def generate_with_stats(cats=None, seed=DEFAULT_SEED, corpus=None):
         t = spec["template"]
         if t not in streams:
             streams[t] = random.Random("%s|%s|%s" % (seed, chash, t))
-        counters[t] += 1
-        item = build_item(spec, cats, chash, seed, counters[t], streams[t], corpus, stats)
+        key = (t, bool(spec.get("fresh")))
+        counters[key] += 1
+        base = FRESH_ID_BASE if spec.get("fresh") else V3_ID_BASE if t in V3_CHANGED else V2_ID_BASE if t in V2_CHANGED else 0
+        item = build_item(spec, cats, chash, seed, counters[key] + base, streams[t], corpus, stats)
         if item is None:
-            counters[t] -= 1
+            counters[key] -= 1
             continue
         items.append(item)
     items.sort(key=lambda i: i["id"])

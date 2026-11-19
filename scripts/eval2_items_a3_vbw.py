@@ -26,6 +26,11 @@ Per item, asserted in code (generate() raises AssertionError otherwise):
   - the reference passes every check; the perturbed answer (the shown artifact with the wrong verdict) fails the verdict;
     for a wrong item the shown artifact with `does not work` fails an oracle check (a verdict alone is not enough).
 Deterministic: every template has its own random.Random seeded by a string; pools are sorted lists; no set order.
+Version 3 (fix round 2, N1, N2, N8): `FRESH` holds further drafts that were never in an open file (a fault and a control as a
+new pair for V1, V2, V3 and V7; a control for V5 on the open side and for V6 on the hidden side); their ids are `-v3-NNN`. The
+V6 fault `sessions:5` (never published) is dropped so that the hidden V6 pair is a fault and a control; its number is not
+reused. Every template now has controls in two split groups, so the split can put a control on each side. The
+connector.plugin.version item carries a note (N8). Items of version 2 keep their id and text.
 Usage: .venv/bin/python scripts/eval2_items_a3_vbw.py [--out FILE]   (prints the counts; writes only to --out)
 """
 import argparse
@@ -49,7 +54,7 @@ import eval2_score as sc  # noqa: E402
 from kafka_sre_rag import catalogue_a3  # noqa: E402
 from kafka_sre_rag.catalogue import KNOWN, Catalogues, catalogue_hash  # noqa: E402
 
-VERSION = "eval2_items_a3_vbw/2"
+VERSION = "eval2_items_a3_vbw/3"
 SEED = "m4-a3-vbw-1"
 TARGET_TOTAL = 32
 ORACLE_TYPES = ("semantic_rule", "forbidden_keys", "yaml_config_keys")
@@ -154,8 +159,8 @@ def yaml_struct(kind, api, fields):
 
 
 # ---- V1 NetworkPolicy
-def b_v1(rng, cats, table):
-    names = pick(rng, [("orders-kafka", "kafka", "payments", "orders-api", "reporting"),
+def b_v1(rng, cats, table, fresh=None):
+    names = fresh["pool"] if fresh else pick(rng, [("orders-kafka", "kafka", "payments", "orders-api", "reporting"),
                        ("events", "streaming", "checkout", "checkout-svc", "analytics"),
                        ("audit-log", "messaging", "fraud", "fraud-scorer", "ingest"),
                        ("clickstream", "data-platform", "ingest", "ingest-gateway", "billing"),
@@ -189,7 +194,7 @@ def b_v1(rng, cats, table):
 
     srcs = anchors_of("V1", table)
     out = []
-    kinds = ["pod_only", "or_entries", "ns_only", "control"]
+    kinds = fresh["kinds"] if fresh else ["pod_only", "or_entries", "ns_only", "control"]
     for (cluster, kns, cns, app, other), kind in zip(names, kinds):
         pod = {"podSelector": {"matchLabels": {"app": app}}}
         nsel = {"namespaceSelector": {"matchLabels": nsl(cns)}}
@@ -228,8 +233,8 @@ def b_v1(rng, cats, table):
 
 
 # ---- V2 restart annotation
-def b_v2(rng, cats, table):
-    conns = pick(rng, [("orders-sink", "orders-connect", "streaming", "org.apache.kafka.connect.file.FileStreamSinkConnector", {"file": "/data/orders.txt", "topics": "orders"}),
+def b_v2(rng, cats, table, fresh=None):
+    conns = fresh["pool"] if fresh else pick(rng, [("orders-sink", "orders-connect", "streaming", "org.apache.kafka.connect.file.FileStreamSinkConnector", {"file": "/data/orders.txt", "topics": "orders"}),
                        ("audit-source", "audit-connect", "platform", "org.apache.kafka.connect.file.FileStreamSourceConnector", {"file": "/var/log/audit.log", "topic": "audit"}),
                        ("metrics-source", "metrics-connect", "observability", "org.apache.kafka.connect.file.FileStreamSourceConnector", {"file": "/var/log/metrics.log", "topic": "metrics"}),
                        ("ledger-sink", "ledger-connect", "finance", "org.apache.kafka.connect.file.FileStreamSinkConnector", {"file": "/data/ledger.txt", "topics": "ledger"})], 4)
@@ -257,7 +262,7 @@ def b_v2(rng, cats, table):
                 (["spec", "config"], d["spec"]["config"])]
 
     out = []
-    for i, (name, cluster, ns, cls, cfg) in enumerate(conns):
+    for i, (name, cluster, ns, cls, cfg) in zip(fresh["positions"] if fresh else range(4), conns):
         if i == 0:
             shown, fixd = conn(name, cluster, ns, cls, cfg, "true"), conn(name, cluster, ns, cls, cfg, "includeTasks")
             intro = "A Kafka Connect cluster `%s` runs the `KafkaConnector` below. To restart the connector instance and all of its tasks, I apply this manifest. Does it do that?" % cluster
@@ -305,16 +310,16 @@ V3_POOL = [("min.insync.replicas", "a producer with `acks=all` must be refused u
            ("min.cleanable.dirty.ratio", "log compaction must start once 10 % of the log is dirty (ratio 0.1)", Fraction(1, 10))]
 
 
-def b_v3(rng, cats, table):
-    picks = pick(rng, [p[0] for p in V3_POOL], 4)
+def b_v3(rng, cats, table, fresh=None):
+    picks = fresh["keys"] if fresh else pick(rng, [p[0] for p in V3_POOL], 4)
     out = []
-    names = pick(rng, ["orders", "payments-events", "inventory-updates", "session-log", "audit-trail", "page-views"], 4)
+    names = fresh["names"] if fresh else pick(rng, ["orders", "payments-events", "inventory-updates", "session-log", "audit-trail", "page-views"], 4)
     for i, (key, name) in enumerate(zip(picks, names)):
         _, need, want = next(p for p in V3_POOL if p[0] == key)
         ent = next(e for e in cats._config[key] if e["scope"] == "topic")
         dflt = num_of(ent["default"])
         wantv = float(want) if isinstance(want, Fraction) else want
-        control = i == 3
+        control = i == (len(picks) - 1 if fresh else 3)
         val = wantv if control else (float(dflt) if "." in str(ent["default"]) else int(dflt))
 
         compacted = key in COMPACTED_KEYS
@@ -364,13 +369,13 @@ def b_v4(rng, cats, table):
 
 
 # ---- V5 heartbeat and session timeout
-def b_v5(rng, cats, table):
-    pool = pick(rng, [("billing-consumers", 30000), ("ledger-readers", 60000), ("search-indexer", 30000),
-                      ("fraud-scorer", 45000), ("report-builder", 90000)], 4)
+def b_v5(rng, cats, table, fresh=None):
+    pool = fresh["pool"] if fresh else pick(rng, [("billing-consumers", 30000), ("ledger-readers", 60000), ("search-indexer", 30000),
+                                                  ("fraud-scorer", 45000), ("report-builder", 90000)], 4)
     out = []
     for i, (gid, sess) in enumerate(pool):
         third = sess // 3
-        variant = ["equal", "above_third", "session_default", "control"][i]
+        variant = (fresh["variants"] if fresh else ["equal", "above_third", "session_default", "control"])[i]
         body = ["bootstrap.servers=broker-1:9092", "group.id=%s" % gid, "enable.auto.commit=false"]
         if variant == "equal":
             hb, shown_sess = sess, sess
@@ -400,11 +405,11 @@ def b_v5(rng, cats, table):
 
 
 # ---- V6 min.insync.replicas equal to replicas
-def b_v6(rng, cats, table):
-    pool = pick(rng, [("orders", 3), ("payments", 3), ("ledger", 2), ("shipments", 4), ("sessions", 5)], 4)
+def b_v6(rng, cats, table, fresh=None):
+    pool = fresh["pool"] if fresh else pick(rng, [("orders", 3), ("payments", 3), ("ledger", 2), ("shipments", 4), ("sessions", 5)], 4)
     out = []
     for i, (name, rep) in enumerate(pool):
-        ctl = i == 3
+        ctl = i == (len(pool) - 1 if fresh else 3)
         minisr = rep - 1 if ctl else rep
         if rep == 2 and ctl:
             rep, minisr = 3, 2
@@ -434,11 +439,11 @@ def b_v6(rng, cats, table):
 
 
 # ---- V7 PodDisruptionBudget
-def b_v7(rng, cats, table):
-    pool = pick(rng, [("orders-kafka", 3), ("events-kafka", 5), ("audit-kafka", 3), ("ledger-kafka", 4), ("search-kafka", 6)], 4)
+def b_v7(rng, cats, table, fresh=None):
+    pool = fresh["pool"] if fresh else pick(rng, [("orders-kafka", 3), ("events-kafka", 5), ("audit-kafka", 3), ("ledger-kafka", 4), ("search-kafka", 6)], 4)
     out = []
     for i, (name, rep) in enumerate(pool):
-        variant = ["max0", "min100", "minall", "control"][i]
+        variant = (fresh["variants"] if fresh else ["max0", "min100", "minall", "control"])[i]
         spec = {"max0": {"maxUnavailable": 0}, "min100": {"minAvailable": "100%"}, "minall": {"minAvailable": rep},
                 "control": {"maxUnavailable": 1}}[variant]
 
@@ -528,6 +533,9 @@ def _mm2(src_cfg=None, tgt_cfg=None, conn_cfg=None):
     return d
 
 
+N8_NOTE = ("The reference only removes the entry from `config`. The KafkaConnector resource has a field for the plugin "
+           "version, `spec.version` (appendix_crds.adoc:3473-3475); an answer that moves the version there is also right "
+           "and passes the structure checks (review round 2, N8: left as it is).")
 FK_KAFKA = [("log.dirs", "/var/lib/kafka/data-0/kafka-log0", "put the log directory of the brokers on `/var/lib/kafka/data-0/kafka-log0`"),
             ("listeners", "PLAINTEXT://:9092", "bind the broker listener to port 9092"),
             ("inter.broker.listener.name", "REPLICATION-9091", "use the listener `REPLICATION-9091` between brokers"),
@@ -559,6 +567,7 @@ def b_fk(rng, cats, table, quota):
     out = []
 
     def add(role, group, kind, intro, shown, fixd, why, fl, path, key, exc=False, cpath=None):
+        note = {"note": N8_NOTE} if key == "connector.plugin.version" else {}
         if role == "wrong":
             src = [forbidden_source(kind, key, cpath)]
         else:
@@ -567,7 +576,7 @@ def b_fk(rng, cats, table, quota):
         # forbidden_keys is an oracle check, structure checks keep their place before it
         oc = [struct.pop()]
         out.append(draft("FK", role, group, intro, kind, dump(shown), why, fix=dump(fixd) if fixd else None,
-                         struct=struct, oracle=oc, sources=src, extra={"config_path": path, "key": key}))
+                         struct=struct, oracle=oc, sources=src, extra={"config_path": path, "key": key, **note}))
 
     def cfgq(path):
         return "Will Strimzi apply every entry of `%s` below as written?" % path
@@ -641,6 +650,28 @@ def b_fk(rng, cats, table, quota):
     return out
 
 
+# Round 2 (N1, N2): further drafts that were never in an open file. A template that was left without a "works" control on
+# one side gets one (V5 open, V6 hidden), a template whose hidden items were all in an open file gets a new fault and a new
+# control as a pair (V1, V2, V3, V7). `pair` joins an existing pair where the control belongs to its faults.
+FRESH = {
+    "V1": {"kinds": ["or_entries", "control"],
+           "pool": [("inventory-kafka", "stock", "warehouse", "stock-sync", "audit"),
+                    ("returns-kafka", "commerce", "refunds", "refund-api", "finance")]},
+    "V2": {"positions": [1, 3],
+           "pool": [("refunds-source", "refunds-connect", "support", "org.apache.kafka.connect.file.FileStreamSourceConnector",
+                     {"file": "/var/log/refunds.log", "topic": "refunds"}),
+                    ("inventory-sink", "inventory-connect", "logistics", "org.apache.kafka.connect.file.FileStreamSinkConnector",
+                     {"file": "/data/inventory.txt", "topics": "inventory"})]},
+    "V3": {"keys": ["segment.bytes", "min.insync.replicas"], "names": ["payments-events", "inventory-updates"]},
+    "V5": {"variants": ["control"], "pool": [("shipment-tracker", 60000)]},
+    "V6": {"pool": [("inventory", 4)]},
+    "V7": {"variants": ["minall", "control"], "pool": [("billing-kafka", 4), ("fraud-kafka", 3)]},
+}
+FRESH_PAIR = {"V1": "vbw:V1:c", "V2": "vbw:V2:c", "V3": "vbw:V3:c", "V5": "vbw:V5:b", "V6": "vbw:V6:b", "V7": "vbw:V7:c"}
+# A hidden fault of version 2 that is not used any more: V6 keeps the fault `orders:3` and gets the new control, so that the
+# hidden side has a pair (fault, control); the fault `sessions:5` is dropped (it was never in an open file). Its number is not reused.
+SKIP = {("V6", "sessions:5")}
+
 BUILDERS = {"V1": b_v1, "V2": b_v2, "V3": b_v3, "V4": b_v4, "V5": b_v5, "V6": b_v6, "V7": b_v7, "V8": b_v8}
 
 
@@ -679,7 +710,7 @@ def parse_ok(d, cats):
     return "validates against the %s schema" % r.source
 
 
-def build_item(d, n, cats, chash, chash_a3):
+def build_item(d, n, cats, chash, chash_a3, ver="v2"):
     tpl = TEMPLATES[d["mech"]]
     wrong = d["role"] == "wrong"
     lang = d["lang"]
@@ -687,7 +718,7 @@ def build_item(d, n, cats, chash, chash_a3):
     fmt_chk = {"format": True, "type": "answer_line"}
     verdict = {"type": "answer_equals", "accepted": ["does not work" if wrong else "works"], "norm": "ci"}
     checks = [fmt_chk, verdict] + (d["struct"] + d["oracle"] if wrong else [])
-    item_id = "a3-%s-v2-%03d" % (tpl, n)
+    item_id = "a3-%s-%s-%03d" % (tpl, ver, n)
     item = {"id": item_id, "tier": "A", "kind": "valid_but_wrong", "family": "%s:%s" % (tpl, d["group"]),
             "domain": DOMAIN[d["mech"]], "question": q, "checks": checks,
             "sources": d["sources"], "versions": VERSIONS.get(d["mech"], STRIMZI_V), "template": tpl, "anchored": True,
@@ -785,7 +816,23 @@ def generate(catalogues_dir=None, catalogues_a3_dir=None, dedup=True, seed=SEED)
     for m in ["V1", "V2", "V3", "V4", "V5", "V6", "V7", "V8", "FK"]:
         for d in drafts.get(m, []):
             counter[m] += 1
+            if (m, d["group"]) in SKIP:
+                continue
             it = build_item(d, counter[m], cats, chash, chash_a3)
+            if dedup:
+                hit, dd = a1.near_duplicate(it["question"], corpus)
+                it["dedup"] = dd
+                if hit:
+                    generate.dropped.append((it["id"], dd))
+                    continue
+            items.append(it)
+    for m in ["V1", "V2", "V3", "V5", "V6", "V7"]:
+        if not status[m][0]:
+            continue
+        ds = BUILDERS[m](random.Random("%s|%s|%s|fresh" % (seed, chash, TEMPLATES[m])), cats, table, fresh=FRESH[m])
+        for k, d in enumerate(ds, 1):
+            d["extra"]["pair"] = FRESH_PAIR[m]
+            it = build_item(d, k, cats, chash, chash_a3, ver="v3")
             if dedup:
                 hit, dd = a1.near_duplicate(it["question"], corpus)
                 it["dedup"] = dd

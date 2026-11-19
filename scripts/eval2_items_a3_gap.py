@@ -22,6 +22,9 @@ the sources do not support it). G3 gaps also search the product name together wi
 deployment name together with the key. The Schema Registry compatibility level pair is replaced (the Apicurio pages in the
 index state its default). Controls accept the documented value with the unit the documentation itself uses.
 
+Version 3 (fix round 2): N4 and N5 are in the `no_invented_value` check (eval2_checks_a3.py), so the items did not change; N1 adds
+one pair each for nc_old_version (the removed `delegation.token.master.key`) and nc_deployment, ids from 201.
+
 Absence record (D3, the Owner's go K5): the generator reads the frozen index, read-only, after checking its sha256
 against runs/v3/INDEX_FROZEN.json (scorer's ChunkIndex.load; a mismatch stops with IndexMismatch). Each gap lists its
 search terms and the number of chunks that hit each. A chunk hits a term when the term occurs in its text, title or
@@ -54,8 +57,9 @@ from eval2_checks_a3 import check_declines, check_no_invented_value  # noqa: E40
 from kafka_sre_rag import catalogue_a3  # noqa: E402
 from kafka_sre_rag.catalogue import Catalogues, catalogue_hash, default_dir  # noqa: E402
 
-VERSION = "eval2_items_a3_gap/2"
+VERSION = "eval2_items_a3_gap/3"
 V2_ID_BASE = 100  # version 2 changed every item (keys, checks, controls): numbers start at 101, no version-1 id is reused
+FRESH_ID_BASE = 200  # version 3 (round 2, N1): further pairs for the hidden side, never in an open file: numbers from 201
 UPGRADE = "raw/apache-kafka/docs/getting-started/upgrade.md"
 PINNED_VERSIONS = ["4.1", "4.2", "4.3", "4.3.2"]
 DEFAULT_SEED = "m4-a3-1"
@@ -128,6 +132,18 @@ SPECS = [
      "gap": {"key": "kafka_batch_max_bytes", "product": "Redpanda", "terms": ["kafka_batch_max_bytes", "redpanda"],
              "cooc": ["Redpanda", "batch max bytes"], "invented": "1048576"},
      "ctl": {"scope": "broker", "key": "message.max.bytes", "wrong": "1048576"}},
+]
+SPECS += [
+    # ---- version 3 (round 2, N1): one further pair each for G1 and G2, drawn after the others
+    {"template": "nc_old_version", "domain": "kafka", "kind": "old", "fresh": True,
+     "gap": {"key": "delegation.token.master.key", "scope": "broker", "version": "3.9", "terms": ["delegation.token.master.key"],
+             "invented": "changeit", "unsupported": True,
+             "premise": {"file": UPGRADE, "line": 265, "phrase": "The `delegation.token.master.key` configuration was removed"}},
+     "ctl": {"scope": "broker", "key": "quota.window.size.seconds", "wrong": "10"}},
+    {"template": "nc_deployment", "domain": "kafka", "kind": "deploy", "fresh": True,
+     "gap": {"key": "num.io.threads", "scope": "broker", "name": "prod-us2", "noun": "cluster",
+             "terms": ["prod-us2"], "cooc": ["prod-us2", "num.io.threads"], "invented": "16"},
+     "ctl": {"scope": "broker", "key": "num.io.threads", "wrong": "16"}},
 ]
 UNANCHORED = []  # every gap is anchored by its absence record, every control by catalogue and index
 
@@ -315,7 +331,7 @@ def control_forms(e):
 def common(spec, role, n, q, chash, chash_a3, seed, dd, pair):
     t = spec["template"]
     key = spec["gap"]["key"] if role == "gap" else spec["ctl"]["key"]
-    return {"id": "a3-%s-%03d" % (t, n + V2_ID_BASE), "tier": "A", "kind": KIND, "family": "%s:%s:%s" % (t, role, key),
+    return {"id": "a3-%s-%03d" % (t, n + (FRESH_ID_BASE if spec.get("fresh") else V2_ID_BASE)), "tier": "A", "kind": KIND, "family": "%s:%s:%s" % (t, role, key),
             "domain": spec["domain"], "question": q + "\n\n" + FORMAT_NOTE,
             "template": t, "pair": pair, "anchored": True,
             "failure_class": "not_covered" if role == "gap" else "plain_lookup", "exposed": False, "overlap": None,
@@ -435,10 +451,11 @@ def generate_with_stats(cats=None, seed=DEFAULT_SEED, corpus=None, idx=None):
     items, counters = [], Counter()
     for spec in SPECS:
         t = spec["template"]
-        pr = build_pair(spec, counters[t] + 1, cats, idx, searcher, index_sha, chash, chash_a3, seed, corpus, stats)
+        key = (t, bool(spec.get("fresh")))
+        pr = build_pair(spec, counters[key] + 1, cats, idx, searcher, index_sha, chash, chash_a3, seed, corpus, stats)
         if pr is None:
             continue
-        counters[t] += 2
+        counters[key] += 2
         items += list(pr)
     items.sort(key=lambda i: i["id"])
     stats["items"] = len(items)

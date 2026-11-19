@@ -762,6 +762,61 @@ class PythonCallbackAliasTests(unittest.TestCase):
             self.assertTrue(ok, (kw, d))
 
 
+@unittest.skipUnless(HAVE_PYSYM, "python_symbols.json not built")
+class PythonRound2Tests(unittest.TestCase):
+    """WP1c fix round 2: N3 (a kwargs entry may fix the value) and a Python callback passed by position."""
+    COMMIT = {"required": [{"name": "commit", "class": "Consumer", "kwargs": [{"name": "asynchronous", "value": False}]}]}
+    HEAD = "from confluent_kafka import Consumer\nc = Consumer({})\nm = c.poll(1.0)\n"
+    PRODUCE = {"required": [{"name": "produce", "class": "Producer", "kwargs": [["on_delivery", "callback"]]}]}
+    PHEAD = "from confluent_kafka import Producer\np = Producer({})\n"
+
+    def commit(self, call):
+        return cc.check_py_calls(self.COMMIT, pb(self.HEAD + call + "\n"), {})
+
+    def test_the_value_of_asynchronous_is_compared_n3(self):
+        for call in ("c.commit(message=m, asynchronous=False)", "c.commit(m, asynchronous=False)",
+                     "c.commit(asynchronous=False, message=m)"):                       # pcc_r1, pcc_r2
+            ok, d = self.commit(call)
+            self.assertTrue(ok, (call, d))
+        for call in ("c.commit(message=m, asynchronous=True)",                           # pcc_bad3
+                     "c.commit(message=m)",                                              # pcc_bad1
+                     "c.commit(message=m, asynchronous=0)",                              # False is not 0
+                     "c.commit(message=m, asynchronous=flag)"):                          # a value the check cannot know
+            ok, d = self.commit(call)
+            self.assertFalse(ok, call)
+            self.assertIn("missing call Consumer.commit", d)
+
+    def test_an_entry_without_a_value_still_takes_any_value(self):
+        spec = {"required": [{"name": "commit", "class": "Consumer", "kwargs": ["asynchronous"]}]}
+        for v in ("True", "False", "flag"):
+            self.assertTrue(cc.check_py_calls(spec, pb(self.HEAD + "c.commit(message=m, asynchronous=%s)\n" % v), {})[0], v)
+
+    def test_unpacked_keywords_cannot_be_disproved(self):
+        self.assertTrue(self.commit("c.commit(message=m, **opts)")[0])
+
+    def test_a_callback_by_position_counts_where_the_symbol_list_gives_its_position(self):
+        params = a3.py_method("confluent_kafka.Producer", "produce")["params"]
+        pos = min(params.index("callback"), params.index("on_delivery"))
+        self.assertEqual(pos, 4)                                                         # topic, value, key, partition, callback
+        ok, d = cc.check_py_calls(self.PRODUCE, pb(self.PHEAD + "p.produce('t', 'v', 'k', -1, print)\n"), {})
+        self.assertTrue(ok, d)                                                           # ppi_pos
+        ok, d = cc.check_py_calls(self.PRODUCE, pb(self.PHEAD + "p.produce('t', 'v', 'k', -1)\n"), {})
+        self.assertFalse(ok)                                                             # four positional arguments: no callback
+        ok, d = cc.check_py_calls(self.PRODUCE, pb(self.PHEAD + "p.produce('t', 'v', 'k')\n"), {})
+        self.assertFalse(ok)
+        ok, d = cc.check_py_calls(self.PRODUCE, pb(self.PHEAD + "p.produce('t', 'v', 'k', -1, callback=print)\n"), {})
+        self.assertTrue(ok, d)
+
+    def test_a_value_given_by_position_is_compared_too(self):
+        params = a3.py_method("confluent_kafka.Consumer", "commit")["params"]
+        i = params.index("asynchronous")
+        args = ["None"] * i + ["False"]
+        ok, d = self.commit("c.commit(%s)" % ", ".join(args))
+        self.assertTrue(ok, d)
+        args[-1] = "True"
+        self.assertFalse(self.commit("c.commit(%s)" % ", ".join(args))[0])
+
+
 class PythonRealSymbolsTests(unittest.TestCase):
     def test_a_realistic_consumer_passes_every_python_check(self):
         text = pb(PY_OK)
