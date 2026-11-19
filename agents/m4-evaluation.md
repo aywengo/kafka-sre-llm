@@ -741,3 +741,26 @@ are there too.
     fact is not in the index.
   - J6: a separate work package for retrieval and index coverage, judged by one hidden-half
     run.
+- 2026-11-19, night: the Owner agreed with the recommendations K1 to K6 (`MILESTONE.md`):
+  - K1: the judge's coverage role is confirmed on B1. For every later batch the rubric
+    chunk check runs after the second review and its completions, and must reach 95 %
+    before any answer exists.
+  - K2: the judged tier is written at scale to 120 or more items, the Owner's questions
+    first, in batches of 30 with the same writing, second review and chunk check.
+  - K3: retrieval candidate R3 (frozen pack first, then the exact-heading lookup and one
+    runbook, up to 10 chunks and 24,000 characters) is tested once on B2 by the rule in
+    `MILESTONE.md`, fixed before B2 exists.
+  - K4: for E3, a statement marked "not confirmed" still counts as an error; minor items
+    are reported beside the bar and not counted; "checked before the user sees it" means
+    that prose streams and each code block is held until its check, with corrections to
+    prose after the answer; E3 is measured on the hidden judged half after E2; a grounded
+    default prompt variant is a separate item with its own pilot; no catalogue change.
+  - K5: the not-covered generator of tier A may read the frozen index, read-only, with its
+    hash checked.
+  - K6: the Owner's 34 questions are reconstructions of public incidents (source 3). They
+    are admitted under the working rule for public posts: ideas only, rubrics from the
+    pinned documentation and never from the posted fix, the source link as the private
+    provenance record, a point that only the incident shows marked as resting on a source
+    outside the index. All 34 are hidden. Sealed sessions write and check their rubrics
+    and adapt or drop items that do not apply to the pinned versions, and return results
+    per id only. The plain copy is kept outside the repository.

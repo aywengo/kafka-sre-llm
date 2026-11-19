@@ -18,9 +18,9 @@ different base model does better.
 
 | # | Criterion | Bar | Status |
 |---|---|---|---|
-| E1 | A new evaluation exists: fresh items for the five task types of `GOAL.md`, a hidden part, mechanical checks, a measured noise level | 300 or more mechanical items, 120 or more judged items, the smallest visible difference stated per tier | mechanical tier built: 496 items, split 251 open and 245 hidden (encrypted); judged tier: after two failed pilots the judge's coverage role (J1) was checked on batch B1 (30 fresh scenarios): five criteria and the second half of the sixth pass, the rubric chunk check missed by about one point (94.0 % against 95 %); the go waits for the Owner |
+| E1 | A new evaluation exists: fresh items for the five task types of `GOAL.md`, a hidden part, mechanical checks, a measured noise level | 300 or more mechanical items, 120 or more judged items, the smallest visible difference stated per tier | mechanical tier built: 496 items, split 251 open and 245 hidden (encrypted); judged tier: after two failed pilots the judge's coverage role (J1) was checked on batch B1 (30 fresh scenarios): five criteria and the second half of the sixth pass, the rubric chunk check missed by about one point (94.0 % against 95 %); **the Owner accepted the coverage role on 2026-11-19 (K1)**; writing at scale started (K2): B2 (30 open), the Owner's 34 (hidden, sealed), then about 26 more |
 | E2 | The starting point is measured on it: plain base, base + retrieval at full precision, and the 4-bit model with retrieval, in default and strict mode, all on the same server path | numbers with their sizes; the cost of 4-bit shown inside a margin fixed before the run (5 points on the mechanical tier) | not started |
-| E3 | Every answer is checked before the user sees it | at most 2 invented or wrong items per 10 answers in default mode on fresh questions, **measured by a reading**, with the checker's own counts beside it | checker built and wired into `ask --check` and the service; on the 30 labelled errors it catches 9, reports 3 as unverified and misses 18 (15 are wrong statements it cannot see); not yet measured on fresh answers |
+| E3 | Every answer is checked before the user sees it (amended 2026-11-19, K4 b: prose streams as it is written, each code block is held until its check, which takes milliseconds, and corrections to prose follow the answer) | at most 2 invented or wrong items per 10 answers in default mode on fresh questions, **measured by a reading**, with the checker's own counts beside it; a statement marked "not confirmed" still counts; minor items are reported beside the bar, not counted (K4 a, c); measured on the hidden judged half after E2 (K4 g) | checker built and wired into `ask --check` and the service; on the 30 labelled errors it catches 9, reports 3 as unverified and misses 18 (15 are wrong statements it cannot see); not yet measured on fresh answers |
 | E4 | Answers are fast on the 4-bit server path | median under 60 s in default mode on the Mac Studio; first words within 10 s | service and streaming built; retrieval 9.5 s to 4.4 s when kept loaded; not yet measured with a model |
 | E5 | Base model decision | bake-off of the shortlist on the new evaluation; keep or switch recorded | shortlist done |
 
@@ -68,6 +68,7 @@ After the first slice:
 | WP4b | Bake-off on the new evaluation; decision | WP1f | the four candidates are downloaded and load-tested 2026-11-19 (`runs/m4/reports/bakeoff_load_test.md`): all four load and answer on the server; median answer on 3 questions 8.0 s (Gemma 4 26B-A4B), 9.5 s (GLM-4.7-Flash), 35 s (Gemma 4 31B), 54 s (Granite 4.2 30B), against 35 s for the reference; quality not measured |
 | D1 | Find why the server path and the in-process path give different output | - | **answered 2026-11-19** (`runs/m4/reports/d1_code_reading.md`, `d1_paths.md`): on 20 open items with the same excerpts and the same full-precision weights, 13 of 20 answers byte-identical and the pass result equal on 20 of 20; the prompt tokens are equal, so the template is not the cause; the 7 differences start at a near-tie word inside matching text (numerics of the two execution paths; whether the server's multi-token prediction or its kernels, not separated). The in-process path stays a continuity check on outcomes, not on bytes |
 | D2 | The Owner reads ten answers that a model has already read | - | waiting for the Owner |
+| WP2d | Grounded default prompt variant (K4 d): a default mode that keeps to the excerpts more closely, with its own pilot; the measured prompts stay frozen | WP1f | not started |
 
 Workers on local models: bounded reading and extraction go to `.claude/local-worker.sh`
 when the model server is free and no job needs the GPU; design, web research and judging
@@ -112,6 +113,7 @@ thinking off.
 | 2026-11-18 | The 15 changes of the design review are accepted into the design; those that are the Owner's are marked as waiting | conductor |
 | 2026-11-18 | **Yes to all recommendations:** the 4-bit model on oMLX is the reference configuration; half of each tier hidden, encrypted, decisions on the hidden half, at most six looks; the downloads and installs for catalogues and checks; loading the 4-bit and full-precision 27B builds for the comparison; `questions_real` becomes a legacy set and the 4-bit bar a margin fixed before the run; public questions may be raw material after a licence check; the four bake-off candidates may be downloaded; other clients' models on the server may be unloaded when it is idle | Owner |
 | 2026-11-19 | **After the failed judging pilot:** build the judged tier with the analysis's changes and a second small pilot on fresh items; the first pilot stays a no-go and the second gets new criteria fixed beforehand; the judge's error flags count toward the bars of `GOAL.md` only after a reader has confirmed them; DeepSeek stays the judge, with the earlier judge re-judging a 24-item subset on every decision run; the Owner reviews which points are essential on his own questions | Owner |
+| 2026-11-19 | **Agreed with the recommendations K1 to K6** (see "Waiting for the Owner", kept for the record): the coverage role is confirmed and every later batch needs the rubric chunk check at 95 % before any answer exists (K1); the judged tier is written at scale, the Owner's questions first, in batches of 30 (K2); WP5 stays open for one additive candidate, R3, tested once on B2 by the rule below, fixed before B2 exists (K3); E3: (a) to (g) as recommended, among them the amended wording, a separate grounded default prompt variant with its own pilot, the model patch step R2 kept on only by its rule, and no catalogue change (K4); the not-covered generator may read the frozen index (K5); the Owner's 34 questions are admitted under the working rule for public posts, all hidden, rubrics by sealed sessions, the plain copy out of the repository (K6) | Owner |
 | 2026-11-19 | **After the second failed judging pilot, agreed with all six recommendations J1 to J6:** the judge reports coverage of essential points and forbidden statements only, wrong, invented and harmful rates come from an identifier check plus blind readings, no third pilot of the judge as an error finder, the coverage role is confirmed on a first fresh batch with criteria fixed beforehand (J1); a sealed reader may read hidden-half answers and return totals only, logged in the ledger (J2); a second reader on about a quarter of the answers (J3); a higher answer limit is measured as its own item (J4); the mechanical scorer reports declines beside the unchanged all-pass rate and may read the frozen index (J5); a work package for retrieval and index coverage, built as a candidate next to the frozen index and judged on the hidden half (J6) | Owner |
 
 ## Waiting for the Owner
@@ -120,7 +122,7 @@ Decided on 2026-11-18 (see "Decisions"). Still his to do, none blocking:
 
 The failed gate of 2026-11-18 (the judging pilot) was decided on 2026-11-19; see "Decisions".
 
-**Open since 2026-11-19, evening: the B1 gate** (`runs/m4/B1_COVERAGE_FINAL.md`). The
+**Decided 2026-11-19, night: K1 to K6 as recommended (kept below for the record).** The B1 gate (`runs/m4/B1_COVERAGE_FINAL.md`). The
 report tool prints GO on its six checks, but criterion 2 has two halves and the tool checks
 only the second. The first half, fixed before the run, was missed: the rubric chunk ids
 held the point's fact in 156 of 166 points (94.0 %, bar 95 %; 10 partial, 0 wrong; eight
@@ -168,6 +170,17 @@ not passed. Two decisions:
   generator (T7). Not a decision but for the Owner to know: the jar downloads for the
   client-code checks are taken as covered by the go of 2026-11-18 ("downloads and installs
   for catalogues and checks"), after a check of versions, hashes and licences.
+- **The rule for R3 (K3), fixed on 2026-11-19 before B2 exists.** R3 is the frozen pack
+  (the frozen six chunks, in frozen order) followed by the exact-heading lookup (2 slots)
+  and at most one runbook, up to 10 chunks and 24,000 characters; its settings hash is
+  recorded when it is built. It is run once with the funnel on B2, after B2's rubrics have
+  passed the chunk check (95 %) and with the search terms of B2's default run for both
+  variants. An indexed must point is served when one of its chunk ids is in the pack.
+  Pass only if both hold: (a) R3 serves at least 15 percentage points more indexed must
+  points than frozen; (b) of the points frozen serves, R3 loses at most 5 % (0 by
+  construction; a loss means a bug). On a pass, the hidden-half run of J6 decides; on a
+  fail, WP5 closes with the frozen retrieval. B1 is development data for R3 and decides
+  nothing.
 - **K6. The Owner's 34 questions** (`eval/m4/inbox/owner_questions.yaml`, 2026-11-19).
   The file calls them reconstructions of public incidents, so by the brief they are
   source 3 (public questions), not source 1. Recommended: (a) admit them under the working
@@ -422,7 +435,12 @@ and J6 come from the mechanical tier and block nothing yet):
 - 2026-11-19, night: D1 answered (see its row): 13 of 20 answers byte-identical between
   the in-process and server paths, pass result equal on 20 of 20, prompt tokens equal;
   the rest is numerics. No model loaded or unloaded on the server.
-- Next, in order: the Owner's K1 to K6; after K5, WP1c T7, then the real T8 run, T9
-  (review) and T10. For the Owner, not blocking: the essential points of
+- 2026-11-19, night: the Owner agreed with K1 to K6. The R3 rule is fixed above, before B2
+  exists. The plain copy of the Owner's questions moved out of the repository after its
+  hash was checked against the sealed copy. Started: WP1c T7 (not covered) and the tool
+  for sealed sessions (`scripts/sealed_io.py`).
+- Next: B2 writing (three writers, then three second reviewers and the chunk check);
+  sealed rubrics for the Owner's 34; R3 built and checked on the development items; the
+  checker's inline marks (R1) and model patch (R2); WP1c T8 real run, T9, T10. For the Owner, not blocking: the essential points of
   the six architecture scenarios (b1-10, b1-18, b1-19, b1-20, b1-29, b1-30). Not blocked:
   D1, the mechanical tier's hidden-half runs.
