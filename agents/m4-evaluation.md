@@ -1,6 +1,6 @@
 # M4, work package 1: a new evaluation
 
-**Status: design by the conductor, revised 2026-11-18 after review and 2026-11-19 after the first judging pilot failed (`runs/m4/reports/s5_pilot_analysis.md`). The Owner's decisions of both days are in `MILESTONE.md`.**
+**Status: design by the conductor, revised 2026-11-18 after review and 2026-11-19 after the first judging pilot failed (`runs/m4/reports/s5_pilot_analysis.md`), and again on 2026-11-19 after the second pilot failed (`runs/m4/reports/s5b_pilot2_analysis.md`; see "Revisions"). The Owner's decisions of both days are in `MILESTONE.md`.**
 Items marked "waits for the Owner" are not yet agreed.
 Tracking: `MILESTONE.md`. Goal and bars: `GOAL.md`.
 
@@ -18,8 +18,9 @@ model's noise where that can be avoided.
 
 Three tiers. **Tier A** is large and scored by a program, with no judge: tasks whose
 answers can be checked against schemas and catalogues built from the pinned sources.
-**Tier B** is smaller and scored by a judge against a written list of required points,
-then partly read. **Tier C** is a live cluster with injected faults and belongs to the
+**Tier B** is smaller; a judge reports how many of a written list of required points an
+answer covers, and blind readings with the sources give the rates of wrong, invented and
+harmful statements. **Tier C** is a live cluster with injected faults and belongs to the
 tools milestone; it is only specified here. Each tier has a hidden part that nobody reads
 during development. The old 40 questions are kept as a legacy set for continuity; that
 they are no longer the gate set waits for the Owner (see "GOAL.md bars: tier and metric").
@@ -33,7 +34,7 @@ An item is a question plus a machine-checkable expectation. No reference prose.
 | Write a resource | "Write a KafkaTopic with 12 partitions, 3 replicas, 7 days retention, compaction off." | The answer contains one YAML document that validates against the pinned schema; listed fields have the listed values |
 | Write a resource with a trap | "…for a KRaft cluster using node pools" | As above, plus fields that must be absent |
 | Name the setting | "Which broker setting limits the time a follower may lag before leaving the ISR, and its default?" | The answer names the catalogue key; the default matches the catalogue |
-| Is this real | "Does `kafka-topics.sh` have an `--unparsed` flag?" (half of these are real, half are not) | Three-way answer (exists / does not exist / not in my sources) matches the catalogue; false "exists" and false "does not exist" are reported separately. At most 10 % of tier A |
+| Is this real | "Does `kafka-topics.sh` have an `--unparsed` flag?" (half of these are real, half are not) | Three-way answer (exists / does not exist / not in my sources) matches the catalogue; false "exists" and false "does not exist" are reported separately. An answer "not in my sources" on an item whose expected answer is "does not exist" (an invented name) still fails the all-pass check and is also reported as an abstention on an invented name (see "Decline outcomes"). At most 10 % of tier A |
 | Fix the manifest | A manifest with one schema error or one wrong field | The corrected document validates and the named field is changed |
 | Write the command | "Describe consumer group `orders` with members and lag." | Tool and flags exist in the catalogue; required flags present; forbidden ones absent |
 | Write the client code | "A Java consumer with manual commit after processing." / the same in Python | It compiles (Java) or passes a syntax and import check (Python); listed API calls present; listed config keys exist |
@@ -99,7 +100,33 @@ Scoring rules:
   does not: strict schema validation, value checks and meaning checks. E3 is measured by a
   reading, as `GOAL.md` requires ("A reviewer's reading"). Scorer counts are reported
   beside the reading, split into errors the checker can see and errors it cannot. A checker
-  change is never accepted on the scorer's numbers alone.
+  change is never accepted on the scorer's numbers alone. Since 2026-11-19 (J5) the scorer
+  also reads the frozen index, read-only and with its hash checked against
+  `runs/v3/INDEX_FROZEN.json`, to find which chunks cover an item's fact. That is new: the
+  scorer and the runtime's checker still share only the catalogues, and nothing else.
+
+Decline outcomes (J5, decided 2026-11-19). On the open half, strict mode scored 174 of 251
+against 194 of 251 for default, 8.0 points lower, and the scorer has no outcome for a
+decline, so a correct decline scores like an invented answer. Of the 26 items default
+passed and strict failed, 19 were declines where the excerpts lacked the fact (10 in the
+index but not retrieved, 6 not in the index, 3 abstentions on an invented name) and 7 were
+strict faults; crediting the 19 would leave a gap of 0.4 points (`runs/m4/reports/s6_strict_loss_analysis.md`,
+one reader, all 26 read).
+
+- The scorer reports, per item and per kind, one of four outcomes beside the all-pass
+  rate: **pass**; **correct decline** (the answer declines and the item's covering chunk
+  ids are not in the pack the answer was given); **wrong decline** (it declines and they
+  are in the pack); **wrong** (any other failure). The all-pass rate itself is unchanged
+  and stays comparable with S6.
+- The covering chunk ids of an item come from its recorded source (file and entry) in the
+  frozen index.
+- For the `is_real` kind, an abstention ("not in my sources") on an item whose expected
+  answer is "does not exist" is reported apart, as an abstention on an invented name.
+- Items whose fact is not in the index (the Argo CD command pages, which `sources.yaml`
+  excludes, and Kafka tool options that exist only in source code) are tagged and reported
+  as their own subset.
+- A rise in correct declines is read together with the wrong declines, so that declining
+  more is not rewarded.
 
 ## Tier B: judged (target 120 or more items)
 
@@ -125,6 +152,16 @@ Rubric rules:
   alternative" answer (which must trigger no must-not);
 - the Owner reviews which points are essential on his own questions.
 
+Rules added on 2026-11-19 from the readers' remarks on the second pilot:
+
+- every must point carries the chunk ids of the passages in the index that contain its
+  fact, recorded by the rubric author before any answer exists; a second reviewer checks
+  them, against the chunks, before answers exist;
+- no bundled points: one fact or one step per point;
+- alternatives that are equally correct go into an any_of group, not into separate points;
+- a point that rests on a source outside the index is allowed but marked as such; it
+  tests retrieval coverage, not the answer, and is never "supported" (see below).
+
 Answers are scored alone, not head to head. Each must point carries a weight: 2 if it is
 essential, otherwise 1. Each must-not point has a severity: *wrong* or *harmful*. Per item:
 
@@ -134,16 +171,36 @@ essential, otherwise 1. Each must-not point has a severity: *wrong* or *harmful*
 - H = must-not points of severity *harmful* that are present;
 - **S = max(-1, P - 0.25·W - 0.5·H).**
 
-The configuration result is three rates per 10 answers, each with its smallest visible
-difference: supported essential misses (a weight-2 point absent while the answer's logged
-excerpts contain its source); confirmed wrong items; confirmed harmful items. A flag counts
-only after a reviewer, blind to the configuration, confirms it against the sources. P is
-reported as coverage. S, with other errors counted at the W penalty once confirmed, is
-secondary; it is the mean over items, with each item's two passes averaged first. Also
-report:
+The judge's role (J1, decided 2026-11-19): it reports rubric coverage only. The judge's
+result for a configuration is:
 
-- the judge's other-errors count (unconfirmed, outside S);
-- the nonexistent identifiers the scorer finds, per answer.
+- coverage P;
+- essential-miss units: a weight-2 point with no verdict "present", where an any_of group
+  counts once, as one unit that is missed if no member is present;
+- supported essential-miss units: essential-miss units that the answer's own excerpts
+  could have answered, by the chunk-id rule below;
+- must-not statements present.
+
+Each is given per 10 answers with its smallest visible difference. The wrong, invented
+and harmful rates do not come from the judge (see "Wrong, invented and harmful: where the
+rates come from"). S is secondary; it is the mean over items, with each item's two passes
+averaged first, and its W counts only must-not points of severity *wrong* and contradicted
+must points. The judge's "other errors" are kept as leads for a reader and are never
+counted toward any bar. Also report:
+
+- the judge's other-errors count (leads only, outside S);
+- the identifier check's totals (see "Wrong, invented and harmful: where the rates come
+  from").
+
+Supported, decided by chunk ids (replaces the file-level rule of the second pilot):
+
+- A must point is *supported* in an answer if one of the chunk ids that the rubric author
+  recorded for it is among the answer's logged excerpts. An any_of group is supported if
+  any member is. A point that rests on a source outside the index is marked as such and
+  is never supported.
+- The file-level rule (any chunk of the point's file counts) is dropped: in the second
+  pilot it counted 15 flags whose chunk did not contain the fact and missed cases where
+  the fact was in a file the rubric did not cite.
 
 Decisions are also reported with the W penalty at 0 and at 0.5; a decision that flips
 between these is reported as depending on the penalty.
@@ -153,11 +210,13 @@ passages. It does not see the reference answer. One call is made per answer. Pas
 the points in reverse order. The judge also gets the answer's own logged excerpts. A
 statement about what the excerpts contain is checked against those excerpts only.
 
-A verdict whose quote is not found in the answer counts as absent and is logged as a judge
-error. A quote is found after removing markdown marks, code-fence tags and list markers and
+A "present" or "contradicted" verdict whose quote is not found in the answer becomes
+"unverified" and is logged as a judge error. An unverified verdict is counted neither as
+present nor as a miss; the share of unverified verdicts is reported. A quote is found after removing markdown marks, code-fence tags and list markers and
 normalising whitespace; fragments joined by "..." must each be at least 12 characters and
 appear in order. Entries of `other_errors` whose `source_quote` is not found in the source
-passages or the answer's excerpts are dropped and counted.
+passages or the answer's excerpts are dropped and counted. The entries that remain are
+leads for a reader (J1), not findings.
 
 The judge instruction, version 2 (exact text; it is version 1 with two changes and the
 `source_quote` field):
@@ -193,9 +252,57 @@ Reply only with JSON: {"must":[{"id":"","verdict":"present|absent|contradicted",
   documentation-citing answers; the answer's own excerpts are meant to fix that.
 - **Cross-check:** the earlier judge model re-judges a fixed 24-item subset on every
   decision run, and the agreement is reported.
-- **Not to be trusted for:** ranking configurations by S; the invented-or-wrong rate and
-  the harm bar without a reviewer's confirmation; made-up identifiers, which belong to the
-  mechanical tier.
+- **Role (J1):** coverage only. Instruction version 2 stays as it is, with thinking off.
+  In the second pilot the judge caught 58 of the 111 wrong, harmful or invented
+  statements the readers found (same statement, at least one pass), and about 18 of the
+  53 it missed were contradicted by a sentence it was shown; so it is not an error finder.
+  There is no third pilot of the judge as an error finder. Claim-by-claim verification
+  (each statement of an answer checked against retrieved passages) is parked as a research
+  item; it could only be tested on fresh items, because the 111 findings have been used.
+- **Not to be trusted for:** the wrong, invented or harmful rate, or any bar built from
+  its other-errors output; ranking configurations by S; made-up identifiers, which belong
+  to the identifier check.
+
+### Wrong, invented and harmful: where the rates come from
+
+Two sources, neither of them the judge (J1).
+
+- **The identifier check.** The evaluation's own check of identifiers against the frozen
+  catalogues: `scripts/eval2_idcheck.py`. It is separate code from the runtime answer
+  checker and shares only the catalogue files with it. It runs on all answers, including
+  those of the hidden half, and the harness prints totals only. It must raise no false
+  "invented" finding on the 244 stored answers and the 48 pilot answers.
+- **Blind readings.** A strong reader (a Claude model) reads answers with the pinned
+  sources. The rates of wrong, invented and harmful statements are the reading's, with the
+  identifier check's totals beside them.
+
+Reading protocol:
+
+1. The reader is blind to the configuration (mode, model, limit) of every answer.
+2. Stage 1, the reader's own findings, before it sees anything from the judge or a second
+   reader. Each finding has a kind: *wrong*, *invented*, *harmful* or *omission* (an
+   omission names the rubric point id and `supported`, by the rule above); a `minor` mark
+   (true or false); a verbatim quote from the answer; and the source file and lines. A
+   statement the sources do not settle is not counted; it is listed as "could not
+   verify".
+3. Stage 2 only after stage 1 is fixed: comparison with a second reader's findings or with
+   the judge's leads.
+4. One row per distinct statement.
+5. `supported` means that the passage itself is in the answer's excerpts. For an any_of
+   group it is true if any member's passage is.
+6. A second reader reads about 25 % of the answers, drawn by a fixed seed (J3), with the
+   same protocol and without seeing the first reader's findings until stage 2.
+7. If the two readers' totals of wrong + invented + harmful on the shared answers differ
+   by more than 30 %, the readings are not used for a bar until the protocol is fixed.
+8. When two configurations are within what the readers' disagreement allows, the reading
+   does not decide between them.
+
+What was measured on the six pilot items both readers read (12 answers,
+`runs/m4/reports/s5b_second_reading.md`): errors 27 by the first reader and 33 by the
+second, 26 found by both; omissions 18 and 16, 16 by both; `supported` agreed on 13 of 16
+shared omissions; the readers agreed on which answer had fewer errors for 5 of 6 items.
+The second reader's threshold was lower for small side errors, so a gap of 2 errors or
+less between two answers flips with the reader.
 
 ### Streaming architecture items
 
@@ -258,17 +365,20 @@ judge's flags outside the reader's labels was a real error. With a same-statemen
 a catch, the judge caught 14 of the reader's 30 wrong items, not 25. The first pilot stays
 a no-go; re-scoring it afterwards with the new quote matching is not a go.
 
-### Second pilot
+### Second pilot (2026-11-19): no-go
 
-What is run:
+What was run:
 
 - 24 fresh open items, written under the rubric rules above;
 - each answered in default and strict mode on the reference configuration (48 answers);
-- judged in two passes with instruction version 2;
-- one reviewer reads all 48 answers blind to the mode, with the excerpts;
-- an optional arm that gives the judge the reference answer.
+- judged in two passes with instruction version 2 (96 judgments);
+- two readers read the 48 answers blind to the mode, with the excerpts: each reader took
+  half of the items (24 answers each), in one pass. One reviewer did not read all 48, so
+  reader and item half cannot be told apart in the readings;
+- an optional arm that gave the judge the reference answer.
 
-The criteria, fixed before the run. Go only if all of the first six hold:
+The criteria, fixed before the run. Go only if all of the first six hold (the pilot's
+report counts precision and recall as one criterion, so it lists five):
 
 - kappa of at least 0.7 between passes;
 - the judge's share of the variance of a paired difference at most 1/3 (this replaces the
@@ -281,12 +391,84 @@ The criteria, fixed before the run. Go only if all of the first six hold:
   confirmed;
 - pair ordering is reported descriptively (it is unpowered at this size).
 
-Cost (the analysis's estimate): answering 48 answers at 47 to 71 s each, 40 to 60 minutes;
-judging 96 to 144 calls, 12 to 20 minutes; the reviewer's reading 2 to 4 hours of model
-time. In all about 1.5 to 2 hours of machine time and one reading. It runs on the model
-server after S6.
+Result (`runs/m4/S5B_JUDGE_PILOT2.md`): **NO-GO, 3 of 5 criteria passed.**
 
-The judged tier's items are written at scale only after the second pilot reports go.
+| Criterion | Result |
+|---|---|
+| Kappa between passes | 0.74 on 334 point pairs: pass |
+| Judge's share of the variance of a paired difference | S 0.19, P 0.26 (24 items): pass |
+| Quote failures | 4.7 % (11 of 234 present or contradicted verdicts): pass |
+| Flag precision and semantic-error recall | precision 0.78 and 0.81 (49 of 63, 56 of 69 flags confirmed); recall 0.43 and 0.49 (48 and 54 of 111 findings, same statement only): fail |
+| Supported essential omissions | 37.5 % of the reviewers' 16 supported trials flagged, 15.8 % of the judge's 38 flags confirmed (6 of 38): fail |
+
+The pilot stays a no-go. Re-scoring it afterwards with the chunk-id rule or the
+"unverified" rule is not a go; the first pilot's rule applies. The analysis
+(`runs/m4/reports/s5b_pilot2_analysis.md`) found why the two criteria failed. A perfect
+judge with the input it had would reach about 76 of 111 findings (0.68), below the 0.7
+bar. Of the 32 unconfirmed supported-miss flags, 23 came from the file-level rule and 9
+from verdicts turned into misses by quote validation. Ignoring "supported", judge and
+readers agreed on essential-miss units with kappa 0.75 and 0.73 (126 units per pass), but
+that was found after the fact, on the same items.
+
+What must not be concluded from this pilot:
+
+- that the judge cannot detect omissions;
+- that re-scoring this pilot with a new attribution rule makes it a go;
+- that a better prompt with the same input reaches 0.7 recall;
+- that the judge's flags measure the wrong rate, the harm rate or the direction between
+  default and strict;
+- any bar status from these 24 items, which were written to be hard, as the product's
+  rate;
+- anything about the cost of 4-bit.
+
+The 24 items have been used for the pilot, the readings and the analysis; a change that
+they prompt lists their ids.
+
+### First fresh batch (B1): confirms the coverage role
+
+The judge's coverage role (J1) is confirmed, or not, on a first batch of fresh items. The
+agreement found in the second pilot was found after the fact, so it needs confirming.
+
+What is run:
+
+- about 30 fresh open scenarios across the five task types of `GOAL.md`, with rubrics
+  under the rules above (chunk ids, no bundled points, any_of groups, outside-index
+  marks), checked by a second reviewer before any answer exists;
+- each answered on the reference configuration in default mode, in strict mode and (J4)
+  in default mode with the answer limit raised from 2,048 to 4,096 tokens;
+- judged in two passes with instruction version 2;
+- the identifier check on all answers;
+- a blind reading of the default and strict answers, with a second reader on about 25 %.
+
+The raised limit is descriptive on this batch. In the second pilot 11 of 24 default
+answers and 5 of 24 strict answers were cut at 2,048 tokens. B1 compares the share of
+answers cut off, the median time per answer, coverage P and essential-miss units, each
+against default at 2,048. The limit itself stays frozen until a decision run.
+
+The criteria, fixed before the run. Go only if all six hold:
+
+1. Essential-miss units, judge against blind reader, an any_of group as one unit: kappa of
+   at least 0.6, and precision and recall of at least 0.75, in each pass, on at least 100
+   weight-2 units.
+2. A reviewer checks the rubric chunk ids before answers exist: the chunk contains the
+   point in at least 95 % of points. Of the judge's supported-miss flags, at least 60 %
+   are confirmed.
+3. "Unverified" verdicts are at most 3 % of must verdicts, and none is counted as absent.
+4. Kappa between the judge's two passes of at least 0.7.
+5. A second reader reads at least 25 % of the answers. If the two readers' wrong +
+   invented totals on the shared answers differ by more than 30 %, readings are not used
+   for a bar until the protocol is fixed.
+6. The identifier check raises zero false "invented" findings on the 244 stored answers
+   and the 48 pilot answers.
+
+Cost (inferred from the pilot's rates, not measured on B1): about 90 answers; at the
+pilot's medians of 82 s (default) and 67 s (strict) per answer, 30 answers take about 41
+and 33 minutes, and the raised limit takes longer than the first; about 180 judgments, at
+the first pilot's rate of 190 in 25 minutes about 25 minutes; the identifier check is
+CPU only. The pilot's 48 answers took two parallel readers about 20 minutes of wall time;
+tokens were not recorded, and B1 records them. It runs on the model server.
+
+The judged tier's items are written at scale only after B1 reports go.
 
 ## Tier C: live (specified only)
 
@@ -327,6 +509,14 @@ more than it gives:
   hidden part is built.
 - Tier B rubrics on the hidden side are checked by a separate reviewer session that
   returns pass or fail per item id only.
+- Readings on the hidden half (J2, decided 2026-11-19). A sealed reader session may read
+  hidden-half answers, with the protocol of "Wrong, invented and harmful: where the rates
+  come from", and returns totals only: no item text, no per-item results and no quotes.
+  Each such reading is written in `runs/m4/HIDDEN_LEDGER.md` before it runs, with its
+  decision rule, as part of the decision run it belongs to; it is not a further run. The
+  conductor and all other sessions never see its transcript. This sends hidden items to a
+  hosted model, which the Owner accepted. Without such a reading, the reading-based bars
+  would rest on the open half.
 
 ## Rules against fitting
 
@@ -348,6 +538,12 @@ separate the cost in search terms from the cost in writing the answer. The in-pr
 is a continuity check only, until D1 explains the difference between paths. Loading the
 full-precision and 4-bit 27B builds on the model server for this comparison waits for the
 Owner (recommendation: go).
+
+## Retrieval and index coverage (J6)
+
+A separate work package builds a candidate index and candidate retrieval settings next to
+the frozen ones. It is judged by one hidden-half run with a rule written beforehand; the
+frozen index and settings are not changed until then. Its plan is a separate document.
 
 ## Statistics
 
@@ -454,8 +650,10 @@ Run sizes (see "Harness"):
 | Open full | the open part, per candidate | the rows above at the size of the open part |
 | Hidden | the hidden part, per decision only | the rows above at the size of the hidden part |
 
-Reviewer time to confirm the judge's flags (see "Tier B: judged"): about 1 to 3 hours per
-configuration (an estimate, not measured). The earlier judge's re-judging of the 24-item
+Reading time (see "Wrong, invented and harmful: where the rates come from"): the pilot's
+48 answers took two parallel readers about 20 minutes of wall time (inferred from the
+run log; tokens were not recorded), plus about a quarter more for the second reader. The
+reviewer no longer confirms the judge's flags one by one. The earlier judge's re-judging of the 24-item
 subset adds about 15 minutes per decision run (an estimate, not measured with that judge).
 These are not in the table.
 
@@ -468,10 +666,10 @@ answers may be shorter than the real-question medians; that was not measured.
 |---|---|
 | 100 % existing keys | Tier A: identifier precision over all generated answers, against complete catalogues |
 | 95 % valid resources | Tier A: all-pass share on the resource kinds |
-| Nothing invented | A reading; the scorer's nonexistent identifiers per answer are reported beside it |
-| Complete | Tier B: supported essential-miss rate |
-| None that would do damage | Tier B: confirmed harmful items only |
-| Honest about gaps | Wrong refusals, counted with the logged excerpts and the item's covering chunk ids |
+| Nothing invented | A reading; the identifier check's totals are reported beside it |
+| Complete | Tier B: supported essential-miss units, decided by chunk ids; confirmed on B1 |
+| None that would do damage | A reading (not the judge's flags) |
+| Honest about gaps | Wrong declines: from the tier A scorer's outcomes (decline outcomes, with the item's covering chunk ids and the pack's excerpts) and from readings |
 
 The design makes `questions_real` a legacy set and not the gate set. That contradicts
 `AGENTS.md` ("`questions_real` is the gate set"), so it needs the Owner's amendment, not a
@@ -488,14 +686,14 @@ already started. The slice needs no downloads, and its truth is programmatic.
 | Task | Role | Files | Inputs → outputs | Acceptance | Needs | Time |
 |---|---|---|---|---|---|---|
 | S1 Harness skeleton | implementer | `scripts/eval2.py` (new), `tests/test_eval2.py` | config → answers with pack ids, timing, manifest; pack replay; hidden ids only | offline tests pass; replay reproduces stored packs on 3 legacy questions; golden tests still pass | CPU | 1 to 1.5 days |
-| S2 Config, REST and Argo CD items | implementer | `scripts/eval2_items_a1.py`, `eval/m4/` | generated config HTML, `connect_rest.yaml`, argocd command pages → about 200 items, grouped 50/50 split | every reference passes, a perturbed one fails; near-duplicate check against all earlier sets clean | CPU | 1 day |
+| S2 Config, REST and Argo CD items | implementer | `scripts/eval2_items_a1.py`, `eval/m4/` | generated config HTML, `connect_rest.yaml`, argocd command pages → 496 items built, grouped 50/50 split (251 open, 245 hidden) | every reference passes, a perturbed one fails; near-duplicate check against all earlier sets clean | CPU | 1 day |
 | S3 Scorer for these kinds plus identifier precision | implementer | `scripts/eval2_score.py` | answers → per-check results | hand-written pass and fail answers behave as expected; `--cancel`-type misses reported as unknown | CPU | 1 day |
 | S4 Rubric pilot rubrics and label check | complex-reviewer, plus researcher for source checks | report only | 30 questions, sources → rubrics with file and line | every point anchored to a source | Claude, CPU | half a day |
-| S5 Judge pilot | job-operator | — | 80 answers × 2 passes | rubric pilot thresholds computed | model server (GLM oQ8e) | 3 to 4 h |
-| S6 A/A and 4-bit against bf16, same server | job-operator | — | about 200 items: 4-bit twice, bf16 once, plus pack replay | p_d and the non-inferiority interval reported | model server, 27B builds (loading them waits for the Owner) | 15 to 20 h |
+| S5 Judge pilot | job-operator | — | 80 answers × 2 passes | rubric pilot thresholds computed | model server (DeepSeek without thinking, chosen in S5a) | 3 to 4 h |
+| S6 A/A and 4-bit against bf16, same server | job-operator | — | 251 open items: 4-bit twice, bf16 once, plus pack replay | p_d and the non-inferiority interval reported | model server, 27B builds (loading them waits for the Owner) | 15 to 20 h |
 
-After the first slice: the remaining tier A kinds and the tier B items are built only after
-the rubric pilot and the A/A test have reported. Then the starting-point measurement
+After the first slice: the remaining tier A kinds are built after the A/A test has
+reported, and the tier B items at scale only after B1 reports go. Then the starting-point measurement
 (exit criterion E2).
 
 ## Acceptance of this work package
@@ -515,3 +713,25 @@ The review is `runs/m4/reports/evaluation_design_review.md` (verdict: build with
 changes). All 15 of its changes are in the text above; it holds the reasoning for each.
 Its statistics workings, cost workings and the list of what the reviewer could not verify
 are there too.
+
+## Revisions
+
+- 2026-11-18: design written; revised after the review (15 changes) and after the Owner's
+  decisions of that day (`MILESTONE.md`).
+- 2026-11-19, first revision: after the first judging pilot failed, judge instruction
+  version 2, fair quote matching, the answer's own excerpts, the second pilot's criteria.
+- 2026-11-19, second revision, after the second pilot failed (3 of 5); the Owner agreed to
+  the recommended J1 to J6:
+  - J1: the judge reports coverage only; wrong, invented and harmful rates come from the
+    identifier check and blind readings; no third pilot of the judge as an error finder;
+    B1 confirms the coverage role.
+  - J2: a sealed reader session may read hidden-half answers and return totals only, each
+    reading logged in `runs/m4/HIDDEN_LEDGER.md` before it runs.
+  - J3: a second reader reads about 25 % of the answers.
+  - J4: B1 measures default mode with the answer limit raised from 2,048 to 4,096 tokens,
+    descriptively; the limit stays frozen.
+  - J5: the tier A scorer reports pass, correct decline, wrong decline and wrong beside
+    the unchanged all-pass rate, reads the frozen index read-only, and tags items whose
+    fact is not in the index.
+  - J6: a separate work package for retrieval and index coverage, judged by one hidden-half
+    run.
