@@ -1,0 +1,87 @@
+# Real questions from the Owner, for the judged tier of the M4 evaluation.
+#
+# WHERE TO WRITE: copy this file to  eval/m4/inbox/owner_questions.yaml  and add your
+# questions there. That folder is git-ignored: this repository is public, and a real
+# incident can carry names and details that must not be published. Nothing in the inbox is
+# committed as it is. A worker turns each entry into an evaluation item (names scrubbed if
+# you ask for it, a rubric written from the pinned documentation, a second reviewer), you
+# review which points are essential, and only then does the item go to the open half (in
+# clear) or the hidden half (encrypted).
+#
+# WHAT MAKES A GOOD ENTRY
+# - A situation you really had: what you saw, what you were asked, what you pasted.
+#   Write the question the way you would have typed it then, without the answer in it.
+# - What was actually wrong and what fixed it. This is the part only you have.
+# - Not a one-fact lookup ("what is the default of X"): those are tested mechanically.
+# - Any topic of GOAL.md: diagnostics, debugging from pasted output, configuration,
+#   Java or Python client code, streaming architecture.
+#
+# FIELDS (only `question`, `what_was_wrong` and `what_fixed_it` are required)
+#   kind            diagnostics | debugging | configuration | coding | architecture
+#   question        what you would ask, with the facts an engineer gives: versions, sizes,
+#                   what changed recently. No hint of the answer.
+#   evidence        pasted logs, `kubectl describe`, tool output, a manifest, code. Optional.
+#   what_was_wrong  the real cause, in your words.
+#   what_fixed_it   what you did, in order, and how you checked that it worked.
+#   essential       the points without which an answer would have been useless or unsafe.
+#                   Optional; you review the final list in any case.
+#   dangerous       what would have made it worse (a tempting but wrong or destructive
+#                   step). Optional.
+#   versions        what you ran at the time. Answers are judged against the pinned
+#                   versions (Kafka 4.3, Strimzi 1.3.1, Argo CD 3.6.1, Kubernetes 1.37);
+#                   if yours differed, the worker checks whether the answer still holds
+#                   and asks you where it does not.
+#   scrub           yes (default): replace names of clusters, namespaces, topics, hosts,
+#                   people and companies before anything is stored outside the inbox.
+#   side            hidden (default) | open | either. Hidden items are encrypted and never
+#                   published; open items are published with the repository.
+#   source          own incident (default) | colleague | a link, if the idea came from a
+#                   public post (ideas only: nothing is copied from it).
+#   note            anything else the worker should know.
+
+questions:
+
+  # ---- EXAMPLE (delete it, or leave it: entries with `example: true` are skipped) ----
+  - example: true
+    kind: debugging
+    versions: {strimzi: "1.3.1", kafka: "4.3"}
+    question: |
+      We cut the partition count of the topic payments-audit from 24 to 12 in Git to save
+      resources. Argo CD synced fine, but the KafkaTopic has not been Ready since. Nothing
+      else changed. What is wrong and how do I get it Ready again?
+    evidence: |
+      $ kubectl get kafkatopic payments-audit -n kafka
+      NAME             CLUSTER   PARTITIONS   REPLICATION FACTOR   READY
+      payments-audit   prod      12           3                    False
+      # the status condition message says the number of partitions cannot be decreased
+    what_was_wrong: |
+      Kafka cannot reduce the number of partitions of a topic. The Topic Operator tried to
+      apply spec.partitions: 12 to a topic that has 24, Kafka refused, and the resource
+      went not Ready. The topic itself was untouched and still has 24 partitions.
+    what_fixed_it: |
+      1. Set spec.partitions back to 24 in Git and let Argo CD sync.
+      2. Checked that the KafkaTopic became Ready (kubectl get kafkatopic -w).
+      3. For fewer partitions we would have had to create a new topic and move the
+         producers and consumers; we decided against it.
+    essential:
+      - says that the partition count of an existing topic cannot be decreased
+      - sets spec.partitions back to the current value (or higher) in the KafkaTopic
+    dangerous:
+      - deleting and recreating the KafkaTopic to get 12 partitions, without saying that
+        this deletes the topic and its data
+    scrub: yes
+    side: either
+    source: own incident
+    note: The condition text above is shortened from memory, not a verbatim copy.
+
+  # ---- YOUR QUESTIONS BELOW ----
+  # - kind: diagnostics
+  #   versions: {}
+  #   question: |
+  #     ...
+  #   evidence: |
+  #     ...
+  #   what_was_wrong: |
+  #     ...
+  #   what_fixed_it: |
+  #     ...
