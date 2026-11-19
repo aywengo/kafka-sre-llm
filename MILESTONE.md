@@ -144,6 +144,24 @@ not passed. Two decisions:
   Its rule is fixed before any look, and its out-of-sample check is the next fresh batch
   (B2, if K2 is a go), not B1. The candidate index (T4) and its two source decisions wait
   until then.
+- **K4. E3, after the revise design** (`runs/m4/reports/wp2b_revise_design.md`, one
+  reviewer, development data B1). Of the 56 non-minor errors in B1's default answers, 13
+  have nothing at run time that could show them (the excerpts seem to support them, or
+  they are reasoning about the user's case), so even a perfect checker would leave default
+  at about 4.3 per 10 (2.7 to 5.0) against the bar of 2; strict about 2.3. The realistic
+  revise step removes about 5 to 7 of the 56. Decisions, with the recommendation:
+  (a) a statement marked "not confirmed" still counts as an error: yes;
+  (b) "checked before the user sees it" against streaming: stream prose, hold each code
+  block until its check (milliseconds), corrections to prose follow the answer, and amend
+  the E3 wording openly to say so;
+  (c) minor items do not count toward the bar, reported beside it: yes;
+  (d) the bar cannot be reached by checking alone in default mode: keep the bar, and open
+  a separate item for a grounded default prompt variant (its own pilot), with E3 possibly
+  closing M4 as not met;
+  (e) build the model patch step (R2) and keep it on only by the rule in section 7 of the
+  design; the code fixes (R0) and inline marks (R1) now;
+  (f) no catalogue change now;
+  (g) E3 is measured on the hidden judged half after E2 (needs K2).
 
 **Decided on 2026-11-19, afternoon: the Owner agreed with the recommendations J1 to J6
 below (see "Decisions").** The second judging pilot failed on 2026-11-19 (3 of 5). The analysis (`runs/m4/reports/s5b_pilot2_analysis.md`)
@@ -330,7 +348,12 @@ and J6 come from the mechanical tier and block nothing yet):
   third of that and the losses are four times the bar, the early sign of fitting the plan
   named. B1 has now been looked at for retrieval, so it can no longer serve as the
   out-of-sample check of any other profile.
-- Next, in order: the Owner's K1, K2 and K3. For the Owner, not blocking: the essential points of
+- 2026-11-19, 17:59: the revise step of the checker designed
+  (`runs/m4/reports/wp2b_revise_design.md`): the bar of 2 per 10 is out of reach in
+  default mode by checking alone (K4). The checker made 6 false flags among its 22 on the
+  B1 answers (none on its development sets); its code fixes (R0, items b1-03, b1-04,
+  b1-13, b1-23, b1-24) started, CPU only.
+- Next, in order: the Owner's K1, K2, K3 and K4; R0. For the Owner, not blocking: the essential points of
   the six architecture scenarios (b1-10, b1-18, b1-19, b1-20, b1-29, b1-30), and the two
   source decisions for the candidate index (Argo CD command pages, Kafka tool option
   pages). Not blocked by them: the checker's "revise" step (E3), D1, the mechanical tier's
