@@ -70,3 +70,29 @@ def answer_messages(question, chunks, *, strict=False, thorough=False, rules=Fal
 
 def expand_messages(question):
     return [{"role": "system", "content": EXPAND_SYSTEM}, {"role": "user", "content": question}]
+
+
+# WP2b R2 (kafka_sre_rag/revise.py): the one extra call that replaces the lines of an answer the catalogue check
+# flagged. Added after the measured prompts above; nothing above it changed. Placeholders are filled with str.replace:
+# <<EXCERPTS>> (pack_text of the excerpts), <<ANSWER>> (the answer, one numbered line per line) and <<FINDINGS>> (one
+# JSON object per finding: line, item, problem, evidence, suggestion). It carries no text of any evaluation item.
+REVISE_PROMPT = (
+    "Below are documentation excerpts, an answer written from them with numbered lines, and findings from a check "
+    "of that answer against catalogues of what exists in Apache Kafka, Strimzi, Kubernetes and Argo CD. Each finding "
+    "names a line and an item on it (a flag, configuration key, field, apiVersion, value, tool or error name) that "
+    "the catalogues contradict, with the evidence from the catalogue.\n\n"
+    "Correct only the lines the findings name. For each such line give the line as it should read, using only the "
+    "real names in the evidence or in the excerpts (the valid options of the tool, the served apiVersion, the "
+    "values the key accepts, the scope the key belongs to). If no correct form is known from the evidence or the "
+    "excerpts, delete the line (text null) instead of guessing. Do not add any command, flag, key, field or name "
+    "that is in neither the evidence nor the excerpts. Keep the indentation, the comment marker and a trailing "
+    "backslash of the line. Give more than one line in one replacement only when the command is wrapped over "
+    "lines with a trailing backslash. If a finding is wrong (the item is correct as written), leave its line out. "
+    "Do not change any line that no finding names.\n\n"
+    "Reply with JSON only, no other text, in exactly this form: "
+    "{\"replacements\": [{\"line\": 12, \"text\": \"the new text of line 12\"}, {\"line\": 30, \"text\": null}]}. "
+    "An empty list means nothing is to be changed.\n\n"
+    "Documentation excerpts:\n\n<<EXCERPTS>>\n\n"
+    "Answer with numbered lines:\n\n<<ANSWER>>\n\n"
+    "Findings, one JSON object per line:\n\n<<FINDINGS>>\n"
+)

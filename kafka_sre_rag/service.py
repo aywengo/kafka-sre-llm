@@ -13,7 +13,7 @@ import uuid
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import config, evalhooks, pipeline, profiles
+from . import config, evalhooks, pipeline, profiles, revise as revise_mod
 from .generators import EmptyAnswerError, ServerError, ThinkFilter
 
 MODEL_DEFAULT = "kafka-sre"
@@ -140,6 +140,18 @@ def parse_check(body, default):
     return v
 
 
+def parse_revise(body, default):
+    """The per-request switch `revise` (R1 marks plus the R2 patch); absent = `default`. It implies the check."""
+    if "revise" not in body:
+        return default
+    v = body["revise"]
+    if not isinstance(v, bool):
+        raise BadRequest("revise must be true or false")
+    if v and body.get("check") is False:
+        raise BadRequest("revise needs the check (check must not be false)")
+    return v
+
+
 def note_chunks(note):
     """The note as the content pieces of a streamed answer: a blank line, then one piece per line."""
     lines = note.split("\n")
@@ -165,12 +177,25 @@ class _Tee:
         return self.gen.chat(messages, max_tokens, None)
 
 
+class _Locked:
+    """The model behind the service lock, for the revise call (it comes after the answer's own lock block)."""
+
+    def __init__(self, gen, lock):
+        self.gen, self.lock = gen, lock
+
+    def chat(self, messages, max_tokens, on_token=None):
+        with self.lock:
+            return self.gen.chat(messages, max_tokens, on_token)
+
+
 class Service:
     def __init__(self, gen, cfg=None, *, mode="default", k="k6", rerank=True, max_tokens=None, verified=None,
-                 check=False, catalogues=None, checker=None, profile="frozen"):
+                 check=False, catalogues=None, checker=None, profile="frozen", revise=False):
         profiles.check(profile)
         self.profile = profile
         self.gen, self.cfg = gen, cfg or config.load()
+        self.revise_default = bool(revise)
+        check = bool(check or revise)
         self.check_default, self.catalogues_dir, self._checker = bool(check), catalogues, checker
         if check:
             self.answer_checker()  # fail at start, not at the first request
@@ -203,11 +228,17 @@ class Service:
                 "verify_passed": self.verified, "default_mode": self.mode,
                 "load_seconds": self.load_seconds, "history": HISTORY_NOTE}
 
-    def answer(self, question, mode, k, on_text=None, check=None):
+    def answer(self, question, mode, k, on_text=None, check=None, revise=None):
         """Retrieve and answer one question, one at a time (the lock). Returns (text, extra) where extra is the
-        dict that travels in the response's `kafka_sre` field. text is the model's answer, never changed; with
-        check, extra["check"] holds the checker's findings and the note (the caller decides where to show it)."""
-        check = self.check_default if check is None else check
+        dict that travels in the response's `kafka_sre` field. Without check, text is the model's answer, never
+        changed. With check (R1) it is the answer with the evidence of each invented or wrong_use item written at its
+        line, and extra["check"] holds the checker's findings and the note of the text shown (the caller decides where
+        to show the note). With revise (R2, implies check) a patch that passed its re-check replaces the flagged lines;
+        extra["revise"] is the record without its texts. With on_text and check the stream is gated (option c of
+        decision O2): prose as it is written, each code fence held until its check and shown with its marks; text is
+        then what was streamed, and extra["corrections"] is the block that follows the answer ("" if none)."""
+        revise = self.revise_default if revise is None else revise
+        check = (self.check_default if check is None else check) or revise
         checker = self.answer_checker() if check else None  # before the model is called
         from . import retrieval
         with self.lock:
@@ -219,11 +250,17 @@ class Service:
                 seen.append(chunks)
                 return chunks
             retrieval.select = capture
+            gate = None
+            if checker and on_text is not None:
+                gate = revise_mod.FenceGate(on_text, checker.check, lambda: seen[0] if seen else [])
             try:
-                r = evalhooks.run_item(question, _Tee(self.gen, on_text), self.cfg, k=k, mode=mode,
-                                       rerank=self.rerank, max_tokens=self.max_tokens, profile=self.profile)
+                r = evalhooks.run_item(question, _Tee(self.gen, gate.feed if gate else on_text), self.cfg, k=k,
+                                       mode=mode, rerank=self.rerank, max_tokens=self.max_tokens,
+                                       profile=self.profile)
             finally:
                 retrieval.select = real_select
+            if gate:
+                gate.finish()
         chunks = seen[0] if seen else []
         reasons = []
         if mode != "default":
@@ -248,9 +285,21 @@ class Service:
                  "measured": not reasons, "unmeasured_reasons": reasons, "tokens": r["tokens"],
                  "truncated": r["truncated"]}
         extra.update(profiles.manifest_fields(self.profile))  # nothing added for frozen
-        if checker:
-            extra["check"] = checker.check(r["text"], chunks)
-        return r["text"], extra
+        if not checker:
+            return r["text"], extra
+        first = checker.check(r["text"], chunks)
+        reviser = revise_mod.Reviser(checker.check, _Locked(self.gen, self.lock) if revise else None, self.max_tokens)
+        rec = reviser.revise(r["text"], chunks, r2=revise, first=first)
+        accepted = rec["r2"]["status"] == "accepted"
+        extra["timings"]["revise_s"] = rec["timings"]["total_s"] - rec["timings"]["check_s"]
+        if revise:
+            extra["revise"] = revise_mod.public(rec)
+        if gate:  # streamed: what the client got is prose as written and the fences with their marks
+            extra["check"] = first
+            extra["corrections"] = revise_mod.corrections_block(rec["patches"]) if accepted else ""
+            return gate.text(), extra
+        extra["check"] = rec["check_after"] if accepted else first
+        return rec["final_text"], extra
 
 
 def _error_body(message, kind):
@@ -304,6 +353,7 @@ def make_handler(svc, allow_non_local):
                 body = json.loads(self.rfile.read(n) or b"null")
                 question, mode, k, stream = parse_request(body, svc.mode)
                 check = parse_check(body, None)
+                revise = parse_revise(body, None)
             except (ValueError, UnicodeDecodeError) as e:  # BadRequest is a ValueError
                 return self._send_json(400, _error_body(f"bad request: {e}", "invalid_request_error"))
             model = body.get("model") if isinstance(body.get("model"), str) and body.get("model") \
@@ -311,7 +361,7 @@ def make_handler(svc, allow_non_local):
             rid, created = "chatcmpl-" + uuid.uuid4().hex[:24], int(time.time())
             if not stream:
                 try:
-                    text, extra = svc.answer(question, mode, k, check=check)
+                    text, extra = svc.answer(question, mode, k, check=check, revise=revise)
                 except CatalogueError as e:
                     return self._send_json(400, _error_body(str(e), "catalogues_missing"))
                 except EmptyAnswerError as e:
@@ -325,7 +375,7 @@ def make_handler(svc, allow_non_local):
                     "choices": [{"index": 0, "message": {"role": "assistant", "content": shown},
                                  "finish_reason": "length" if extra["truncated"] else "stop"}],
                     "usage": {"completion_tokens": extra["tokens"]}, "kafka_sre": extra})
-            self._stream(question, mode, k, model, rid, created, check)
+            self._stream(question, mode, k, model, rid, created, check, revise)
 
         def _chunk(self, rid, created, model, delta, finish=None, extra=None):
             d = {"id": rid, "object": "chat.completion.chunk", "created": created, "model": model,
@@ -339,7 +389,7 @@ def make_handler(svc, allow_non_local):
             self.wfile.write(f"data: {data}\n\n".encode("utf-8"))
             self.wfile.flush()
 
-        def _stream(self, question, mode, k, model, rid, created, check=None):
+        def _stream(self, question, mode, k, model, rid, created, check=None, revise=None):
             started = []
 
             def begin():  # headers go out with the first token, so an error before it is a plain HTTP error
@@ -360,7 +410,7 @@ def make_handler(svc, allow_non_local):
                     begin()
                     self._write_event(self._chunk(rid, created, model, {"content": piece}))
             try:
-                text, extra = svc.answer(question, mode, k, on_text=on_text, check=check)
+                text, extra = svc.answer(question, mode, k, on_text=on_text, check=check, revise=revise)
             except CatalogueError as e:  # raised before the model is called, so nothing was streamed
                 return self._send_json(400, _error_body(str(e), "catalogues_missing"))
             except (EmptyAnswerError, ServerError) as e:
@@ -374,7 +424,8 @@ def make_handler(svc, allow_non_local):
             try:
                 begin()
                 if "check" in extra:  # the last content chunks, before the end marker
-                    for piece in note_chunks(extra["check"]["note"]):
+                    for piece in note_chunks(extra["check"]["note"]) + (
+                            note_chunks(extra["corrections"]) if extra.get("corrections") else []):
                         self._write_event(self._chunk(rid, created, model, {"content": piece}))
                 self._write_event(self._chunk(rid, created, model, {},
                                               "length" if extra["truncated"] else "stop", extra))

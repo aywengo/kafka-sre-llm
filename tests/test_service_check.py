@@ -50,7 +50,10 @@ class TestServiceCheck(unittest.TestCase):
             self.assertEqual(d["choices"][0]["message"]["content"], BAD)
             self.assertNotIn("check", d["kafka_sre"])
             d = post(s.url, body(check=True)).json()
-            self.assertTrue(d["choices"][0]["message"]["content"].startswith(BAD + "\n\nCould not confirm"))
+            c = d["choices"][0]["message"]["content"]
+            self.assertTrue(c.startswith(BAD + " [not confirmed: `log.retention.hours`"))  # R1 mark after the sentence
+            self.assertTrue(c.endswith("\n\n" + d["kafka_sre"]["check"]["note"]))
+            self.assertIn("Could not confirm", c)
             self.assertIn("log.retention.hours", [f["text"] for f in d["kafka_sre"]["check"]["findings"]])
             self.assertEqual(post(s.url, body(check="yes")).status_code, 400)
 
@@ -63,14 +66,16 @@ class TestServiceCheck(unittest.TestCase):
             d = post(s.url, body(check=False)).json()
             self.assertEqual(d["choices"][0]["message"]["content"], GOOD)
 
-    def test_prompt_and_model_text_unchanged(self, sel):
+    def test_prompt_unchanged_and_note_last(self, sel):
         g0, g1 = AnsGen(BAD), AnsGen(BAD)
         with Running(g0, catalogues=str(self.cat)) as s:
             post(s.url, body())
         with Running(g1, catalogues=str(self.cat)) as s:
             d = post(s.url, body(check=True)).json()
         self.assertEqual(g0.calls, g1.calls)
-        self.assertEqual(d["kafka_sre"]["check"]["note"], d["choices"][0]["message"]["content"][len(BAD) + 2:])
+        c = d["choices"][0]["message"]["content"]
+        self.assertTrue(c.startswith(BAD))
+        self.assertTrue(c.endswith("\n\n" + d["kafka_sre"]["check"]["note"]))
 
     def test_streaming_note_is_last_content_before_done(self, sel):
         with Running(AnsGen(BAD), catalogues=str(self.cat)) as s:
@@ -80,7 +85,9 @@ class TestServiceCheck(unittest.TestCase):
             self.assertEqual(ev[-1], "[DONE]")
             objs = [json.loads(e) for e in ev[:-1]]
             text = "".join(o["choices"][0]["delta"].get("content") or "" for o in objs)
-            self.assertEqual(text, plain)
+            # the streamed prose is as written (no inline mark: it was shown before the check); the note follows
+            self.assertEqual(text, BAD + "\n\n" + objs[-1]["kafka_sre"]["check"]["note"])
+            self.assertTrue(plain.startswith(BAD + " [not confirmed:"))
             self.assertTrue(text.startswith(BAD + "\n\nCould not confirm"))
             self.assertEqual(objs[-1]["choices"][0]["finish_reason"], "stop")
             self.assertIn("check", objs[-1]["kafka_sre"])

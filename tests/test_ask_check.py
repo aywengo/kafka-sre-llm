@@ -73,12 +73,13 @@ class TestAskCheck(unittest.TestCase):
         self.assertTrue(o1.startswith(o0.split("\nSources:")[0]))  # the answer text is printed as before
         self.assertNotIn("Could not confirm", o0)
 
-    def test_json_text_identical_and_findings_structured(self):
+    def test_json_first_pass_text_identical_and_findings_structured(self):
         _, o0 = run(["--json"], BAD)
         _, o1 = run(["--json", "--check", "--catalogues", str(self.cat)], BAD)
         d0, d1 = json.loads(o0), json.loads(o1)
         self.assertNotIn("check", d0)
-        self.assertEqual(d0["text"], d1["text"])
+        self.assertEqual(d0["text"], d1["first_pass_text"])      # the model's text is kept, unchanged
+        self.assertTrue(d1["text"].startswith(d0["text"] + " [not confirmed: `log.retention.hours`"))  # R1 mark
         c = d1["check"]
         self.assertEqual(c["catalogue_hash"], manifest_for(self.cat)["catalogue_hash"])
         self.assertIn("log.retention.hours", [f["text"] for f in c["findings"] if f["level"] == "invented"])

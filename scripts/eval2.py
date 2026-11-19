@@ -5,6 +5,8 @@
   eval2.py answer --items items.jsonl --out answers.jsonl --config NAME --backend openai --model M [...]
   eval2.py answer ... --replay-packs other_answers.jsonl        (same excerpts as another run)
   eval2.py answer ... --subset smoke                            (fixed stratified subset of the open file)
+  eval2.py answer --items items.jsonl --revise-from answers.jsonl [--r2 --backend openai --model M] [--catalogue DIR]
+                                                                (revise replay, below)
   eval2.py keygen                                               (key for the hidden part; never overwrites)
   eval2.py split --items all.jsonl --seed 7 --open-out open.jsonl --hidden-out hidden.jsonl.enc
   eval2.py report answers.jsonl [answers2.jsonl.enc ...]
@@ -14,6 +16,12 @@ Items: JSON Lines; id (unique), tier (A, B or legacy), kind, family, domain, que
 Hidden files end in .enc (AES-256-CBC through the openssl binary, HMAC-SHA256 checked in Python); progress
 lines for them carry ids and timings only. Key: EVAL_HIDDEN_KEY or ~/.config/kafka-sre-llm/eval_hidden.key.
 The server URL comes from --base-url or OMLX_URL and is never written to the manifest.
+
+Revise replay (--revise-from): the stored first-pass answers and packs of another run go through the revise step of
+kafka_sre_rag/revise.py (R1 marks; with --r2 also the patch call to the model) with the catalogue check. Nothing is
+regenerated and the stored answers file is only read. One record per item is written to --out (default: the answers
+file with .revise.jsonl in place of .jsonl, next to it), with the first-pass text, findings, patches, final text, both
+check results, timings and the revise prompt hash. Resumable by id; hidden items need .enc files throughout.
 """
 import argparse
 import hashlib
@@ -449,7 +457,101 @@ def load_replay(path, items):
     return {i: src[i]["pack"] for i in src}
 
 
+def revise_out_path(answers):
+    p = str(answers)
+    return p[:-len(".jsonl.enc")] + ".revise.jsonl.enc" if p.endswith(".jsonl.enc") else (
+        p[:-len(".jsonl")] + ".revise.jsonl" if p.endswith(".jsonl") else p + ".revise.jsonl")
+
+
+def cmd_revise(a, out=sys.stdout):
+    """--revise-from: the revise step on stored answers and packs. No retrieval, no first-pass generation."""
+    from kafka_sre_rag import config, evalhooks, revise as rv, service
+    src_path = Path(a.revise_from)
+    a.out = a.out or revise_out_path(src_path)
+    hidden = is_hidden(a.items)
+    if not (hidden == is_hidden(a.out) == is_hidden(src_path)):
+        raise EvalError("hidden items, the stored answers and the records file must all end in .enc, or none")
+    if Path(a.out).resolve() == src_path.resolve():
+        raise EvalError("--out is the stored answers file; the stored answers are never changed")
+    if not a.catalogue:
+        raise EvalError("--revise-from needs --catalogue DIR (the catalogues of the check)")
+    items = read_items(a.items)
+    if a.limit:
+        items = items[: a.limit]
+    stored = {r["id"]: r for r in read_jsonl(src_path)}
+    missing = [it["id"] for it in items if not stored.get(it["id"], {}).get("text")
+               or not isinstance(stored[it["id"]].get("pack"), list) or stored[it["id"]].get("error")]
+    if missing:
+        raise EvalError(f"--revise-from: {len(missing)} items have no stored answer and pack (first: {missing[0]})")
+    cfg = config.load()
+    gen = None
+    if a.r2:
+        if a.backend != "stub":
+            config.verify(cfg=cfg)
+        gen = make_generator(a)
+    try:
+        checker = service.AnswerChecker(a.catalogue)
+    except service.CatalogueError as e:
+        raise EvalError(str(e))
+    reviser = rv.Reviser(checker.check, gen, a.max_tokens)
+    ident = getattr(gen, "identity", None) or {}
+    commit, dirty = git_info()
+    manifest = {"harness": "eval2", "kind": "revise", "config": a.config, "answers_sha256": sha256_file(src_path),
+                "answers_run": (read_manifest(src_path) or {}).get("run"), "items_sha256": sha256_file(a.items),
+                "items_count": len(items), "r2": bool(a.r2), "backend": ident.get("backend"),
+                "model_requested": ident.get("model"), "max_tokens": a.max_tokens or rv.REVISE_MAX_TOKENS,
+                "checker_catalogue_hash": checker.catalogue_hash, "revise_version": rv.VERSION,
+                "revise_layout": rv.LAYOUT, "revise_prompt_sha256": rv.prompt_sha256(),
+                "runtime_git_commit": commit, "runtime_tree_dirty": dirty, "hidden": hidden,
+                "started": datetime.now(timezone.utc).isoformat(timespec="seconds"), "ended": None}
+    manifest["run"] = run_id(manifest)
+    store = AnswerStore(a.out)
+    old = read_manifest(a.out)
+    if old is not None:
+        if comparable(old) != comparable(manifest):
+            raise EvalError("manifest differs from the existing records file; not resuming")
+        manifest["started"] = old["started"]
+    elif store.rows:
+        raise EvalError("records file has rows but no manifest; not resuming")
+    write_manifest(a.out, manifest)
+    store.drop_failed()
+    done = {r["id"] for r in store.rows}
+    todo = [it for it in items if it["id"] not in done]
+    print(f"[revise] run {manifest['run']}: {len(items)} items, {len(done)} already done, {len(todo)} to do",
+          file=out, flush=True)
+    consecutive = 0
+    for i, it in enumerate(todo, 1):
+        t0 = time.monotonic()
+        row = {"id": it["id"], "error": None, "run": manifest["run"]}
+        try:
+            chunks = evalhooks.chunks_by_ids(stored[it["id"]]["pack"])
+            rec = reviser.revise(stored[it["id"]]["text"], chunks, r2=bool(a.r2))
+            row.update(rec)
+            consecutive = 0
+        except Exception as e:  # recorded; the run continues
+            row["error"] = one_line(e)
+            consecutive += 1
+        row["seconds"] = {"total": time.monotonic() - t0}
+        store.add(row)
+        st = (row.get("r2") or {}).get("status", "-")
+        print(f"[revise] {i}/{len(todo)} id={it['id']} flagged={row.get('flagged', '-')} r2={st} "
+              f"total={row['seconds']['total']:.1f}s {'FAILED' if row['error'] else 'ok'}"
+              + ("" if hidden or not row["error"] else " " + row["error"]), file=out, flush=True)
+        if a.max_consecutive_errors and consecutive >= a.max_consecutive_errors:
+            print(f"[revise] stopping: {consecutive} failed items in a row", file=out, flush=True)
+            return 1
+    manifest["ended"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    write_manifest(a.out, manifest)
+    print(f"[revise] done {len(store.rows)} rows, {sum(1 for r in store.rows if r['error'])} errors",
+          file=out, flush=True)
+    return 0
+
+
 def cmd_answer(a, out=sys.stdout):
+    if getattr(a, "revise_from", None):
+        return cmd_revise(a, out)
+    if not a.out:
+        raise EvalError("--out is required")
     hidden = is_hidden(a.items)
     if hidden != is_hidden(a.out):
         raise EvalError("hidden items need an answers file ending in .enc, and the other way round")
@@ -649,7 +751,7 @@ def build_parser():
     s.add_argument("--hidden-out", required=True)
     an = sub.add_parser("answer")
     an.add_argument("--items", required=True)
-    an.add_argument("--out", required=True)
+    an.add_argument("--out", help="answers file (required, except with --revise-from)")
     an.add_argument("--config", required=True, help="configuration name")
     an.add_argument("--backend", choices=["mlx", "openai", "stub"], default="openai")
     an.add_argument("--model")
@@ -666,6 +768,12 @@ def build_parser():
     an.add_argument("--catalogue", help="catalogue directory to hash into the manifest")
     an.add_argument("--host-class", default=None, help='free text, for example "Mac Studio"')
     an.add_argument("--replay-packs", help="answers file of another run: use its stored chunk ids")
+    an.add_argument("--revise-from", metavar="ANSWERS",
+                    help="run the revise step (R1 marks) on the stored answers and packs of this answers file; "
+                         "no generation; records go to --out (default: next to the answers). Needs --catalogue")
+    an.add_argument("--r2", action="store_true",
+                    help="with --revise-from: also the R2 patch call (one model call per flagged answer; "
+                         "--backend and --model as for answers)")
     an.add_argument("--subset", choices=["smoke"])
     an.add_argument("--smoke-a", type=int, default=60)
     an.add_argument("--smoke-b", type=int, default=24)

@@ -4,7 +4,7 @@ import json
 import os
 import sys
 
-from . import config, profiles, service
+from . import config, profiles, revise as revise_mod, service
 from .generators import EmptyAnswerError, ServerError, ThinkFilter
 
 DRY_EXPANSION = "consumer group, kafka-consumer-groups.sh, --describe, --group, LAG, max.poll.interval.ms"
@@ -54,7 +54,13 @@ def build_parser():
         p.add_argument("--check", action="store_true",
                        help="check the names in the answer (config keys, fields, flags, errors) against the "
                             "catalogues of what exists and print a note under the answer; the answer itself and "
-                            "the prompt are not changed. Needs the catalogues (python scripts/build_catalogues.py)")
+                            "the prompt are not changed. Needs the catalogues (python scripts/build_catalogues.py). "
+                            "R1: each item the catalogues contradict is also marked at its line in the answer "
+                            "(a comment line in a code block, a bracketed note in prose); no model call")
+        p.add_argument("--revise", action="store_true",
+                       help="with --check: R2, one more call to the same model that replaces the flagged lines; "
+                            "the replacement is used only if the check passes it again, otherwise the R1 marks "
+                            "stay. Costs about 15 to 20 s on an answer with a contradicted item")
         p.add_argument("--catalogues", metavar="DIR", default=None,
                        help="catalogues for --check (default: work/m4/catalogues)")
         p.add_argument("--dry-run", action="store_true",
@@ -119,6 +125,8 @@ def ask_service(a):
             "messages": [{"role": "user", "content": a.question}]}
     if a.check:
         body["check"] = True
+    if a.revise:
+        body["revise"] = True
     local = is_loopback_host(base)
     flt, extra, text = ThinkFilter(), None, ""
     try:
@@ -150,8 +158,9 @@ def ask_service(a):
     except httpx.HTTPError as e:
         raise ServerError(f"cannot reach the service at {base} ({type(e).__name__})") from None
     check = extra.get("check")
-    if check and text.endswith("\n\n" + check["note"]):  # the service appended the note to the text
-        answer_text = text[:-len("\n\n" + check["note"])]
+    cut = text.rfind("\n\n" + check["note"]) if check else -1
+    if cut >= 0:  # the service appended the note (and, when streamed, a corrections block) to the text
+        answer_text = text[:cut]
     else:
         answer_text = text
     if a.json:
@@ -200,7 +209,7 @@ def serve(a, cfg, checker=None):
     gen = make_generator(a)
     svc = service.Service(gen, cfg, mode=a.mode, k=a.k, profile=a.profile, rerank=not (a.dry_run and a.no_rerank_in_dry_run),
                           max_tokens=a.max_tokens, verified=verified, check=a.check,
-                          catalogues=a.catalogues, checker=checker)
+                          catalogues=a.catalogues, checker=checker, revise=a.revise)
     print("loading the index, the BM25 structures and the reranker ...", file=sys.stderr, flush=True)
     secs = svc.warm_up()
     srv = service.make_server(svc, a.host, a.port, a.allow_non_local)
@@ -218,10 +227,17 @@ def serve(a, cfg, checker=None):
 def run_one(question, gen, cfg, a, checker=None):
     from .pipeline import ask
     flt = ThinkFilter() if getattr(a, "stream", False) and not (a.json or a.dry_run) else None
-    if flt:
+    gate = None
+    seen_now = []
+    live = not (a.json or a.dry_run)  # the answer is printed while it is generated
+    if live and checker is not None:  # decision O2, option c: prose as written, a code block only after its check
+        gate = revise_mod.FenceGate(lambda s: print(s, end="", flush=True), checker.check,
+                                    lambda: seen_now[0] if seen_now else [])
+        stream = (lambda t: gate.feed(flt.feed(t))) if flt else gate.feed  # noqa: E731
+    elif flt:
         stream = lambda t: print(flt.feed(t), end="", flush=True)  # noqa: E731
     else:
-        stream = None if (a.json or a.dry_run) else (lambda t: print(t, end="", flush=True))
+        stream = None if not live else (lambda t: print(t, end="", flush=True))
     kw = dict(k=a.k, mode=a.mode, on_token=stream, rerank=not (a.dry_run and a.no_rerank_in_dry_run),
               max_tokens=a.max_tokens)
     if a.profile != "frozen":  # the frozen call stays exactly as it was
@@ -230,24 +246,40 @@ def run_one(question, gen, cfg, a, checker=None):
             f = profiles.manifest_fields(a.profile)
             print(f"retrieval profile: {f['retrieval_profile']}  settings sha256: {f['retrieval_settings_sha256']}  "
                   f"measured: false", flush=True)
-    check = None
+    check = rec = None
+    shown = None
     if checker is None:
         ans = ask(question, gen, cfg, **kw)
     else:  # the check runs after the answer is complete, on the excerpts it was written from
         with service.capture_chunks() as seen:
+            seen_now = seen
             ans = ask(question, gen, cfg, **kw)
-        check = checker.check(ans.text, seen[0] if seen else [])
+        if gate:  # the end of the stream: a code block still held is checked and shown before anything else runs
+            if flt:
+                gate.feed(flt.finish())
+            gate.finish()
+        chunks = seen[0] if seen else []
+        check = checker.check(ans.text, chunks)
+        rec = revise_mod.Reviser(checker.check, gen if getattr(a, "revise", False) else None, a.max_tokens).revise(
+            ans.text, chunks, r2=getattr(a, "revise", False), first=check)
+        accepted = rec["r2"]["status"] == "accepted"
+        shown = rec["final_text"]
+        if accepted:
+            check = rec["check_after"]
     if a.json:
-        out = {"question": question, "text": ans.text, "sources": ans.sources, "expansion": ans.expansion,
-               "timings": ans.timings, "measured": ans.measured, "tokens": ans.tokens,
+        out = {"question": question, "text": ans.text if shown is None else shown, "sources": ans.sources,
+               "expansion": ans.expansion, "timings": ans.timings, "measured": ans.measured, "tokens": ans.tokens,
                "truncated": ans.truncated, "unmeasured_reasons": ans.unmeasured_reasons}
         out.update(ans.profile_fields)  # nothing for frozen
         if check is not None:
             out["check"] = check
+            out["first_pass_text"] = ans.text
+            if getattr(a, "revise", False):
+                out["revise"] = revise_mod.public(rec)
         print(json.dumps(out, ensure_ascii=False))
         return
     banner = config.unmeasured_banner(ans.unmeasured_reasons)
-    if flt:
+    if flt and not gate:
         print(flt.finish(), end="")
     if stream:
         print()  # end the streamed answer's line before the notice
@@ -255,9 +287,11 @@ def run_one(question, gen, cfg, a, checker=None):
     if banner:
         print(banner, file=sys.stderr)
     if not stream:
-        print(ans.text)
+        print(ans.text if shown is None else shown)
     if check is not None:
-        print("\n" + check["note"])
+        print("\n" + (rec["check_first"]["note"] if gate else check["note"]))
+        if gate and rec["r2"]["status"] == "accepted":  # streamed: the corrections follow the answer
+            print("\n" + revise_mod.corrections_block(rec["patches"]))
     if a.sources:
         print_sources(ans.sources)
     if ans.truncated:
@@ -297,6 +331,9 @@ def main(argv=None):
             print(f"error: {e}", file=sys.stderr)
             return 1
         return 0
+    if getattr(a, "revise", False) and not a.check:
+        print("error: --revise needs --check", file=sys.stderr)
+        return 2
     checker = None
     if a.check:  # before anything slow is loaded
         try:
