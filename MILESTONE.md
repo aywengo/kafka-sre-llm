@@ -5,7 +5,7 @@ Working name "M4"; the release number is decided at the end. Started 2026-11-18,
 release of v3.0.0 and v3.0.1. `GOAL.md` says where the project is going; this file says
 where the current milestone stands.
 
-Last updated: 2026-11-19, 12:20.
+Last updated: 2026-11-19, 12:40.
 
 ## What this milestone is for
 
@@ -119,8 +119,24 @@ Decided on 2026-11-18 (see "Decisions"). Still his to do, none blocking:
 The failed gate of 2026-11-18 (the judging pilot) was decided on 2026-11-19; see "Decisions".
 
 **Open, blocking the judged tier (WP1d) and everything behind it:** the second judging
-pilot failed on 2026-11-19 (3 of 5). What the judged tier becomes is the Owner's decision;
-the analysis with the options is being written (`runs/m4/reports/s5b_pilot2_analysis.md`).
+pilot failed on 2026-11-19 (3 of 5). The analysis (`runs/m4/reports/s5b_pilot2_analysis.md`)
+found that the recall bar was out of reach with what the judge is shown (a perfect judge
+would reach about 0.68 against the bar of 0.7), that judge and readers do agree on which
+essential points an answer misses (kappa 0.75 and 0.73, found after the fact), and that
+the rule deciding "the excerpts had it" was wrong in both directions. Four decisions:
+
+- **J1. The judged tier's role.** Recommended: the judge reports coverage of the essential
+  points and forbidden statements only; wrong, invented and harmful rates come from an
+  identifier check against the catalogues plus blind readings with the sources; no third
+  pilot of the judge as an error finder; the coverage role is confirmed on the first fresh
+  batch against criteria fixed beforehand. This changes `agents/m4-evaluation.md`.
+- **J2. Readings on the hidden half.** Recommended: a sealed reader session may read
+  hidden-half answers and return totals only, each one logged in the ledger. Without it
+  the reading-based bars rest on the open half.
+- **J3. A second reader on about a quarter of the answers.** Recommended: yes.
+- **J4. The answer length limit.** 11 of 24 default answers and 5 of 24 strict answers in
+  the pilot were cut at the frozen 2,048-token limit. Recommended: measure a higher limit
+  as its own item; it changes the measured configuration and the answer time.
 
 1. **Fresh real questions with correct answers:** 30 to 50 from real incidents.
 2. **Review of the architecture rubrics** when they exist (without it that part is 15
@@ -180,6 +196,12 @@ the analysis with the options is being written (`runs/m4/reports/s5b_pilot2_anal
   omissions 23 in default and 33 in strict, of which the answer's own excerpts supported 1
   and 7, so most omissions are retrieval gaps. The answer checker catches 5 of the 14
   invented names that no judge flag caught.
-- Next: the reviewer's analysis of the failure and the options; then the Owner's decision
-  on the judged tier. Not blocked by it: the mechanical tier's hidden-half runs, D1, the
-  load test of the bake-off candidates.
+- 2026-11-19, 12:35: analysis of the failed pilot back (`s5b_pilot2_analysis.md`). Beyond
+  the judge: retrieval put 19 of the 119 chunks the rubric authors marked as covering into
+  the packs, and 12 of 24 items got none; about 48 of the 56 essential omissions are
+  retrieval or index gaps; median time per answer 82 s in default and 67 s in strict mode
+  (24 each, 4-bit, server path). Started: a second blind reading of six items to measure
+  agreement between readers; the load test of the four bake-off candidates.
+- Next: the Owner's decisions J1 to J4. Not blocked by them: the load test, the checker's
+  extraction gaps the pilot showed (items p2-01, p2-03, p2-08, p2-22 and the others listed
+  in the analysis), D1, the mechanical tier's hidden-half runs.
