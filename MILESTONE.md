@@ -168,6 +168,21 @@ not passed. Two decisions:
   generator (T7). Not a decision but for the Owner to know: the jar downloads for the
   client-code checks are taken as covered by the go of 2026-11-18 ("downloads and installs
   for catalogues and checks"), after a check of versions, hashes and licences.
+- **K6. The Owner's 34 questions** (`eval/m4/inbox/owner_questions.yaml`, 2026-11-19).
+  The file calls them reconstructions of public incidents, so by the brief they are
+  source 3 (public questions), not source 1. Recommended: (a) admit them under the working
+  rule for public posts: ideas only, rubrics written from the pinned documentation and
+  never from the posted fix, the source link kept as the private provenance record, and a
+  point that only the incident shows marked "rests on a source outside the index";
+  (b) keep all 34 hidden as marked, so they serve E2, E3 and E5; the next development
+  batch B2 (for K3's check) is then written by the usual process and is open; (c) a sealed
+  writer and a sealed reviewer write and check their rubrics and return results per id
+  only; each item is checked against Kafka 4.3, Strimzi 1.3.1, Kubernetes 1.37 and Argo
+  CD 3.6.1 (22 have no exact version, and an incident from the ZooKeeper era may not
+  apply); (d) once the sealed copy is verified, the plain copy leaves the repository (the
+  Owner keeps the original elsewhere; deleting it is the Owner's call). Not blocking: the
+  base and judge models may have seen these public incidents in training, which raises
+  absolute scores on them but affects both arms of a comparison alike.
 
 **Decided on 2026-11-19, afternoon: the Owner agreed with the recommendations J1 to J6
 below (see "Decisions").** The second judging pilot failed on 2026-11-19 (3 of 5). The analysis (`runs/m4/reports/s5b_pilot2_analysis.md`)
@@ -370,7 +385,16 @@ and J6 come from the mechanical tier and block nothing yet):
   (T0 download check, T1a tables, T3 scorer checks). Conductor decisions on the plan: no
   model in the generators; the Strimzi forbidden keys are fixed in the new pools only; the
   hidden half grows through a new file; the mix floors apply to each build on its own.
-- Next, in order: the Owner's K1 to K5; WP1c T0, T1a and T3, then T5 and T6 (T1b, T2
+- 2026-11-19, 18:25: the Owner's questions file (`eval/m4/inbox/owner_questions.yaml`,
+  git-ignored) checked by counts only, no question text read: 34 items (case numbers 2 to
+  51, 17 gaps the header calls review exclusions), all marked hidden; diagnostics 14,
+  debugging 10, architecture 4, configuration 4, coding 2; 22 with no exact version; no
+  IPv4, e-mail or secret-like strings; 50 links, all public post-mortems and issue
+  trackers. The header calls them public-source reconstructions, not the Owner's own
+  incidents. Sealing them into `eval/hidden/tier_b_owner.jsonl.enc` (ids `oq-NNN`, source
+  and note kept apart from the question) started; nothing is written from them before K2
+  and K6.
+- Next, in order: the Owner's K1 to K6; WP1c T0, T1a and T3, then T5 and T6 (T1b, T2
   and T4 after the jar downloads). For the Owner, not blocking: the essential points of
   the six architecture scenarios (b1-10, b1-18, b1-19, b1-20, b1-29, b1-30). Not blocked:
   D1, the mechanical tier's hidden-half runs.
