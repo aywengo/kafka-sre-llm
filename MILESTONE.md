@@ -5,7 +5,7 @@ Working name "M4"; the release number is decided at the end. Started 2026-11-18,
 release of v3.0.0 and v3.0.1. `GOAL.md` says where the project is going; this file says
 where the current milestone stands.
 
-Last updated: 2026-11-19, 12:40.
+Last updated: 2026-11-19, 13:40.
 
 ## What this milestone is for
 
@@ -59,12 +59,12 @@ After the first slice:
 | WP1d | Judged tier: scenarios and rubrics, the Owner's questions first | S5 | not started |
 | WP1f | Starting-point measurement (E2) | WP1c, WP1d | not started |
 | WP2a | Labelled test set for the checker: 30 distinct items from the three readings | - | **done**: `runs/m4/reports/wp2a_labels_checked.jsonl` (two local-model runs, verified by counts and against sources) |
-| WP2b | Answer checker in the runtime: flag, then revise. Separate code from the scorer; shares only the catalogues | WP1a, WP2a | library **done** (`a61f818`): zero false "invented" findings on 244 stored answers; wiring into `ask` and the service running; "revise" not started |
+| WP2b | Answer checker in the runtime: flag, then revise. Separate code from the scorer; shares only the catalogues | WP1a, WP2a | library **done** (`a61f818`): zero false "invented" findings on 244 stored answers; wired into `ask --check` and the service; extraction gaps from the pilot reading closed 2026-11-19 (`d0a165e`, `runs/m4/reports/wp2b_extraction_gaps.md`): it now reports 14 of the 16 names in the 48 pilot answers that the catalogues can decide (8 before), with no new "invented" finding on the 244 stored answers; the pilot answers are a development set, so this is not a measurement; "revise" not started |
 | WP2c | Measure E3 by a reading | WP2b, WP1f | not started |
 | WP3a | Long-running local service that keeps the index and reranker loaded; streaming | - | **done** (`d0b3faa`): loopback only, OpenAI-compatible; about 3.8 GB held when idle |
 | WP3b | Fewer excerpts for simple lookups; measure E4 | WP3a, WP1f | not started |
 | WP4a | Shortlist of base models | - | **done** 2026-11-18 (`runs/m4/reports/base_shortlist.md`) |
-| WP4b | Bake-off on the new evaluation; decision | WP1f | the four candidates are downloaded, not loaded; whether the server's runtime loads them is unknown |
+| WP4b | Bake-off on the new evaluation; decision | WP1f | the four candidates are downloaded and load-tested 2026-11-19 (`runs/m4/reports/bakeoff_load_test.md`): all four load and answer on the server; median answer on 3 questions 8.0 s (Gemma 4 26B-A4B), 9.5 s (GLM-4.7-Flash), 35 s (Gemma 4 31B), 54 s (Granite 4.2 30B), against 35 s for the reference; quality not measured |
 | D1 | Find why the server path and the in-process path give different output | - | not started |
 | D2 | The Owner reads ten answers that a model has already read | - | waiting for the Owner |
 
@@ -202,6 +202,13 @@ the rule deciding "the excerpts had it" was wrong in both directions. Four decis
   retrieval or index gaps; median time per answer 82 s in default and 67 s in strict mode
   (24 each, 4-bit, server path). Started: a second blind reading of six items to measure
   agreement between readers; the load test of the four bake-off candidates.
+- 2026-11-19, 13:40: three things came back. The bake-off candidates all load and answer
+  on the server (table row WP4b). A second reader re-read six pilot items blind
+  (`runs/m4/reports/s5b_second_reading.md`): 26 wrong statements found by both readers, 1
+  only by the first, 7 only by the second, none of them false; omissions 16, 2 and 0; the
+  readers differ on 3 of 16 "supported" values. The checker's extraction gaps are closed
+  (row WP2b); one borderline finding stays (`leader.imbalance.per.broker.percentage`, absent
+  from the pinned Kafka configuration but still listed in the Strimzi documentation).
 - Next: the Owner's decisions J1 to J4. Not blocked by them: the load test, the checker's
   extraction gaps the pilot showed (the pilot items behind them are listed in the analysis
   and go into the change's record), D1, the mechanical tier's hidden-half runs.
