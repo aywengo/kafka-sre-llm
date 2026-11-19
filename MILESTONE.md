@@ -18,7 +18,7 @@ different base model does better.
 
 | # | Criterion | Bar | Status |
 |---|---|---|---|
-| E1 | A new evaluation exists: fresh items for the five task types of `GOAL.md`, a hidden part, mechanical checks, a measured noise level | 300 or more mechanical items, 120 or more judged items, the smallest visible difference stated per tier | mechanical tier built: 496 items, split 251 open and 245 hidden (encrypted); judged tier: the second judging pilot is a no-go too (3 of 5), stopped until the Owner has seen it |
+| E1 | A new evaluation exists: fresh items for the five task types of `GOAL.md`, a hidden part, mechanical checks, a measured noise level | 300 or more mechanical items, 120 or more judged items, the smallest visible difference stated per tier | mechanical tier built: 496 items, split 251 open and 245 hidden (encrypted); judged tier: after two failed pilots the judge's coverage role (J1) was checked on batch B1 (30 fresh scenarios): five criteria and the second half of the sixth pass, the rubric chunk check missed by about one point (94.0 % against 95 %); the go waits for the Owner |
 | E2 | The starting point is measured on it: plain base, base + retrieval at full precision, and the 4-bit model with retrieval, in default and strict mode, all on the same server path | numbers with their sizes; the cost of 4-bit shown inside a margin fixed before the run (5 points on the mechanical tier) | not started |
 | E3 | Every answer is checked before the user sees it | at most 2 invented or wrong items per 10 answers in default mode on fresh questions, **measured by a reading**, with the checker's own counts beside it | checker built and wired into `ask --check` and the service; on the 30 labelled errors it catches 9, reports 3 as unverified and misses 18 (15 are wrong statements it cannot see); not yet measured on fresh answers |
 | E4 | Answers are fast on the 4-bit server path | median under 60 s in default mode on the Mac Studio; first words within 10 s | service and streaming built; retrieval 9.5 s to 4.4 s when kept loaded; not yet measured with a model |
@@ -56,7 +56,7 @@ After the first slice:
 | WP | What | Depends on | Status |
 |---|---|---|---|
 | WP1c | Remaining mechanical kinds (resources, commands, client code, version traps, valid but wrong, safe order, sizing, not covered) | downloads (see 3 below), S5, S6 | not started |
-| WP1d | Judged tier: scenarios and rubrics, the Owner's questions first | first fresh batch B1 | role changed 2026-11-19 (J1); code and design amendment in work; then batch B1 |
+| WP1d | Judged tier: scenarios and rubrics, the Owner's questions first | first fresh batch B1 | **B1 done 2026-11-19** (`runs/m4/B1_COVERAGE_FINAL.md`, `B1_COVERAGE_BATCH.md`): 30 scenarios, 90 answers, 180 judgments, 60 answers read blind (16 by a second reader). Judge against reader on 158 essential units: kappa 0.86 and 0.78, precision 0.98 and 0.90, recall 0.86 and 0.86 (pass 1, pass 2); supported misses confirmed 14 of 14; unverified 0.6 %; pass-to-pass kappa 0.85; readers' totals 41 and 53 on the shared answers (23 % apart); identifier check 0 false findings. The rubric chunk check before the run was 94.0 % (bar 95 %). Waits for the Owner: the gate, and writing the tier at scale |
 | WP5 | Retrieval and index coverage: candidate index and settings next to the frozen ones, one hidden-half run decides (J6) | J5 | analysis and plan in work |
 | WP1f | Starting-point measurement (E2) | WP1c, WP1d | not started |
 | WP2a | Labelled test set for the checker: 30 distinct items from the three readings | - | **done**: `runs/m4/reports/wp2a_labels_checked.jsonl` (two local-model runs, verified by counts and against sources) |
@@ -119,6 +119,23 @@ thinking off.
 Decided on 2026-11-18 (see "Decisions"). Still his to do, none blocking:
 
 The failed gate of 2026-11-18 (the judging pilot) was decided on 2026-11-19; see "Decisions".
+
+**Open since 2026-11-19, evening: the B1 gate** (`runs/m4/B1_COVERAGE_FINAL.md`). The
+report tool prints GO on its six checks, but criterion 2 has two halves and the tool checks
+only the second. The first half, fixed before the run, was missed: the rubric chunk ids
+held the point's fact in 156 of 166 points (94.0 %, bar 95 %; 10 partial, 0 wrong; eight
+completed afterwards, not re-measured). Readers later found two more chunk problems (b1-27
+m6, b1-26 m3|m4), which stay as written because answers exist. By the letter the gate is
+not passed. Two decisions:
+
+- **K1. The coverage role.** Recommended: accept it as confirmed. The missed half is
+  rubric preparation, not the judge. What it protects, the "supported" flags, was confirmed
+  in 14 of 14 cases, and every criterion on the judge passed with a margin (lowest: recall
+  0.86 against 0.75). For every later batch the chunk check runs after the completions and
+  must reach 95 % before any answer exists.
+- **K2. Writing the judged tier at scale.** About 90 more scenarios to reach 120, the
+  Owner's questions first, in batches of 30 with the same writing, second review and chunk
+  check. Bulk generation, so the Owner's go. Recommended: yes.
 
 **Decided on 2026-11-19, afternoon: the Owner agreed with the recommendations J1 to J6
 below (see "Decisions").** The second judging pilot failed on 2026-11-19 (3 of 5). The analysis (`runs/m4/reports/s5b_pilot2_analysis.md`)
@@ -255,11 +272,27 @@ and J6 come from the mechanical tier and block nothing yet):
   chunks hold the fact in 156 (94.0 %; bar 95 %), partial in 10, wrong in none; eight were
   completed afterwards, not re-measured. The run was started on the model server (90
   answers, 180 judge calls, estimated 2.6 to 2.9 h).
-- Next, in order: when the run is done, build the blind bundles (second reader on a
-  quarter, seed 20261119), two readers read default and strict, unblind, run the coverage
-  report; bring the Owner the six criteria with criterion 2's first half already missed
-  by about one point (94.0 % against 95 %). In parallel: the retrieval work package from its plan. For the Owner,
-  not blocking: the essential points of the six architecture scenarios (b1-10, b1-18,
-  b1-19, b1-20, b1-29, b1-30). Not blocked by them: the load test, the checker's
-  extraction gaps the pilot showed (the pilot items behind them are listed in the analysis
-  and go into the change's record), D1, the mechanical tier's hidden-half runs.
+- 2026-11-19, 17:20: B1 done. The run took 2.3 h (14:17 to 16:35); all 90 answers and
+  180 judgments valid, packs identical across the three sets. Blind readings started at
+  16:25, while the judge ran: three readers on 60 answers, a second reader on 16 (8 items,
+  27 % of the read answers); 441 rows, all valid; about 18 to 28 minutes and 80,000 to
+  320,000 tokens per reader session. Criteria: see WP1d and "Waiting for the Owner" (K1,
+  K2). Descriptive, open items written to be hard, not a decision measurement: the first
+  reader found 56 wrong, invented or harmful statements that are not minor in the 30
+  default answers (24 of 30 answers have at least one; 4 harmful) and 34 in the 30 strict
+  answers (19 of 30; 2 harmful), against the bar of at most 2 per 10 answers; the judge's
+  coverage is 0.57 default and 0.47 strict. The raised limit (J4): cut-off answers 19 of
+  30 at 2,048 tokens, 1 of 30 at 4,096; +6.7 s per answer (SE 3.4); coverage +0.01 (SE
+  0.02); the identifier check finds 20 nonexistent identifiers at 4,096 against 10 at
+  2,048 (not verified by reading). Rubric remarks of the readers, not changed: b1-17 m5
+  names only `ssl.truststore.location` (both answers used the working
+  `ssl.truststore.certificates`); two pinned sources disagree on the defaults of
+  `connect.protocol` and `transaction.timeout.ms`. The full funnel (WP5) stalled after 24
+  of 275 items (no output for 10 minutes while the reranker scored); stopped, a fix is in
+  work.
+- Next, in order: the Owner's K1 and K2; the funnel fix and the full funnel, then the
+  retrieval profiles (WP5 T5, T6). For the Owner, not blocking: the essential points of
+  the six architecture scenarios (b1-10, b1-18, b1-19, b1-20, b1-29, b1-30), and the two
+  source decisions for the candidate index (Argo CD command pages, Kafka tool option
+  pages). Not blocked by them: the checker's "revise" step (E3), D1, the mechanical tier's
+  hidden-half runs.
