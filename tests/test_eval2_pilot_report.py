@@ -520,7 +520,9 @@ class CoverageReport(unittest.TestCase):
         text, num = self.report()
         self.assertEqual(num["criteria"]["C6 identifier check"], "WAITING")
         self.assertFalse(num["go"])
-        self.assertIn("Go or no-go: NO-GO", text)          # C5 fails
+        self.assertNotIn("Go or no-go", text)              # C6 waits: neither GO nor NO-GO
+        text, num = self.report(idcheck_false=0)
+        self.assertIn("Go or no-go: NO-GO", text)          # C5 fails, nothing waits
         f = [x for x in self.findings() if x.get("reader") != "B"]
         _, n1 = self.report(f, idcheck_false=0)            # no second reader: C5 waits
         self.assertEqual(n1["criteria"]["C5 two readers agree on totals"], "WAITING")
@@ -583,6 +585,28 @@ class CoverageReport(unittest.TestCase):
         self.assertIn("| reader_wih | default - strict | 3 | 1.333 (0.667) |", text)
         self.assertIn("| default | 3 | 20.0 (5.8) |", text)
         self.assertIn("| strict | 3 | 6.7 (3.3) |", text)
+
+    def test_empty_findings_everything_that_needs_readers_waits(self):
+        text, num = self.report(findings=[], idcheck_false=0)
+        for k in ("C1 essential-miss units, judge against reader", "C2 supported misses confirmed by the reader", "C5 two readers agree on totals"):
+            self.assertEqual(num["criteria"][k], "WAITING")
+        self.assertNotIn("FAIL", text)
+        self.assertNotIn("NO-GO", text)
+        self.assertNotIn("Go or no-go", text)
+        self.assertIn("Waiting for the readers' files", text)
+        self.assertIn("3 of 6 criteria passed, 0 failed, 3 waiting", text)
+        self.assertEqual(num["criteria"]["C3 unverified verdicts"], "PASS")
+        self.assertEqual(num["criteria"]["C4 kappa between the passes"], "PASS")
+        self.assertEqual(num["criteria"]["C6 identifier check"], "PASS")
+        self.assertFalse(num["go"])
+
+    def test_partly_read_batch_computes_c1_on_the_read_answers_only(self):
+        f = [x for x in self.findings() if int(x["id"][2:]) < 30 and x.get("reader") != "B"]
+        text, num = self.report(f, idcheck_false=0)
+        self.assertEqual(num["c1_pass2"]["units"], 90)          # 30 read answers x 3 units
+        self.assertIn("computed on the 30 read answers of 40", text)
+        self.assertEqual(num["criteria"]["C1 essential-miss units, judge against reader"], "WAITING")   # under 100 units
+        self.assertNotIn("Go or no-go", text)
 
     def test_old_modes_still_print_their_reports(self):
         # the first pilot's and the second pilot's modes are untouched by the coverage mode (their own tests above); the v2 report still builds

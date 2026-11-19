@@ -1010,10 +1010,12 @@ def build_report_coverage(results, rubrics, findings, reads=None, all_read=False
         enough = enough and n >= COV_MIN_UNITS
         numbers[f"c1_pass{p}"] = {"units": n, "kappa": kappa, "precision": prec, "recall": rec, "both": both_n, "judge_only": jo, "reader_only": ro}
         c1_lines.append(f"   - pass {p}: {n} weight-2 units, both miss {both_n}, judge only {jo}, reader only {ro}; kappa {fmt(kappa)} "
-                        f"(at least {COV_KAPPA}), precision {fmt(prec)} (at least {COV_PRECISION}), recall {fmt(rec)} (at least {COV_RECALL}): {pf(ok)}")
-    cs["C1 essential-miss units, judge against reader"] = status3(c1_ok, enough) if passes else WAITING
+                        f"(at least {COV_KAPPA}), precision {fmt(prec)} (at least {COV_PRECISION}), recall {fmt(rec)} (at least {COV_RECALL}): "
+                        + (WAITING if not read_answers else pf(ok) if n >= COV_MIN_UNITS else "not decided, fewer than %d units" % COV_MIN_UNITS))
+    cs["C1 essential-miss units, judge against reader"] = status3(c1_ok, enough) if passes and read_answers else WAITING
     out(f"**C1 essential-miss units, judge against reader (kappa, precision, recall in each pass, at least {COV_MIN_UNITS} units): {cs['C1 essential-miss units, judge against reader']}**"
-        + ("" if enough else f" (fewer than {COV_MIN_UNITS} units in a pass: not decided)"))
+        + (" (no answer has been read by a reader)" if not read_answers else "" if enough else f" (fewer than {COV_MIN_UNITS} units in a pass: not decided)")
+        + (f"; computed on the {len(read_answers)} read answers of {len(answers)}" if read_answers else ""))
     L.extend(c1_lines)
     out(f"   - reader omission rows that do not map to a unit (not used): {len(unmapped)}")
     for k, who, f, why in unmapped:
@@ -1114,8 +1116,11 @@ def build_report_coverage(results, rubrics, findings, reads=None, all_read=False
     failed_c = [k for k, v in cs.items() if v == "FAIL"]
     waiting = [k for k, v in cs.items() if v == WAITING]
     go = not failed_c and not waiting
-    out(f"**Go or no-go: {'GO' if go else 'NO-GO' if failed_c else 'WAITING'}** ({sum(v == 'PASS' for v in cs.values())} of {len(cs)} criteria passed, "
-        f"{len(failed_c)} failed, {len(waiting)} waiting). Go only if all six hold.")
+    counts = f"{sum(v == 'PASS' for v in cs.values())} of {len(cs)} criteria passed, {len(failed_c)} failed, {len(waiting)} waiting"
+    if waiting:
+        out(f"**Waiting for the readers' files and the identifier check's number** ({counts}). No go or no-go while a criterion is waiting.")
+    else:
+        out(f"**Go or no-go: {'GO' if go else 'NO-GO'}** ({counts}). Go only if all six hold.")
     out("")
 
     # descriptive
