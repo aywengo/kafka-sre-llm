@@ -203,5 +203,5 @@ the rule deciding "the excerpts had it" was wrong in both directions. Four decis
   (24 each, 4-bit, server path). Started: a second blind reading of six items to measure
   agreement between readers; the load test of the four bake-off candidates.
 - Next: the Owner's decisions J1 to J4. Not blocked by them: the load test, the checker's
-  extraction gaps the pilot showed (items p2-01, p2-03, p2-08, p2-22 and the others listed
-  in the analysis), D1, the mechanical tier's hidden-half runs.
+  extraction gaps the pilot showed (the pilot items behind them are listed in the analysis
+  and go into the change's record), D1, the mechanical tier's hidden-half runs.
