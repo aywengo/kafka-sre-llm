@@ -5,7 +5,7 @@ Working name "M4"; the release number is decided at the end. Started 2026-11-18,
 release of v3.0.0 and v3.0.1. `GOAL.md` says where the project is going; this file says
 where the current milestone stands.
 
-Last updated: 2026-11-19, 13:40.
+Last updated: 2026-11-19, 14:05.
 
 ## What this milestone is for
 
@@ -123,7 +123,8 @@ pilot failed on 2026-11-19 (3 of 5). The analysis (`runs/m4/reports/s5b_pilot2_a
 found that the recall bar was out of reach with what the judge is shown (a perfect judge
 would reach about 0.68 against the bar of 0.7), that judge and readers do agree on which
 essential points an answer misses (kappa 0.75 and 0.73, found after the fact), and that
-the rule deciding "the excerpts had it" was wrong in both directions. Four decisions:
+the rule deciding "the excerpts had it" was wrong in both directions. Six decisions (J5
+and J6 come from the mechanical tier and block nothing yet):
 
 - **J1. The judged tier's role.** Recommended: the judge reports coverage of the essential
   points and forbidden statements only; wrong, invented and harmful rates come from an
@@ -137,6 +138,19 @@ the rule deciding "the excerpts had it" was wrong in both directions. Four decis
 - **J4. The answer length limit.** 11 of 24 default answers and 5 of 24 strict answers in
   the pilot were cut at the frozen 2,048-token limit. Recommended: measure a higher limit
   as its own item; it changes the measured configuration and the answer time.
+- **J5. A decline outcome in the mechanical scorer.** The 8-point loss of strict mode on
+  the open half is mostly not a quality loss (`runs/m4/reports/s6_strict_loss_analysis.md`,
+  one reader, all 26 lost items read): in 19 of them the excerpts lacked the fact and
+  strict declined, 7 are real strict faults, and 6 items go the other way. Recommended:
+  report pass, correct decline, wrong decline and wrong beside the unchanged all-pass
+  rate, before the first hidden run. The scorer would then read the frozen index, which
+  the design does not allow today.
+- **J6. A work package for retrieval and index coverage.** Both analyses point at it: in
+  the pilot about 48 of 56 essential omissions were retrieval or index gaps, and on the
+  mechanical tier 16 of strict's 26 losses are facts that were not retrieved (10) or not in
+  the index (6: the Argo CD command pages are excluded in `sources.yaml`, and Kafka tool
+  options exist only in source code). Recommended: yes, after J5; it needs a go to rebuild
+  the frozen index, a licence check and a measurement on the hidden half.
 
 1. **Fresh real questions with correct answers:** 30 to 50 from real incidents.
 2. **Review of the architecture rubrics** when they exist (without it that part is 15
@@ -209,6 +223,9 @@ the rule deciding "the excerpts had it" was wrong in both directions. Four decis
   readers differ on 3 of 16 "supported" values. The checker's extraction gaps are closed
   (row WP2b); one borderline finding stays (`leader.imbalance.per.broker.percentage`, absent
   from the pinned Kafka configuration but still listed in the Strimzi documentation).
-- Next: the Owner's decisions J1 to J4. Not blocked by them: the load test, the checker's
+- 2026-11-19, 14:05: analysis of strict mode's 8-point loss on the open mechanical half
+  back (decision J5). The strict prompt is not changed: at most 7 items could be gained,
+  below what the tier can detect.
+- Next: the Owner's decisions J1 to J6. Not blocked by them: the load test, the checker's
   extraction gaps the pilot showed (the pilot items behind them are listed in the analysis
   and go into the change's record), D1, the mechanical tier's hidden-half runs.
