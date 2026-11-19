@@ -5,7 +5,7 @@ Working name "M4"; the release number is decided at the end. Started 2026-11-18,
 release of v3.0.0 and v3.0.1. `GOAL.md` says where the project is going; this file says
 where the current milestone stands.
 
-Last updated: 2026-11-19, 14:40.
+Last updated: 2026-11-19, night.
 
 ## What this milestone is for
 
@@ -241,11 +241,25 @@ and J6 come from the mechanical tier and block nothing yet):
   evaluation's identifier check for free-text answers (J1); the amendment of
   `agents/m4-evaluation.md`; the analysis of where retrieval loses the needed passage and
   the plan for the retrieval work package (J6).
-- Next, in order: review and push the four changes; write the first fresh batch (about
-  30 open scenarios, rubrics with chunk ids, second reviewer; the Owner's questions go
-  first if any are in the inbox by then); run it on the model server (default, strict,
-  default with a 4,096-token limit), judge, identifier check, blind reading with a second
-  reader on a quarter; go or no-go on the coverage role. In parallel: the retrieval
-  work package from its plan. Not blocked by them: the load test, the checker's
+- 2026-11-19, evening: built and pushed for J1 and J5: the judge step's coverage role
+  (`ca1ae42`, `ab7920a`), the scorer's decline outcomes (`21ac50e`: on the 251 open items
+  default has 194 pass, 3 correct declines, 52 wrong; strict has 174 pass, 41 correct
+  declines, 10 wrong declines, 21 wrong; the split is fitted to the open half), the
+  evaluation's identifier check (`970e8c5`: 8.3 nonexistent identifiers per 10 pilot
+  answers in default mode and 1.7 in strict, all 43 findings verified), the amended design
+  (`agents/m4-evaluation.md`), the run chain and the blinding tool (`6e75ae9`).
+- 2026-11-19, night: batch B1 written, reviewed and pushed before any answer exists
+  (`91e2b34`, `c02b429`): 30 scenarios, six per task type, 184 must points, 79 essential
+  units, 74 must-not points; three second reviewers accepted all thirty with 189 changes.
+  Criterion 2, first half: an independent count of all 166 points with chunk ids found the
+  chunks hold the fact in 156 (94.0 %; bar 95 %), partial in 10, wrong in none; eight were
+  completed afterwards, not re-measured. The run was started on the model server (90
+  answers, 180 judge calls, estimated 2.6 to 2.9 h).
+- Next, in order: when the run is done, build the blind bundles (second reader on a
+  quarter, seed 20261119), two readers read default and strict, unblind, run the coverage
+  report; bring the Owner the six criteria with criterion 2's first half already missed
+  by two points. In parallel: the retrieval work package from its plan. For the Owner,
+  not blocking: the essential points of the six architecture scenarios (b1-10, b1-18,
+  b1-19, b1-20, b1-29, b1-30). Not blocked by them: the load test, the checker's
   extraction gaps the pilot showed (the pilot items behind them are listed in the analysis
   and go into the change's record), D1, the mechanical tier's hidden-half runs.
