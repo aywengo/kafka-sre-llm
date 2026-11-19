@@ -5,7 +5,7 @@ Working name "M4"; the release number is decided at the end. Started 2026-11-18,
 release of v3.0.0 and v3.0.1. `GOAL.md` says where the project is going; this file says
 where the current milestone stands.
 
-Last updated: 2026-11-19, 10:55.
+Last updated: 2026-11-19, 12:20.
 
 ## What this milestone is for
 
@@ -18,7 +18,7 @@ different base model does better.
 
 | # | Criterion | Bar | Status |
 |---|---|---|---|
-| E1 | A new evaluation exists: fresh items for the five task types of `GOAL.md`, a hidden part, mechanical checks, a measured noise level | 300 or more mechanical items, 120 or more judged items, the smallest visible difference stated per tier | mechanical tier built: 496 items, split 251 open and 245 hidden (encrypted); judged tier waits for the judging pilot |
+| E1 | A new evaluation exists: fresh items for the five task types of `GOAL.md`, a hidden part, mechanical checks, a measured noise level | 300 or more mechanical items, 120 or more judged items, the smallest visible difference stated per tier | mechanical tier built: 496 items, split 251 open and 245 hidden (encrypted); judged tier: the second judging pilot is a no-go too (3 of 5), stopped until the Owner has seen it |
 | E2 | The starting point is measured on it: plain base, base + retrieval at full precision, and the 4-bit model with retrieval, in default and strict mode, all on the same server path | numbers with their sizes; the cost of 4-bit shown inside a margin fixed before the run (5 points on the mechanical tier) | not started |
 | E3 | Every answer is checked before the user sees it | at most 2 invented or wrong items per 10 answers in default mode on fresh questions, **measured by a reading**, with the checker's own counts beside it | checker built and wired into `ask --check` and the service; on the 30 labelled errors it catches 9, reports 3 as unverified and misses 18 (15 are wrong statements it cannot see); not yet measured on fresh answers |
 | E4 | Answers are fast on the 4-bit server path | median under 60 s in default mode on the Mac Studio; first words within 10 s | service and streaming built; retrieval 9.5 s to 4.4 s when kept loaded; not yet measured with a model |
@@ -48,7 +48,7 @@ First slice (needs no downloads; supports the 4-bit decision):
 | S1 | Harness: answer, manifest, pack replay, hidden part, run sizes, report | implementer | **done** (`d0403e3`); run only with a stub model so far | `runs/m4/reports/s1_harness.md` |
 | S2, S3 | Mechanical items (config, Connect REST, Argo CD, error names) and the scorer with identifier precision; catalogue provenance | implementer | **done** (`39e6911`): 496 items with resources, manifest fixes, commands and version traps; a blind guess scores 11 %; split in `e6b8d8c` | `runs/m4/reports/s2_s3_tier_a1.md`, `tier_a1_rebalance.md` |
 | S4 | Rubric pilot: blind rubrics for 30 questions whose answers have a reader's findings; check of the labels that rest on memory | complex-reviewer, researcher | **done**: 30 rubrics (`eval/m4/pilot/rubrics.jsonl`); 30 distinct labels, 25 confirmed, 5 partly, 0 refuted | `runs/m4/reports/s4a_label_check.md`, `s4b_blind_rubrics.md` |
-| S5 | Judge pilot: does judging point by point repeat better than a mark from 1 to 5 | job-operator; needs the model server | **done, NO-GO: 1 of 4 criteria passed** (`runs/m4/S5_JUDGE_PILOT.md`). Judge chosen in S5a: DeepSeek without thinking, with source passages (22 s a call against 691 s). The analysis (`runs/m4/reports/s5_pilot_analysis.md`): the judge repeats well and is cheap, but the score does not rank answers as the reader did, and about 1 in 6 of its error flags outside the reader's labels is real. Decided 2026-11-19: build with changes. **Second pilot queued behind S6** (`scripts/m4_s5b_judge_pilot2.sh`): 24 fresh scenarios (`eval/m4/pilot2/`), rubrics corrected by a second reviewer before any answer existed (105 changes), judge step version 2, 48 answers and 263 judge calls, then a blind reading; go or no-go on criteria fixed beforehand | `runs/m4/reports/s5_judge_step.md` |
+| S5 | Judge pilot: does judging point by point repeat better than a mark from 1 to 5 | job-operator; needs the model server | **done, NO-GO: 1 of 4 criteria passed** (`runs/m4/S5_JUDGE_PILOT.md`). Judge chosen in S5a: DeepSeek without thinking, with source passages (22 s a call against 691 s). The analysis (`runs/m4/reports/s5_pilot_analysis.md`): the judge repeats well and is cheap, but the score does not rank answers as the reader did, and about 1 in 6 of its error flags outside the reader's labels is real. Decided 2026-11-19: build with changes. **Second pilot queued behind S6** (`scripts/m4_s5b_judge_pilot2.sh`): 24 fresh scenarios (`eval/m4/pilot2/`), rubrics corrected by a second reviewer before any answer existed (105 changes), judge step version 2, 48 answers and 263 judge calls, then a blind reading; go or no-go on criteria fixed beforehand. **Second pilot done 2026-11-19, NO-GO: 3 of 5 criteria passed** (`runs/m4/S5B_JUDGE_PILOT2.md`). Passed: agreement between passes (kappa 0.74), the judge's share of the variance (0.19), quotes not found (4.7 %). Failed: the judge's flags are mostly real (0.78 and 0.81 confirmed) but catch only 0.43 and 0.49 of the 111 wrong, harmful or invented statements two blind readers found (bar 0.7); and its "the excerpts had it, the answer dropped it" flags were confirmed in 6 of 38 cases (bar 60 %). The stage is stopped until the Owner has seen it | `runs/m4/reports/s5_judge_step.md`, `s5b_unblind_report.md`, `s5b_blind_reading_01_12.md`, `s5b_blind_reading_13_24.md` |
 | S6 | Noise (the reference run twice) and 4-bit against full precision on the same server, with pack replay | job-operator; needs the model server | **done** 2026-11-19 10:18 (`runs/m4/S6_NOISE_4BIT.md`), 251 open items, first look and not the decision: no noise (two identical runs, 251 of 251 answers byte-identical); all checks pass on 77.3 % with the 4-bit model and 76.5 % at full precision (difference +0.8 points, 90 % interval -2.8 to +4.5; on identical excerpts 0.0, -2.6 to +2.7; inside the 5-point margin both ways); strict mode 8.0 points below default (-11.9 to -4.2); median 19 to 25 s per answer at 4-bit against 44 s at full precision | `runs/m4/reports/s6_prep.md` |
 
 After the first slice:
@@ -118,6 +118,10 @@ Decided on 2026-11-18 (see "Decisions"). Still his to do, none blocking:
 
 The failed gate of 2026-11-18 (the judging pilot) was decided on 2026-11-19; see "Decisions".
 
+**Open, blocking the judged tier (WP1d) and everything behind it:** the second judging
+pilot failed on 2026-11-19 (3 of 5). What the judged tier becomes is the Owner's decision;
+the analysis with the options is being written (`runs/m4/reports/s5b_pilot2_analysis.md`).
+
 1. **Fresh real questions with correct answers:** 30 to 50 from real incidents.
 2. **Review of the architecture rubrics** when they exist (without it that part is 15
    items, not 25).
@@ -168,3 +172,14 @@ The failed gate of 2026-11-18 (the judging pilot) was decided on 2026-11-19; see
   server path, is not at its ceiling (77 %), and on the open half the 4-bit model is inside
   the margin against full precision. Strict mode loses 8 points on mechanical tasks. The
   second judging pilot started by itself at 10:18.
+- 2026-11-19, 11:53: the second pilot answered and judged (48 answers, 263 judge calls);
+  criteria 1 to 3 passed. Two reviewers then read the 48 answers blind, 24 each, one pass.
+  12:15: unblinded and the report rerun: NO-GO, criteria 4 and 5 failed. What the readers
+  found, apart from the judge (24 hard scenarios, one reader per item): default mode 67
+  wrong or invented statements and 1 harmful in 24 answers, strict mode 40 and 3; essential
+  omissions 23 in default and 33 in strict, of which the answer's own excerpts supported 1
+  and 7, so most omissions are retrieval gaps. The answer checker catches 5 of the 14
+  invented names that no judge flag caught.
+- Next: the reviewer's analysis of the failure and the options; then the Owner's decision
+  on the judged tier. Not blocked by it: the mechanical tier's hidden-half runs, D1, the
+  load test of the bake-off candidates.
