@@ -8,7 +8,7 @@ Two classes, reported separately because the first measures arithmetic and not r
   rule_from_docs  the question gives the quantities only; the rule is the pinned passage
 
 Truth, no model (D6): the expected value is computed exactly (fractions); the tolerance is per item (0 for integer
-conversions, 1 % otherwise, below the 4.9 % of MB against MiB and the 2.4 % of KB against KiB). Every item carries
+conversions, 1 % otherwise, 3 % for the page-cache rule of thumb, below the 4.9 % of MB against MiB and the 2.4 % of KB against KiB). Every item carries
 perturbed answers: unit slips (MB against MiB, ms against s, bytes against KiB, ...) and off-by-a-factor errors
 (forgotten replication factor, forgotten division, ...). The reference must pass and each perturbed answer must
 fail `number_within`; a template or parameter set where one of these does not hold is counted and skipped.
@@ -34,7 +34,10 @@ import eval2_score as sc  # noqa: E402
 from eval2_checks_a3 import check_number_within  # noqa: E402
 from kafka_sre_rag.catalogue import Catalogues, catalogue_hash, default_dir  # noqa: E402
 
-VERSION = "eval2_items_a3_sizing/1"
+VERSION = "eval2_items_a3_sizing/2"
+# Version 2 (review finding M2): a rule-of-thumb item whose reference is a rounded estimate takes a 3 % tolerance (a
+# rounded "12 GiB" for 11.72 is 2.4 % off; the nearest perturbation is 6.9 % off). Its items get new numbers (101...).
+V2_ID_BASE = {"size_page_cache": 100}
 DEFAULT_SEED = "m4-a3-1"
 KIND = "computed_sizing"
 F = Fraction
@@ -152,7 +155,7 @@ TEMPLATES = [
     {"id": "size_disk_rf", "klass": "arith_only", "domain": "kafka", "unit": "GiB", "tol": 0.01, "fn": t_disk,
      "anchor": (CFG_STREAMS, 1636, "more storage space as well (3x with the replication factor of 3)"),
      "params": [(5, 3, 3, 6), (12, 2, 3, 4), (2, 7, 2, 3)]},
-    {"id": "size_page_cache", "klass": "rule_from_docs", "domain": "kafka", "unit": "GiB", "tol": 0.01, "fn": t_pagecache,
+    {"id": "size_page_cache", "klass": "rule_from_docs", "domain": "kafka", "unit": "GiB", "tol": 0.03, "fn": t_pagecache,
      "anchor": (HW, 31, "assuming you want to be able to buffer for 30 seconds and compute your memory need as write_throughput*30"),
      "params": [(120,), (400,), (75,)]},
     {"id": "size_heartbeat", "klass": "rule_from_docs", "domain": "kafka", "unit": "ms", "tol": 0, "fn": t_heartbeat,
@@ -204,7 +207,7 @@ def build_item(tpl, params, n, cats, chash, seed, rng, corpus, stats):
     perts = [{"label": lab, "kind": kind, "text": "Worked out with the stated rule.\nANSWER: %s" % ans(val, u),
               "violates": 1, "check": "number_within"} for lab, kind, val, u in slips]
     item = {
-        "id": "a3-%s-%03d" % (tpl["id"], n), "tier": "A", "kind": KIND, "family": "%s:%s" % (tpl["id"], "-".join(str(x) for x in params)),
+        "id": "a3-%s-%03d" % (tpl["id"], n + V2_ID_BASE.get(tpl["id"], 0)), "tier": "A", "kind": KIND, "family": "%s:%s" % (tpl["id"], "-".join(str(x) for x in params)),
         "domain": tpl["domain"], "question": core + "\n\n" + FORMAT_NOTE,
         "checks": [{"type": "answer_line", "format": True}, chk],
         "reference": "Worked out with the stated rule.\nANSWER: %s" % ans(v, unit),

@@ -123,6 +123,143 @@ class Vbw(unittest.TestCase):
 
 
 @unittest.skipUnless(HAVE, "catalogues and catalogues_a3 not built")
+class FixRound2(unittest.TestCase):
+    """Review findings B3 (V1, V2, V7), S3, S4 and the pair field: the reviewer's wrong fixes fail, its correct
+    rewordings pass."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.items = g.generate(dedup=False)
+        cls.cats = Catalogues.load(None)
+
+    def of(self, tpl):
+        return [i for i in self.items if i["template"] == tpl]
+
+    def run_oracle(self, it, doc):
+        oracle = it["vbw"]["oracle_checks_on_control"]
+        res = sc.run_checks({"id": it["id"], "checks": oracle}, "```yaml\n%s\n```" % doc.rstrip("\n"), self.cats)
+        return all(r["pass"] for r in res)
+
+    @staticmethod
+    def shown(it):
+        return re.search(r"```yaml\n(.*?)\n```", it["question"], re.S).group(1)
+
+    def fix_of(self, it):
+        return it["vbw"]["control_artifact"]
+
+    def with_from(self, it, frm):
+        d = sc.yaml.safe_load(self.fix_of(it))
+        d["spec"]["ingress"][0]["from"] = frm
+        return sc.yaml.safe_dump(d, sort_keys=False)
+
+    def test_ids_version_and_pairs(self):
+        self.assertEqual(g.VERSION, "eval2_items_a3_vbw/2")
+        for it in self.items:
+            self.assertIn("-v2-", it["id"])
+            self.assertTrue(it["pair"].startswith("vbw:"), it["id"])
+            self.assertEqual(it["generator"], g.VERSION)
+        for tpl in {i["template"] for i in self.items}:
+            items = self.of(tpl)
+            for c in [i for i in items if i["vbw"]["role"] == "control"]:
+                self.assertTrue(any(w["pair"] == c["pair"] and w["vbw"]["role"] == "wrong" for w in items), c["id"])
+        for tpl in ("vbw_netpol_from", "vbw_restart_annotation", "vbw_default_value", "vbw_heartbeat_session",
+                    "vbw_min_isr_replicas", "vbw_pdb_no_eviction"):
+            self.assertEqual(len({i["pair"] for i in self.of(tpl)}), 2, tpl)  # two groups, so two sides are possible
+
+    def test_v1_four_probes_and_the_reviewers_wrong_fixes(self):
+        for it in self.of("vbw_netpol_from"):
+            probes = [c for c in it["vbw"]["oracle_checks_on_control"] if c["oracle"] == "netpol_allows"]
+            self.assertEqual([c["expect"] for c in probes], [True, False, False, False])
+            self.assertEqual(len({(c["source"]["namespace"], str(c["source"]["pod_labels"])) for c in probes}), 4)
+            self.assertTrue(self.run_oracle(it, self.fix_of(it)), it["id"])
+            ctl = sc.yaml.safe_load(self.fix_of(it))["spec"]["ingress"][0]["from"][0]
+            ns_only = {"namespaceSelector": ctl["namespaceSelector"]}
+            pod_only = {"podSelector": ctl["podSelector"]}
+            both = {**ctl}
+            # namespace-only selector admits every pod of the namespace; pod-only reaches the policy's own namespace
+            self.assertFalse(self.run_oracle(it, self.with_from(it, [ns_only])), it["id"])
+            self.assertFalse(self.run_oracle(it, self.with_from(it, [pod_only])), it["id"])
+            # a second entry for the policy's own namespace (the reviewer's wrong fix for namespace `analytics`)
+            self.assertFalse(self.run_oracle(it, self.with_from(it, [both, pod_only])), it["id"])
+            self.assertFalse(self.run_oracle(it, self.with_from(it, [ns_only, pod_only])), it["id"])
+            # correct rewording: the same AND with matchExpressions in the namespace selector
+            ns = ctl["namespaceSelector"]["matchLabels"]["kubernetes.io/metadata.name"]
+            alt = {"namespaceSelector": {"matchExpressions": [{"key": "kubernetes.io/metadata.name", "operator": "In",
+                                                                "values": [ns]}]}, "podSelector": ctl["podSelector"]}
+            self.assertTrue(self.run_oracle(it, self.with_from(it, [alt])), it["id"])
+
+    def test_v2_expect_states_all_three_flags(self):
+        for it in self.of("vbw_restart_annotation"):
+            for c in it["vbw"]["oracle_checks_on_control"]:
+                self.assertTrue({"restart_connector", "include_tasks", "only_failed"} <= set(c["expect"]), it["id"])
+
+    def test_v2_reviewers_wrong_fixes(self):
+        conns = [i for i in self.of("vbw_restart_annotation") if i["vbw"]["role"] == "wrong"
+                 and "KafkaConnector" in i["family"]]
+        tasks_item = next(i for i in self.of("vbw_restart_annotation") if i["vbw"]["role"] == "wrong"
+                          and "restart_connector" in i["vbw"]["oracle_checks_on_control"][0]["expect"]
+                          and i["vbw"]["oracle_checks_on_control"][0]["expect"]["include_tasks"] and "KafkaConnector" in i["family"])
+        only_item = next(i for i in conns if i["vbw"]["oracle_checks_on_control"][0]["expect"]["only_failed"])
+
+        def conn(it, value):
+            d = sc.yaml.safe_load(self.fix_of(it))
+            d["metadata"]["annotations"]["strimzi.io/restart"] = value
+            return sc.yaml.safe_dump(d, sort_keys=False)
+        # "restart the connector and all of its tasks": includeTasks,onlyFailed is too narrow
+        self.assertTrue(self.run_oracle(tasks_item, conn(tasks_item, "includeTasks")))
+        self.assertFalse(self.run_oracle(tasks_item, conn(tasks_item, "includeTasks,onlyFailed")))
+        self.assertFalse(self.run_oracle(tasks_item, conn(tasks_item, "true")))
+        # "restart only if FAILED": the combined value also restarts the tasks
+        self.assertTrue(self.run_oracle(only_item, conn(only_item, "onlyFailed")))
+        self.assertFalse(self.run_oracle(only_item, conn(only_item, "includeTasks,onlyFailed")))
+        # MirrorMaker 2: the broad form fails, includeTasks passes
+        mm2 = next(i for i in self.of("vbw_restart_annotation") if "KafkaMirrorMaker2" in i["family"]
+                   and i["vbw"]["role"] == "wrong")
+        d = sc.yaml.safe_load(self.fix_of(mm2))
+        ann = d["metadata"]["annotations"]["strimzi.io/restart-connector"]
+        self.assertTrue(ann.endswith(":includeTasks"))
+        self.assertTrue(self.run_oracle(mm2, self.fix_of(mm2)))
+        d["metadata"]["annotations"]["strimzi.io/restart-connector"] = ann + ",onlyFailed"
+        self.assertFalse(self.run_oracle(mm2, sc.yaml.safe_dump(d, sort_keys=False)))
+
+    def test_v7_exactly_one_allowed(self):
+        for it in self.of("vbw_pdb_no_eviction"):
+            c = it["vbw"]["oracle_checks_on_control"][0]
+            self.assertEqual(c["allowed"], 1)
+            rep = c["replicas"]
+            self.assertTrue(self.run_oracle(it, self.fix_of(it)))
+            for spec in ({"maxUnavailable": rep}, {"minAvailable": 1}, {"minAvailable": 0}, {"maxUnavailable": 0},
+                         {"minAvailable": "100%"}):
+                d = sc.yaml.safe_load(self.fix_of(it))
+                d["spec"].pop("maxUnavailable", None)
+                d["spec"].update(spec)
+                self.assertFalse(self.run_oracle(it, sc.yaml.safe_dump(d, sort_keys=False)), (it["id"], spec))
+            d = sc.yaml.safe_load(self.fix_of(it))
+            d["spec"].pop("maxUnavailable")
+            d["spec"]["minAvailable"] = rep - 1          # a correct rewording of "one at a time"
+            self.assertTrue(self.run_oracle(it, sc.yaml.safe_dump(d, sort_keys=False)))
+
+    def test_v3_compaction_keys_only_on_compacted_topics(self):
+        for it in self.of("vbw_default_value"):
+            key = it["family"].split(":")[1]
+            for text in (self.shown(it), self.fix_of(it)):
+                cfg = sc.yaml.safe_load(text)["spec"]["config"]
+                self.assertEqual("cleanup.policy" in cfg and cfg["cleanup.policy"] == "compact",
+                                 key in g.COMPACTED_KEYS, it["id"])
+            # own Default line, not the min.insync.replicas lines
+            dl = [s for s in it["sources"] if s["entry"].endswith("Default")]
+            self.assertEqual(len(dl), 1)
+            self.assertIn("<th>Default:</th>", dl[0]["phrase"])
+            self.assertTrue(any(s["entry"].startswith(key + " ") for s in it["sources"]))
+            if key != "min.insync.replicas":
+                self.assertFalse(any("min.insync.replicas" in s["entry"] for s in it["sources"]), it["id"])
+
+    def test_s4_wording_in_the_pool(self):
+        pool = dict((k, n) for k, n, _ in g.V3_POOL)
+        self.assertIn("record batches of up to 2 MiB", pool["max.message.bytes"])
+
+
+@unittest.skipUnless(HAVE, "catalogues and catalogues_a3 not built")
 class Gating(unittest.TestCase):
     """A rule that the table anchors later is picked up by rerunning; valid_but_wrong false keeps a rule out."""
 

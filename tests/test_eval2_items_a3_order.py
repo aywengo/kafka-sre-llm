@@ -100,6 +100,74 @@ class OrderItems(unittest.TestCase):
         self.assertEqual(outs[0], outs[1])
         self.assertEqual(json.loads(outs[0]), json.loads(json.dumps(self.items)))
 
+    # ---------------------------------------------------------------- WP1c fix F3 (B2, S1, S2): review rewordings
+    def item(self, tpl, k=0):
+        return [i for i in self.items if i["template"] == tpl][k]
+
+    def passes(self, item, text):
+        res = sc.run_checks(item, text, self.cats)
+        return all(r["pass"] for r in res), [(r["type"], r["detail"][:80]) for r in res if not r["pass"]]
+
+    def test_changed_templates_have_new_ids(self):
+        for t in gen.V2_CHANGED:
+            for i in self.items:
+                if i["template"] == t:
+                    self.assertGreater(int(i["id"].rsplit("-", 1)[1]), 100, i["id"])
+        self.assertTrue(all(i["generator"] == "eval2_items_a3_order/2" for i in self.items))
+
+    def test_sg_delete_offsets_follows_the_tool_source(self):
+        i = self.item("order_sg_delete_offsets")
+        g = "orders-streams"
+        t = "bin/kafka-streams-groups.sh --bootstrap-server kafka:9092 "
+        # review fixture sgd_r1: describe the offsets, then delete them
+        self.assertEqual(self.passes(i, "```bash\n%s--describe --group %s --offsets\n%s--delete-offsets --group %s --all-input-topics\n```" % (t, g, t, g))[0], True)
+        # the doc page's form (--dry-run / --execute with --delete-offsets) is rejected by the tool: the item fails it
+        for mut in ("--delete-offsets --group %s --all-input-topics --execute" % g, "--delete-offsets --group %s --all-input-topics --dry-run" % g):
+            ok, why = self.passes(i, "```bash\n%s--delete-offsets --group %s --all-input-topics --dry-run\n%s%s\n```" % (t, g, t, mut))
+            self.assertFalse(ok, mut)
+        self.assertFalse(self.passes(i, "```bash\n%s--delete-offsets --group %s --all-input-topics\n```" % (t, g))[0])  # no describe first
+        self.assertTrue(any("kafka-streams-group-sh.md" in s["file"] for s in i["sources"] if s["file"]))
+        self.assertIn("StreamsGroupCommandOptions.java:60-61, 235-236", i["note"])
+        self.assertIn("dry-run", i["note"])
+
+    def test_tool_rule_is_enforced_in_the_generator(self):
+        spec = dict(next(x for x in gen.specs() if x["template"] == "order_sg_delete_offsets"))
+        spec["safe"] = spec["safe"] + [("--dry-run", None)]
+        from collections import Counter
+        st = Counter()
+        self.assertIsNone(gen.build_item(spec, self.cats, "h", "s", 1, __import__("random").Random(1), [], st))
+        self.assertTrue(any("accepted only with --reset-offsets" in k for k in st), dict(st))
+
+    def test_sg_delete_offsets_anchors_hold_the_tool_source_lines(self):
+        i = self.item("order_sg_delete_offsets")
+        files = {(s["file"].rsplit("/", 1)[-1], s["line"]) for s in i["sources"] if s["file"]}
+        self.assertTrue({("StreamsGroupCommandOptions.java", 60), ("StreamsGroupCommandOptions.java", 61),
+                         ("StreamsGroupCommandOptions.java", 236)} <= files, files)
+
+    def test_argo_diff_counts_as_the_safe_step_and_prune_false_is_not_pruning(self):
+        i = self.item("order_argo_sync", 1)
+        a = "web-frontend"
+        for text in ("```bash\nargocd app diff %s\nargocd app sync %s\n```" % (a, a),                         # ar_r1
+                     "```bash\nargocd app get %s\nargocd app sync %s --dry-run\nargocd app sync %s\n```" % (a, a, a),  # ar_r2
+                     "```bash\nargocd app sync %s --dry-run\nargocd app sync %s --prune=false\n```" % (a, a),            # ar_r3
+                     "```\n$ argocd app sync %s --dry-run\n$ argocd app sync %s\n```" % (a, a),                          # ar_r4
+                     "```bash\nargocd app diff %s --exit-code=false\nargocd app sync %s\n```" % (a, a)):                # ar_r5
+            ok, why = self.passes(i, text)
+            self.assertTrue(ok, (text, why))
+        for text in ("```bash\nargocd app sync %s\n```" % a, "```bash\nargocd app sync %s --prune\nargocd app diff %s\n```" % (a, a),
+                     "```bash\nargocd app diff %s\nargocd app sync %s --prune\n```" % (a, a),
+                     "```bash\nargocd app sync %s\nargocd app diff %s\n```" % (a, a)):
+            self.assertFalse(self.passes(i, text)[0], text)
+
+    def test_reassign_asks_to_generate_the_plan(self):
+        i = self.item("order_reassign")
+        self.assertIn("Generate the plan and save it as", i["question"])
+        self.assertNotIn("is saved in", i["question"])
+        bs = "bin/kafka-reassign-partitions.sh --bootstrap-server kafka:9092 "
+        # review ra1_r1 (execute, verify, no generate) fails; ra1_r2 (generate, execute, verify) passes
+        self.assertFalse(self.passes(i, "```bash\n%s--execute --reassignment-json-file expand-cluster-reassignment.json\n%s--verify --reassignment-json-file expand-cluster-reassignment.json\n```" % (bs, bs))[0])
+        self.assertTrue(self.passes(i, "```bash\n%s--topics-to-move-json-file topics-to-move.json --broker-list \"5,6\" --generate\n# save the proposed assignment as expand-cluster-reassignment.json\n%s--reassignment-json-file expand-cluster-reassignment.json --execute\n%s--reassignment-json-file expand-cluster-reassignment.json --verify\n```" % (bs, bs, bs))[0])
+
 
 if __name__ == "__main__":
     unittest.main()

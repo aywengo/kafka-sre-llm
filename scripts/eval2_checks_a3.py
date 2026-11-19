@@ -563,6 +563,9 @@ def oracle_pdb_evicts(chk, text):
     n, why = pdb_allowed_disruptions(pdb, int(chk["replicas"]))
     if n is None:
         return False, why
+    if chk.get("allowed") is not None:   # an exact number of allowed disruptions (a3 version 2: "one at a time")
+        return n == int(chk["allowed"]), "%s: %d eviction(s) allowed with %d replicas; expected exactly %d" % (
+            why, n, chk["replicas"], int(chk["allowed"]))
     allows = n > 0
     return allows == bool(chk["expect"]), "%s: %d eviction(s) allowed with %d replicas; expected %s" % (
         why, n, chk["replicas"], "an eviction" if chk["expect"] else "no eviction")
@@ -646,11 +649,17 @@ def _step_matches(step, cmd):
             return False
     if step.get("flags_any") and not any(f in flags for f in step["flags_any"]):
         return False
-    return not any(f in flags for f in step.get("flags_forbidden", []))
+    if any(f in flags for f in step.get("flags_forbidden", [])):
+        return False
+    # boolean flags: `--prune=false` (or `--prune false`) does not set the flag; any other value, or none, does
+    return not any(f in flags and not all(x is not None and str(x).strip().lower() == "false" for x in flags[f])
+                   for f in step.get("flags_forbidden_true", []))
 
 
 def check_cmd_order(chk, text, cats):
-    """chk["steps"]: [{role: safe|mutate|verify, tool, words?, flags_all?, flags_any?, flags_forbidden?, values?}].
+    """chk["steps"]: [{role: safe|mutate|verify, tool, words?, flags_all?, flags_any?, flags_forbidden?,
+    flags_forbidden_true?, values?}]; several steps may share a role (any of them matches). `flags_forbidden_true`
+    names boolean flags that are forbidden unless given the value false (`--prune=false`).
     Passes when a mutating line is present, a safe line comes before the first mutating line, and, when a verify
     step is defined and any verify line occurs, one comes after the first mutating line (chk["require_verify"]
     makes that line mandatory). A line that matches a mutate step counts as mutating, whatever else it matches."""
@@ -756,18 +765,63 @@ def check_declines(chk, text, cats):
     return declined, ("declines: %r" % (gap[:100] or sc.parse_answer_line(text))) if declined else "the answer does not decline"
 
 
+PINNED_VERSIONS = ("4.1", "4.2", "4.3", "4.3.2")  # Kafka documentation pins of sources.yaml; a decline may name them
+_CMD_RE = re.compile(r"^\$?\s*(?:\S*/)?(?:kafka-[\w-]+|connect-[\w-]+|kubectl|argocd|oc|helm|curl|jq|grep|cat)(?:\.sh)?(?=\s|$)")
+_SETTER_RE = re.compile(r"--(?:add-config(?:-file)?|alter|config|delete-config|override|set|property|producer-property|"
+                        r"consumer-property)\b|(?<=\s)(?!-)[\w.]+=\S+")
+_BIND_RE = re.compile(r"\b(?:is|are|was|were|equals?|defaults?|set to|sets|uses?|runs? with|value)\b|=", re.I)
+_GLOSS_RE = re.compile(r"(\d[\d,.]*)(\s*[A-Za-z]{0,12})?\s*\([^()\n]*\)")
+
+
+def _alnum(s):
+    return re.sub(r"[^a-z0-9]", "", (s or "").lower())
+
+
+def _command_only_block(body):
+    """True when every line of a fenced block is a command line of a known tool that sets no value."""
+    lines = [l.strip() for l in re.sub(r"\\[ \t]*\n[ \t]*", " ", body).split("\n") if l.strip() and not l.strip().startswith("#")]
+    return bool(lines) and all(_CMD_RE.match(l) and not _SETTER_RE.search(l) for l in lines)
+
+
+def _without_commands(text):
+    """(text without fenced command-only blocks and without inline code that is a value-free command, ...)."""
+    def block(m):
+        return "" if _command_only_block(m.group(1)) else m.group(0)
+    text = sc.FENCE_RE.sub(block, text or "")
+    keep = []
+    for line in text.split("\n"):
+        if _CMD_RE.match(line.strip()) and not _SETTER_RE.search(line):
+            continue
+        keep.append(re.sub(r"`([^`\n]+)`", lambda m: "" if _CMD_RE.match(m.group(1)) and not _SETTER_RE.search(m.group(1)) else m.group(0), line))
+    return "\n".join(keep)
+
+
 def check_no_invented_value(chk, text, cats):
-    """The answer gives no value. It fails on: an ANSWER line or code block that carries a payload
-    (has_payload), a concrete number (any number or version in the text other than those in chk["allowed_numbers"],
-    which the generator fills with the numbers the question itself contains), or an identifier the catalogues
-    call unknown (other than chk["allowed_identifiers"], the question's own names)."""
+    """The answer gives no value for the asked key or deployment. It fails on:
+      - an ANSWER line with a payload, or a fenced code block that is not a value-free command (a lookup such as
+        `kafka-configs.sh --describe` is allowed; `--add-config`, `key=value` lines and the like are not);
+      - a sentence that binds a number to the asked key (chk["asked"]: the key, the deployment or the product; or a
+        binding verb such as "is", "defaults to", "=") when the number is not allowed. Allowed are the numbers of the
+        question (chk["allowed_numbers"]), the pinned Kafka versions (PINNED_VERSIONS, chk["pinned_versions"]), the
+        catalogue default of the asked key (chk["default_numbers"]) with the gloss that follows it ("168 (7 days)"),
+        and any number inside a value-free command line;
+      - an identifier the catalogues call unknown (other than chk["allowed_identifiers"], the question's own names)."""
     bad = []
-    if sc.has_payload(text):
+    body = _without_commands(text)
+    if sc.has_payload(body):
         bad.append("an answer value or code block")
-    allowed = {str(x) for x in chk.get("allowed_numbers", [])}
-    nums = [n for n in VERSION_OR_NUM_RE.findall(text or "") if n.strip(",") not in allowed]
+    allowed = {str(x) for x in chk.get("allowed_numbers", [])} | {str(x) for x in chk.get("default_numbers", [])} \
+        | set(chk.get("pinned_versions", PINNED_VERSIONS))
+    prose = sc.FENCE_RE.sub("", body)
+    prose = _GLOSS_RE.sub(lambda m: m.group(0) if m.group(1).strip(",") not in allowed else m.group(1) + (m.group(2) or ""), prose)
+    asked = [_alnum(a) for a in chk.get("asked", []) if _alnum(a)]
+    nums = []
+    for sent in re.split(r"\n+|(?<=[.!?])\s+(?=[A-Z`])", prose):
+        found = [n for n in VERSION_OR_NUM_RE.findall(sent) if n.strip(",") not in allowed]
+        if found and (_BIND_RE.search(sent) or any(a in _alnum(sent) for a in asked)):
+            nums += found
     if nums:
-        bad.append("number(s) %s" % sorted(set(nums))[:5])
+        bad.append("number(s) %s bound to the asked setting" % sorted(set(nums))[:5])
     allowed_ids = set(chk.get("allowed_identifiers", []))
     unk = [r["token"] for r in sc.classify_identifiers(text, cats)["unknown"] if r["token"] not in allowed_ids]
     if unk:

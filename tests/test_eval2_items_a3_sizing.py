@@ -60,7 +60,23 @@ class SizingItems(unittest.TestCase):
     def test_tolerance_is_below_the_binary_decimal_gap(self):
         for i in self.items:
             chk = next(c for c in i["checks"] if c["type"] == "number_within")
-            self.assertLessEqual(chk["tolerance"], 0.01, i["id"])
+            # 1 % everywhere; 3 % for the page-cache rule of thumb, whose reference is a rounded estimate (M2)
+            self.assertLessEqual(chk["tolerance"], 0.03 if i["template"] == "size_page_cache" else 0.01, i["id"])
+
+    def test_page_cache_accepts_a_rounded_estimate_and_still_fails_every_perturbation(self):
+        # review fixtures pc_r1..pc_r6 for a3-size_page_cache (400 MiB/s): 11.72 GiB is the reference
+        it = next(i for i in self.items if i["template"] == "size_page_cache" and "400" in i["question"])
+        chk = next(c for c in it["checks"] if c["type"] == "number_within")
+        for a in ("11.72 GiB", "~11.7 GiB", "11.72GiB", "11.71875 GiB", "12 GiB", "12000 MiB"):
+            self.assertTrue(sc.CHECKS["number_within"](chk, "ANSWER: " + a, self.cats)[0], a)
+        for a in ("13 GiB", "11 GiB", "12 GB", "12000 GB", "23.4 GiB", "0.39 GiB", "6 GiB"):
+            self.assertFalse(sc.CHECKS["number_within"](chk, "ANSWER: " + a, self.cats)[0], a)
+        for p in it["perturbed"]:
+            self.assertFalse(sc.CHECKS["number_within"](chk, p["text"], self.cats)[0], p["label"])
+
+    def test_changed_items_have_new_ids(self):
+        self.assertTrue(all(i["id"].endswith(("-101", "-102", "-103")) for i in self.items if i["template"] == "size_page_cache"))
+        self.assertTrue(all(i["generator"] == "eval2_items_a3_sizing/2" for i in self.items))
 
     def test_every_formula_cites_an_existing_line_with_the_phrase(self):
         for i in self.items:

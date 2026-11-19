@@ -39,10 +39,14 @@ import eval2_score as sc  # noqa: E402
 from eval2_checks_a3 import check_cmd_order  # noqa: E402
 from kafka_sre_rag.catalogue import KNOWN, Catalogues, catalogue_hash, default_dir  # noqa: E402
 
-VERSION = "eval2_items_a3_order/1"
+VERSION = "eval2_items_a3_order/2"
 DEFAULT_SEED = "m4-a3-1"
 BS = "kafka:9092"
 KIND = "safe_order"
+# Version 2: the items of these templates changed (their steps or their wording), so their numbers start at 101 and
+# no version-1 id is reused.
+V2_CHANGED = ("order_sg_delete_offsets", "order_argo_sync", "order_reassign")
+V2_ID_BASE = 100
 FORMAT_NOTE = ("Give the commands in the order they should be run, in one code block, one command per line; "
                "use only options that exist for the tool.")
 
@@ -50,6 +54,16 @@ DOC_OPS = "raw/apache-kafka/docs/operations/basic-kafka-operations.md"
 DOC_SG = "raw/apache-kafka/docs/streams/developer-guide/kafka-streams-group-sh.md"
 DOC_RESET = "raw/apache-kafka/docs/streams/developer-guide/app-reset-tool.md"
 DOC_ARGO = "raw/argo-cd/docs/user-guide/commands/argocd_app_sync.md"
+DOC_ARGO_DIFF = "raw/argo-cd/docs/user-guide/commands/argocd_app_diff.md"
+SRC_SG_OPTS = "raw_catalogue/apache-kafka-tools/tools/src/main/java/org/apache/kafka/tools/streams/StreamsGroupCommandOptions.java"
+
+# Tool rules the catalogue does not carry (Q5: enforced here, the frozen kafka_cli catalogue does not change):
+# for kafka-streams-groups.sh, `--dry-run` and `--execute` are accepted only together with `--reset-offsets`.
+TOOL_RULES = {"kafka-streams-groups.sh": {
+    "only_with": {"--dry-run": "--reset-offsets", "--execute": "--reset-offsets"},
+    "anchors": [(SRC_SG_OPTS, 60, "Only show results without executing changes on streams group. Supported operations: reset-offsets."),
+                (SRC_SG_OPTS, 61, "Execute operation. Supported operations: reset-offsets."),
+                (SRC_SG_OPTS, 236, '"Only Option " + resetOffsetsOpt + " accepts "')]}}
 
 
 # ------------------------------------------------------------------ anchors
@@ -141,21 +155,27 @@ def specs():
             "anchors": [anchor(DOC_SG, 90, "Always preview changes with `--dry-run` before using `--execute`"),
                         anchor(DOC_SG, 172, "Preview changes with `--dry-run`")],
         })
-    # --- streams groups: deleting offsets is a mutating operation of the same passage
+    # --- streams groups: deleting offsets. The pinned tool source (not the doc page, which says to preview every
+    # mutating operation with --dry-run) accepts --dry-run and --execute only with --reset-offsets; so the safe step is
+    # describing the committed offsets and the mutating step is --delete-offsets itself.
     for params in ({"g": "orders-streams"}, {"g": "clicks-streams"}):
         s.append({
             "template": "order_sg_delete_offsets", "group": "kafka-streams-groups:delete-offsets:%s" % params["g"],
             "tool": "kafka-streams-groups.sh", "domain": "kafka", "params": params, "forbidden": "--delete",
             "forbidden_role": "mutate",
-            "task": "delete the committed offsets of all input topics of the Streams group `{g}`, so that it re-reads them on restart (the instances are stopped)",
+            "task": "delete the committed offsets of all input topics of the Streams group `{g}`, so that it re-reads them on restart (the instances are stopped), after looking at the offsets the group has committed",
             "limit": "Keep the group: it must not be deleted.",
-            "safe": [("--delete-offsets", None), ("--group", "{g}"), ("--all-input-topics", None), ("--dry-run", None)],
-            "mutate": [("--delete-offsets", None), ("--group", "{g}"), ("--all-input-topics", None), ("--execute", None)],
-            "safe_step": {"flags_all": ["--delete-offsets", "--dry-run"]},
-            "mutate_step": {"flags_all": ["--delete-offsets", "--execute"]},
-            "flags": ["--delete-offsets", "--group", "--all-input-topics", "--dry-run", "--execute", "--delete"],
-            "anchors": [anchor(DOC_SG, 35, "Mutating operations (offset resets/deletes, group deletion)"),
-                        anchor(DOC_SG, 35, "Always preview with \\--dry-run before executing")],
+            "safe": [("--describe", None), ("--offsets", None), ("--group", "{g}")],
+            "mutate": [("--delete-offsets", None), ("--group", "{g}"), ("--all-input-topics", None)],
+            "safe_step": {"flags_all": ["--describe", "--offsets"]},
+            "mutate_step": {"flags_all": ["--delete-offsets"], "flags_forbidden": ["--dry-run", "--execute"]},
+            "flags": ["--describe", "--offsets", "--delete-offsets", "--group", "--all-input-topics", "--delete"],
+            "note": ("The doc page kafka-streams-group-sh.md (lines 35, 114, 165) says to preview with --dry-run before every "
+                     "mutating operation, but the pinned tool source accepts --dry-run and --execute only with --reset-offsets "
+                     "(StreamsGroupCommandOptions.java:60-61, 235-236). The item follows the tool: --describe --offsets first, "
+                     "then --delete-offsets without --dry-run or --execute."),
+            "anchors": [anchor(DOC_SG, 35, "Mutating operations (offset resets/deletes, group deletion)")] + [
+                anchor(*a) for a in TOOL_RULES["kafka-streams-groups.sh"]["anchors"]],
         })
     # --- application reset tool: one dry run before the irreversible reset
     for params in ({"a": "orders-app", "t": "orders-events"}, {"a": "fraud-detector", "t": "payments"}):
@@ -185,7 +205,7 @@ def specs():
             "template": "order_reassign", "group": "kafka-reassign-partitions:%s" % ("throttle" if thr else "plain"),
             "tool": "kafka-reassign-partitions.sh", "domain": "kafka", "params": params,
             "forbidden": "--disable-rack-aware", "forbidden_role": "safe", "verify": True,
-            "task": "move all partitions of the topics listed in `{f}` to the brokers {b}%s, and confirm that the move has finished. The plan to execute is saved in `{r}`" % (
+            "task": "move all partitions of the topics listed in `{f}` to the brokers {b}%s, and confirm that the move has finished. Generate the plan and save it as `{r}`" % (
                 " with the data movement throttled to {v} bytes per second" if thr else ""),
             "limit": "Keep the rack-aware replica assignment.",
             "safe": [("--generate", None), ("--topics-to-move-json-file", "{f}"), ("--broker-list", "{b}")],
@@ -221,9 +241,12 @@ def specs():
             "limit": "Do not prune resources.",
             "safe": "argocd app sync {a} --dry-run", "mutate": "argocd app sync {a}",
             "safe_step": {"words": ["app", "sync"], "flags_all": ["--dry-run"]},
-            "mutate_step": {"words": ["app", "sync"], "flags_forbidden": ["--dry-run"]},
+            "safe_alt_steps": [{"words": ["app", "diff"]}],
+            "mutate_step": {"words": ["app", "sync"], "flags_forbidden": ["--dry-run"], "flags_forbidden_true": ["--prune"]},
+            "forbidden_bool": True,
             "flags": ["--dry-run", "--prune"],
-            "anchors": [anchor(DOC_ARGO, 49, "Preview apply without affecting cluster")],
+            "anchors": [anchor(DOC_ARGO, 49, "Preview apply without affecting cluster"),
+                        anchor(DOC_ARGO_DIFF, 5, "Perform a diff against the target and live state.")],
         })
     return s
 
@@ -256,9 +279,11 @@ def steps_for(spec):
             continue
         st = {"role": role, "tool": tool, **st}
         st["flags_forbidden"] = list(st.get("flags_forbidden", []))
-        if role == spec["forbidden_role"]:
+        if role == spec["forbidden_role"] and not spec.get("forbidden_bool"):
             st["flags_forbidden"].append(spec["forbidden"])
         steps.append(st)
+        if role == "safe":
+            steps += [{"role": "safe", "tool": tool, "flags_forbidden": [], **alt} for alt in spec.get("safe_alt_steps", [])]
     return steps
 
 
@@ -328,6 +353,10 @@ def build_item(spec, cats, chash, seed, n, rng, corpus, stats):
             if spec.get(role):
                 flags = [f for f, _ in spec[role]] + ["--bootstrap-server"]
                 probs = sc.constraint_problems(tool, flags, cats)
+                rule = TOOL_RULES.get(tool)
+                for f, need in (rule["only_with"].items() if rule else ()):
+                    if f in flags and need not in flags:
+                        probs.append("%s is accepted only with %s (%s:%d)" % (f, need, rule["anchors"][-1][0], rule["anchors"][-1][1]))
                 if probs:
                     stats["derivation_failed:%s: constraint of %s: %s" % (spec["template"], tool, "; ".join(probs))] += 1
                     return None
@@ -352,7 +381,7 @@ def build_item(spec, cats, chash, seed, n, rng, corpus, stats):
         stats["dropped:near_duplicate:%s" % spec["template"]] += 1
         return None
     item = {
-        "id": "a3-%s-%03d" % (spec["template"], n), "tier": "A", "kind": KIND, "family": "%s:%s" % (spec["template"], spec["group"]),
+        "id": "a3-%s-%03d" % (spec["template"], n + (V2_ID_BASE if spec["template"] in V2_CHANGED else 0)), "tier": "A", "kind": KIND, "family": "%s:%s" % (spec["template"], spec["group"]),
         "domain": spec["domain"], "question": question, "checks": checks, "reference": block(ref),
         "sources": [{"catalogue": "pinned_text", "entry": spec["template"], "fact": a["phrase"], "file": a["file"],
                      "line": a["line"]} for a in spec["anchors"]] + [
@@ -363,6 +392,7 @@ def build_item(spec, cats, chash, seed, n, rng, corpus, stats):
         "template": spec["template"], "anchored": True, "failure_class": "safe_order", "exposed": False,
         "catalogue_hash": chash, "seed": seed, "generator": VERSION, "dedup": dd, "chance": 0.0,
         "perturbed_reference": perts[0][1], "perturbed_violates": oi,
+        **({"note": spec["note"]} if spec.get("note") else {}),
         "perturbed": [{"label": lab, "text": txt, "violates": oi, "check": "cmd_order"} for lab, txt in perts],
     }
     # the reference passes every check; every perturbed order fails cmd_order

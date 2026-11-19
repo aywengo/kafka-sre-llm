@@ -21,6 +21,14 @@ Truth, no model (D6):
     line. Python items are therefore marked "not_in_index": true and reported as their own subset.
   - Java templates never touch RocksDB types: a `java_template_rocksdb` result is a failure of the build.
 
+Version 2 (WP1c fix round, after the independent review): (1) each required Java call takes a list of accepted
+signatures ("signatures"): every overload that does the same job, each one cited (Javadoc line of the pinned Kafka source
+or the Java catalogue) and asserted to exist in the catalogue; try-with-resources counts as the `close()` call (ListCalls
+lists it); in Python `callback` is accepted as the alias of `on_delivery`. (2) A wrong_signature perturbation is a real fault
+(a call the 4.3.2 API does not have, asserted absent from the catalogue and cited), never a correct overload. (3) Java items
+whose facts are only in the Javadoc under raw_catalogue/ are `not_in_index`, decided per item from where its anchors are
+(tests check it against the frozen index). (4) The format note no longer says to declare the concrete class. Ids carry `-v2-`.
+
 Perturbed programs, one of each kind per item (`perturbed`: kind, text, check, fails):
   wrong_signature   a call to an overload (or arity) that the item does not accept (Python: an unknown keyword or too
                     many positional arguments)
@@ -42,6 +50,7 @@ exactly one Java item; Java items without a Python restatement have a pair of th
 Deterministic: one random stream per template (Random("seed|template"); the catalogue hash is recorded, not seeded), no set iteration.
 `generate()` returns the items and writes no file. Run: .venv/bin/python scripts/eval2_items_a3_client.py
 """
+import copy
 import json
 import random
 import re
@@ -57,14 +66,13 @@ import eval2_score as sc  # noqa: E402
 from kafka_sre_rag import catalogue_a3  # noqa: E402
 from kafka_sre_rag.catalogue import Catalogues, catalogue_hash, default_dir  # noqa: E402
 
-VERSION = "eval2_items_a3_client/1"
+VERSION = "eval2_items_a3_client/2"
 DEFAULT_SEED = "m4-a3-1"
 KIND = "client_code"
 PLAN = {"java": 18, "python": 6}
 
 JAVA_NOTE = ("Give one complete Java source file in a single ```java code block. It must compile against kafka-clients "
-             "4.3.2 (and kafka-streams 4.3.2 where Streams is used) with no other library. Declare the client with its "
-             "concrete class (KafkaConsumer, KafkaProducer, Admin).")
+             "4.3.2 (and kafka-streams 4.3.2 where Streams is used) with no other library.")
 PY_NOTE = ("Give one complete Python script in a single ```python code block, using only the confluent-kafka package.")
 
 KAFKA = "raw_catalogue/apache-kafka-api/clients/src/main/java/org/apache/kafka"
@@ -72,6 +80,8 @@ KC = KAFKA + "/clients/consumer/KafkaConsumer.java"
 KP = KAFKA + "/clients/producer/KafkaProducer.java"
 KA = KAFKA + "/clients/admin/Admin.java"
 KT = KAFKA + "/common/config/TopicConfig.java"
+KSB = "raw_catalogue/apache-kafka-api/streams/src/main/java/org/apache/kafka/streams/StreamsBuilder.java"
+KST = "raw_catalogue/apache-kafka-api/streams/src/main/java/org/apache/kafka/streams/kstream/KStream.java"
 CFG_STREAMS = "raw/apache-kafka/docs/streams/developer-guide/config-streams.md"
 CORE_STREAMS = "raw/apache-kafka/docs/streams/core-concepts.md"
 TUTORIAL = "raw/apache-kafka/docs/streams/tutorial.md"
@@ -84,6 +94,10 @@ KS = "org.apache.kafka.streams.kstream.KStream"
 KGS = "org.apache.kafka.streams.kstream.KGroupedStream"
 KT_ = "org.apache.kafka.streams.kstream.KTable"
 STREAMS = "org.apache.kafka.streams.KafkaStreams"
+COLL, DUR, MAP, LISTENER = "java.util.Collection", "java.time.Duration", "java.util.Map", P + "consumer.ConsumerRebalanceListener"
+CREATE_OPTS, KFUTURE = P + "admin.CreateTopicsOptions", "org.apache.kafka.common.KafkaFuture"
+CONSUMED, PRODUCED = "org.apache.kafka.streams.kstream.Consumed", "org.apache.kafka.streams.kstream.Produced"
+OCB, RECORD, CALLBACK = P + "consumer.OffsetCommitCallback", P + "producer.ProducerRecord", P + "producer.Callback"
 BAD_JAVA_IMPORT = "org.apache.kafka.clients.ClientFactory"        # not in java_api.json (asserted)
 BAD_PY_NAME = "ConsumerFactory"                                      # not in python_symbols.json (asserted)
 
@@ -93,6 +107,10 @@ def E(cls, method, params=None):
     if params is not None:
         e["params"] = params
     return e
+
+
+def S(cls, method, *sigs):               # an entry that accepts any of several overloads that do the same job
+    return {"class": cls, "method": method, "signatures": [list(x) for x in sigs]}
 
 
 def O(cls, method):                      # an entry of an order list: no signature, only the order matters
@@ -461,6 +479,38 @@ CONSUMER_ANCHORS = [
     anchor(KC, 237, "consumer.commitSync();", "commitSync after the polled records are handled"),
 ]
 
+# Overloads that do the same job (accepted by the checks), each cited: the line of the pinned Kafka source that declares it.
+OV_SUBSCRIBE = [anchor(KC, 726, "public void subscribe(Collection<String> topics) {", "subscribe(Collection) subscribes to the topics"),
+                anchor(KC, 700, "public void subscribe(Collection<String> topics, ConsumerRebalanceListener listener) {",
+                       "subscribe(Collection, ConsumerRebalanceListener) subscribes to the same topics and registers a listener")]
+OV_POLL = [anchor(KC, 904, "public ConsumerRecords<K, V> poll(final Duration timeout) {", "poll(Duration) is the only poll in 4.3.2")]
+OV_COMMIT_SYNC = [anchor(KC, 950, "public void commitSync() {", "commitSync() commits the offsets of the last poll, blocking"),
+                  anchor(KC, 995, "public void commitSync(Duration timeout) {", "commitSync(Duration) is the same blocking commit with a timeout"),
+                  anchor(KC, 1049, "public void commitSync(final Map<TopicPartition, OffsetAndMetadata> offsets) {",
+                         "commitSync(Map) is a blocking commit of the given offsets"),
+                  anchor(KC, 1103, "public void commitSync(final Map<TopicPartition, OffsetAndMetadata> offsets, final Duration timeout) {",
+                         "commitSync(Map, Duration) is a blocking commit of the given offsets with a timeout")]
+OV_COMMIT_ASYNC_CB = [anchor(KC, 1138, "public void commitAsync(OffsetCommitCallback callback) {", "commitAsync(callback) commits the offsets of the last poll without blocking"),
+                      anchor(KC, 1169, "public void commitAsync(final Map<TopicPartition, OffsetAndMetadata> offsets, OffsetCommitCallback callback) {",
+                             "commitAsync(Map, callback) commits the given offsets without blocking")]
+OV_COMMIT_ASYNC = [anchor(KC, 1114, "public void commitAsync() {", "commitAsync() commits the offsets of the last poll without blocking")] + OV_COMMIT_ASYNC_CB
+OV_SEND = [anchor(KP, 840, "public Future<RecordMetadata> send(ProducerRecord<K, V> record) {", "send(record) sends the record"),
+           anchor(KP, 836, "Equivalent to <code>send(record, null)</code>", "send(record) is send(record, null)"),
+           anchor(KP, 959, "public Future<RecordMetadata> send(ProducerRecord<K, V> record, Callback callback) {", "send(record, callback) sends the record and calls back")]
+OV_CREATE_TOPICS = [anchor(KA, 180, "default CreateTopicsResult createTopics(Collection<NewTopic> newTopics) {", "createTopics(Collection) creates the topics"),
+                    anchor(KA, 172, "This is a convenience method for {@link #createTopics(Collection, CreateTopicsOptions)} with default options.",
+                           "createTopics(Collection) is createTopics(Collection, CreateTopicsOptions) with default options"),
+                    anchor(KA, 201, "CreateTopicsResult createTopics(Collection<NewTopic> newTopics, CreateTopicsOptions options);",
+                           "createTopics(Collection, CreateTopicsOptions) creates the topics with options")]
+OV_ADMIN_CLOSE = [anchor(KA, 153, "default void close() {", "close() releases the admin client"),
+                  anchor(KA, 167, "void close(Duration timeout);", "close(Duration) releases the admin client, waiting at most the timeout")]
+OV_STREAM = [anchor(KSB, 118, "KStream<K, V> stream(final String topic) {", "stream(String) reads the topic"),
+             anchor(KSB, 135, "KStream<K, V> stream(final String topic,", "stream(String, Consumed) reads the topic with explicit serdes"),
+             anchor(KSB, 154, "KStream<K, V> stream(final Collection<String> topics) {", "stream(Collection) reads the topics"),
+             anchor(KSB, 173, "KStream<K, V> stream(final Collection<String> topics,", "stream(Collection, Consumed) reads the topics with explicit serdes")]
+OV_TO = [anchor(KST, 541, "void to(final String topic);", "to(String) writes the stream to the topic"),
+         anchor(KST, 546, "void to(final String topic,", "to(String, Produced) writes the stream to the topic with explicit serdes")]
+
 # Each template: lang, source, domain, tasks (3 phrasings use the same {task}), variants, checks, perturbations.
 # `ops` are applied to the filled source: ("replace", old, new) | ("remove", substring) | ("move_before"|"move_after", moved, anchor)
 JAVA_TEMPLATES = [
@@ -470,14 +520,18 @@ JAVA_TEMPLATES = [
      "variants": [("orders", {"cls": "OrderReader", "topic": "orders", "group": "billing", "bs": "kafka:9092"}),
                   ("clicks", {"cls": "ClickConsumer", "topic": "page-clicks", "group": "analytics", "bs": "broker-1:9093"})],
      "anchors": CONSUMER_ANCHORS,
-     "calls": [E(CONSUMER, "subscribe", ["java.util.Collection"]), E(CONSUMER, "poll", ["java.time.Duration"]),
-               E(CONSUMER, "commitSync", [])],
+     "calls": [S(CONSUMER, "subscribe", [COLL], [COLL, LISTENER]), E(CONSUMER, "poll", [DUR]),
+               S(CONSUMER, "commitSync", [], [DUR], [MAP], [MAP, DUR])],
+     "overloads": OV_SUBSCRIBE + OV_POLL + OV_COMMIT_SYNC,
      "order": [O(CONSUMER, "subscribe"), O(CONSUMER, "poll"), O(CONSUMER, "commitSync")],
      "config": {"keys": ["bootstrap.servers=%bs", "group.id=%group", "enable.auto.commit=false"], "scope": ["consumer"]},
      "probe": ("ConsumerConfig", "ENABLE_AUTO_COMMIT_CONFIG"),
-     "ops": {"wrong_signature": ("replace", "consumer.commitSync();", "consumer.commitSync(Duration.ofSeconds(5));"),
+     "ops": {"wrong_signature": ("replace", "consumer.poll(Duration.ofMillis(100))", "consumer.poll(100)"),
              "missing_call": ("remove", "consumer.commitSync();"),
-             "wrong_order": ("move_before", "consumer.commitSync();", "ConsumerRecords<String, String> records")}},
+             "wrong_order": ("move_before", "consumer.commitSync();", "ConsumerRecords<String, String> records")},
+     # poll(long) was removed: KafkaConsumer.java:904 declares only poll(Duration), the catalogue lists only poll(Duration)
+     "faults": {"wrong_signature": ("consumer.poll(long): not in the 4.3.2 API", [(CONSUMER, "poll", ["long"])], OV_POLL)},
+     "fails": {"wrong_signature": ["java_call_order", "java_calls", "java_compiles"]}},
     {"template": "client_consumer_commit_async", "source": JAVA_ASYNC, "domain": "kafka",
      "task": ("consumes the topic `{topic}` as consumer group `{group}` from `{bs}` with auto commit turned off. After each "
               "poll it processes the records and then commits the offsets asynchronously, passing a callback that reports "
@@ -487,8 +541,9 @@ JAVA_TEMPLATES = [
      "anchors": CONSUMER_ANCHORS[:4] + [
          anchor(KC, 1125, "This is an asynchronous call and will not block. Any errors encountered are either passed to the callback",
                 "commitAsync reports errors only through its callback")],
-     "calls": [E(CONSUMER, "subscribe", ["java.util.Collection"]), E(CONSUMER, "poll", ["java.time.Duration"]),
-               E(CONSUMER, "commitAsync", [P + "consumer.OffsetCommitCallback"])],
+     "calls": [S(CONSUMER, "subscribe", [COLL], [COLL, LISTENER]), E(CONSUMER, "poll", [DUR]),
+               S(CONSUMER, "commitAsync", [OCB], [MAP, OCB])],
+     "overloads": OV_SUBSCRIBE + OV_POLL + OV_COMMIT_ASYNC_CB,
      "order": [O(CONSUMER, "subscribe"), O(CONSUMER, "poll"), O(CONSUMER, "commitAsync")],
      "config": {"keys": ["bootstrap.servers=%bs", "group.id=%group", "enable.auto.commit=false"], "scope": ["consumer"]},
      "probe": ("ConsumerConfig", "ENABLE_AUTO_COMMIT_CONFIG"),
@@ -532,8 +587,10 @@ JAVA_TEMPLATES = [
                 "the commit goes into onPartitionsRevoked"),
          anchor(KC, 1125, "This is an asynchronous call and will not block. Any errors encountered are either passed to the callback",
                 "commitAsync in the loop does not block")],
-     "calls": [E(CONSUMER, "subscribe", ["java.util.Collection", P + "consumer.ConsumerRebalanceListener"]),
-               E(CONSUMER, "poll", ["java.time.Duration"]), E(CONSUMER, "commitSync", []), E(CONSUMER, "commitAsync", [])],
+     "calls": [E(CONSUMER, "subscribe", [COLL, LISTENER]),
+               E(CONSUMER, "poll", [DUR]), S(CONSUMER, "commitSync", [], [DUR], [MAP], [MAP, DUR]),
+               S(CONSUMER, "commitAsync", [], [OCB], [MAP, OCB])],
+     "overloads": OV_POLL + OV_COMMIT_SYNC + OV_COMMIT_ASYNC,
      "order": [O(CONSUMER, "subscribe"), O(CONSUMER, "poll"), O(CONSUMER, "commitAsync")],
      "config": {"keys": ["bootstrap.servers=%bs", "group.id=%group", "enable.auto.commit=false"], "scope": ["consumer"]},
      "probe": ("ConsumerConfig", "ENABLE_AUTO_COMMIT_CONFIG"),
@@ -553,14 +610,19 @@ JAVA_TEMPLATES = [
                  anchor(KP, 167, "default to <code>all</code>", "idempotence goes with acks=all"),
                  anchor(KP, 1178, "callbacks passed to {@link #send(ProducerRecord,Callback)} have been called",
                         "flush completes the earlier sends")],
-     "calls": [E(PRODUCER, "send", [P + "producer.ProducerRecord"]), E(PRODUCER, "flush", [])],
+     "calls": [S(PRODUCER, "send", [RECORD], [RECORD, CALLBACK]), E(PRODUCER, "flush", [])],
+     "overloads": OV_SEND,
      "order": [O(PRODUCER, "send"), O(PRODUCER, "flush")],
      "config": {"keys": ["bootstrap.servers=%bs", "enable.idempotence=true", "acks=all"], "scope": ["producer"]},
      "probe": ("ProducerConfig", "ENABLE_IDEMPOTENCE_CONFIG"),
      "ops": {"wrong_signature": ("replace", 'producer.send(new ProducerRecord<>("%topic", "key-" + i, "value-" + i));',
-                                 'producer.send(new ProducerRecord<>("%topic", "key-" + i, "value-" + i), null);'),
+                                 'producer.send("%topic", "key-" + i, "value-" + i);'),
              "missing_call": ("remove", "producer.flush();"),
-             "wrong_order": ("move_before", "producer.flush();", "for (int i = 0;")}},
+             "wrong_order": ("move_before", "producer.flush();", "for (int i = 0;")},
+     # send takes a ProducerRecord (KafkaProducer.java:840, 959), never topic, key and value
+     "faults": {"wrong_signature": ("producer.send(String, String, String): no such overload",
+                                    [(PRODUCER, "send", ["java.lang.String", "java.lang.String", "java.lang.String"])], OV_SEND)},
+     "fails": {"wrong_signature": ["java_call_order", "java_calls", "java_compiles"]}},
     {"template": "client_producer_transaction", "source": JAVA_TXN, "domain": "kafka",
      "task": ("sends {n} records to the topic `{topic}` on `{bs}` in one transaction with the transactional id `{txid}`: it "
               "initialises transactions once, begins the transaction, sends the records and commits; when a KafkaException "
@@ -576,18 +638,21 @@ JAVA_TEMPLATES = [
                  anchor(KP, 635, "Needs to be called before any other methods when the {@code transactional.id} is set",
                         "initTransactions before any other method")],
      "calls": [E(PRODUCER, "initTransactions", []), E(PRODUCER, "beginTransaction", []),
-               E(PRODUCER, "send", [P + "producer.ProducerRecord"]), E(PRODUCER, "commitTransaction", []),
+               S(PRODUCER, "send", [RECORD], [RECORD, CALLBACK]), E(PRODUCER, "commitTransaction", []),
                E(PRODUCER, "abortTransaction", [])],
+     "overloads": OV_SEND,
      "order": [O(PRODUCER, "initTransactions"), O(PRODUCER, "beginTransaction"), O(PRODUCER, "send"),
                O(PRODUCER, "commitTransaction")],
      "config": {"keys": ["bootstrap.servers=%bs", "transactional.id=%txid"], "forbidden": {"enable.idempotence": "false"},
                 "scope": ["producer"]},
      "probe": ("ProducerConfig", "TRANSACTIONAL_ID_CONFIG"),
      "ops": {"wrong_signature": ("replace", 'producer.send(new ProducerRecord<>("%topic", "key-" + i, "value-" + i));',
-                                 'producer.send(new ProducerRecord<>("%topic", "key-" + i, "value-" + i), null);'),
+                                 'producer.send("%topic", "key-" + i, "value-" + i);'),
              "missing_call": ("remove", "producer.abortTransaction();"),
              "wrong_order": ("move_after", "producer.initTransactions();", "producer.beginTransaction();")},
-     "fails": {"missing_call": ["java_calls"]}},                   # abortTransaction is not in the order list
+     "faults": {"wrong_signature": ("producer.send(String, String, String): no such overload",
+                                    [(PRODUCER, "send", ["java.lang.String", "java.lang.String", "java.lang.String"])], OV_SEND)},
+     "fails": {"missing_call": ["java_calls"], "wrong_signature": ["java_call_order", "java_calls", "java_compiles"]}},                   # abortTransaction is not in the order list
     {"template": "client_producer_callback", "source": JAVA_CALLBACK, "domain": "kafka",
      "task": ("sends {n} records to the topic `{topic}` on `{bs}` asynchronously, passing a callback to every send that "
               "reports a failed delivery, and flushes the producer before it exits."),
@@ -618,16 +683,19 @@ JAVA_TEMPLATES = [
                  anchor(KA, 90, ".configs(Collections.singletonMap(TopicConfig.CLEANUP_POLICY_CONFIG", "topic configs go through NewTopic.configs"),
                  anchor(KT, 75, 'RETENTION_MS_CONFIG = "retention.ms"', "retention.ms is a topic config"),
                  anchor(KA, 95, "Call get() to block until the topic creation is complete or has failed", "get() waits for the result")],
-     "calls": [E(ADMIN, "createTopics", ["java.util.Collection"]), E(NEWTOPIC, "configs", ["java.util.Map"]),
-               E("org.apache.kafka.common.KafkaFuture", "get", []), E(ADMIN, "close", [])],
+     "calls": [S(ADMIN, "createTopics", [COLL], [COLL, CREATE_OPTS]), E(NEWTOPIC, "configs", [MAP]),
+               S(KFUTURE, "get", [], ["long", "java.util.concurrent.TimeUnit"]), S(ADMIN, "close", [], [DUR])],
+     "overloads": OV_CREATE_TOPICS + OV_ADMIN_CLOSE,
      "order": [O(NEWTOPIC, "configs"), O(ADMIN, "createTopics"), O("org.apache.kafka.common.KafkaFuture", "get"), O(ADMIN, "close")],
      "config": {"keys": ["bootstrap.servers=%bs", "retention.ms=%ret", "cleanup.policy=%cleanup"], "scope": ["admin", "topic"]},
      "probe": ("TopicConfig", "RETENTION_MS_CONFIG"),
-     "ops": {"wrong_signature": ("replace", "admin.createTopics(List.of(topic));",
-                                 "admin.createTopics(List.of(topic), new org.apache.kafka.clients.admin.CreateTopicsOptions());"),
+     "ops": {"wrong_signature": ("replace", "admin.createTopics(List.of(topic));", "admin.createTopics(topic);"),
              "missing_call": ("remove", "topic.configs("),
              "wrong_order": ("move_before", "admin.close();", "result.all().get();")},
-     "fails": {"missing_call": ["java_call_order", "java_calls", "java_config"]}},   # the removed line also carries both topic configs
+     # createTopics takes a Collection of NewTopic (Admin.java:180, 201), not one NewTopic
+     "faults": {"wrong_signature": ("admin.createTopics(NewTopic): no such overload", [(ADMIN, "createTopics", [NEWTOPIC])], OV_CREATE_TOPICS)},
+     "fails": {"missing_call": ["java_call_order", "java_calls", "java_config"],
+               "wrong_signature": ["java_call_order", "java_calls", "java_compiles"]}},   # the removed line also carries both topic configs
     {"template": "client_streams_uppercase", "source": JAVA_STREAMS, "domain": "streams",
      "task": ("converts text with Kafka Streams: every value read from the topic `{in}` is written to `{out}` in upper "
               "case, keys unchanged. Application id `{appid}`, brokers `{bs}`{eos_text}. It starts the application."),
@@ -645,15 +713,22 @@ JAVA_TEMPLATES = [
                  anchor(TUTORIAL, 125, "final Topology topology = builder.build();", "the topology is built from the builder"),
                  anchor(TUTORIAL, 149, "final KafkaStreams streams = new KafkaStreams(topology, props);", "KafkaStreams from topology and config"),
                  anchor(TUTORIAL, 151, "By calling its `start()` function we can trigger the execution", "start() runs the application")],
-     "calls": [E(SB, "stream", ["java.lang.String"]), E(KS, "mapValues"), E(KS, "to", ["java.lang.String"]), E(STREAMS, "<init>"),
+     "calls": [S(SB, "stream", ["java.lang.String"], ["java.lang.String", CONSUMED], [COLL], [COLL, CONSUMED]), E(KS, "mapValues"),
+               S(KS, "to", ["java.lang.String"], ["java.lang.String", PRODUCED]), E(STREAMS, "<init>"),
                E(STREAMS, "start", [])],
+     "overloads": OV_STREAM + OV_TO,
      "order": [O(SB, "stream"), O(KS, "mapValues"), O(KS, "to"), O(STREAMS, "<init>"), O(STREAMS, "start")],
      "config": {"keys": ["application.id=%appid", "bootstrap.servers=%bs"], "scope": ["streams"],
                 "variant_keys": {"eos": ["processing.guarantee=exactly_once_v2"]}},
      "probe": ("StreamsConfig", "APPLICATION_ID_CONFIG"),
-     "ops": {"wrong_signature": ("replace", '.to("%out");', '.to("%out", org.apache.kafka.streams.kstream.Produced.with(Serdes.String(), Serdes.String()));'),
+     "ops": {"wrong_signature": ("replace", '.to("%out");', '.to("%out", Serdes.String(), Serdes.String());'),
              "missing_call": ("remove", "streams.start();"),
-             "wrong_order": ("move_after", "lines.mapValues(", "streams.start();")}},
+             "wrong_order": ("move_after", "lines.mapValues(", "streams.start();")},
+     # to(topic, keySerde, valueSerde) of old tutorials is gone: KStream.java:541-566 declares four overloads, none with two Serdes
+     "faults": {"wrong_signature": ("KStream.to(String, Serde, Serde): no such overload",
+                                    [(KS, "to", ["java.lang.String", "org.apache.kafka.common.serialization.Serde",
+                                                 "org.apache.kafka.common.serialization.Serde"])], OV_TO)},
+     "fails": {"wrong_signature": ["java_call_order", "java_calls", "java_compiles"]}},
 ]
 
 PY_TEMPLATES = [
@@ -686,7 +761,7 @@ PY_TEMPLATES = [
                  anchor(KP, 167, "default to <code>all</code>", "idempotence goes with acks=all"),
                  anchor(KP, 1178, "callbacks passed to {@link #send(ProducerRecord,Callback)} have been called",
                         "flush completes the earlier sends and their callbacks")],
-     "calls": [{"name": "produce", "class": "Producer", "kwargs": ["on_delivery"]}, {"name": "flush", "class": "Producer"}],
+     "calls": [{"name": "produce", "class": "Producer", "kwargs": [["on_delivery", "callback"]]}, {"name": "flush", "class": "Producer"}],
      "order": [{"name": "produce", "class": "Producer"}, {"name": "flush", "class": "Producer"}],
      "require_import": ["Producer"],
      "config": {"keys": ["bootstrap.servers=%bs", "enable.idempotence=true", "acks=all"]},
@@ -796,6 +871,11 @@ def parse_kv(s, params):
     return k, v
 
 
+def catalogue_signatures(cls, method):
+    """The erased parameter lists of the overloads of cls.method in the Java catalogue ([] when there is none)."""
+    return [[ck._erase(p) for p in m.get("params", [])] for m in (catalogue_a3.java_methods(cls, method) or [])]
+
+
 def make_checks(tpl, lang, variant_key, params):
     cfg = tpl["config"]
     kv = [parse_kv(s, params) for s in cfg["keys"] + cfg.get("variant_keys", {}).get(variant_key, [])]
@@ -805,13 +885,13 @@ def make_checks(tpl, lang, variant_key, params):
         config["forbidden"] = dict(cfg["forbidden"])
     if lang == "java":
         config["scope"] = list(cfg["scope"])
-        entries = lambda es: [dict(e, method=sub(e["method"], params)) for e in es]  # noqa: E731
+        entries = lambda es: [dict(copy.deepcopy(e), method=sub(e["method"], params)) for e in es]  # noqa: E731
         return [{"type": "java_compiles", "format": True, "timeout": 30},
                 {"type": "java_calls", "required": entries(tpl["calls"])},
                 {"type": "java_call_order", "order": entries(tpl["order"])}, config]
     return [{"type": "py_syntax", "format": True},
             {"type": "py_imports", "require": list(tpl["require_import"])},
-            {"type": "py_calls", "required": [dict(e) for e in tpl["calls"]], "order": [dict(e) for e in tpl["order"]]},
+            {"type": "py_calls", "required": [copy.deepcopy(e) for e in tpl["calls"]], "order": [copy.deepcopy(e) for e in tpl["order"]]},
             config]
 
 
@@ -831,12 +911,20 @@ def probe_mutations(tpl, params):
     return "%s.%s" % (cls, const), "%s.%s" % (cls, bad_const), '"%s"' % typo, value, typo
 
 
+def not_in_index(tpl, lang):
+    """True when the facts the program needs are not in the documentation index: Python (the wheel's symbol list), and Java
+    items whose every cited passage is Javadoc under raw_catalogue/ (the index holds raw/ pages only). A Java item with a
+    cited passage under raw/ (the Streams developer guide) is in the index. tests/test_eval2_items_a3_client.py checks this
+    against the frozen index file item by item."""
+    return lang == "python" or not any(a["file"].startswith("raw/") for a in tpl["anchors"])
+
+
 # ============================================================== one item
 def build_item(tpl, lang, variant_key, params, n, rng, cats, chash, chash_a3, corpus, stats, verify):
     name = tpl["template"]
     fail = lambda why: stats.update(["derivation_failed:%s:%s: %s" % (name, variant_key, why)])  # noqa: E731
     # anchors: every cited phrase is on its cited line
-    for a in tpl["anchors"]:
+    for a in tpl["anchors"] + tpl.get("overloads", []) + [x for f in tpl.get("faults", {}).values() for x in f[2]]:
         ok, why = verify_anchor(a["file"], a["line"], a["phrase"])
         if not ok:
             fail("anchor: " + why)
@@ -850,6 +938,15 @@ def build_item(tpl, lang, variant_key, params, n, rng, cats, chash, chash_a3, co
             if e["method"] != "<init>" and not catalogue_a3.java_methods(e["class"], e["method"]):
                 fail("%s.%s is not in the Java catalogue" % (e["class"], e["method"]))
                 return None
+            for sig in ck.entry_signatures(e) or []:          # every accepted overload exists in the catalogue
+                if [ck._erase(x) for x in sig] not in catalogue_signatures(e["class"], e["method"]):
+                    fail("%s.%s(%s) is not an overload in the Java catalogue" % (e["class"], e["method"], ", ".join(sig)))
+                    return None
+        for kind, (why, absent, _) in tpl.get("faults", {}).items():   # a wrong_signature program is really wrong
+            for cls_, m_, sig in absent:
+                if [ck._erase(x) for x in sig] in catalogue_signatures(cls_, m_):
+                    fail("fault %s: %s.%s(%s) exists in the Java catalogue" % (kind, cls_, m_, ", ".join(sig)))
+                    return None
         scopes = checks[3]["scope"]
         names = ck.java_config_names(scopes + ["common"])
         for k in checks[3]["keys"]:
@@ -911,10 +1008,15 @@ def build_item(tpl, lang, variant_key, params, n, rng, cats, chash, chash_a3, co
                       "violates": next(i for i, c in enumerate(checks) if c["type"] == primary[kind]),
                       "fails": sorted(tpl.get("fails", {}).get(kind, fails[kind]))})
     item = {
-        "id": "a3-%s-%03d" % (name, n), "tier": "A", "kind": KIND, "family": "%s:%s" % (name, variant_key),
+        "id": "a3-%s-v2-%03d" % (name, n), "tier": "A", "kind": KIND, "family": "%s:%s" % (name, variant_key),
         "domain": tpl["domain"], "language": lang, "question": question, "checks": checks, "reference": ref,
         "sources": [{"catalogue": "pinned_text", "entry": name, "fact": a["phrase"], "file": a["file"], "line": a["line"],
                      "requires": a["requires"]} for a in tpl["anchors"]] + [
+                    {"catalogue": "pinned_text", "entry": name, "fact": a["phrase"], "file": a["file"], "line": a["line"],
+                     "requires": "accepted overload: " + a["requires"]} for a in tpl.get("overloads", [])] + [
+                    {"catalogue": "pinned_text", "entry": name, "fact": a["phrase"], "file": a["file"], "line": a["line"],
+                     "requires": "the wrong_signature program is wrong, %s: %s" % (f[0], a["requires"])}
+                    for f in tpl.get("faults", {}).values() for a in f[2]] + [
             ({"catalogue": "java_api", "entry": "kafka-clients 4.3.2, kafka-streams 4.3.2",
               "fact": "every required class, method and *_CONFIG constant resolves in the jars", "file": None, "line": None}
              if lang == "java" else
@@ -923,7 +1025,7 @@ def build_item(tpl, lang, variant_key, params, n, rng, cats, chash, chash_a3, co
               "file": None, "line": None})],
         "versions": {"kafka": "4.3"} if lang == "java" else {"kafka": "4.3", "confluent-kafka": "2.16.1"},
         "template": name, "anchored": True, "failure_class": "client_code", "exposed": False,
-        "not_in_index": lang == "python", "pair": "client:%s:%s" % (tpl.get("pair_with", name), variant_key), "catalogue_hash": chash, "catalogue_hash_a3": chash_a3, "seed": None,
+        "not_in_index": not_in_index(tpl, lang), "pair": "client:%s:%s" % (tpl.get("pair_with", name), variant_key), "catalogue_hash": chash, "catalogue_hash_a3": chash_a3, "seed": None,
         "generator": VERSION, "dedup": dd, "chance": 0.0,
         "perturbed_reference": perts[0]["text"], "perturbed_violates": perts[0]["violates"], "perturbed": perts,
     }

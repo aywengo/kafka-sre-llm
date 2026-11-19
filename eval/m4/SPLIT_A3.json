@@ -9,22 +9,31 @@
   "open": 60
  },
  "exposed_ids": [
-  "a3-client_admin_create_topic-002",
-  "a3-client_consumer_rebalance_listener-001",
-  "a3-nc_deployment-005",
-  "a3-nc_old_version-001",
-  "a3-order_argo_sync-002",
-  "a3-order_cg_reset-001",
-  "a3-size_follower_traffic-001",
-  "a3-size_page_cache-002",
-  "a3-vbw_default_value-003",
-  "a3-vbw_restart_annotation-001"
+  "a3-client_consumer_commit_sync-v2-001",
+  "a3-client_producer_callback-v2-001",
+  "a3-nc_old_version-101",
+  "a3-nc_old_version-108",
+  "a3-order_argo_sync-101",
+  "a3-order_shg_reset-001",
+  "a3-size_disk_rf-001",
+  "a3-size_heartbeat-003",
+  "a3-vbw_min_isr_replicas-v2-001",
+  "a3-vbw_pdb_no_eviction-v2-001"
  ],
- "exposure_seed": "m4-a3-1",
- "generator": "eval2_items_a3/1",
- "generator_commit": "b2fb91dedfaaf9940e48f78eee1c707f5be85f01",
- "grouping": "valid_but_wrong by mechanism (forbidden-key template by resource kind); items with `pair` by it; all other items by their own family",
- "items_sha256": "d425cdada882b81d1124a6dc49d5d43b03ca7af6326882aa9a67e98eaf036ce3",
+ "exposure_seed": "m4-a3-2",
+ "generator": "eval2_items_a3/2",
+ "generator_files_sha256": {
+  "eval2_checks_a3.py": "ac6f1753a3f9975d9ae4774e61a04b40ec64bde065421ffdd7b1e09ccaf36ab9",
+  "eval2_checks_a3_client.py": "c23415784bffeb4d5ac5c30986ad7ca00b8613f0115c4f057dc190d415609a9b",
+  "eval2_items_a3_client.py": "361b0e1302ce76a578dbab99872f76b710e62d78fecb44664cb41037f4347dfa",
+  "eval2_items_a3_gap.py": "69a7b89ef8615dbf1ad23c9003bc685d74d86859d0d0f0c0cc7acdf203da4786",
+  "eval2_items_a3_order.py": "f724910974d1eaea6770cb5e2842164314bf9aa9715e9341e3dbc043e72f4604",
+  "eval2_items_a3_sizing.py": "0ed607a42718dfd74003951b8b78a3fb8ca59bf05fae822a401916488f81d944",
+  "eval2_items_a3_vbw.py": "12db2ca5ec70e5c710001791a93987f48028aca65fc639f1b0a13327795def92",
+  "javacheck/ListCalls.java": "4c4402ebf01d630263de0389fa6d7b0f251c3dcca78b7c1ae6d4da85b46cd967"
+ },
+ "grouping": "items with `pair` by it; all other items by their own family",
+ "items_sha256": "62bbed2411bd2cd5c544841898aa6433ba1455da0d0bffb9f0d067c6b38fa9d8",
  "items_total": 120,
  "kinds_missing": [],
  "outputs": {
@@ -32,13 +41,13 @@
    "items": 60,
    "note": "encrypted with a random salt: the ciphertext differs on every run; the plaintext (jsonl, sort_keys, in the order of the items) is reproduced exactly",
    "path": "eval/hidden/tier_a3.jsonl.enc",
-   "plaintext_sha256": "e246d347c52a7a13987d5acfd2ba6960fceedb76f81af42a324b6bb9048b0914",
-   "sha256": "57155c53f1a8ae463dbc34acf8c16c3897916885a7692423e0d73f00d2d2b6f3"
+   "plaintext_sha256": "36457901cfe8c9b16fce544166e4cb1558ba01023f959b03acc4d0e846000fd7",
+   "sha256": "47865ce06e5fd9b4837f472eb98e870abbed02e591356da9b0ab50e5155262fb"
   },
   "open": {
    "items": 60,
    "path": "eval/m4/open/tier_a3.jsonl",
-   "sha256": "3f160b30fcdb59d3e55e79b86d9a8989e9bbc19011c13e31ed6c4bad35708ea3"
+   "sha256": "0b94c2aeba9e644c6e413d0b26f5faefc105b497f7a9b1b8a52e9412cbff3f6b"
   }
  },
  "per_kind": {
@@ -72,7 +81,12 @@
   "items": 496,
   "items_sha256": "5adc9cb4b555b3e3aea168fd213f86c2939d2fa321799b31514762b4e2cd2f64"
  },
- "rule": "groups on one side (an item and its control together); families with any item exposed:true go open; share per (tier, kind) cell reached with the remaining groups (eval2_items_a3.split_extend, the method of scripts/eval2.py split_families)",
- "seed": 20261118,
- "share": 0.5
+ "replaces": {
+  "generator": "eval2_items_a3/1",
+  "items_sha256": "d425cdada882b81d1124a6dc49d5d43b03ca7af6326882aa9a67e98eaf036ce3"
+ },
+ "rule": "groups on one side (an item and its control, a task and its restatement, by `pair`); groups with any item exposed:true go open; the share per (tier, kind, template) and (tier, kind) cell is reached with the remaining groups (eval2_items_a3.split_extend, the method of scripts/eval2.py split_families with the template as part of the cell)",
+ "seed": 20261119,
+ "share": 0.5,
+ "templates_one_side": []
 }

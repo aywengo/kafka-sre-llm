@@ -12,6 +12,9 @@
 //   {"t":"err","line":L,"msg":"..."}      a compile error (the calls that resolved are still listed)
 //   {"t":"unresolved","line":L,"name":"m"}  a call javac could not resolve
 // Constructors are calls named "<init>" with the class constructed as owner and receiver.
+// A try-with-resources statement closes each resource implicitly: a call "close" with "implicit":true is listed for
+// every resource, after the calls of the try block (resources in reverse order), before any catch or finally block.
+// Its owner is the class that declares the close() the resource type resolves to, its receiver the resource's type.
 import com.sun.source.tree.*;
 import com.sun.source.util.*;
 import javax.lang.model.element.*;
@@ -166,6 +169,36 @@ public class ListCalls {
            .append(",\"params\":").append(ps).append(",\"args\":").append(as).append("}\n");
     }
 
+    // The no-argument close() that a resource of type `t` resolves to (the most specific declaration), or null.
+    static ExecutableElement closeOf(TypeMirror t) {
+        if (t == null || t.getKind() != TypeKind.DECLARED) return null;
+        TypeElement te = (TypeElement) ((DeclaredType) t).asElement();
+        List<ExecutableElement> cands = new ArrayList<>();
+        for (Element m : elements.getAllMembers(te)) {
+            if (m.getKind() == ElementKind.METHOD && m.getSimpleName().contentEquals("close")
+                    && ((ExecutableElement) m).getParameters().isEmpty()) cands.add((ExecutableElement) m);
+        }
+        ExecutableElement best = null;
+        for (ExecutableElement c : cands) {
+            boolean overridden = false;
+            for (ExecutableElement o : cands) {
+                if (o != c && elements.overrides(o, c, te)) { overridden = true; break; }
+            }
+            if (!overridden && (best == null || elements.overrides(c, best, te))) best = c;
+        }
+        return best;
+    }
+
+    static void emitImplicitClose(Tree resource, TypeMirror t) {
+        ExecutableElement m = closeOf(t);
+        if (m == null) return;
+        TypeElement owner = (TypeElement) m.getEnclosingElement();
+        out.append("{\"t\":\"call\",\"seq\":").append(seq++).append(",\"file\":").append(esc(new File(unit.getSourceFile().getName()).getName()))
+           .append(",\"line\":").append(line(resource))
+           .append(",\"owner\":").append(esc(elements.getBinaryName(owner).toString())).append(",\"receiver\":").append(esc(typeName(t)))
+           .append(",\"name\":\"close\",\"params\":[],\"args\":[],\"implicit\":true}\n");
+    }
+
     static String simpleName(ExpressionTree select) {
         if (select instanceof MemberSelectTree) return ((MemberSelectTree) select).getIdentifier().toString();
         if (select instanceof IdentifierTree) return ((IdentifierTree) select).getName().toString();
@@ -196,6 +229,20 @@ public class ListCalls {
                         scan(n.getMethodSelect(), v);     // receiver chain first, then the arguments, then the call
                         scan(n.getArguments(), v);
                         emit(p, n, n.getMethodSelect(), n.getArguments(), false);
+                        return null;
+                    }
+                    @Override public Void visitTry(TryTree n, Void v) {
+                        TreePath p = getCurrentPath();
+                        scan(n.getResources(), v);
+                        scan(n.getBlock(), v);
+                        List<? extends Tree> res = n.getResources();
+                        for (int i = res.size() - 1; i >= 0; i--) {
+                            Tree r = res.get(i);
+                            TypeMirror t = trees.getTypeMirror(new TreePath(p, r));
+                            emitImplicitClose(r, t);
+                        }
+                        scan(n.getCatches(), v);
+                        scan(n.getFinallyBlock(), v);
                         return null;
                     }
                     @Override public Void visitNewClass(NewClassTree n, Void v) {

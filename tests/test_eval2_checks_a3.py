@@ -225,6 +225,15 @@ class PdbTests(Base):
         self.ok(self.chk(3, False), self.pdb('minAvailable: "67%"'))    # ceil(2.01) = 3 must stay
         self.ok(self.chk(10, True), self.pdb('minAvailable: "90%"'))    # 9 stay, 1 may go
 
+    def test_exactly_one_allowed_disruption(self):
+        c = dict(self.chk(3, True), allowed=1)
+        self.ok(c, self.pdb("maxUnavailable: 1"))
+        self.ok(c, self.pdb("minAvailable: 2"))
+        self.bad(c, self.pdb("maxUnavailable: 3"), "expected exactly 1")   # every pod may go at once
+        self.bad(c, self.pdb("maxUnavailable: 2"), "expected exactly 1")
+        self.bad(c, self.pdb("maxUnavailable: 0"), "expected exactly 1")
+        self.bad(c, self.pdb("minAvailable: 0"), "expected exactly 1")
+
     def test_no_verdict_cases_fail(self):
         self.bad(self.chk(3, True), self.pdb("minAvailable: 1\n  maxUnavailable: 1"), "only one")
         self.bad(self.chk(3, True), self.pdb("paused: true"), "neither")
@@ -478,8 +487,47 @@ class DeclineTests(Base):
 
     def test_numbers_of_the_question_are_allowed(self):
         c = {"type": "no_invented_value", "allowed_numbers": ["3.5"]}
-        self.ok(c, "ANSWER: not in my sources\nThe documentation does not cover Kafka 3.5.")
-        self.bad({"type": "no_invented_value"}, "ANSWER: not in my sources\nThe documentation does not cover Kafka 3.5.", "number")
+        self.ok(c, "ANSWER: not in my sources\nThe default in Kafka 3.5 is not covered.")
+        self.bad({"type": "no_invented_value"}, "ANSWER: not in my sources\nThe default in Kafka 3.5 is 3.5.", "number")
+
+    def test_a_decline_may_state_documented_facts_and_a_lookup(self):
+        # WP1c fix F3 (B4, Q3): review rewordings, all correct declines
+        c = {"type": "no_invented_value", "allowed_numbers": ["3.4"], "asked": ["log.retention.hours", "prod-eu1"],
+             "default_numbers": ["168"], "pinned_versions": ["4.1", "4.2", "4.3"],
+             "allowed_identifiers": ["log.retention.hours", "prod-eu1", "quota.consumer.default"]}
+        for t in (
+            "I cannot see the configuration of prod-eu1. The documented default of log.retention.hours is 168 (7 days), but your brokers may override it.\nANSWER: not in my sources",
+            "I do not know which value your cluster uses; check server.properties or run `kafka-configs.sh --bootstrap-server <broker> --entity-type brokers --entity-name 1 --describe --all`.\nANSWER: not in my sources",
+            "That is specific to your deployment. You can read it from a broker:\n\n```bash\nbin/kafka-configs.sh --bootstrap-server <broker> --entity-type brokers --entity-default --describe --all\n```\nANSWER: not in my sources",
+            "My sources cover Kafka 4.3 only, and quota.consumer.default is not in them.\nANSWER: not in my sources",
+            "The pinned 4.1 to 4.3 configuration pages do not list quota.consumer.default, so I cannot give its 3.4 default.\nANSWER: not in my sources",
+        ):
+            self.ok(c, t)
+
+    def test_an_asserted_value_for_the_asked_key_still_fails(self):
+        c = {"type": "no_invented_value", "allowed_numbers": [], "asked": ["log.retention.hours", "prod-eu1"],
+             "default_numbers": ["168"], "pinned_versions": ["4.3"]}
+        self.bad(c, "ANSWER: 72", "answer value")
+        self.bad(c, "prod-eu1 uses 72 hours.\nANSWER: not in my sources", "number")
+        self.bad(c, "The documentation does not cover it, but it is 77.\nANSWER: not in my sources", "number")
+        self.bad(c, "Not covered, but I would expect 72 hours for prod-eu1.\nANSWER: not in my sources", "number")
+        self.bad(c, "Not covered; set `log.retention.hours=72`.\nANSWER: not in my sources", "number")
+        self.bad(c, "```bash\nkafka-configs.sh --alter --add-config log.retention.hours=72\n```\nANSWER: not in my sources", "code block")
+        self.bad(c, "```properties\nlog.retention.hours=72\n```", "code block")
+        self.bad(c, "The default is 168 (7 days) and prod-eu1 sets it to 24.\nANSWER: not in my sources", "number")
+
+    def test_cmd_order_boolean_flag_and_alternative_safe_steps(self):
+        steps = [{"role": "safe", "tool": "argocd", "words": ["app", "sync"], "flags_all": ["--dry-run"], "flags_forbidden": []},
+                 {"role": "safe", "tool": "argocd", "words": ["app", "diff"], "flags_forbidden": []},
+                 {"role": "mutate", "tool": "argocd", "words": ["app", "sync"], "flags_forbidden": ["--dry-run"],
+                  "flags_forbidden_true": ["--prune"]}]
+        c = {"type": "cmd_order", "steps": steps}
+        self.ok(c, "```bash\nargocd app diff web\nargocd app sync web\n```")
+        self.ok(c, "```bash\nargocd app diff web --exit-code=false\nargocd app sync web --prune=false\n```")
+        self.ok(c, "```bash\nargocd app sync web --dry-run\nargocd app sync web\n```")
+        self.bad(c, "```bash\nargocd app diff web\nargocd app sync web --prune\n```", "no mutating line")
+        self.bad(c, "```bash\nargocd app sync web --prune=true\n```", "no mutating line")
+        self.bad(c, "```bash\nargocd app sync web\nargocd app diff web\n```", "no safe line")
 
     def test_unknown_identifier(self):
         # fixture catalogue: kafka_config.json is complete for these scopes, a made-up key of a known prefix is unknown

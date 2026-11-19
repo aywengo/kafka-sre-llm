@@ -313,6 +313,129 @@ public class U {
         self.assertFalse(a3.java_is_subtype(KC, "org.apache.kafka.clients.producer.Producer"))
 
 
+class EntrySignatureTests(unittest.TestCase):
+    """WP1c fix round, B1: an entry accepts any of several overloads ("signatures"); "params" still works alone."""
+
+    def test_entry_signatures(self):
+        self.assertIsNone(cc.entry_signatures({"class": KC, "method": "poll"}))
+        self.assertEqual(cc.entry_signatures({"params": []}), [[]])
+        self.assertEqual(cc.entry_signatures({"signatures": [[], ["java.time.Duration"]]}), [[], ["java.time.Duration"]])
+        self.assertEqual(cc.entry_signatures({"params": [], "signatures": [["java.time.Duration"]]}), [[], ["java.time.Duration"]])
+
+    def test_match_on_any_signature_only(self):
+        call = {"owner": KC, "receiver": KC, "name": "commitSync", "params": ["java.time.Duration"]}
+        self.assertTrue(cc._entry_matches({"class": KC, "method": "commitSync", "signatures": [[], ["java.time.Duration"]]}, call))
+        self.assertFalse(cc._entry_matches({"class": KC, "method": "commitSync", "signatures": [[], ["java.util.Map"]]}, call))
+        self.assertTrue(cc._entry_matches({"class": KC, "method": "commitSync", "signatures": []}, dict(call, params=["x"])))  # no list: any
+        self.assertTrue(cc._entry_matches({"class": KC, "method": "commitSync", "params": ["java.time.Duration"]}, call))
+
+    def test_description_lists_the_alternatives(self):
+        d = cc._describe({"class": KC, "method": "commitSync", "signatures": [[], ["java.time.Duration"]]})
+        self.assertEqual(d, "KafkaConsumer.commitSync( | Duration)")
+
+
+@unittest.skipUnless(HAVE_JAVA, "javac, java or the pinned jars are missing")
+class JavaOverloadAndCloseTests(unittest.TestCase):
+    SIGS = {"class": KC, "method": "commitSync", "signatures": [[], ["java.time.Duration"],
+                                                                   ["java.util.Map"], ["java.util.Map", "java.time.Duration"]]}
+
+    def test_every_listed_overload_passes(self):
+        for call in ("consumer.commitSync();", "consumer.commitSync(Duration.ofSeconds(5));", "consumer.commitSync(java.util.Map.of());",
+                     "consumer.commitSync(java.util.Map.of(), Duration.ofSeconds(5));"):
+            ok, d = cc.check_java_calls({"required": [POLL, self.SIGS]}, jb(CONSUMER.replace("consumer.commitSync();", call)), {})
+            self.assertTrue(ok, (call, d))
+
+    def test_an_overload_not_listed_or_not_in_the_api_fails(self):
+        ok, d = cc.check_java_calls({"required": [POLL, dict(self.SIGS, signatures=[[], ["java.util.Map"]])]},
+                                    jb(CONSUMER.replace("consumer.commitSync();", "consumer.commitSync(Duration.ofSeconds(5));")), {})
+        self.assertFalse(ok)
+        ok, d = cc.check_java_calls({"required": [POLL, self.SIGS]}, jb(CONSUMER.replace("Duration.ofMillis(200)", "200")), {})
+        self.assertFalse(ok)                                  # poll(long) is not in the 4.3.2 API
+        self.assertIn("could not resolve", d)
+
+    def test_try_with_resources_is_a_close_call(self):
+        close = {"class": KC, "method": "close", "params": []}
+        ok, d = cc.check_java_calls({"required": [POLL, close]}, jb(CONSUMER), {})
+        self.assertTrue(ok, d)
+        info, why = cc.list_calls(jb(CONSUMER))
+        self.assertIsNone(why)
+        implicit = [c for c in info["calls"] if c.get("implicit")]
+        self.assertEqual([(c["name"], c["owner"], c["params"]) for c in implicit], [("close", KC, [])])
+        no_close = CONSUMER.replace("try (KafkaConsumer<String, String> consumer = new KafkaConsumer<>(props)) {",
+                                    "{ KafkaConsumer<String, String> consumer = new KafkaConsumer<>(props);").replace(
+                                        "while (true) {", "for (int i = 0; i < 3; i++) {")
+        ok, d = cc.check_java_calls({"required": [POLL, close]}, jb(no_close), {})
+        self.assertFalse(ok)
+        self.assertIn("close", d)
+        ok, d = cc.check_java_calls({"required": [POLL, close]}, jb(no_close.replace("consumer.commitSync();", "consumer.commitSync();\n consumer.close();")), {})
+        self.assertTrue(ok, d)
+
+    def test_the_implicit_close_comes_after_the_body_and_before_the_catch_and_finally(self):
+        code = """
+import org.apache.kafka.clients.admin.Admin;
+import java.util.Properties;
+public class A {
+    public static void main(String[] args) throws Exception {
+        try (Admin admin = Admin.create(new Properties())) {
+            admin.listTopics();
+        } catch (RuntimeException e) {
+            System.out.println(e.getMessage());
+        } finally {
+            System.out.println("done");
+        }
+    }
+}
+"""
+        info, why = cc.list_calls(jb(code))
+        self.assertIsNone(why)
+        names = [(c["name"], bool(c.get("implicit"))) for c in info["calls"] if c["name"] in ("create", "listTopics", "close", "getMessage", "println")]
+        self.assertEqual(names, [("create", False), ("listTopics", False), ("close", True), ("getMessage", False), ("println", False),
+                                 ("println", False)])
+        self.assertLess([n for n, _ in names].index("listTopics"), [n for n, _ in names].index("close"))
+        self.assertLess([n for n, _ in names].index("close"), [n for n, _ in names].index("getMessage"))
+        ok, d = cc.check_java_call_order({"order": [{"class": "org.apache.kafka.clients.admin.Admin", "method": "listTopics"},
+                                                    {"class": "org.apache.kafka.clients.admin.Admin", "method": "close"}]}, jb(code), {})
+        self.assertTrue(ok, d)
+
+    def test_two_resources_close_in_reverse_order_and_an_interface_typed_resource_matches(self):
+        code = """
+import org.apache.kafka.clients.admin.Admin;
+import org.apache.kafka.clients.consumer.Consumer;
+import org.apache.kafka.clients.consumer.KafkaConsumer;
+import java.util.Properties;
+public class A {
+    public static void main(String[] args) {
+        Properties p = new Properties();
+        try (Admin admin = Admin.create(p); Consumer<String, String> consumer = new KafkaConsumer<>(p)) {
+            System.out.println(admin);
+        }
+    }
+}
+"""
+        info, why = cc.list_calls(jb(code))
+        self.assertIsNone(why)
+        implicit = [c for c in info["calls"] if c.get("implicit")]
+        self.assertEqual([c["receiver"].rsplit(".", 1)[-1] for c in implicit], ["Consumer", "Admin"])
+        self.assertTrue(cc.check_java_calls({"required": [{"class": KC, "method": "close", "params": []}]}, jb(code), {})[0])
+
+    def test_a_resource_given_as_a_variable_is_closed_too(self):
+        code = """
+import org.apache.kafka.clients.admin.Admin;
+import java.util.Properties;
+public class A {
+    public static void main(String[] args) {
+        Admin admin = Admin.create(new Properties());
+        try (admin) {
+            System.out.println(admin);
+        }
+    }
+}
+"""
+        info, why = cc.list_calls(jb(code))
+        self.assertIsNone(why)
+        self.assertEqual([c["name"] for c in info["calls"] if c.get("implicit")], ["close"])
+
+
 @unittest.skipUnless(HAVE_JAVA, "javac, java or the pinned jars are missing")
 class JavaCallOrderTests(unittest.TestCase):
     def test_poll_before_commit_passes(self):
@@ -593,6 +716,52 @@ class PythonFixtureTests(unittest.TestCase):
 
 
 @unittest.skipUnless(HAVE_PYSYM, "python_symbols.json not built")
+class PythonCallbackAliasTests(unittest.TestCase):
+    """WP1c fix round, B1: `callback` is accepted as the alias of `on_delivery` (python_symbols.json lists both)."""
+    ALIAS = {"required": [{"name": "produce", "class": "Producer", "kwargs": [["on_delivery", "callback"]]}]}
+    CODE = "from confluent_kafka import Producer\np = Producer({})\np.produce('t', value='v', %s=print)\n"
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        fix = json.loads(json.dumps(FIX))
+        fix["classes"]["confluent_kafka.Producer"]["methods"]["produce"]["params"].append("on_delivery")   # as in the wheel
+        (Path(cls.tmp.name) / "python_symbols.json").write_text(json.dumps(fix))
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def run_check(self, spec, code):
+        return cc.check_py_calls(dict(spec, catalogues_a3=self.tmp.name), pb(code), {})
+
+    def test_either_name_passes(self):
+        for kw in ("on_delivery", "callback"):
+            ok, d = self.run_check(self.ALIAS, self.CODE % kw)
+            self.assertTrue(ok, (kw, d))
+
+    def test_neither_name_fails_and_a_plain_name_stays_exact(self):
+        ok, d = self.run_check(self.ALIAS, "from confluent_kafka import Producer\np = Producer({})\np.produce('t', value='v')\n")
+        self.assertFalse(ok)
+        self.assertIn("missing call Producer.produce", d)
+        ok, d = self.run_check({"required": [{"name": "produce", "class": "Producer", "kwargs": ["on_delivery"]}]}, self.CODE % "callback")
+        self.assertFalse(ok)
+
+    def test_an_unknown_keyword_still_fails(self):
+        ok, d = self.run_check(self.ALIAS, self.CODE % "on_delivery" + "p.produce('t', value='v', sync=True)\n")
+        self.assertFalse(ok)
+        self.assertIn("no parameter sync", d)
+
+    @unittest.skipUnless(HAVE_PYSYM, "python_symbols.json is not built")
+    def test_the_real_symbol_list_has_both_names(self):
+        params = a3.py_method("confluent_kafka.Producer", "produce")["params"]
+        self.assertIn("on_delivery", params)
+        self.assertIn("callback", params)
+        for kw in ("on_delivery", "callback"):
+            ok, d = cc.check_py_calls(self.ALIAS, pb(self.CODE % kw), {})
+            self.assertTrue(ok, (kw, d))
+
+
 class PythonRealSymbolsTests(unittest.TestCase):
     def test_a_realistic_consumer_passes_every_python_check(self):
         text = pb(PY_OK)

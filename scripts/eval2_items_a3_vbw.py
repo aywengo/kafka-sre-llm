@@ -49,7 +49,7 @@ import eval2_score as sc  # noqa: E402
 from kafka_sre_rag import catalogue_a3  # noqa: E402
 from kafka_sre_rag.catalogue import KNOWN, Catalogues, catalogue_hash  # noqa: E402
 
-VERSION = "eval2_items_a3_vbw/1"
+VERSION = "eval2_items_a3_vbw/2"
 SEED = "m4-a3-vbw-1"
 TARGET_TOTAL = 32
 ORACLE_TYPES = ("semantic_rule", "forbidden_keys", "yaml_config_keys")
@@ -107,6 +107,17 @@ def entry_source(cats, key, scope):
             "line": e["source_line"], "phrase": key}
 
 
+def default_source(cats, key, scope):
+    """The `Default:` row of the key's own entry in the generated reference (the first one after its heading)."""
+    e = next(x for x in cats._config[key] if x["scope"] == scope)
+    lines = (ROOT / e["source_file"]).read_text(errors="replace").split("\n")
+    for n in range(e["source_line"], min(len(lines), e["source_line"] + 10) + 1):
+        if "<th>Default:</th>" in lines[n - 1]:
+            return {"catalogue": "kafka_config", "entry": "%s (%s) Default" % (key, scope), "file": e["source_file"],
+                    "line": n, "phrase": re.sub(r"\s+", " ", lines[n - 1]).strip()}
+    raise AssertionError("no Default row for %s" % key)
+
+
 def forbidden_source(kind, key, config_path=None, exception=False):
     res = catalogue_a3.resources()
     name = kind if config_path is None else "%s:%s" % (kind, config_path)
@@ -158,15 +169,17 @@ def b_v1(rng, cats, table):
                          "policyTypes": ["Ingress"],
                          "ingress": [{"ports": [{"protocol": "TCP", "port": 9092}], "from": frm}]}}
 
-    def chks(cluster, kns, cns, app, other_ns, other_app, deny_other_ns):
+    def chks(cluster, kns, cns, app, other_ns, other_app):
+        """One allow probe and three deny probes (version 2): the same label in another namespace, another pod of
+        the source namespace, the same label in the target (policy) namespace."""
         tgt = {"namespace": kns, "pod_labels": {"strimzi.io/cluster": cluster}}
         allns = {n: nsl(n) for n in (kns, cns, other_ns)}
         mk = lambda src, exp: {"type": "semantic_rule", "oracle": "netpol_allows", "rule": "V1", "port": 9092,  # noqa
                                "source": src, "target": tgt, "namespaces": allns, "expect": exp}
-        out = [mk({"namespace": cns, "pod_labels": {"app": app}}, True)]
-        out.append(mk({"namespace": other_ns, "pod_labels": {"app": app}}, False) if deny_other_ns
-                   else mk({"namespace": cns, "pod_labels": {"app": other_app}}, False))
-        return out
+        return [mk({"namespace": cns, "pod_labels": {"app": app}}, True),
+                mk({"namespace": other_ns, "pod_labels": {"app": app}}, False),
+                mk({"namespace": cns, "pod_labels": {"app": other_app}}, False),
+                mk({"namespace": kns, "pod_labels": {"app": app}}, False)]
 
     def fields(p):
         s, m = p["spec"], p["metadata"]
@@ -187,26 +200,26 @@ def b_v1(rng, cats, table):
             intro = ctx + "Only the pods labelled `app: %s` in namespace `%s` must reach the brokers on TCP 9092; nothing from other namespaces. Does this NetworkPolicy do that?" % (app, cns)
             fixd = pol(cluster, kns, app, [both])
             why = "The entry has only a podSelector, which selects pods of the policy's own namespace `%s`, not of `%s`; the selectors must be in one entry." % (kns, cns)
-            oc = chks(cluster, kns, cns, app, other, None, True)
+            oc = chks(cluster, kns, cns, app, other, "other-" + app)
         elif kind == "or_entries":
             shown = pol(cluster, kns, app, [nsel, pod])
             intro = ctx + "Only the pods labelled `app: %s` in namespace `%s` must reach the brokers on TCP 9092. Does this NetworkPolicy do that?" % (app, cns)
             fixd = pol(cluster, kns, app, [both])
             why = "Two entries in `from` are ORed: every pod of `%s` is allowed, and so is any `app: %s` pod of `%s`. One entry with both selectors is an AND." % (cns, app, kns)
-            oc = chks(cluster, kns, cns, app, other, "other-" + app, False)
+            oc = chks(cluster, kns, cns, app, other, "other-" + app)
         elif kind == "ns_only":
             shown = pol(cluster, kns, app, [nsel])
             intro = ctx + "Only the pods labelled `app: %s` in namespace `%s` must reach the brokers on TCP 9092, not the other pods of that namespace. Does this NetworkPolicy do that?" % (app, cns)
             fixd = pol(cluster, kns, app, [both])
             why = "A namespaceSelector alone selects all pods of the matching namespace; the podSelector has to be in the same entry."
-            oc = chks(cluster, kns, cns, app, other, "other-" + app, False)
+            oc = chks(cluster, kns, cns, app, other, "other-" + app)
         else:
             shown = pol(cluster, kns, app, [both])
             intro = ctx + "Only the pods labelled `app: %s` in namespace `%s` must reach the brokers on TCP 9092. Does this NetworkPolicy do that?" % (app, cns)
             fixd = None
             why = "Both selectors are in one entry, so only `app: %s` pods of `%s` match."
             why = why % (app, cns)
-            oc = chks(cluster, kns, cns, app, other, "other-" + app, False)
+            oc = chks(cluster, kns, cns, app, other, "other-" + app)
         out.append(draft("V1", "control" if kind == "control" else "wrong", "%s:%s" % (kind, cluster), intro,
                          "NetworkPolicy", dump(shown), why, fix=dump(fixd) if fixd else None,
                          struct=yaml_struct("NetworkPolicy", "networking.k8s.io/v1", fields(shown)), oracle=oc,
@@ -249,14 +262,14 @@ def b_v2(rng, cats, table):
             shown, fixd = conn(name, cluster, ns, cls, cfg, "true"), conn(name, cluster, ns, cls, cfg, "includeTasks")
             intro = "A Kafka Connect cluster `%s` runs the `KafkaConnector` below. To restart the connector instance and all of its tasks, I apply this manifest. Does it do that?" % cluster
             why = "`strimzi.io/restart: \"true\"` restarts the connector instance only; `includeTasks` restarts the tasks as well."
-            exp = {"restart_connector": True, "include_tasks": True}
+            exp = {"restart_connector": True, "include_tasks": True, "only_failed": False}
             kind_name = "KafkaConnector"
             fl = fields_conn(shown)
         elif i == 1:
             shown, fixd = conn(name, cluster, ns, cls, cfg, "true"), conn(name, cluster, ns, cls, cfg, "onlyFailed")
             intro = "The `KafkaConnector` below runs on the Connect cluster `%s`. I want Strimzi to restart the connector instance only if it is in the FAILED state, so I apply this manifest. Does it do that?" % cluster
             why = "`true` restarts the instance whatever its state; `onlyFailed` restarts only instances with a FAILED status."
-            exp = {"restart_connector": True, "only_failed": True}
+            exp = {"restart_connector": True, "include_tasks": False, "only_failed": True}
             kind_name = "KafkaConnector"
             fl = fields_conn(shown)
         elif i == 2:
@@ -264,7 +277,7 @@ def b_v2(rng, cats, table):
             shown, fixd = mm2(name, ns, cname), mm2(name, ns, cname + ":includeTasks")
             intro = "A `KafkaMirrorMaker2` resource named `%s` mirrors `source` to `target`. To restart the connector `%s` together with its tasks, I apply this manifest. Does it do that?" % (name, cname)
             why = "`strimzi.io/restart-connector=<name>` restarts the connector instance only; `<name>:includeTasks` restarts its tasks too."
-            exp = {"restart_connector": True, "include_tasks": True, "connector": cname}
+            exp = {"restart_connector": True, "include_tasks": True, "only_failed": False, "connector": cname}
             kind_name = "KafkaMirrorMaker2"
             fl = [(["metadata", "name"], name), (["spec", "mirrors", 0, "sourceConnector", "tasksMax"], 2)]
         else:
@@ -283,10 +296,11 @@ def b_v2(rng, cats, table):
 
 
 # ---- V3 value equal to the default
+COMPACTED_KEYS = ("delete.retention.ms", "min.cleanable.dirty.ratio")  # act only on topics with cleanup.policy=compact
 V3_POOL = [("min.insync.replicas", "a producer with `acks=all` must be refused unless at least 2 replicas hold the record", 2),
            ("retention.ms", "records must be kept for 3 days (259200000 ms)", 259200000),
            ("segment.bytes", "log segments must roll at 256 MiB (268435456 bytes)", 268435456),
-           ("max.message.bytes", "the topic must accept records of up to 2 MiB (2097152 bytes)", 2097152),
+           ("max.message.bytes", "the topic must accept record batches of up to 2 MiB (2097152 bytes)", 2097152),
            ("delete.retention.ms", "delete tombstones must be kept for 12 hours (43200000 ms)", 43200000),
            ("min.cleanable.dirty.ratio", "log compaction must start once 10 % of the log is dirty (ratio 0.1)", Fraction(1, 10))]
 
@@ -303,10 +317,13 @@ def b_v3(rng, cats, table):
         control = i == 3
         val = wantv if control else (float(dflt) if "." in str(ent["default"]) else int(dflt))
 
+        compacted = key in COMPACTED_KEYS
+
         def topic(v):
+            cfg = {"cleanup.policy": "compact", key: v} if compacted else {key: v}
             return {"apiVersion": "kafka.strimzi.io/v1", "kind": "KafkaTopic",
                     "metadata": {"name": name, "namespace": "kafka", "labels": {"strimzi.io/cluster": "events"}},
-                    "spec": {"partitions": 6, "replicas": 3, "config": {key: v}}}
+                    "spec": {"partitions": 6, "replicas": 3, "config": cfg}}
         shown = topic(val)
         fixd = None if control else topic(wantv)
         intro = "In the Strimzi cluster `events`, %s. I apply this `KafkaTopic`. Does it do that?" % need
@@ -317,10 +334,12 @@ def b_v3(rng, cats, table):
         oc = [{"type": "semantic_rule", "oracle": "config_rule", "rule": "V3",
                "rules": [{"a": key, "op": "eq", "b": {"const": wantv}}]}]
         fl = [(["metadata", "name"], name), (["spec", "partitions"], 6), (["spec", "replicas"], 3)]
+        if compacted:
+            fl.append((["spec", "config", "cleanup.policy"], "compact"))
         out.append(draft("V3", "control" if control else "wrong", "%s:%s" % (key, name), intro, "KafkaTopic",
                          dump(shown), why, fix=dump(fixd) if fixd else None,
                          struct=yaml_struct("KafkaTopic", "kafka.strimzi.io/v1", fl), oracle=oc,
-                         sources=anchors_of("V3", table) + [entry_source(cats, key, "topic")],
+                         sources=[entry_source(cats, key, "topic"), default_source(cats, key, "topic")],
                          extra={"default": str(ent["default"])}))
     return out
 
@@ -432,7 +451,8 @@ def b_v7(rng, cats, table):
         intro = "The StatefulSet `%s` runs %d broker pods. Node drains must be able to evict one broker pod at a time. Does this PodDisruptionBudget allow that?" % (name, rep)
         why = ("The budget requires zero voluntary evictions (%s), so a node drain cannot evict a broker pod." % json.dumps(spec)) \
             if variant != "control" else "`maxUnavailable: 1` allows one voluntary eviction at a time."
-        oc = [{"type": "semantic_rule", "oracle": "pdb_evicts", "rule": "V7", "replicas": rep, "expect": True}]
+        oc = [{"type": "semantic_rule", "oracle": "pdb_evicts", "rule": "V7", "replicas": rep, "expect": True,
+               "allowed": 1}]
         fl = [(["metadata", "name"], "%s-pdb" % name), (["spec", "selector"], {"matchLabels": {"app": name}})]
         out.append(draft("V7", "control" if variant == "control" else "wrong", "%s:%s" % (variant, name), intro,
                          "PodDisruptionBudget", dump(shown), why, fix=dump(fixd) if fixd else None,
@@ -667,7 +687,7 @@ def build_item(d, n, cats, chash, chash_a3):
     fmt_chk = {"format": True, "type": "answer_line"}
     verdict = {"type": "answer_equals", "accepted": ["does not work" if wrong else "works"], "norm": "ci"}
     checks = [fmt_chk, verdict] + (d["struct"] + d["oracle"] if wrong else [])
-    item_id = "a3-%s-%03d" % (tpl, n)
+    item_id = "a3-%s-v2-%03d" % (tpl, n)
     item = {"id": item_id, "tier": "A", "kind": "valid_but_wrong", "family": "%s:%s" % (tpl, d["group"]),
             "domain": DOMAIN[d["mech"]], "question": q, "checks": checks,
             "sources": d["sources"], "versions": VERSIONS.get(d["mech"], STRIMZI_V), "template": tpl, "anchored": True,
@@ -710,6 +730,33 @@ def build_item(d, n, cats, chash, chash_a3):
     return item
 
 
+def assign_pairs(m, drafts):
+    """`pair` (version 2): an item and its control share a value, the split keeps a pair on one side. V1..V8: the
+    first wrong item with the control, the other two wrong items together. FK: a control with the first wrong item of
+    its resource kind, every other wrong item alone."""
+    if m == "FK":
+        first = {}
+        for d in drafts:
+            if d["role"] == "wrong":
+                first.setdefault(d["group"].split(":")[0], d)
+        used = set()
+        for d in drafts:
+            if d["role"] == "wrong":
+                d["extra"]["pair"] = "vbw:FK:%s" % d["group"]
+        for d in drafts:
+            if d["role"] == "control":
+                kind = d["group"].split(":")[0]
+                cand = [w for w in drafts if w["role"] == "wrong" and w["group"].split(":")[0] == kind
+                        and w["group"] not in used]
+                tgt = cand[0] if cand else first[kind]
+                used.add(tgt["group"])
+                d["extra"]["pair"] = tgt["extra"]["pair"]
+        return
+    wrong = [d for d in drafts if d["role"] == "wrong"]
+    for d in drafts:
+        d["extra"]["pair"] = "vbw:%s:%s" % (m, "a" if d["role"] == "control" or d is wrong[0] else "b")
+
+
 def generate(catalogues_dir=None, catalogues_a3_dir=None, dedup=True, seed=SEED):
     """The items, in a fixed order; no file is written. Raises AssertionError when an item breaks an invariant."""
     cats = Catalogues.load(catalogues_dir)
@@ -732,6 +779,8 @@ def generate(catalogues_dir=None, catalogues_a3_dir=None, dedup=True, seed=SEED)
         for line in (ROOT / "eval" / "m4" / "open" / "tier_a.jsonl").read_text().splitlines():
             if line.strip():
                 corpus.append(("eval/m4/open/tier_a.jsonl", a1.tokens(json.loads(line)["question"])))
+    for m, ds in drafts.items():
+        assign_pairs(m, ds)
     generate.dropped = []
     for m in ["V1", "V2", "V3", "V4", "V5", "V6", "V7", "V8", "FK"]:
         for d in drafts.get(m, []):

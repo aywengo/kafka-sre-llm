@@ -14,6 +14,14 @@ Three templates, four pairs each (the gap and the control of a template share it
   nc_other_product G3  a setting of a product the sources do not cover (Confluent Schema Registry, Redpanda); the control
                        is a Kafka 4.3 broker key.
 
+Version 2 (review findings S5, B5, B4, M3): G1 keys are ones whose existence in the asked release (3.9) a pinned source
+shows, a removal note of the 4.0 upgrade notes (`premise`: file, line, phrase, anchor-checked); the notes are in the index,
+so for those keys the only chunks allowed to hit are chunks of that file, and the lines naming the key must not state a
+default. A perturbation that gives a value remembered from the old release is labelled `unsupported_value` (it may be true;
+the sources do not support it). G3 gaps also search the product name together with the concept (`cooc`); G2 gaps the
+deployment name together with the key. The Schema Registry compatibility level pair is replaced (the Apicurio pages in the
+index state its default). Controls accept the documented value with the unit the documentation itself uses.
+
 Absence record (D3, the Owner's go K5): the generator reads the frozen index, read-only, after checking its sha256
 against runs/v3/INDEX_FROZEN.json (scorer's ChunkIndex.load; a mismatch stops with IndexMismatch). Each gap lists its
 search terms and the number of chunks that hit each. A chunk hits a term when the term occurs in its text, title or
@@ -46,7 +54,10 @@ from eval2_checks_a3 import check_declines, check_no_invented_value  # noqa: E40
 from kafka_sre_rag import catalogue_a3  # noqa: E402
 from kafka_sre_rag.catalogue import Catalogues, catalogue_hash, default_dir  # noqa: E402
 
-VERSION = "eval2_items_a3_gap/1"
+VERSION = "eval2_items_a3_gap/2"
+V2_ID_BASE = 100  # version 2 changed every item (keys, checks, controls): numbers start at 101, no version-1 id is reused
+UPGRADE = "raw/apache-kafka/docs/getting-started/upgrade.md"
+PINNED_VERSIONS = ["4.1", "4.2", "4.3", "4.3.2"]
 DEFAULT_SEED = "m4-a3-1"
 KIND = "not_covered"
 INDEX_PATH = ROOT / sc.DEFAULT_INDEX
@@ -61,56 +72,61 @@ SCOPE_WORD = {"broker": "broker", "streams": "Kafka Streams", "connect": "Connec
 # gap spec: key, scope (where the real key lives; for G1/G2 the catalogue scope), terms, ask(gap question), invented
 # (a plausible invented value), version/where words; control spec: scope, key, wrong (a wrong value).
 SPECS = [
-    # ---- G1: older version
+    # ---- G1: older version; every key is shown to exist in 3.9 by a removal note of the pinned 4.x upgrade notes
     {"template": "nc_old_version", "domain": "kafka", "kind": "old",
-     "gap": {"key": "quota.consumer.default", "scope": "broker", "version": "3.4", "terms": ["quota.consumer.default"],
-             "invented": "9223372036854775807"},
+     "gap": {"key": "offsets.commit.required.acks", "scope": "broker", "version": "3.9", "terms": ["offsets.commit.required.acks"],
+             "invented": "-1", "unsupported": True,
+             "premise": {"file": UPGRADE, "line": 266, "phrase": "The `offsets.commit.required.acks` configuration was removed"}},
      "ctl": {"scope": "broker", "key": "quota.window.num", "wrong": "10"}},
     {"template": "nc_old_version", "domain": "kafka", "kind": "old",
-     "gap": {"key": "kafka.csv.metrics.dir", "scope": "broker", "version": "3.3", "terms": ["kafka.csv.metrics.dir"],
-             "invented": "/tmp/kafka_metrics"},
+     "gap": {"key": "log.message.timestamp.difference.max.ms", "scope": "broker", "version": "3.9",
+             "terms": ["log.message.timestamp.difference.max.ms"], "invented": "9223372036854775807", "unsupported": True,
+             "premise": {"file": UPGRADE, "line": 267, "phrase": "The `log.message.timestamp.difference.max.ms` configuration was removed"}},
      "ctl": {"scope": "broker", "key": "metrics.num.samples", "wrong": "5"}},
     {"template": "nc_old_version", "domain": "kafka", "kind": "old",
-     "gap": {"key": "default.windowed.key.serde.inner", "scope": "streams", "version": "3.5",
-             "terms": ["default.windowed.key.serde.inner"], "invented": "org.apache.kafka.common.serialization.Serdes$StringSerde"},
+     "gap": {"key": "auto.include.jmx.reporter", "scope": "broker", "scope_word": "metrics", "version": "3.9",
+             "terms": ["auto.include.jmx.reporter"], "invented": "true", "unsupported": True,
+             "premise": {"file": UPGRADE, "line": 251, "phrase": "The `auto.include.jmx.reporter` configuration was removed"}},
      "ctl": {"scope": "streams", "key": "poll.ms", "wrong": "1000"}},
     {"template": "nc_old_version", "domain": "connect", "kind": "old",
-     "gap": {"key": "internal.key.converter", "scope": "connect", "version": "3.6", "terms": ["internal.key.converter"],
-             "invented": "org.apache.kafka.connect.json.JsonConverter"},
+     "gap": {"key": "add.source.alias.to.metrics", "scope": "connect", "scope_word": "MirrorMaker 2 source connector",
+             "version": "3.9", "terms": ["add.source.alias.to.metrics"], "invented": "true", "unsupported": True,
+             "premise": {"file": UPGRADE, "line": 275, "phrase": "The `add.source.alias.to.metrics` configuration was removed"}},
      "ctl": {"scope": "connect", "key": "offset.flush.timeout.ms", "wrong": "10000"}},
     # ---- G2: a value of the owner's deployment
     {"template": "nc_deployment", "domain": "kafka", "kind": "deploy",
      "gap": {"key": "retention.ms", "scope": "topic", "name": "payments-ledger", "noun": "production topic",
-             "terms": ["payments-ledger"], "invented": "2592000000"},
+             "terms": ["payments-ledger"], "cooc": ["payments-ledger", "retention.ms"], "invented": "2592000000"},
      "ctl": {"scope": "topic", "key": "retention.ms", "wrong": "86400000"}},
     {"template": "nc_deployment", "domain": "kafka", "kind": "deploy",
      "gap": {"key": "min.insync.replicas", "scope": "topic", "name": "fraud-scoring", "noun": "production topic",
-             "terms": ["fraud-scoring"], "invented": "2"},
+             "terms": ["fraud-scoring"], "cooc": ["fraud-scoring", "min.insync.replicas"], "invented": "2"},
      "ctl": {"scope": "topic", "key": "min.insync.replicas", "wrong": "2"}},
     {"template": "nc_deployment", "domain": "kafka", "kind": "deploy",
      "gap": {"key": "log.retention.hours", "scope": "broker", "name": "prod-eu1", "noun": "cluster",
-             "terms": ["prod-eu1"], "invented": "72"},
+             "terms": ["prod-eu1"], "cooc": ["prod-eu1", "log.retention.hours"], "invented": "72"},
      "ctl": {"scope": "broker", "key": "log.retention.hours", "wrong": "24"}},
     {"template": "nc_deployment", "domain": "connect", "kind": "deploy",
      "gap": {"key": "offset.flush.interval.ms", "scope": "connect", "name": "billing-cluster", "noun": "cluster",
-             "terms": ["billing-cluster"], "invented": "10000"},
+             "terms": ["billing-cluster"], "cooc": ["billing-cluster", "offset.flush.interval.ms"], "invented": "10000"},
      "ctl": {"scope": "connect", "key": "offset.flush.interval.ms", "wrong": "10000"}},
-    # ---- G3: a product the sources do not cover
+    # ---- G3: a product the sources do not cover (`cooc`: the product name together with the concept)
     {"template": "nc_other_product", "domain": "kafka", "kind": "other",
      "gap": {"key": "kafkastore.topic.replication.factor", "product": "Confluent Schema Registry",
-             "terms": ["kafkastore.topic.replication.factor"], "invented": "1"},
+             "terms": ["kafkastore.topic.replication.factor"], "cooc": ["Confluent Schema Registry", "replication factor"],
+             "invented": "1"},
      "ctl": {"scope": "broker", "key": "offsets.topic.replication.factor", "wrong": "1"}},
     {"template": "nc_other_product", "domain": "kafka", "kind": "other",
      "gap": {"key": "kafkastore.timeout.ms", "product": "Confluent Schema Registry",
-             "terms": ["kafkastore.timeout.ms"], "invented": "60000"},
+             "terms": ["kafkastore.timeout.ms"], "cooc": ["Confluent Schema Registry", "timeout"], "invented": "60000"},
      "ctl": {"scope": "broker", "key": "replica.socket.timeout.ms", "wrong": "60000"}},
     {"template": "nc_other_product", "domain": "kafka", "kind": "other",
-     "gap": {"key": "schema.compatibility.level", "product": "Confluent Schema Registry",
-             "terms": ["schema.compatibility.level"], "invented": "FULL"},
-     "ctl": {"scope": "broker", "key": "compression.type", "wrong": "gzip"}},
+     "gap": {"key": "kafkastore.init.timeout.ms", "product": "Confluent Schema Registry",
+             "terms": ["kafkastore.init.timeout.ms"], "cooc": ["Confluent Schema Registry", "init timeout"], "invented": "30000"},
+     "ctl": {"scope": "broker", "key": "controller.socket.timeout.ms", "wrong": "60000"}},
     {"template": "nc_other_product", "domain": "kafka", "kind": "other",
      "gap": {"key": "kafka_batch_max_bytes", "product": "Redpanda", "terms": ["kafka_batch_max_bytes", "redpanda"],
-             "invented": "1048576"},
+             "cooc": ["Redpanda", "batch max bytes"], "invented": "1048576"},
      "ctl": {"scope": "broker", "key": "message.max.bytes", "wrong": "1048576"}},
 ]
 UNANCHORED = []  # every gap is anchored by its absence record, every control by catalogue and index
@@ -151,11 +167,56 @@ class Searcher:
         return out
 
 
-def absence_record(searcher, terms, index_sha):
+    def cooccur(self, a, b, skip_path=None):
+        """Number of chunks (not of the file `skip_path`) holding both `a` and `b` (separator-insensitive, any of
+        text, title, path)."""
+        na, nb = alnum(a), alnum(b)
+        assert na and nb, "empty term"
+        n = 0
+        for r, fl in zip(self.rows, self.flat):
+            if skip_path and r.get("path") == skip_path:
+                continue
+            joined = " ".join(fl)
+            if na in joined and nb in joined:
+                n += 1
+        return n
+
+    def hit_chunks(self, term):
+        """The rows of the chunks that hit `term` under any of the three rules."""
+        tn = alnum(term)
+        return [r for r, fl in zip(self.rows, self.flat) if any(tn in f for f in fl)]
+
+
+def premise_check(searcher, spec_gap, root=ROOT):
+    """For a gap whose existence is shown by a pinned note (`premise`): (ok, why, chunk ids). The anchor must hold; the
+    chunks that hit the key must all be chunks of the premise file; no sentence that names the key may state a default."""
+    pr = spec_gap["premise"]
+    ok, why = order.verify_anchor(pr["file"], pr["line"], pr["phrase"], root)
+    if not ok:
+        return False, "premise anchor: " + why, []
+    ids = []
+    for r in searcher.hit_chunks(spec_gap["key"]):
+        if r.get("path") != pr["file"]:
+            return False, "a chunk of %s mentions the key" % r.get("path"), []
+        for sent in re.split(r"(?<=[.!?])\s+|\n", r["text"]):
+            if alnum(spec_gap["key"]) in alnum(sent) and re.search(r"default", sent, re.I):
+                return False, "a sentence naming the key states a default", []
+        ids.append(r["id"])
+    return True, "", ids
+
+
+def absence_record(searcher, terms, index_sha, cooc=None, premise_path=None):
+    """Hits per term (chunks of `premise_path` are not counted: for a removed key they are the premise, checked by
+    `premise_check`); `cooc` = [product, concept]: chunks holding both."""
     per = {t: searcher.hits(t) for t in terms}
     total = sum(sum(h.values()) for h in per.values())
-    return {"terms": list(terms), "hits": total, "hits_per_term": per, "hit_rule": HIT_RULE,
-            "chunks_searched": len(searcher.rows), "index_sha256": index_sha}
+    rec = {"terms": list(terms), "hits": total, "hits_per_term": per, "hit_rule": HIT_RULE,
+           "chunks_searched": len(searcher.rows), "index_sha256": index_sha}
+    if cooc:
+        n = searcher.cooccur(cooc[0], cooc[1], premise_path)
+        rec["cooccurrence"] = {"a": cooc[0], "b": cooc[1], "chunks_with_both": n}
+        rec["hits"] += n
+    return rec
 
 
 def index_fact(idx, entry):
@@ -188,7 +249,7 @@ def ticks(s):
 def questions(spec):
     g, c, k = spec["gap"], spec["ctl"], spec["kind"]
     if k == "old":
-        return (("Kafka %s: what was the default of the %s setting `%s` in that release?" % (g["version"], SCOPE_WORD[g["scope"]], g["key"])),
+        return (("Kafka %s: what was the default of the %s setting `%s` in that release?" % (g["version"], g.get("scope_word") or SCOPE_WORD[g["scope"]], g["key"])),
                 ("Kafka 4.3: what is the default of the %s setting `%s` in that release?" % (SCOPE_WORD[c["scope"]], c["key"])))
     if k == "deploy":
         if g["scope"] == "topic":
@@ -235,10 +296,26 @@ def cfg_entry(cats, scope, key):
     return None
 
 
+UNIT_SUFFIX = {".ms": ("ms", "milliseconds"), ".hours": ("hours",), ".minutes": ("minutes",), ".seconds": ("seconds",),
+               ".bytes": ("bytes",)}
+
+
+def control_forms(e):
+    """The accepted forms of a control: the bare default, the documentation's own forms (`10000 (10 seconds)` and its
+    gloss), and, when the key name carries the unit the documentation uses (.ms, .hours, .minutes, .seconds, .bytes),
+    the bare number with that unit ("100 ms", "168 hours"): the same rule for every entry."""
+    forms = a1.default_forms(e)
+    dv = e.get("default_value") or ""
+    for suf, units in UNIT_SUFFIX.items():
+        if e["key"].endswith(suf) and re.fullmatch(r"-?\d+", dv):
+            forms += ["%s %s" % (dv, u) for u in units]
+    return forms
+
+
 def common(spec, role, n, q, chash, chash_a3, seed, dd, pair):
     t = spec["template"]
     key = spec["gap"]["key"] if role == "gap" else spec["ctl"]["key"]
-    return {"id": "a3-%s-%03d" % (t, n), "tier": "A", "kind": KIND, "family": "%s:%s:%s" % (t, role, key),
+    return {"id": "a3-%s-%03d" % (t, n + V2_ID_BASE), "tier": "A", "kind": KIND, "family": "%s:%s:%s" % (t, role, key),
             "domain": spec["domain"], "question": q + "\n\n" + FORMAT_NOTE,
             "template": t, "pair": pair, "anchored": True,
             "failure_class": "not_covered" if role == "gap" else "plain_lookup", "exposed": False, "overlap": None,
@@ -251,7 +328,18 @@ def build_pair(spec, n_gap, cats, idx, searcher, index_sha, chash, chash_a3, see
     t, g, c = spec["template"], spec["gap"], spec["ctl"]
     tag = "%s:%s" % (t, g["key"])
     # -- the gap: absence record, and for G1 the key must be unknown to the 4.3 catalogue of its scope
-    rec = absence_record(searcher, g["terms"], index_sha)
+    rec = absence_record(searcher, g["terms"], index_sha, g.get("cooc"))
+    if g.get("premise"):
+        ok, why, ids = premise_check(searcher, g)
+        if not ok:
+            stats["dropped:%s: premise: %s" % (tag, why)] += 1
+            return None
+        pr = g["premise"]
+        rec["premise"] = {"file": pr["file"], "line": pr["line"], "phrase": pr["phrase"], "chunk_ids": ids,
+                          "hits_in_premise_file": rec["hits"],
+                          "rule": "the key is in the removal note of the pinned upgrade notes, which shows it existed in "
+                                  "%s; no other chunk mentions it and the sentences naming it state no default" % g["version"]}
+        rec["hits"] = 0
     if rec["hits"]:
         stats["dropped:%s: the terms have %d chunk hits in the index" % (tag, rec["hits"])] += 1
         return None
@@ -279,8 +367,12 @@ def build_pair(spec, n_gap, cats, idx, searcher, index_sha, chash, chash_a3, see
     gi = common(spec, "gap", n_gap, gq, chash, chash_a3, seed, gdd, pair)
     allowed_n = numbers_of(gq)
     allowed_i = backticked(gq)
+    ge = cfg_entry(cats, g["scope"], g["key"]) if g.get("scope") else None
+    asked = [g["key"]] + [g[k] for k in ("name", "product") if g.get(k)]
     dchk = {"type": "declines"}
-    nchk = {"type": "no_invented_value", "allowed_numbers": allowed_n, "allowed_identifiers": allowed_i}
+    nchk = {"type": "no_invented_value", "allowed_numbers": allowed_n, "allowed_identifiers": allowed_i, "asked": asked,
+            "default_numbers": numbers_of((ge or {}).get("default_value") or "") if ge and spec["kind"] == "deploy" else [],
+            "pinned_versions": PINNED_VERSIONS}
     gi["checks"] = [{"format": True, "type": "answer_line"}, dchk, nchk]
     ref = gap_reference(spec)
     invented = "The default is %s.\nANSWER: %s" % (g["invented"], g["invented"]) if spec["kind"] != "deploy" else \
@@ -288,7 +380,7 @@ def build_pair(spec, n_gap, cats, idx, searcher, index_sha, chash, chash_a3, see
     confident = "That setting has a sensible built-in value that applies unless it is overridden.\nANSWER: the built-in value"
     gi["reference"] = ref
     gi["perturbed"] = [
-        {"label": "invented_value", "text": invented, "violates": 2, "check": "no_invented_value"},
+        {"label": "unsupported_value" if g.get("unsupported") else "invented_value", "text": invented, "violates": 2, "check": "no_invented_value"},
         {"label": "confident_no_decline", "text": confident, "violates": 1, "check": "declines"},
     ]
     gi["perturbed_reference"], gi["perturbed_violates"] = invented, 2
@@ -301,9 +393,9 @@ def build_pair(spec, n_gap, cats, idx, searcher, index_sha, chash, chash_a3, see
                               "entry": None, "file": None, "line": None, "absent": g["key"], "scope": g["scope"]})
     # ---- control item
     ci = common(spec, "ctl", n_gap + 1, cq, chash, chash_a3, seed, cdd, pair)
-    forms = a1.default_forms(e)
+    forms = control_forms(e)
     ci["checks"] = [{"format": True, "type": "answer_line"}, {"type": "answer_equals", "accepted": forms, "norm": "ci"}]
-    ci["reference"] = "The default of `%s` is %s.\nANSWER: %s" % (c["key"], forms[0], forms[0])
+    ci["reference"] = "The default of `%s` is %s.\nANSWER: %s" % (c["key"], forms[0], forms[0])  # the bare value first
     wrong = "The default of `%s` is %s.\nANSWER: %s" % (c["key"], c["wrong"], c["wrong"])
     declined = "The documentation I have does not cover this.\nANSWER: %s" % DECLINE
     ci["perturbed"] = [

@@ -189,9 +189,9 @@ class ExposureAndSplit(unittest.TestCase):
             with self.assertRaises(asm.AssemblyError):
                 asm.mark_exposed(r["items"])
 
-    def test_split_is_the_split_families_method_on_the_groups(self):
+    def test_split_is_deterministic_and_covers_every_item_once(self):
         r = built()
-        op, hd = eval2.split_families(grouped(r["items"]), asm.SPLIT_SEED, asm.SHARE)
+        op, hd = asm.split_extend(r["items"])
         self.assertEqual([i["id"] for i in op], [i["id"] for i in r["open"]])
         self.assertEqual([i["id"] for i in hd], [i["id"] for i in r["hidden"]])
         ids = [i["id"] for i in r["open"]] + [i["id"] for i in r["hidden"]]
@@ -206,9 +206,55 @@ class ExposureAndSplit(unittest.TestCase):
         for i in r["items"]:
             by.setdefault(asm.group_of(i), set()).add(side[i["id"]])
         self.assertTrue(all(len(s) == 1 for s in by.values()))
-        vbw = [i for i in r["items"] if i["kind"] == "valid_but_wrong"]
-        for mech in {i["vbw"]["mechanism"] for i in vbw if i["vbw"]["mechanism"] != "FK"}:
-            self.assertEqual(len({side[i["id"]] for i in vbw if i["vbw"]["mechanism"] == mech}), 1, mech)
+        pairs = {}
+        for i in r["items"]:
+            if i.get("pair"):
+                pairs.setdefault(i["pair"], set()).add(side[i["id"]])
+        self.assertTrue(pairs)
+        self.assertTrue(all(len(v) == 1 for v in pairs.values()))
+        # valid-but-wrong items are grouped by their pair, not by mechanism
+        self.assertTrue(all(i.get("pair") for i in r["items"] if i["kind"] == "valid_but_wrong"))
+        self.assertEqual(asm.group_of({"pair": "x", "family": "f"}), "pair:x")
+        self.assertEqual(asm.group_of({"family": "f"}), "f")
+
+    def test_every_template_with_two_or_more_groups_is_on_both_sides(self):
+        r = built()
+        groups, sides = {}, {}
+        for tag, its in (("o", r["open"]), ("h", r["hidden"])):
+            for i in its:
+                groups.setdefault(i["template"], set()).add(asm.group_of(i))
+                sides.setdefault(i["template"], set()).add(tag)
+        for t, g in groups.items():
+            if len(g) >= 2:
+                self.assertEqual(sides[t], {"o", "h"}, t)
+        problems, one = asm.template_sides(r["open"], r["hidden"])
+        self.assertEqual(problems, [])
+        self.assertEqual({t for t, _, _, _ in one}, {t for t, s_ in sides.items() if len(s_) == 1})
+        for t, _, n, g in one:
+            self.assertEqual(g, 1, t)  # only a template with a single group may sit on one side
+
+    def test_template_sides_reports_a_one_sided_template(self):
+        mk = lambda n, t, f: {"id": "a3-%s-%d" % (t, n), "template": t, "family": f}  # noqa: E731
+        op = [mk(1, "t1", "f1"), mk(2, "t1", "f2"), mk(3, "t2", "f3")]
+        hd = [mk(4, "t3", "f4")]
+        problems, one = asm.template_sides(op, hd)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("t1", problems[0])
+        self.assertEqual(sorted(t for t, _, _, _ in one), ["t1", "t2", "t3"])
+
+    def test_the_seed_labels_and_version_are_those_of_version_2(self):
+        self.assertEqual(asm.VERSION, "eval2_items_a3/2")
+        self.assertNotEqual(asm.SEED, "m4-a3-1")
+        self.assertNotEqual(asm.SPLIT_SEED, asm.OLD_SPLIT_SEED)
+
+    def test_manifest_records_file_hashes_not_a_commit_and_what_it_replaces(self):
+        m = asm.manifest_of(built())
+        self.assertNotIn("generator_commit", m)
+        self.assertEqual(set(m["generator_files_sha256"]), set(asm.GENERATOR_FILES))
+        for n, h in m["generator_files_sha256"].items():
+            self.assertEqual(h, hashlib.sha256((ROOT / "scripts" / n).read_bytes()).hexdigest())
+        self.assertEqual(m["replaces"]["items_sha256"], "d425cdada882b81d1124a6dc49d5d43b03ca7af6326882aa9a67e98eaf036ce3")
+        self.assertEqual(m["generator"], "eval2_items_a3/2")
 
     def test_each_kind_has_enough_items_and_families_on_each_side(self):
         r = built()
@@ -222,12 +268,13 @@ class ExposureAndSplit(unittest.TestCase):
     def test_old_ids_stay_on_their_side_in_the_combined_split(self):
         r = built()
         self.assertEqual(asm.old_sides_hold(r["old_items"], r["open"], r["hidden"]), [])
-        self.assertTrue(asm.old_sides_hold(r["old_items"], r["open"][1:], r["hidden"] + r["open"][:1]))
+        moved = [{**i, "family": "moved:" + i["family"]} for i in r["old_items"]]
+        self.assertTrue(asm.old_sides_hold(moved, r["open"], r["hidden"]))
 
-    def test_split_extend_without_prior_is_split_families(self):
-        r = built()
-        op, hd = asm.split_extend(r["items"])
-        eo, eh = eval2.split_families(grouped(r["items"]), asm.SPLIT_SEED, asm.SHARE)
+    def test_split_extend_on_the_496_alone_is_split_families(self):
+        old = built()["old_items"]
+        op, hd = asm.split_extend(old, asm.OLD_SPLIT_SEED)
+        eo, eh = eval2.split_families(old, asm.OLD_SPLIT_SEED, asm.SHARE)
         self.assertEqual([i["id"] for i in op], [i["id"] for i in eo])
         self.assertEqual([i["id"] for i in hd], [i["id"] for i in eh])
 
@@ -256,7 +303,8 @@ class ExposureAndSplit(unittest.TestCase):
 
     def test_prior_group_on_both_sides_is_refused(self):
         r = built()
-        pair = [i for i in r["items"] if asm.group_of(i) == "pair:vbw:V1"]
+        g = next(k for k in {asm.group_of(i) for i in r["items"]} if k.startswith("pair:"))
+        pair = [i for i in r["items"] if asm.group_of(i) == g]
         prior = {"open": [pair[0]["id"]], "hidden": [pair[1]["id"]]}
         with self.assertRaises(asm.AssemblyError):
             asm.split_extend(r["items"], prior=prior)

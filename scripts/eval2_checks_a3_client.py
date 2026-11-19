@@ -22,7 +22,11 @@ once per process against scripts/fetch_maven_jars.py; no other jar, no network):
                    {"class": "org.apache.kafka.clients.consumer.KafkaConsumer", "method": "commitSync",
                     "params": ["java.time.Duration"]}; "class" matches the declaring class or the static type of the
                    receiver, "method" "<init>" is a constructor, "params" (erased binary names, optional) is the
-                   resolved signature. A call javac could not resolve matches nothing.
+                   resolved signature. "signatures" (optional, a list of such "params" lists) accepts any one of
+                   several overloads that do the same job (the item cites each one); "params" and "signatures" together
+                   accept the union. A call javac could not resolve matches nothing. The `close()` that a
+                   try-with-resources block makes for each resource is listed by ListCalls as a call (implicit) and
+                   matches like a written `close()`.
   java_call_order spec: {"order": [E, E, ...]}: the calls occur in this order (a subsequence of the calls in
                    evaluation order: receiver chain, arguments, the call).
   java_config      the configuration the program sets through put / setProperty / putIfAbsent on a Properties or
@@ -41,6 +45,8 @@ Python checks (symbols: work/m4/catalogues_a3/python_symbols.json, the confluent
                    whose class is known (x = Consumer(...)) must exist in that class and take the keywords and the
                    number of positional arguments given. spec: {"required": [{"name": "poll", "class": "Consumer",
                    "kwargs": ["timeout"], "min_args": 0}], "forbidden": [...], "order": [...], "unknown_methods": true}.
+                   An element of "kwargs" may itself be a list of alternative names (any one is enough), for
+                   example ["on_delivery", "callback"]: python_symbols.json lists both as parameters of produce.
                    A receiver of unknown class matches an entry that names a class (it cannot be disproved).
   py_config        the librdkafka-style configuration dicts passed to the client classes: spec {"keys": {...},
                    "forbidden": {...}}; a key the wheel's property table does not know is an invented key. The
@@ -287,14 +293,25 @@ def _entry_matches(e, c, directory=None):
         return False
     if e.get("method") and e["method"] != c["name"]:
         return False
-    if e.get("params") is not None and [_erase(p) for p in e["params"]] != c["params"]:
+    sigs = entry_signatures(e)
+    if sigs is not None and not any([_erase(p) for p in sig] == c["params"] for sig in sigs):
         return False
     return True
 
 
+def entry_signatures(e):
+    """The accepted parameter lists of an entry: None (any), or a list of lists ("params" and "signatures" together)."""
+    sigs = []
+    if e.get("params") is not None:
+        sigs.append(e["params"])
+    sigs.extend(e.get("signatures") or [])
+    return sigs or None
+
+
 def _describe(e):
+    sigs = entry_signatures(e)
     return "%s.%s(%s)" % ((e.get("class") or "*").rsplit(".", 1)[-1], e.get("method", "*"),
-                          "*" if e.get("params") is None else ", ".join(_erase(p).rsplit(".", 1)[-1] for p in e["params"]))
+                          "*" if sigs is None else " | ".join(", ".join(_erase(p).rsplit(".", 1)[-1] for p in sig) for sig in sigs))
 
 
 def _java_info(chk, text):
@@ -706,7 +723,8 @@ def _py_entry_matches(e, c):
     if e.get("min_args") is not None and c["nargs"] < e["min_args"] and not c["star"]:
         return False
     for k in e.get("kwargs", []):
-        if k not in c["kwargs"] and not c["dstar"]:
+        names = k if isinstance(k, list) else [k]
+        if not any(n in c["kwargs"] for n in names) and not c["dstar"]:
             return False
     return True
 

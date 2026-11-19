@@ -19,6 +19,10 @@ import eval2_items_a3_gap as gen  # noqa: E402
 import eval2_score as sc  # noqa: E402
 from kafka_sre_rag.catalogue import Catalogues, default_dir  # noqa: E402
 
+def alnum2(s):
+    return re.sub(r"[^a-z0-9]", "", s.lower())
+
+
 HAVE_INDEX = gen.INDEX_PATH.is_file() and gen.FROZEN_PATH.is_file()
 HAVE = (default_dir() / "CATALOGUES.json").is_file() and (ROOT / "work" / "m4" / "catalogues_a3" / "MANIFEST.json").is_file() \
     and HAVE_INDEX and (ROOT / "eval" / "m4" / "open" / "tier_a.jsonl").is_file()
@@ -88,12 +92,22 @@ class GapItems(unittest.TestCase):
                 tl, tn = term.lower(), re.sub(r"[^a-z0-9]", "", term.lower())
                 self.assertTrue(tn)
                 n = 0
+                skip = (rec.get("premise") or {}).get("file")  # a removed key is named in the pinned upgrade notes
                 for r in rows:
+                    if r["path"] == skip:
+                        continue
                     for f in (r["text"], r.get("title") or "", r["path"]):
                         if term in f or tl in f.lower() or tn in re.sub(r"[^a-z0-9]", "", f.lower()):
                             n += 1
                 self.assertEqual(n, 0, (g["id"], term))
-                self.assertEqual(sum(rec["hits_per_term"][term].values()), 0)
+                if not skip:
+                    self.assertEqual(sum(rec["hits_per_term"][term].values()), 0)
+            if "cooccurrence" in rec:
+                a, b = alnum2(rec["cooccurrence"]["a"]), alnum2(rec["cooccurrence"]["b"])
+                n = sum(1 for r in rows if a in alnum2(r["text"] + " " + (r.get("title") or "") + " " + r["path"])
+                        and b in alnum2(r["text"] + " " + (r.get("title") or "") + " " + r["path"]))
+                self.assertEqual(n, 0, (g["id"], rec["cooccurrence"]))
+                self.assertEqual(rec["cooccurrence"]["chunks_with_both"], 0)
 
     def test_the_search_finds_a_term_that_is_there(self):
         s = gen.Searcher(self.idx.rows)
@@ -142,7 +156,8 @@ class GapItems(unittest.TestCase):
                 self.assertFalse(res[p["violates"]]["pass"], (i["id"], p["label"]))
                 self.assertEqual(res[p["violates"]]["type"], p["check"])
         for g in self.gaps:
-            self.assertEqual({p["label"] for p in g["perturbed"]}, {"invented_value", "confident_no_decline"})
+            first = "unsupported_value" if g["template"] == "nc_old_version" else "invented_value"
+            self.assertEqual({p["label"] for p in g["perturbed"]}, {first, "confident_no_decline"})
             self.assertEqual({p["check"] for p in g["perturbed"]}, {"no_invented_value", "declines"})
         for c in self.ctls:
             self.assertEqual({p["label"] for p in c["perturbed"]}, {"decline", "wrong_value"})
@@ -184,6 +199,85 @@ class GapItems(unittest.TestCase):
             outs.append(r.stdout)
         self.assertEqual(outs[0], outs[1])
         self.assertEqual(json.loads(outs[0]), json.loads(json.dumps(self.items, sort_keys=True)))
+
+
+    # ------------------------------------------------------------ WP1c fix F3 (B4, B5, S5, M3)
+    def test_old_version_keys_have_a_pinned_premise_and_no_default_in_the_sources(self):
+        for g in self.gaps:
+            if g["template"] != "nc_old_version":
+                continue
+            pr = g["sources"][0]["premise"]
+            self.assertEqual(pr["file"], gen.UPGRADE)
+            ok, why = gen.order.verify_anchor(pr["file"], pr["line"], pr["phrase"])
+            self.assertTrue(ok, (g["id"], why))
+            self.assertIn("3.9", g["question"])
+            self.assertEqual({r for r in g["sources"][0]["premise"]["chunk_ids"]} <= {
+                c["id"] for c in self.idx.rows if c["path"] == gen.UPGRADE}, True)
+            self.assertEqual([p["label"] for p in g["perturbed"]][0], "unsupported_value")
+
+    def test_premise_check_rejects_a_key_named_elsewhere_or_with_a_default(self):
+        s = gen.Searcher(self.idx.rows)
+        good = {"key": "offsets.commit.required.acks", "premise": {"file": gen.UPGRADE, "line": 266,
+                                                                  "phrase": "The `offsets.commit.required.acks` configuration was removed"}}
+        self.assertTrue(gen.premise_check(s, good)[0])
+        self.assertFalse(gen.premise_check(s, dict(good, premise=dict(good["premise"], line=265)))[0])
+        elsewhere = {"key": "offsets.topic.replication.factor", "premise": dict(good["premise"])}
+        ok, why, _ = gen.premise_check(s, elsewhere)
+        self.assertFalse(ok, why)
+
+    def test_the_schema_registry_compatibility_pair_is_gone_and_the_index_holds_that_fact(self):
+        self.assertNotIn("schema.compatibility.level", {k for g in self.gaps for k in g["sources"][0]["terms"]})
+        s = gen.Searcher(self.idx.rows)
+        self.assertGreater(s.cooccur("Confluent Schema Registry", "compatibility"), 0)
+
+    def test_product_and_concept_search_catches_a_covered_pair(self):
+        s = gen.Searcher(self.idx.rows)
+        rec = gen.absence_record(s, ["schema.compatibility.level"], self.sha, ["Confluent Schema Registry", "compatibility"])
+        self.assertGreater(rec["hits"], 0)
+        for g in self.gaps:
+            if g["template"] == "nc_other_product":
+                self.assertIn("cooccurrence", g["sources"][0])
+                self.assertEqual(g["sources"][0]["cooccurrence"]["chunks_with_both"], 0)
+
+    def test_declines_of_the_review_pass_every_gap_check(self):
+        """Correct, helpful declines (default of the asked key, pinned versions, a lookup command) pass; a value fails."""
+        for g in self.gaps:
+            key = g["sources"][0]["terms"][0]
+            nchk = next(c for c in g["checks"] if c["type"] == "no_invented_value")
+            texts = ["My sources cover Kafka 4.3 only, and `%s` is not in them.\nANSWER: not in my sources" % key,
+                     "The pinned 4.1 to 4.3 pages do not cover `%s`.\nANSWER: not in my sources" % key,
+                     "Not covered. You can look it up with `kafka-configs.sh --bootstrap-server <broker> --entity-type brokers --entity-name 1 --describe --all`.\nANSWER: not in my sources",
+                     "Not covered.\n\n```bash\nbin/kafka-configs.sh --bootstrap-server <broker> --entity-type brokers --entity-default --describe --all\n```\nANSWER: not in my sources"]
+            if nchk["default_numbers"]:
+                texts.append("The documented default of `%s` is %s, but yours may differ; it is not in my sources.\nANSWER: not in my sources"
+                             % (key, nchk["default_numbers"][0]))
+            for t in texts:
+                res = {r["type"]: r["pass"] for r in sc.run_checks(g, t, self.cats)}
+                self.assertTrue(res["declines"] and res["no_invented_value"], (g["id"], t, res))
+            res = sc.run_checks(g, "It is probably 4242 there.\nANSWER: not in my sources", self.cats)
+            self.assertFalse({r["type"]: r["pass"] for r in res}["no_invented_value"], g["id"])
+
+    def test_controls_accept_the_documented_value_with_its_unit(self):
+        seen = 0
+        for c in self.ctls:
+            acc = next(k for k in c["checks"] if k["type"] == "answer_equals")["accepted"]
+            key = c["family"].split(":")[-1]
+            dv = acc[0]
+            for suf, units in gen.UNIT_SUFFIX.items():
+                if key.endswith(suf) and dv.lstrip("-").isdigit():
+                    seen += 1
+                    for u in units:
+                        res = sc.run_checks(c, "The default is %s %s.\nANSWER: %s %s" % (dv, u, dv, u), self.cats)
+                        self.assertTrue(all(r["pass"] for r in res), (c["id"], u))
+        self.assertGreaterEqual(seen, 3)
+        by = {i["family"].split(":")[-1]: i for i in self.ctls}
+        for key, ans in (("log.retention.hours", "168 hours"), ("poll.ms", "100 ms")):
+            self.assertTrue(all(r["pass"] for r in sc.run_checks(by[key], "ANSWER: " + ans, self.cats)), key)
+
+    def test_ids_are_version_2(self):
+        for i in self.items:
+            self.assertGreater(int(i["id"].rsplit("-", 1)[1]), 100, i["id"])
+            self.assertEqual(i["generator"], "eval2_items_a3_gap/2")
 
 
 @unittest.skipUnless(HAVE_INDEX, "frozen index not present")
