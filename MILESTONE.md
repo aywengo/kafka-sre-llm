@@ -56,7 +56,7 @@ After the first slice:
 | WP | What | Depends on | Status |
 |---|---|---|---|
 | WP1c | Remaining mechanical kinds (resources, commands, client code, version traps, valid but wrong, safe order, sizing, not covered) | downloads (see 3 below), S5, S6 | resources, manifest fixes, commands and version traps were built in slice A2; plan for the other five 2026-11-19 (`runs/m4/reports/wp1c_plan.md`): 120 items by templates and programmatic checks, no model, in a separate generator and separate files, so the 496 items and their split stay byte-identical; 11 to 15 worker-days. **Done 2026-11-19:** T0 to T6 and the T8 code (tables, Java catalogue from the 4.3.2 jars, scorer checks `eval2_score/3`, Java and Python client checks, generators: 24 client code, 32 valid but wrong, 16 safe order, 24 sizing; assembly and grouped split, dry run only). **Waits:** T7 (not covered, 24 items) for K5; then the real T8 run (the split is made once), T9 review, T10 integration |
-| WP1d | Judged tier: scenarios and rubrics, the Owner's questions first | first fresh batch B1 | **B1 done 2026-11-19** (`runs/m4/B1_COVERAGE_FINAL.md`, `B1_COVERAGE_BATCH.md`): 30 scenarios, 90 answers, 180 judgments, 60 answers read blind (16 by a second reader). Judge against reader on 158 essential units: kappa 0.86 and 0.78, precision 0.98 and 0.90, recall 0.86 and 0.86 (pass 1, pass 2); supported misses confirmed 14 of 14; unverified 0.6 %; pass-to-pass kappa 0.85; readers' totals 41 and 53 on the shared answers (23 % apart); identifier check 0 false findings. The rubric chunk check before the run was 94.0 % (bar 95 %). Waits for the Owner: the gate, and writing the tier at scale |
+| WP1d | Judged tier: scenarios and rubrics, the Owner's questions first | first fresh batch B1 | **Writing at scale (K2) since 2026-11-19, evening**: B2 (30 open) in second review; the Owner's 24 (hidden, sealed) in completion. **B1 done 2026-11-19** (`runs/m4/B1_COVERAGE_FINAL.md`, `B1_COVERAGE_BATCH.md`): 30 scenarios, 90 answers, 180 judgments, 60 answers read blind (16 by a second reader). Judge against reader on 158 essential units: kappa 0.86 and 0.78, precision 0.98 and 0.90, recall 0.86 and 0.86 (pass 1, pass 2); supported misses confirmed 14 of 14; unverified 0.6 %; pass-to-pass kappa 0.85; readers' totals 41 and 53 on the shared answers (23 % apart); identifier check 0 false findings. The rubric chunk check before the run was 94.0 % (bar 95 %). Waits for the Owner: the gate, and writing the tier at scale |
 | WP5 | Retrieval and index coverage: candidate index and settings next to the frozen ones, one hidden-half run decides (J6) | J5 | plan, funnel tool and runtime profiles done; R2 chosen by its rule; **B1 check (T7) failed 2026-11-19** (`runs/m4/reports/wp5_t7_b1_funnel.md`): indexed must points served 56 to 77 of 166 (+12.7 points, bar +15), 12 of the 56 frozen-served lost (21 %, bar 5 %); T8 and T9 do not run; waits for the Owner (K3) |
 | WP1f | Starting-point measurement (E2) | WP1c, WP1d | not started |
 | WP2a | Labelled test set for the checker: 30 distinct items from the three readings | - | **done**: `runs/m4/reports/wp2a_labels_checked.jsonl` (two local-model runs, verified by counts and against sources) |
@@ -467,8 +467,25 @@ and J6 come from the mechanical tier and block nothing yet):
   exists. The plain copy of the Owner's questions moved out of the repository after its
   hash was checked against the sealed copy. Started: WP1c T7 (not covered) and the tool
   for sealed sessions (`scripts/sealed_io.py`).
-- Next: B2 writing (three writers, then three second reviewers and the chunk check);
-  sealed rubrics for the Owner's 34; R3 built and checked on the development items; the
-  checker's inline marks (R1) and model patch (R2); WP1c T8 real run, T9, T10. For the Owner, not blocking: the essential points of
+- 2026-11-19, 21:00 to 23:00: WP1c T7 and T8 done: the a3 set built and split (`584fe6e`):
+  120 items, 60 open and 60 hidden; the mechanical tier now has 616 items; on the union
+  the near-miss, scope and value/type floors are missed (12.5, 13.0, 9.7 %), reported as
+  decided; independent review T9 running. R3 built (`d3d12ea`, hash `d0225486…`). The rule
+  for E3 and the revise step written (`fd634f5`); the revise module (R1, R2, streaming)
+  being built. The Owner's questions: three sealed writers kept or restated 24 of 34 and
+  dropped 10 (oq-008, 010, 014, 028, 029, 030, 038, 043, 045, 051: the mechanism does not
+  exist on the pinned versions or cannot be checked in them); three sealed reviewers
+  confirmed all 10 drops and changed 23 of the 24 rubrics; chunk check 110 of 131 points
+  (84 %), so a sealed completion step runs before an independent count (bar 95 %). B2: 30
+  open scenarios written by three writers (two overlapping items replaced), assembled in
+  `eval/m4/b2/` (not committed until reviewed), three second reviewers running.
+- For the Owner, not blocking: on his own questions, the restatements whose cause differs
+  from his original (oq-018, oq-032, oq-036, oq-041, oq-042, oq-048), and the weights of
+  the three architecture items (oq-002, oq-012, oq-026; in oq-012 two of his proposed
+  points were left out, one over the six-unit limit, one with no pinned source). He may
+  read his own hidden items; the conductor does not.
+- Next: B2 changes applied and its chunk check (95 %), then B2 committed and answered on
+  the server (default and strict, and R3 for the funnel); the Owner's 24 to their count;
+  WP1c T9 and T10; the revise module, then its development run on B1. For the Owner, not blocking: the essential points of
   the six architecture scenarios (b1-10, b1-18, b1-19, b1-20, b1-29, b1-30). Not blocked:
   D1, the mechanical tier's hidden-half runs.
