@@ -5,7 +5,7 @@ Working name "M4"; the release number is decided at the end. Started 2026-11-18,
 release of v3.0.0 and v3.0.1. `GOAL.md` says where the project is going; this file says
 where the current milestone stands.
 
-Last updated: 2026-11-19, 00:15.
+Last updated: 2026-11-19, 01:45.
 
 ## What this milestone is for
 
@@ -48,7 +48,7 @@ First slice (needs no downloads; supports the 4-bit decision):
 | S1 | Harness: answer, manifest, pack replay, hidden part, run sizes, report | implementer | **done** (`d0403e3`); run only with a stub model so far | `runs/m4/reports/s1_harness.md` |
 | S2, S3 | Mechanical items (config, Connect REST, Argo CD, error names) and the scorer with identifier precision; catalogue provenance | implementer | **done** (`39e6911`): 496 items with resources, manifest fixes, commands and version traps; a blind guess scores 11 %; split in `e6b8d8c` | `runs/m4/reports/s2_s3_tier_a1.md`, `tier_a1_rebalance.md` |
 | S4 | Rubric pilot: blind rubrics for 30 questions whose answers have a reader's findings; check of the labels that rest on memory | complex-reviewer, researcher | **done**: 30 rubrics (`eval/m4/pilot/rubrics.jsonl`); 30 distinct labels, 25 confirmed, 5 partly, 0 refuted | `runs/m4/reports/s4a_label_check.md`, `s4b_blind_rubrics.md` |
-| S5 | Judge pilot: does judging point by point repeat better than a mark from 1 to 5 | job-operator; needs the model server | **done, NO-GO: 1 of 4 criteria passed** (`runs/m4/S5_JUDGE_PILOT.md`). Judge chosen in S5a: DeepSeek without thinking, with source passages (22 s a call against 691 s). The analysis (`runs/m4/reports/s5_pilot_analysis.md`): the judge repeats well and is cheap, but the score does not rank answers as the reader did, and about 1 in 6 of its error flags outside the reader's labels is real. Decided 2026-11-19: build with changes; second pilot being prepared (24 fresh items, both modes, after S6) | `runs/m4/reports/s5_judge_step.md` |
+| S5 | Judge pilot: does judging point by point repeat better than a mark from 1 to 5 | job-operator; needs the model server | **done, NO-GO: 1 of 4 criteria passed** (`runs/m4/S5_JUDGE_PILOT.md`). Judge chosen in S5a: DeepSeek without thinking, with source passages (22 s a call against 691 s). The analysis (`runs/m4/reports/s5_pilot_analysis.md`): the judge repeats well and is cheap, but the score does not rank answers as the reader did, and about 1 in 6 of its error flags outside the reader's labels is real. Decided 2026-11-19: build with changes. **Second pilot queued behind S6** (`scripts/m4_s5b_judge_pilot2.sh`): 24 fresh scenarios (`eval/m4/pilot2/`), rubrics corrected by a second reviewer before any answer existed (105 changes), judge step version 2, 48 answers and 263 judge calls, then a blind reading; go or no-go on criteria fixed beforehand | `runs/m4/reports/s5_judge_step.md` |
 | S6 | Noise (the reference run twice) and 4-bit against full precision on the same server, with pack replay | job-operator; needs the model server | **running** since 2026-11-18 23:47 (`scripts/m4_s6_noise_4bit.sh`): 5-item gate, then the open half five times; about 25 s per answer on the 4-bit model, so 12 to 15 hours | `runs/m4/reports/s6_prep.md` |
 
 After the first slice:
@@ -156,3 +156,11 @@ The failed gate of 2026-11-18 (the judging pilot) was decided on 2026-11-19; see
 - 2026-11-19: the Owner agreed to all five recommendations on the judged tier. Started:
   fair quote matching and the answer's own excerpts in the judge step; the design changes;
   24 fresh scenarios with rubrics under the new rubric rules. The second pilot runs after S6.
+- 2026-11-19, 01:45: the judged tier's design is revised (`c78171a`); judge step version 2
+  and the second pilot's chain are in (`d63f0a7`, `bd31c03`); 24 fresh scenarios written
+  blind and corrected by a second reviewer (`af0121a`, `44db03f`). On the server: S6 in its
+  first of five runs (about 25 s an item); the second pilot waits behind it.
+- Next, in order: read `runs/m4/S6_NOISE_4BIT.md` (noise, first look at the cost of 4-bit,
+  ceiling check of the mechanical items); when the second pilot has answered and judged,
+  have one reviewer read the 48 answers blind and fill the candidate-error file, then
+  run the pilot report for go or no-go; on a go, write the judged tier at scale.
