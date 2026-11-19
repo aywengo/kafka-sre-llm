@@ -353,7 +353,14 @@ and J6 come from the mechanical tier and block nothing yet):
   default mode by checking alone (K4). The checker made 6 false flags among its 22 on the
   B1 answers (none on its development sets); its code fixes (R0, items b1-03, b1-04,
   b1-13, b1-23, b1-24) started, CPU only.
-- Next, in order: the Owner's K1, K2, K3 and K4; R0. For the Owner, not blocking: the essential points of
+- 2026-11-19, 18:07: R0 done (`runs/m4/reports/wp2b_t1_checker_fixes.md`): on the B1
+  answers the 6 false flags are gone, two missed invented names are now found (b1-24
+  `--partition`, b1-23 a nonexistent Streams key), the 16 true flags are kept; on the 244
+  stored and 48 pilot answers no new finding, one false flag of the same kind removed;
+  catalogue hash unchanged. These B1 answers are development data for the checker now. The
+  pilot invented totals in `wp2b_extraction_gaps.md` (13 and 6) were from an intermediate
+  run; the committed code gives 11 and 5 (corrected there).
+- Next, in order: the Owner's K1, K2, K3 and K4. For the Owner, not blocking: the essential points of
   the six architecture scenarios (b1-10, b1-18, b1-19, b1-20, b1-29, b1-30), and the two
   source decisions for the candidate index (Argo CD command pages, Kafka tool option
   pages). Not blocked by them: the checker's "revise" step (E3), D1, the mechanical tier's

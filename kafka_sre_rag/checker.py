@@ -25,8 +25,8 @@ Shape rules that keep the checker from judging what it cannot know (each is a cl
     words with one, one of them distinctive, e.g. retention.hours ~ log.retention.hours); a key that resembles
     none (auto.register.schemas) is `unverified`: it may belong to another component. The start of a real key
     (min.insync) is an abbreviation and is not reported. A scope is taken only from a YAML path, a properties file
-    named in the sentence or just before the block, or (for `key=value` only) a section heading about settings;
-    never from the words of a sentence;
+    named in the sentence (for a key in prose or an inline span) or in the sentence or just before the block (for a
+    fence), or (for `key=value` only) a section heading about settings; never from the words of a sentence;
   * a field that is not in the Strimzi reference but is written under an older apiVersion than the one the
     reference describes is `invented` only when a real sibling has a similar name, else `unverified`; what lies
     below a field already reported is not reported again;
@@ -38,7 +38,15 @@ Shape rules that keep the checker from judging what it cannot know (each is a cl
   * a Kafka-prefixed CamelCase name is judged as a Strimzi type only where it is used as a kind
     (a `kind:` line, "the X resource"); elsewhere it may be a Java class and is `not_covered`;
   * a CamelCase or UPPER_SNAKE name is judged as a protocol error only when it is that shape of a real
-    error name with a small spelling difference, or the sentence speaks of an error.
+    error name with a small spelling difference, or the sentence speaks of an error. A CamelCase name ending in
+    `Exception` is a Java class, not a protocol error name, and is not judged; an UPPER_SNAKE name that is an ACL
+    operation name (the AclOperation enum) is not judged; other names in a sentence about ACLs still are.
+
+WP2b R0 rules (each prompted by items of batch B1, listed per rule at the code; rule of agents/m4-evaluation.md,
+"Rules against fitting"): `$(...)` replaced before the pipe split (b1-24); `key=value` lines in a properties
+fence judged without the first-word rule (b1-23); `...Exception` and ACL operation names not judged as protocol errors
+(b1-04); keys under `matchLabels` and `nodeSelector` not judged as field paths (b1-13); a key in prose takes no
+scope from the lines before it (b1-03).
 
 Stdlib only. Imports only kafka_sre_rag.catalogue. Reads nothing under eval/.
 """
@@ -93,6 +101,32 @@ CONFIG_PATH_SCOPE = {  # (kind, normalised path of the config map) -> scope; "op
     ("KafkaMirrorMaker2", "spec.mirrors[].checkpointConnector.config"): "open",
     ("KafkaMirrorMaker2", "spec.mirrors[].heartbeatConnector.config"): "open",
 }
+
+SUBST_RE = re.compile(r"\$\([^()]*\)")
+
+
+def _drop_substitutions(line: str) -> str:
+    """Replace each `$(...)` command substitution by a placeholder word before a command line is split at `|`, `;`
+    and `&&`: a pipe inside the substitution must not cut the command it sits in. B1 item: b1-24
+    (`kubectl exec ... $(kubectl get pod ... | head -1) -- /opt/kafka/bin/kafka-consumer-groups.sh ...`, whose Kafka
+    command was cut off at the pipe and never parsed). The substitution's own content is not parsed."""
+    prev = None
+    while prev != line:
+        prev, line = line, SUBST_RE.sub("SUBST", line)
+    return line
+
+
+# ACL operations, the AclOperation enum written in UPPER_SNAKE. Source: raw/apache-kafka/docs/security/authorization-and-acls.md
+# lines 438-451 ("Valid values are": Read, Write, Create, Delete, Alter, Describe, ClusterAction, DescribeConfigs,
+# AlterConfigs, IdempotentWrite, CreateTokens, DescribeTokens, All) and lines 595-609 ("Operations in Kafka");
+# raw_catalogue/apache-kafka-tools/.../AclCommand.java lines 60-64 (imports of CREATE, DESCRIBE, IDEMPOTENT_WRITE, READ,
+# WRITE of AclOperation) and 396 (AclOperation.ALL). Only these words are exempt from the protocol-error look-up; a
+# real or invented error name in a sentence about ACLs is still checked. B1 item: strict b1-04 (`IDEMPOTENT_WRITE`).
+ACL_OPERATIONS = frozenset({"ALL", "READ", "WRITE", "CREATE", "DELETE", "ALTER", "DESCRIBE", "CLUSTER_ACTION",
+                            "DESCRIBE_CONFIGS", "ALTER_CONFIGS", "IDEMPOTENT_WRITE", "CREATE_TOKENS", "DESCRIBE_TOKENS"})
+# maps whose keys are labels of the user's cluster, not Strimzi fields. B1 item: strict b1-13
+# (`...namespaceSelector.matchLabels.kubernetes.io/metadata.name`).
+LABEL_MAP_SEGMENTS = ("matchLabels", "nodeSelector")
 
 CAMEL_RE = re.compile(r"(?<![\w.\-/])(?:[A-Z][a-z0-9]+){2,}(?![\w\-])")
 UPPER_SNAKE_RE = re.compile(r"(?<![\w.\-/])[A-Z][A-Z0-9]*(?:_[A-Z0-9]+){1,}(?![\w\-])")
@@ -526,7 +560,11 @@ class Checker:
         """The scope of a key, when the context states it: a properties file named in the sentence or the
         text before the block; for a `key=value` setting also a section heading about one kind of settings,
         unless the sentence itself speaks of another scope."""
-        sc = self._scope_from_text(sentence, seg.before)
+        # WP2b R0: a key written in prose or in an inline span (seg.kind == "text") takes a properties file only from
+        # its own sentence; the lines before it say nothing about this key. In strict b1-03 the paragraph before
+        # named `server.properties`, which gave the inline `max.message.bytes` ("topic-level") and `max.request.size`
+        # ("your producer's") the scope `broker`. A fence still takes the text before it.
+        sc = self._scope_from_text(sentence, seg.before if seg.kind == "fence" else "")
         if sc or not heading_ok:
             return sc
         sc = self._scope_from_heading(seg.heading)
@@ -545,12 +583,16 @@ class Checker:
             if not m:
                 continue
             key, val = m.group(1), re.sub(r"\s+#.*$", "", m.group(2)).strip()
-            out += self._config_items(key, val, no, s, "fence", {"scope": scope} if scope else {})
+            # WP2b R0: inside a properties fence every `key=value` line is a setting, so the first-word rule of
+            # `_is_config_key` (the first word must start a catalogued key) is not applied; the decision treats a
+            # key far from every real key as `unverified` ("config_far_from_any_key"), a near one as `invented`.
+            # B1 item: strict b1-23 (`global.state.store.update.exception.handler`, no key starts with `global.`).
+            out += self._config_items(key, val, no, s, "fence", {"scope": scope} if scope else {}, any_first=True)
         return out
 
-    def _config_items(self, key, value, no, sentence, source, ctx) -> List[Item]:
+    def _config_items(self, key, value, no, sentence, source, ctx, any_first=False) -> List[Item]:
         out = []
-        if not self._is_config_key(key):
+        if not self._is_config_key(key, any_first):
             return out
         out.append(Item(key, "config_key", no, sentence, source, dict(ctx)))
         v = (value or "").strip().strip("\"'`")
@@ -558,7 +600,7 @@ class Checker:
             out.append(Item("%s=%s" % (key, v), "config_value", no, sentence, source, dict(ctx, key=key, value=v)))
         return out
 
-    def _is_config_key(self, tok: str) -> bool:
+    def _is_config_key(self, tok: str, any_first: bool = False) -> bool:
         if not re.fullmatch(r"[a-z][a-z0-9_-]*(?:\.[a-z0-9_-]+)+", tok):
             return False
         last = tok.rsplit(".", 1)[1]
@@ -567,7 +609,7 @@ class Checker:
         if re.fullmatch(r"v?\d+(\.\d+)*", tok):
             return False
         first = tok.split(".")[0]
-        return first in self._first or tok.startswith(FOREIGN_KEY_PREFIXES)
+        return any_first or first in self._first or tok.startswith(FOREIGN_KEY_PREFIXES)
 
     # -------- YAML
     def _extract_yaml(self, lines, seg, _hd) -> List[Item]:
@@ -634,6 +676,8 @@ class Checker:
                         seen_paths.add(cpath)
                         out.append(Item(cpath, "field_path", no, line_text, "fence", dict(ctx, path=cpath)))
                     continue
+                if any(s in LABEL_MAP_SEGMENTS for s in segs[:-1]):
+                    continue    # WP2b R0: a key in a label-selector map is a label of the user's cluster, not a field (b1-13)
                 if any(s.endswith(("annotations", "labels")) and s != "matchLabels" for s in segs[:-1]) and "/" in key:
                     out += self._yaml_meta(segs, key, val, no, line_text, kind)
                     continue
@@ -695,7 +739,7 @@ class Checker:
             if not s or s.startswith("#"):
                 continue
             s = re.sub(r"^\$\s+", "", s)
-            for cmd in re.split(r"\s*(?:\|\||&&|\||;)\s*", s):
+            for cmd in re.split(r"\s*(?:\|\||&&|\||;)\s*", _drop_substitutions(s)):
                 out += self.parse_command(cmd, no, s, "fence")
         return out
 
@@ -1040,6 +1084,8 @@ class Checker:
             return []
         if len(kinds) != 1:
             return []
+        if any(".%s." % seg in path for seg in LABEL_MAP_SEGMENTS):
+            return []       # a key under matchLabels written in prose (b1-13)
         p = normalise_path(path)
         return [Item(p, "field_path", no, sent, source, {"kind": kinds[0], "path": p})]
 
@@ -1056,7 +1102,7 @@ class Checker:
         base = c.split()[0].split("/")[-1]
         if base.startswith("kafka-") or base in ("kubectl", "argocd", "curl", "oc"):
             its = []
-            for cmd in re.split(r"\s*(?:\|\||&&|\||;)\s*", c):
+            for cmd in re.split(r"\s*(?:\|\||&&|\||;)\s*", _drop_substitutions(c)):
                 its += self.parse_command(cmd, no, sent, "inline")
             tl = next((i.context["tool"] for i in its if i.type == "cli_tool"), None)
             return its, tl
@@ -1402,6 +1448,12 @@ class Checker:
         if norm in self._error_norm:
             it.status = KNOWN
             return
+        # WP2b R0: a CamelCase name ending in `Exception` is a Java class (it exists in the client library, which
+        # the pinned sources do not hold), not a protocol error name: it is not matched to one. B1 item: b1-04
+        # (`TransactionalIdAuthorizationException`, default, default_4k and strict).
+        if camel and tok.endswith("Exception"):
+            it.status = SKIPPED
+            return
         near = difflib.get_close_matches(norm, list(self._error_norm), n=1, cutoff=0.9)
         # only a sentence that says "error" or "exception" makes an UPPER_SNAKE word an error name; "returns" or "raises"
         # also precede ordinary enum values (READ_COMMITTED returns ...)
@@ -1412,7 +1464,9 @@ class Checker:
             self._add(result, INVENTED, it, "error_name", "`%s` is not a protocol error name; the nearest real one is `%s`" % (tok, name),
                       "use `%s`" % name, "protocol_errors")
             return
-        if not camel and sentence_error and self.cats.data["protocol_errors"]:
+        # WP2b R0: an ACL operation name (IDEMPOTENT_WRITE) is not a protocol error; nothing else is exempt. B1 item: strict b1-04.
+        acl_word = tok in ACL_OPERATIONS
+        if not camel and sentence_error and not acl_word and self.cats.data["protocol_errors"]:
             r = self.cats.error_name(tok)
             if r.unknown:
                 it.status = UNKNOWN
