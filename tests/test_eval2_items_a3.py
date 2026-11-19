@@ -320,6 +320,49 @@ class ExposureAndSplit(unittest.TestCase):
 
 
 @unittest.skipUnless(HAVE, SKIP)
+class SharedVariants(unittest.TestCase):
+    """Revision 2 of version 3: hidden items that repeat a published item's fault or scenario are tagged, not moved."""
+
+    def item(self, kind, template, family, fc="valid_but_wrong"):
+        return {"kind": kind, "template": template, "family": family, "failure_class": fc}
+
+    def test_variant_drops_the_resource_name_and_keeps_fault_scenario_and_class(self):
+        v = asm.variant_key
+        self.assertEqual(v(self.item("valid_but_wrong", "vbw_netpol_from", "vbw_netpol_from:pod_only:audit-log")),
+                         v(self.item("valid_but_wrong", "vbw_netpol_from", "vbw_netpol_from:pod_only:billing")))
+        self.assertNotEqual(v(self.item("valid_but_wrong", "vbw_netpol_from", "vbw_netpol_from:pod_only:a")),
+                            v(self.item("valid_but_wrong", "vbw_netpol_from", "vbw_netpol_from:ns_only:a")))
+        self.assertNotEqual(v(self.item("valid_but_wrong", "vbw_netpol_from", "vbw_netpol_from:control:a")),
+                            v(self.item("valid_but_wrong", "vbw_netpol_from", "vbw_netpol_from:control:a", "valid_control")))
+        self.assertEqual(v(self.item("safe_order", "order_app_reset", "order_app_reset:kafka-streams-application-reset:x", "safe_order")),
+                         v(self.item("safe_order", "order_app_reset", "order_app_reset:kafka-streams-application-reset:y", "safe_order")))
+        self.assertNotEqual(v(self.item("safe_order", "order_sg_reset", "order_sg_reset:kafka-streams-groups:earliest", "safe_order")),
+                            v(self.item("safe_order", "order_sg_reset", "order_sg_reset:kafka-streams-groups:shift", "safe_order")))
+        self.assertIsNone(v(self.item("client_code", "client_x", "client_x:a")))
+
+    def test_the_real_build_tags_exactly_the_hidden_items_with_a_published_variant(self):
+        r = built()
+        pub = r["published"]
+        for i in r["hidden"]:
+            self.assertEqual(bool(i.get("shares_variant_with_published")), pub.shares_variant(i), i["id"])
+        for i in r["open"]:
+            self.assertNotIn("shares_variant_with_published", i)
+        m = asm.manifest_of(r)["shares_variant_with_published"]
+        self.assertEqual(m["total"], sum(m["per_template"].values()))
+        self.assertEqual(m["total"], sum(1 for i in r["hidden"] if i.get("shares_variant_with_published")))
+        # tagged, not moved: the split is the one by publication
+        self.assertEqual(asm.manifest_of(r)["revision"]["number"], 2)
+
+    def test_the_record_carries_the_variant_of_every_published_vbw_and_order_item(self):
+        rec = json.loads((ROOT / asm.PUBLISHED_PATH).read_text())
+        rows = [asm.git_rows(c, p) for _, c, p in asm.PUBLISHED_SOURCES]
+        if any(x is None for x in rows):
+            raise unittest.SkipTest("the earlier open files are not in git here")
+        for v, part in zip(rec["versions"], rows):
+            for i, r in zip(v["items"], part):
+                self.assertEqual(i.get("variant"), asm.variant_key(r))
+
+
 class PublishedOpenFiles(unittest.TestCase):
     """Round 2, N1: nothing that was ever in an open file is hidden."""
 

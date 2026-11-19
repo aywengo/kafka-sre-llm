@@ -60,7 +60,7 @@ class OrderItems(unittest.TestCase):
     def test_dropping_any_required_step_fails(self):
         for i in self.items:
             chk = next(c for c in i["checks"] if c["type"] == "cmd_order")
-            lines = i["reference"].split("\n")[1:-1]
+            lines = [l for l in i["reference"].split("\n")[1:-1] if not l.startswith("#")]   # a comment line is no step
             for k in range(len(lines)):
                 kept = lines[:k] + lines[k + 1:]
                 text = "```bash\n%s\n```" % "\n".join(kept)
@@ -132,7 +132,8 @@ class OrderItems(unittest.TestCase):
     def test_the_new_draws_have_their_own_numbers_and_entries(self):
         fresh = [i for i in self.items if gen_fresh(i)]
         self.assertEqual(sorted(i["template"] for i in fresh), ["order_app_reset", "order_argo_sync", "order_reassign"])
-        self.assertTrue(all(i["id"].endswith("-201") for i in fresh))
+        # revision 2: the fresh order_reassign item has the new id 251 (201 is not reused for changed content)
+        self.assertTrue(all(i["id"].endswith("-251" if i["template"] == "order_reassign" else "-201") for i in fresh))
         self.assertEqual(len({i["family"] for i in self.items}), len(self.items))
 
     def test_sg_delete_offsets_follows_the_tool_source(self):
@@ -212,18 +213,28 @@ class OrderItems(unittest.TestCase):
         self.assertFalse(self.passes(i, block(gen_, ex, ver))[0])                           # ra_bad_nothrottle
         self.assertFalse(self.passes(i, block(gen_, ex + " --throttle 50000000"))[0])      # ra_bad_noverify
         self.assertFalse(self.passes(i, block(gen_ + " --disable-rack-aware", ex + " --throttle 50000000", ver))[0])   # ra_bad_rack
-        # the reference saves the plan file that the execute and verify lines use, and passes
-        gline = i["reference"].split("\n")[1]
-        self.assertIn("--generate", gline)
-        self.assertTrue(gline.endswith("> bigger-cluster.json"), gline)
+        # revision 2: --generate prints two JSON blocks, so the reference does not redirect its output into the plan file; a comment line
+        # after it says to save the proposed block as the plan file that the execute and verify lines use (DOC_OPS 398)
+        ref = i["reference"].split("\n")
+        self.assertIn("--generate", ref[1])
+        self.assertNotIn(">", ref[1])
+        self.assertTrue(ref[2].startswith("# save the") and "Proposed partition reassignment configuration" in ref[2] and ref[2].count("bigger-cluster.json") == 1, ref[2])
+        self.assertIn(("raw/apache-kafka/docs/operations/basic-kafka-operations.md", 398), [(x["file"], x["line"]) for x in i["sources"]])
         # the plain item asks for no throttle: none is required, and none is checked
         j = [x for x in self.items if x["family"].endswith(":plain")][0]
         self.assertNotIn("--throttle", j["reference"])
-        self.assertTrue(j["reference"].split("\n")[1].endswith("> expand-cluster-reassignment.json"))
+        self.assertNotIn(">", j["reference"].split("\n")[1])
+        self.assertIn("expand-cluster-reassignment.json", j["reference"].split("\n")[2])
+        for x in self.items:
+            if x["template"] == "order_reassign":   # all three (two open, one fresh): no redirect of the generate output, new ids
+                self.assertTrue(all(">" not in l for l in x["reference"].split("\n") if "--generate" in l))
+                self.assertTrue(all(">" not in t["text"].split("\n")[k] for t in x["perturbed"] for k, l in enumerate(t["text"].split("\n")) if "--generate" in l))
+                self.assertIn(int(x["id"].rsplit("-", 1)[1]), (401, 402, 251))
+            
 
     def test_reassign_asks_to_generate_the_plan(self):
         i = [x for x in self.items if x["family"].endswith(":plain")][0]
-        self.assertIn("Generate the plan and save it as", i["question"])
+        self.assertIn("Generate the candidate assignment and save the proposed assignment as", i["question"])
         self.assertNotIn("is saved in", i["question"])
         bs = "bin/kafka-reassign-partitions.sh --bootstrap-server kafka:9092 "
         # review ra1_r1 (execute, verify, no generate) fails; ra1_r2 (generate, execute, verify) passes

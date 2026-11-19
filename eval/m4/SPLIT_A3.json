@@ -51,13 +51,13 @@
   "eval2_checks_a3_client.py": "49c328e5d9dace7202ae5150f97a882c6c1eef7b15aa3f42a1f78098c1aa8c34",
   "eval2_items_a3_client.py": "cc1e9668e23ba8f7737915b3700d9e303d72a517d71c38bb044e67f2eabd5e9a",
   "eval2_items_a3_gap.py": "f77c6e739de3d0503cee2698136965d8b47bd1b6fb58bf2a822b343dc909dbef",
-  "eval2_items_a3_order.py": "d4a09edbeb86c88ea50e190befe830d430c8870858d150aeb66bc238ca321e93",
+  "eval2_items_a3_order.py": "166fc7877f65aae434181e3e7686902cf299ba2f1b58430133b4a98d6f40c809",
   "eval2_items_a3_sizing.py": "0c191218d123b04c1b06661563e537d363456a45f7fc4da8b0533ef071fdbe99",
   "eval2_items_a3_vbw.py": "ebcd38d384e0c8cddfaa325ff268f066209037a8755ae8e4066ff2874e1ba45f",
   "javacheck/ListCalls.java": "4c4402ebf01d630263de0389fa6d7b0f251c3dcca78b7c1ae6d4da85b46cd967"
  },
  "grouping": "items with `pair` by it; all other items by their own family",
- "items_sha256": "5131332543ec6e1ba794cb78771ddf63d792ced8c01b07c066feac93246dd168",
+ "items_sha256": "d9e1789787cad044b23ddc58652baf6ecb0a36234db826280778d13aef2639a0",
  "items_total": 148,
  "kinds_missing": [],
  "near_duplicate_limit": "items of one template are parameter variants of one wording: the near-duplicate thresholds (Jaccard 0.5, containment 0.8) cannot hold between a hidden item and an open item of the same template; hidden items differ from every published item by the rule above",
@@ -66,13 +66,13 @@
    "items": 60,
    "note": "encrypted with a random salt: the ciphertext differs on every run; the plaintext (jsonl, sort_keys, in the order of the items) is reproduced exactly",
    "path": "eval/hidden/tier_a3.jsonl.enc",
-   "plaintext_sha256": "31c52a3081397d2a26045c30410b77f593bd24f136d591d461f5ddd95e59aa10",
-   "sha256": "55b0ce2999f288f26acb81a32ee6130395c09d5749b3a777265f28d6bc9cdc95"
+   "plaintext_sha256": "6ad7b65b4e6b01b119322faf28856951eff906ed1f406f14869f8c3e7a1d5a07",
+   "sha256": "2411879b235fd541b37cb2f0a325ab051ceb2fa594ecbbb132c34d06df7219de"
   },
   "open": {
    "items": 88,
    "path": "eval/m4/open/tier_a3.jsonl",
-   "sha256": "1f7f32b53308bc68a004ab33ee0fa6105862374ed3edefdaf0d33949a9059916"
+   "sha256": "4047c4b9700baabf86527d47be55c68b80847a42cabb1a6f567dfb47fd0171af"
   }
  },
  "per_kind": {
@@ -108,14 +108,14 @@
  },
  "published_matches": {
   "none": 2,
-  "same entry": 8,
-  "same question": 77,
+  "same entry": 9,
+  "same question": 76,
   "same words": 1
  },
  "published_open": {
   "leak_jaccard": 0.97,
   "path": "eval/m4/A3_PUBLISHED_OPEN.json",
-  "sha256": "87f54c4afc39d627dad5a293df3497fa873db11544dcb61ed8898235cde9b793",
+  "sha256": "8ea809ad1c944b6eb0b1e06075816c9e5ac46e532be3b3f9be19355bf77941b6",
   "versions": [
    "eval2_items_a3/1",
    "eval2_items_a3/2"
@@ -131,7 +131,30 @@
    "items_sha256": "62bbed2411bd2cd5c544841898aa6433ba1455da0d0bffb9f0d067c6b38fa9d8"
   }
  ],
+ "revision": {
+  "number": 2,
+  "reason": "the three order_reassign references saved the whole --generate output (two JSON blocks) as the plan file; they now save the proposed block as the docs describe (new ids); hidden items that share a published item's fault or scenario with other resource names are tagged (shares_variant_with_published)"
+ },
  "rule": "groups on one side (an item and its control, a task and its restatement, by `pair`); a group with an item that is in an open file of an earlier version (same normalised question, same drawn entry, or the same words: Jaccard of the token sets of at least leak_jaccard) goes open as a whole; every other group is hidden, so the hidden side holds only items that were never open (eval2_items_a3.split_by_publication)",
+ "shares_variant_with_published": {
+  "per_kind": {
+   "safe_order": 5,
+   "valid_but_wrong": 7
+  },
+  "per_template": {
+   "order_app_reset": 1,
+   "order_argo_sync": 1,
+   "order_reassign": 1,
+   "order_sg_delete_offsets": 1,
+   "order_shg_reset": 1,
+   "vbw_min_isr_replicas": 1,
+   "vbw_netpol_from": 2,
+   "vbw_pdb_no_eviction": 2,
+   "vbw_restart_annotation": 2
+  },
+  "rule": "hidden items whose `variant` (the entry without resource names: family label minus its resource segment, for valid_but_wrong plus the failure class; eval2_items_a3.variant_key) equals that of an item of A3_PUBLISHED_OPEN.json; tagged `shares_variant_with_published: true`, not moved; hidden reports give the total with and without them",
+  "total": 12
+ },
  "split": "by publication",
  "templates_one_side": []
 }

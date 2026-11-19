@@ -57,99 +57,123 @@
     },
     {
      "id": "a3-vbw_default_value-001",
-     "question_sha256": "39d19db0faab6c98c46c35d52ca5d6f0f7d12f4600e2d0fdcd4327fba8918bb7"
+     "question_sha256": "39d19db0faab6c98c46c35d52ca5d6f0f7d12f4600e2d0fdcd4327fba8918bb7",
+     "variant": "vbw_default_value:delete.retention.ms|valid_but_wrong"
     },
     {
      "id": "a3-vbw_default_value-002",
-     "question_sha256": "b95c000338fdd2188239001d4a9861dda1e6b1f0e810f6e194514ce008978fa3"
+     "question_sha256": "b95c000338fdd2188239001d4a9861dda1e6b1f0e810f6e194514ce008978fa3",
+     "variant": "vbw_default_value:retention.ms|valid_but_wrong"
     },
     {
      "id": "a3-vbw_default_value-003",
-     "question_sha256": "0354fb43371fa9db46811a99c5a41d25d7d36b4dba1c446646de3f32100b2c66"
+     "question_sha256": "0354fb43371fa9db46811a99c5a41d25d7d36b4dba1c446646de3f32100b2c66",
+     "variant": "vbw_default_value:min.cleanable.dirty.ratio|valid_but_wrong"
     },
     {
      "id": "a3-vbw_default_value-004",
-     "question_sha256": "feeed3345cec60294957488cb7bef709d238b5f21533c62d4f7442c72bfeb6d8"
+     "question_sha256": "feeed3345cec60294957488cb7bef709d238b5f21533c62d4f7442c72bfeb6d8",
+     "variant": "vbw_default_value:max.message.bytes|valid_control"
     },
     {
      "id": "a3-vbw_netpol_from-001",
-     "question_sha256": "3dc0cb4369718b985ce51e4f1fc9281a1fcdadae9eb878dc5947c5c3726e6a04"
+     "question_sha256": "3dc0cb4369718b985ce51e4f1fc9281a1fcdadae9eb878dc5947c5c3726e6a04",
+     "variant": "vbw_netpol_from:pod_only|valid_but_wrong"
     },
     {
      "id": "a3-vbw_netpol_from-002",
-     "question_sha256": "1b410dc3f511140a3264862d3bd75460c41446e2a1a700b20cf0ca6bf3e3db6d"
+     "question_sha256": "1b410dc3f511140a3264862d3bd75460c41446e2a1a700b20cf0ca6bf3e3db6d",
+     "variant": "vbw_netpol_from:or_entries|valid_but_wrong"
     },
     {
      "id": "a3-vbw_netpol_from-003",
-     "question_sha256": "7d9e321bfdc1cbbcc4f7f5f83708107bdb90b576c069ba6786977ab16c431791"
+     "question_sha256": "7d9e321bfdc1cbbcc4f7f5f83708107bdb90b576c069ba6786977ab16c431791",
+     "variant": "vbw_netpol_from:ns_only|valid_but_wrong"
     },
     {
      "id": "a3-vbw_netpol_from-004",
-     "question_sha256": "d11498b9431d1387345b0b244f86b1186324f04a63621637043afcb0826e8b39"
+     "question_sha256": "d11498b9431d1387345b0b244f86b1186324f04a63621637043afcb0826e8b39",
+     "variant": "vbw_netpol_from:control|valid_control"
     },
     {
      "id": "a3-vbw_pdb_no_eviction-001",
-     "question_sha256": "7645ba6a7797de15804a191de4388204f75dec41f36ce00f4ce47deaf5a456b6"
+     "question_sha256": "7645ba6a7797de15804a191de4388204f75dec41f36ce00f4ce47deaf5a456b6",
+     "variant": "vbw_pdb_no_eviction:max0|valid_but_wrong"
     },
     {
      "id": "a3-vbw_pdb_no_eviction-002",
-     "question_sha256": "2ec711943349824f829743bcaeae50553eeacd998fd0ce5ee6187069203af1d2"
+     "question_sha256": "2ec711943349824f829743bcaeae50553eeacd998fd0ce5ee6187069203af1d2",
+     "variant": "vbw_pdb_no_eviction:min100|valid_but_wrong"
     },
     {
      "id": "a3-vbw_pdb_no_eviction-003",
-     "question_sha256": "88fdf602659778989fdde1cf9deea0f7310b9f9046d259bd9743d157f9448f21"
+     "question_sha256": "88fdf602659778989fdde1cf9deea0f7310b9f9046d259bd9743d157f9448f21",
+     "variant": "vbw_pdb_no_eviction:minall|valid_but_wrong"
     },
     {
      "id": "a3-vbw_pdb_no_eviction-004",
-     "question_sha256": "33abb0fcf409d53a8aeef5adf35d98f5cceecbcf9cedcdaedb3dac03c146e0bd"
+     "question_sha256": "33abb0fcf409d53a8aeef5adf35d98f5cceecbcf9cedcdaedb3dac03c146e0bd",
+     "variant": "vbw_pdb_no_eviction:control|valid_control"
     },
     {
      "id": "a3-vbw_restart_annotation-001",
-     "question_sha256": "9a03d8d502f0c5ee82ba574037d9e812d6499af460d8b6ef7e497462720f2dca"
+     "question_sha256": "9a03d8d502f0c5ee82ba574037d9e812d6499af460d8b6ef7e497462720f2dca",
+     "variant": "vbw_restart_annotation:KafkaConnector|valid_but_wrong"
     },
     {
      "id": "a3-vbw_restart_annotation-002",
-     "question_sha256": "d1c563ffd30606a0ca82b575d20db7921ffc5be6009a766cff8a816ae2dc1af3"
+     "question_sha256": "d1c563ffd30606a0ca82b575d20db7921ffc5be6009a766cff8a816ae2dc1af3",
+     "variant": "vbw_restart_annotation:KafkaConnector|valid_but_wrong"
     },
     {
      "id": "a3-vbw_restart_annotation-003",
-     "question_sha256": "c7e26aa6fcddc258c4e5f42a65505f027925332169b7e7a2a9d741c431a25d4f"
+     "question_sha256": "c7e26aa6fcddc258c4e5f42a65505f027925332169b7e7a2a9d741c431a25d4f",
+     "variant": "vbw_restart_annotation:KafkaMirrorMaker2|valid_but_wrong"
     },
     {
      "id": "a3-vbw_restart_annotation-004",
-     "question_sha256": "b8b8d15e63446b12b726d39149df9c06e509f4e197140261ff000f0695cb1175"
+     "question_sha256": "b8b8d15e63446b12b726d39149df9c06e509f4e197140261ff000f0695cb1175",
+     "variant": "vbw_restart_annotation:KafkaConnector|valid_control"
     },
     {
      "id": "a3-order_app_reset-001",
-     "question_sha256": "643e1e981cb12344ad4aaa71930c0b366245960d98b9fb2b426c3da51b8dd2e3"
+     "question_sha256": "643e1e981cb12344ad4aaa71930c0b366245960d98b9fb2b426c3da51b8dd2e3",
+     "variant": "order_app_reset:kafka-streams-application-reset"
     },
     {
      "id": "a3-order_app_reset-002",
-     "question_sha256": "109a4dab308bd12f327f2f20d03fc2a1cee9696aca1a636f35f83148e4c58d6d"
+     "question_sha256": "109a4dab308bd12f327f2f20d03fc2a1cee9696aca1a636f35f83148e4c58d6d",
+     "variant": "order_app_reset:kafka-streams-application-reset"
     },
     {
      "id": "a3-order_argo_sync-002",
-     "question_sha256": "10c2e0b492394db591613f60b3e0994c6a104fee9fc7c12b3507824aff5f51e9"
+     "question_sha256": "10c2e0b492394db591613f60b3e0994c6a104fee9fc7c12b3507824aff5f51e9",
+     "variant": "order_argo_sync:argocd-app-sync"
     },
     {
      "id": "a3-order_cg_reset-001",
-     "question_sha256": "9bfd4fd135b8759b5ce83144eb0cda55d790214616e63a85b4f8a0b52ce908fc"
+     "question_sha256": "9bfd4fd135b8759b5ce83144eb0cda55d790214616e63a85b4f8a0b52ce908fc",
+     "variant": "order_cg_reset:kafka-consumer-groups:earliest"
     },
     {
      "id": "a3-order_reassign-001",
-     "question_sha256": "c5219d5a89973c7640df53c21386a94c3a1344aeb24bed5a25f634d864a813a4"
+     "question_sha256": "c5219d5a89973c7640df53c21386a94c3a1344aeb24bed5a25f634d864a813a4",
+     "variant": "order_reassign:kafka-reassign-partitions:plain"
     },
     {
      "id": "a3-order_sg_delete_offsets-001",
-     "question_sha256": "1f295b75164553b06eab9a89dd1e231406d3b6e605cfd6a32f6a7136b5c01460"
+     "question_sha256": "1f295b75164553b06eab9a89dd1e231406d3b6e605cfd6a32f6a7136b5c01460",
+     "variant": "order_sg_delete_offsets:kafka-streams-groups:delete-offsets"
     },
     {
      "id": "a3-order_sg_reset-001",
-     "question_sha256": "73746a5e09047298789f2a53678fcbd8b9ecc32569853089d6966f2d37c28cd6"
+     "question_sha256": "73746a5e09047298789f2a53678fcbd8b9ecc32569853089d6966f2d37c28cd6",
+     "variant": "order_sg_reset:kafka-streams-groups:earliest"
     },
     {
      "id": "a3-order_sg_reset-003",
-     "question_sha256": "1c20f7b8e57520c86b29d5ca0beef10b65ea800c1c903b37906fa3b53ad8cc69"
+     "question_sha256": "1c20f7b8e57520c86b29d5ca0beef10b65ea800c1c903b37906fa3b53ad8cc69",
+     "variant": "order_sg_reset:kafka-streams-groups:shift"
     },
     {
      "id": "a3-size_follower_traffic-001",
@@ -304,99 +328,123 @@
     },
     {
      "id": "a3-vbw_default_value-v2-002",
-     "question_sha256": "b95c000338fdd2188239001d4a9861dda1e6b1f0e810f6e194514ce008978fa3"
+     "question_sha256": "b95c000338fdd2188239001d4a9861dda1e6b1f0e810f6e194514ce008978fa3",
+     "variant": "vbw_default_value:retention.ms|valid_but_wrong"
     },
     {
      "id": "a3-vbw_default_value-v2-003",
-     "question_sha256": "7290c8a108bcd40685c36251af7a8ff750acc1b0513563b33548b661e4f2a507"
+     "question_sha256": "7290c8a108bcd40685c36251af7a8ff750acc1b0513563b33548b661e4f2a507",
+     "variant": "vbw_default_value:min.cleanable.dirty.ratio|valid_but_wrong"
     },
     {
      "id": "a3-vbw_forbidden_key-v2-001",
-     "question_sha256": "cdef3e6c3cf40199820e4328f3ba7cad951f3b169de7fc90e4b4a7fbc3dce0a9"
+     "question_sha256": "cdef3e6c3cf40199820e4328f3ba7cad951f3b169de7fc90e4b4a7fbc3dce0a9",
+     "variant": "vbw_forbidden_key:Kafka:log.dirs|valid_but_wrong"
     },
     {
      "id": "a3-vbw_forbidden_key-v2-005",
-     "question_sha256": "caa406830189976e82c22b793d40e0acbbd9b46b0e6b68211d6faa99da8fc998"
+     "question_sha256": "caa406830189976e82c22b793d40e0acbbd9b46b0e6b68211d6faa99da8fc998",
+     "variant": "vbw_forbidden_key:KafkaConnector:connector.plugin.version|valid_but_wrong"
     },
     {
      "id": "a3-vbw_forbidden_key-v2-006",
-     "question_sha256": "b799507ac8b22d9a96bd9ac2370dac693bbd411e9a451aaf489ec77c7798dc70"
+     "question_sha256": "b799507ac8b22d9a96bd9ac2370dac693bbd411e9a451aaf489ec77c7798dc70",
+     "variant": "vbw_forbidden_key:KafkaMirrorMaker2:tasks.max|valid_but_wrong"
     },
     {
      "id": "a3-vbw_forbidden_key-v2-007",
-     "question_sha256": "a3c0415d20de74a99a444921685e7f4449f2f3052b08f8f6a80c8ee0a6567fef"
+     "question_sha256": "a3c0415d20de74a99a444921685e7f4449f2f3052b08f8f6a80c8ee0a6567fef",
+     "variant": "vbw_forbidden_key:Kafka:cruise.control.metrics.topic.min.insync.replicas|valid_control"
     },
     {
      "id": "a3-vbw_heartbeat_session-v2-002",
-     "question_sha256": "bac963b0d64ad79bcdbc499c8dd08d9864df00259c6e09b4a0d260a024c82e57"
+     "question_sha256": "bac963b0d64ad79bcdbc499c8dd08d9864df00259c6e09b4a0d260a024c82e57",
+     "variant": "vbw_heartbeat_session:above_third|valid_but_wrong"
     },
     {
      "id": "a3-vbw_heartbeat_session-v2-003",
-     "question_sha256": "e670ba12941c2bb09b4aca0d739da5134cf38efbc965afb48b12c7a6966e4201"
+     "question_sha256": "e670ba12941c2bb09b4aca0d739da5134cf38efbc965afb48b12c7a6966e4201",
+     "variant": "vbw_heartbeat_session:session_default|valid_but_wrong"
     },
     {
      "id": "a3-vbw_min_isr_replicas-v2-001",
-     "question_sha256": "a43ce0ab47e97fda950ccfb934dd376455448d6b2fca1620b8cf0ab258e1ef21"
+     "question_sha256": "a43ce0ab47e97fda950ccfb934dd376455448d6b2fca1620b8cf0ab258e1ef21",
+     "variant": "vbw_min_isr_replicas:3|valid_but_wrong"
     },
     {
      "id": "a3-vbw_min_isr_replicas-v2-004",
-     "question_sha256": "e6c7d4ebb4519a085297158c5c5ab01ed1cc14740d35c9e533bf39586a1b888c"
+     "question_sha256": "e6c7d4ebb4519a085297158c5c5ab01ed1cc14740d35c9e533bf39586a1b888c",
+     "variant": "vbw_min_isr_replicas:3|valid_control"
     },
     {
      "id": "a3-vbw_netpol_from-v2-002",
-     "question_sha256": "1b410dc3f511140a3264862d3bd75460c41446e2a1a700b20cf0ca6bf3e3db6d"
+     "question_sha256": "1b410dc3f511140a3264862d3bd75460c41446e2a1a700b20cf0ca6bf3e3db6d",
+     "variant": "vbw_netpol_from:or_entries|valid_but_wrong"
     },
     {
      "id": "a3-vbw_netpol_from-v2-003",
-     "question_sha256": "7d9e321bfdc1cbbcc4f7f5f83708107bdb90b576c069ba6786977ab16c431791"
+     "question_sha256": "7d9e321bfdc1cbbcc4f7f5f83708107bdb90b576c069ba6786977ab16c431791",
+     "variant": "vbw_netpol_from:ns_only|valid_but_wrong"
     },
     {
      "id": "a3-vbw_pdb_no_eviction-v2-001",
-     "question_sha256": "7645ba6a7797de15804a191de4388204f75dec41f36ce00f4ce47deaf5a456b6"
+     "question_sha256": "7645ba6a7797de15804a191de4388204f75dec41f36ce00f4ce47deaf5a456b6",
+     "variant": "vbw_pdb_no_eviction:max0|valid_but_wrong"
     },
     {
      "id": "a3-vbw_pdb_no_eviction-v2-004",
-     "question_sha256": "33abb0fcf409d53a8aeef5adf35d98f5cceecbcf9cedcdaedb3dac03c146e0bd"
+     "question_sha256": "33abb0fcf409d53a8aeef5adf35d98f5cceecbcf9cedcdaedb3dac03c146e0bd",
+     "variant": "vbw_pdb_no_eviction:control|valid_control"
     },
     {
      "id": "a3-vbw_restart_annotation-v2-002",
-     "question_sha256": "d1c563ffd30606a0ca82b575d20db7921ffc5be6009a766cff8a816ae2dc1af3"
+     "question_sha256": "d1c563ffd30606a0ca82b575d20db7921ffc5be6009a766cff8a816ae2dc1af3",
+     "variant": "vbw_restart_annotation:KafkaConnector|valid_but_wrong"
     },
     {
      "id": "a3-vbw_restart_annotation-v2-003",
-     "question_sha256": "c7e26aa6fcddc258c4e5f42a65505f027925332169b7e7a2a9d741c431a25d4f"
+     "question_sha256": "c7e26aa6fcddc258c4e5f42a65505f027925332169b7e7a2a9d741c431a25d4f",
+     "variant": "vbw_restart_annotation:KafkaMirrorMaker2|valid_but_wrong"
     },
     {
      "id": "a3-order_app_reset-002",
-     "question_sha256": "109a4dab308bd12f327f2f20d03fc2a1cee9696aca1a636f35f83148e4c58d6d"
+     "question_sha256": "109a4dab308bd12f327f2f20d03fc2a1cee9696aca1a636f35f83148e4c58d6d",
+     "variant": "order_app_reset:kafka-streams-application-reset"
     },
     {
      "id": "a3-order_argo_sync-101",
-     "question_sha256": "8bb86bb242610509a317770c74ea25b1d61b7ecad654f65b8db363a31f611fdc"
+     "question_sha256": "8bb86bb242610509a317770c74ea25b1d61b7ecad654f65b8db363a31f611fdc",
+     "variant": "order_argo_sync:argocd-app-sync"
     },
     {
      "id": "a3-order_cg_reset-001",
-     "question_sha256": "9bfd4fd135b8759b5ce83144eb0cda55d790214616e63a85b4f8a0b52ce908fc"
+     "question_sha256": "9bfd4fd135b8759b5ce83144eb0cda55d790214616e63a85b4f8a0b52ce908fc",
+     "variant": "order_cg_reset:kafka-consumer-groups:earliest"
     },
     {
      "id": "a3-order_reassign-102",
-     "question_sha256": "59691fa90b2265172a4dced2e9580ca44c397709f299c808fbded626f0dd023c"
+     "question_sha256": "59691fa90b2265172a4dced2e9580ca44c397709f299c808fbded626f0dd023c",
+     "variant": "order_reassign:kafka-reassign-partitions:throttle"
     },
     {
      "id": "a3-order_sg_delete_offsets-101",
-     "question_sha256": "0105a25e3548706b4787b4b1b69cd21780b9a49541bd215949a17cc13ede4f60"
+     "question_sha256": "0105a25e3548706b4787b4b1b69cd21780b9a49541bd215949a17cc13ede4f60",
+     "variant": "order_sg_delete_offsets:kafka-streams-groups:delete-offsets"
     },
     {
      "id": "a3-order_sg_reset-001",
-     "question_sha256": "73746a5e09047298789f2a53678fcbd8b9ecc32569853089d6966f2d37c28cd6"
+     "question_sha256": "73746a5e09047298789f2a53678fcbd8b9ecc32569853089d6966f2d37c28cd6",
+     "variant": "order_sg_reset:kafka-streams-groups:earliest"
     },
     {
      "id": "a3-order_sg_reset-003",
-     "question_sha256": "1c20f7b8e57520c86b29d5ca0beef10b65ea800c1c903b37906fa3b53ad8cc69"
+     "question_sha256": "1c20f7b8e57520c86b29d5ca0beef10b65ea800c1c903b37906fa3b53ad8cc69",
+     "variant": "order_sg_reset:kafka-streams-groups:shift"
     },
     {
      "id": "a3-order_shg_reset-001",
-     "question_sha256": "a63cf08de844ce2c8e81b0f95b0b84685db57804158a925d441bab9ac19a7ad2"
+     "question_sha256": "a63cf08de844ce2c8e81b0f95b0b84685db57804158a925d441bab9ac19a7ad2",
+     "variant": "order_shg_reset:kafka-share-groups"
     },
     {
      "id": "a3-size_disk_rf-001",

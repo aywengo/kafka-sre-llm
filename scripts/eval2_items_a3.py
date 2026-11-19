@@ -46,6 +46,9 @@ import eval2  # noqa: E402
 import eval2_items_a1 as a1  # noqa: E402
 
 VERSION = "eval2_items_a3/3"
+REVISION = {"number": 2, "reason": "the three order_reassign references saved the whole --generate output (two JSON blocks) as the plan file; "
+                                   "they now save the proposed block as the docs describe (new ids); hidden items that share a published "
+                                   "item's fault or scenario with other resource names are tagged (shares_variant_with_published)"}
 SEED = "m4-a3-3"          # exposure draw of version 3 (version 1 used m4-a3-1, version 2 m4-a3-2)
 SPLIT_SEED = 20261119    # the split draw of version 2: not used for the a3 split any more (publication decides), kept for the record
 OLD_SPLIT_SEED = 20261118  # the seed of the 496: only for the proof that the 496 do not move
@@ -187,6 +190,27 @@ def q_sha(q):
     return sha(norm_text(q))
 
 
+# Revision 2 of version 3: the "variant" of a valid-but-wrong or safe-order item is its entry without the resource names: the family
+# label (template:fault or scenario:resource ...) with the resource segment taken out, and for valid-but-wrong the failure class
+# (wrong or control). Two items of one variant teach the same fault or scenario with other names. The segment index per template.
+RESOURCE_SEGMENT = {"vbw_default_value": 2, "vbw_netpol_from": 2, "vbw_pdb_no_eviction": 2, "vbw_heartbeat_session": 2,
+                    "vbw_restart_annotation": 2, "vbw_min_isr_replicas": 1,
+                    "order_app_reset": 2, "order_argo_sync": 2, "order_sg_delete_offsets": 3, "order_shg_reset": 2,
+                    "order_reassign": 3}   # order_reassign: the plan file name, present only on the throttled entry of the fresh draw
+
+
+def variant_key(it):
+    """None for kinds without a variant (client, sizing, not covered), else the entry without resource names."""
+    if it["kind"] not in ("valid_but_wrong", "safe_order"):
+        return None
+    seg = it["family"].split(":")
+    i = RESOURCE_SEGMENT.get(it["template"])
+    if i is not None and i < len(seg):
+        del seg[i]
+    key = ":".join(seg)
+    return key + ("|" + it["failure_class"] if it["kind"] == "valid_but_wrong" else "")
+
+
 def git_rows(commit, path):
     """The rows of a file of an earlier commit, or None when git or the commit is not available here."""
     try:
@@ -206,7 +230,8 @@ def published_record():
         if rows is None:
             raise AssemblyError("the open file of %s (%s:%s) is not available from git" % (gen, commit, path))
         versions.append({"generator": gen, "commit": commit, "path": path,
-                         "items": [{"id": r["id"], "question_sha256": q_sha(r["question"])} for r in rows]})
+                         "items": [dict({"id": r["id"], "question_sha256": q_sha(r["question"])},
+                                      **({"variant": variant_key(r)} if variant_key(r) else {})) for r in rows]})
     return {"schema": 1, "purpose": "the open items of every earlier a3 version are public; no hidden item of a later version may equal "
                                     "or nearly equal one of them (scripts/eval2_items_a3.py)",
             "normalisation": NORMALISATION, "versions": versions}
@@ -228,6 +253,7 @@ class Published:
         for v in record["versions"]:
             for i in v["items"]:
                 self.id_hashes.setdefault(i["id"], set()).add(i["question_sha256"])
+        self.variants = {i["variant"] for v in record["versions"] for i in v["items"] if i.get("variant")}
         self.rows = rows
         self.families = {r["family"] for r in rows} if rows else set()
         self.tokens = [a1.tokens(core_of(r)) for r in rows] if rows else []
@@ -245,6 +271,11 @@ class Published:
             if t and u and len(t & u) / len(t | u) >= LEAK_JACCARD:
                 return "same words"
         return None
+
+    def shares_variant(self, it):
+        """True when the item has the variant of a published item (same fault or scenario, other resource names)."""
+        k = variant_key(it)
+        return bool(k) and k in self.variants
 
     def maxima(self, it):
         """(jaccard, containment) of the question against the published texts (None without texts)."""
@@ -691,6 +722,9 @@ def build(allow_missing=(), verify=False, with_predecessor=True, published=None)
     r["problems"] += mp
     op, hd, r["published_groups"] = split_by_publication(items, pub)
     r["open"], r["hidden"] = op, hd
+    for i in hd:   # revision 2: a hidden item that repeats the fault or scenario of a published item with other names is tagged, not moved
+        if pub.shares_variant(i):
+            i["shares_variant_with_published"] = True
     r["problems"] += ["hidden item %s is published (%s)" % (i["id"], pub.match(i)) for i in hd if pub.match(i)]
     r["problems"] += ["exposed item %s is on the hidden side" % i["id"] for i in hd if i.get("exposed")]
     r["problems"] += hidden_count_problems(hd, allow_missing)
@@ -713,6 +747,14 @@ def manifest_of(r, enc_sha=None):
         "published_open": {"path": PUBLISHED_PATH, "sha256": sha(record_text(r["published"].record)),
                            "leak_jaccard": LEAK_JACCARD, "versions": [v["generator"] for v in r["published"].record["versions"]]},
         "exposure_seed": SEED,
+        "revision": REVISION,
+        "shares_variant_with_published": {
+            "rule": "hidden items whose `variant` (the entry without resource names: family label minus its resource segment, for "
+                    "valid_but_wrong plus the failure class; eval2_items_a3.variant_key) equals that of an item of A3_PUBLISHED_OPEN.json; "
+                    "tagged `shares_variant_with_published: true`, not moved; hidden reports give the total with and without them",
+            "per_template": dict(sorted(Counter(i["template"] for i in hd if i.get("shares_variant_with_published")).items())),
+            "per_kind": dict(sorted(Counter(i["kind"] for i in hd if i.get("shares_variant_with_published")).items())),
+            "total": sum(1 for i in hd if i.get("shares_variant_with_published"))},
         "catalogue_hash": catalogue_hash(default_dir()), "catalogue_hash_a3": catalogue_a3.manifest()["catalogue_hash"],
         "predecessor": {"items_sha256": json.loads(SPLIT_A1.read_text())["items_sha256"], "items": 496},
         "items_total": len(items), "items_sha256": sha(serialise(items)),

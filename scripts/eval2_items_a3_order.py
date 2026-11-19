@@ -24,6 +24,8 @@ kafka-configs; the preview of `kafka-streams-groups.sh --delete`) are counted as
 
 Version 3 (fix round 2): N6 and N7 changed the checks of order_sg_delete_offsets and order_reassign (new ids from 301); N1 adds one
 parameter set (`fresh`, ids from 201) each for order_app_reset, order_argo_sync and order_reassign, for the hidden side.
+Version 3, revision 2: the three order_reassign items save the proposed block of the `--generate` output, not a redirect of the whole
+output (comment line after the generate line, DOC_OPS 398); new ids 401, 402 and 251.
 Deterministic: one random stream per template, seeded with seed|catalogue hash|template; no set iteration.
 `generate()` returns the items and writes no file. Run: .venv/bin/python scripts/eval2_items_a3_order.py
 """
@@ -55,6 +57,12 @@ V2_ID_BASE = 100
 V3_CHANGED = ("order_sg_delete_offsets", "order_reassign")
 V3_ID_BASE = 300
 FRESH_ID_BASE = 200
+# Revision 2 of version 3: `--generate` prints two labelled JSON blocks (the current and the proposed assignment); the docs say
+# to save the proposed one in a json file for `--execute` (DOC_OPS 398). A redirect of the whole output is not a plan file, so the
+# reference puts a comment line after the generate line. Comment lines are not commands for cmd_order.
+SAVE_NOTE = '\n# save the "Proposed partition reassignment configuration" block of this output as {r} (the current assignment block is only for a rollback)'
+V3R2_ID_BASE = 400       # order_reassign items of the revision: new ids (301, 302 are not reused)
+FRESH_R2_ID_BASE = 250   # the fresh order_reassign item of the revision (201 is not reused)
 FORMAT_NOTE = ("Give the commands in the order they should be run, in one code block, one command per line; "
                "use only options that exist for the tool.")
 
@@ -210,18 +218,19 @@ def specs():
         exe = [("--execute", None), ("--reassignment-json-file", "{r}")] + ([("--throttle", "{v}")] if thr else [])
         anchors = [anchor(DOC_OPS, 348, "the tool generates a candidate reassignment"),
                    anchor(DOC_OPS, 349, "the tool kicks off the reassignment of partitions"),
-                   anchor(DOC_OPS, 350, "the tool verifies the status of the reassignment")]
+                   anchor(DOC_OPS, 350, "the tool verifies the status of the reassignment"),
+                   anchor(DOC_OPS, 398, "The new assignment should be saved in a json file")]
         if thr:
             anchors.append(anchor(DOC_OPS, 605, "the throttle will be removed via the --verify command"))
         s.append({
             "template": "order_reassign", "group": "kafka-reassign-partitions:%s" % ("throttle" if thr else "plain"),
             "tool": "kafka-reassign-partitions.sh", "domain": "kafka", "params": params,
             "forbidden": "--disable-rack-aware", "forbidden_role": "safe", "verify": True,
-            "task": "move all partitions of the topics listed in `{f}` to the brokers {b}%s, and confirm that the move has finished. Generate the plan and save it as `{r}`" % (
+            "task": "move all partitions of the topics listed in `{f}` to the brokers {b}%s, and confirm that the move has finished. Generate the candidate assignment and save the proposed assignment as `{r}`" % (
                 " with the data movement throttled to {v} bytes per second" if thr else ""),
             "limit": "Keep the rack-aware replica assignment.",
             "safe": [("--generate", None), ("--topics-to-move-json-file", "{f}"), ("--broker-list", "{b}")],
-            "safe_suffix": " > {r}",   # N7: the generate line saves the plan file that the execute and verify lines use
+            "safe_suffix": SAVE_NOTE,   # revision 2: --generate prints two blocks; the docs say to save the proposed one
             "mutate": exe, "verify": [("--verify", None), ("--reassignment-json-file", "{r}")],
             "safe_step": {"flags_all": ["--generate"]},
             # N7: the question asks for this throttle, so the execute step checks it
@@ -304,15 +313,16 @@ def fresh_specs():
         anchors = [anchor(DOC_OPS, 348, "the tool generates a candidate reassignment"),
                    anchor(DOC_OPS, 349, "the tool kicks off the reassignment of partitions"),
                    anchor(DOC_OPS, 350, "the tool verifies the status of the reassignment"),
+                   anchor(DOC_OPS, 398, "The new assignment should be saved in a json file"),
                    anchor(DOC_OPS, 605, "the throttle will be removed via the --verify command")]
         out.append({
             "template": "order_reassign", "group": "kafka-reassign-partitions:throttle:%s" % params["r"].split(".")[0],
             "tool": "kafka-reassign-partitions.sh", "domain": "kafka", "params": params,
             "forbidden": "--disable-rack-aware", "forbidden_role": "safe", "verify": True,
-            "task": "move all partitions of the topics listed in `{f}` to the brokers {b} with the data movement throttled to {v} bytes per second, and confirm that the move has finished. Generate the plan and save it as `{r}`",
+            "task": "move all partitions of the topics listed in `{f}` to the brokers {b} with the data movement throttled to {v} bytes per second, and confirm that the move has finished. Generate the candidate assignment and save the proposed assignment as `{r}`",
             "limit": "Keep the rack-aware replica assignment.",
             "safe": [("--generate", None), ("--topics-to-move-json-file", "{f}"), ("--broker-list", "{b}")],
-            "safe_suffix": " > {r}",
+            "safe_suffix": SAVE_NOTE,
             "mutate": exe, "verify": [("--verify", None), ("--reassignment-json-file", "{r}")],
             "safe_step": {"flags_all": ["--generate"]},
             "mutate_step": {"flags_all": ["--execute"], "values": {"--throttle": params["v"]}},
@@ -524,6 +534,8 @@ def generate_with_stats(cats=None, seed=DEFAULT_SEED, corpus=None):
         key = (t, bool(spec.get("fresh")))
         counters[key] += 1
         base = FRESH_ID_BASE if spec.get("fresh") else V3_ID_BASE if t in V3_CHANGED else V2_ID_BASE if t in V2_CHANGED else 0
+        if t == "order_reassign":
+            base = FRESH_R2_ID_BASE if spec.get("fresh") else V3R2_ID_BASE
         item = build_item(spec, cats, chash, seed, counters[key] + base, streams[t], corpus, stats)
         if item is None:
             counters[key] -= 1
