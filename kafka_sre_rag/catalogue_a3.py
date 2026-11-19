@@ -3,6 +3,9 @@
   forbidden(kind, key, config_path=None)   the rule that forbids `key` in the config map of `kind`, or None
   semantic_rules()                          the semantic-rule table (mechanisms V1..V8, memory quantities)
   verify(directory=None)                    recompute the hashes against MANIFEST.json
+  java_api(directory=None)                  (T1b) the Java API of the pinned kafka-clients / kafka-streams jars
+  java_class(fqcn), java_methods(fqcn, name, params=None), java_constant(fqcn, name),
+  client_config_names(scope)                lookups in it; None / [] / {} when absent
 
 A key is forbidden under a config path when it equals a forbidden key, or starts with a forbidden prefix
 and is not an exception. An exception equals the key, or ends with "." and is a prefix of the key; an
@@ -18,7 +21,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_DIR = ROOT / "work" / "m4" / "catalogues_a3"
-FILES = ("strimzi_forbidden", "semantic_rules")
+FILES = ("strimzi_forbidden", "semantic_rules", "java_api")
 
 _loaded = {}
 
@@ -106,3 +109,40 @@ def forbidden(kind, key, config_path=None, directory=None):
     f, ln = _anchor_for(e, hit[2], hit[1])
     return {"kind": kind, "config_path": e["config_path"], "rule": hit[0], "match": hit[1],
             "file": f, "line": ln, "source": e["source"]}
+
+
+# ------------------------------------------------------------------ Java API (T1b), additive
+def java_api(directory=None):
+    """The java_api.json table, or None when it was not built (jars not fetched)."""
+    d = Path(directory or DEFAULT_DIR)
+    if not (d / "java_api.json").is_file():
+        return None
+    return _read(d, "java_api")
+
+
+def java_class(fqcn, directory=None):
+    """The record of a public class (nested classes use '$': 'a.b.Outer$Inner'), or None."""
+    j = java_api(directory)
+    return None if j is None else j["classes"].get(fqcn)
+
+
+def java_methods(fqcn, name, params=None, directory=None):
+    """The public methods `name` of the class; `params` (a list of type strings) narrows to one signature."""
+    c = java_class(fqcn, directory)
+    if c is None:
+        return []
+    return [m for m in c["methods"] if m["name"] == name and (params is None or m["params"] == list(params))]
+
+
+def java_constant(fqcn, name, directory=None):
+    """The value of a public compile-time constant (string constants as str), or None."""
+    c = java_class(fqcn, directory)
+    if c is None or name not in c["constants"]:
+        return None
+    return c["constants"][name]["value"]
+
+
+def client_config_names(scope, directory=None):
+    """{config name: {constant, source, line}} for scope consumer, producer, admin, streams or common."""
+    j = java_api(directory)
+    return {} if j is None else j["client_config_names"].get(scope, {})

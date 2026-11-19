@@ -8,6 +8,10 @@ Output: work/m4/catalogues_a3/ (git-ignored), separate from work/m4/catalogues/ 
                            the broker list from the KafkaClusterSpec API module)
   semantic_rules.json      the source sentences the valid-but-wrong mechanisms V1..V8 rest on, and the
                            Kubernetes memory-quantity suffix rule; each with file and line
+  java_api.json            (T1b) public classes, methods with parameter types and public constants of the
+                           pinned kafka-clients and kafka-streams jars, read with javap; the client config
+                           names (ConsumerConfig.*_CONFIG ...) with their string values; skipped, with a
+                           message, when the jars or the sparse clone are not fetched (scripts/fetch_maven_jars.py)
   MANIFEST.json            sha256 of each file and the combined hash
 
 Every entry cites file and line, and the build re-reads that line and fails (exit 2) if the text does
@@ -21,13 +25,15 @@ import argparse
 import hashlib
 import json
 import re
+import subprocess
 import sys
+import zipfile
 from pathlib import Path
 
-VERSION = "build_catalogues_a3/1"
+VERSION = "build_catalogues_a3/2"
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_OUT = ROOT / "work" / "m4" / "catalogues_a3"
-FILES = ("strimzi_forbidden", "semantic_rules")      # order of the combined hash
+FILES = ("strimzi_forbidden", "semantic_rules", "java_api")      # order of the combined hash
 MANIFEST_NAME = "MANIFEST.json"
 
 DOC = "raw/strimzi/documentation"
@@ -37,6 +43,7 @@ MANAGED = DOC + "/modules/managing/con-managed-broker-config-properties.adoc"
 SSL_DOC = DOC + "/modules/con-common-configuration-properties.adoc"
 K8S = "raw/kubernetes/content/en/docs"
 KCFG = "raw/apache-kafka-config/content/en/43/generated"
+KAFKA_SRC = "raw_catalogue/apache-kafka-api"
 
 
 class BuildError(Exception):
@@ -235,6 +242,8 @@ def anchor(rel, quote, _unused=None):
 
 
 def build_semantic():
+    if not (ROOT / KAFKA_SRC / "LICENSE").is_file():
+        raise BuildError("the sparse clone %s is absent: run scripts/fetch_maven_jars.py --clone" % KAFKA_SRC)
     NP = K8S + "/concepts/services-networking/network-policies.md"
     PDB = K8S + "/tasks/run-application/configure-pdb.md"
     MEM = K8S + "/concepts/configuration/manage-resources-containers.md"
@@ -299,10 +308,14 @@ def build_semantic():
         "oracle": "java.util.Properties parser semantics",
         "anchored": False,
         "reason": "no sentence about comments or trailing '#' in a .properties value exists in the pinned "
-                  "documentation (raw/apache-kafka, raw/apache-kafka-config, raw/strimzi/documentation: grepped); "
-                  "the rule lives in the JDK Properties.load javadoc and Kafka's Utils.loadProps, neither of which "
-                  "is a pinned source (sparse clone is D1, pending)",
+                  "documentation (raw/apache-kafka, raw/apache-kafka-config, raw/strimzi/documentation: grepped). "
+                  "Utils.loadProps (T1b, sparse clone) only calls java.util.Properties.load on the file; the "
+                  "comment rule is in the JDK, not in a pinned source, so the Kafka source does not settle it",
         "anchors": [],
+        "context_anchors": [
+            {"file": KAFKA_SRC + "/clients/src/main/java/org/apache/kafka/common/utils/Utils.java", "line": None,
+             "quote": "props.load(propStream);"},
+        ],
     }
     m["V5"] = {
         "title": "heartbeat.interval.ms must be lower than session.timeout.ms and typically no higher than 1/3 of it",
@@ -340,13 +353,35 @@ def build_semantic():
     m["V8"] = {
         "title": "a key real for the broker but not for the topic scope inside a KafkaTopic config map",
         "oracle": "membership of the key in the topic scope of kafka_config (topic_config.html)",
-        "anchored": False,
-        "reason": "no pinned sentence says the Topic Operator or the broker accepts a broker-scope key in "
-                  "KafkaTopic spec.config; Kafka's own topic-config name validation may reject it, which would "
-                  "make the item 'rejected', not 'valid but wrong'",
-        "note": "generators build no items on an unanchored rule. T1b may re-anchor it from the Kafka source in "
-                "the sparse clone (topic config name validation); the item kind would then change",
-        "anchors": [],
+        "anchored": True,
+        "valid_but_wrong": False,
+        "outcome": "rejected",
+        "item_kind": "rejected, not valid but wrong",
+        "reason": "the Kafka source (T1b, sparse clone at the pinned commit) rejects an unknown topic config name "
+                  "on topic create and on alter: ControllerConfigurationValidator.validate (TOPIC) calls "
+                  "LogConfig.validate, which calls LogConfig.validateNames, which throws InvalidConfigurationException "
+                  "'Unknown topic config name' for any name not in the LogConfig definition (the topic scope); "
+                  "ConfigurationControlManager turns it into an INVALID_CONFIG error, and create reaches it through "
+                  "incrementalAlterConfig. A broker-only key in KafkaTopic spec.config is therefore refused by the "
+                  "broker, not accepted: the mechanism is NOT valid-but-wrong, generators must not use it in that "
+                  "kind. It can serve a 'rejected' item. The documentation says only 'The topic configuration.' "
+                  "(context anchor)",
+        "anchors": [
+            {"file": KAFKA_SRC + "/storage/src/main/java/org/apache/kafka/storage/internals/log/LogConfig.java",
+             "line": None, "quote": 'throw new InvalidConfigurationException("Unknown topic config name: " + name);'},
+            {"file": KAFKA_SRC + "/storage/src/main/java/org/apache/kafka/storage/internals/log/LogConfig.java",
+             "line": None, "quote": "public static void validateNames(Map<String, String> props) {"},
+            {"file": KAFKA_SRC + "/storage/src/main/java/org/apache/kafka/storage/internals/log/LogConfig.java",
+             "line": None, "quote": "        validateNames(props);"},
+            {"file": KAFKA_SRC + "/core/src/main/scala/kafka/server/ControllerConfigurationValidator.scala",
+             "line": None, "quote": "LogConfig.validate(oldConfigs, filteredConfigs, kafkaConfig.extractLogConfigMap,"},
+            {"file": KAFKA_SRC + "/metadata/src/main/java/org/apache/kafka/controller/ConfigurationControlManager.java",
+             "line": None, "quote": "validator.validate(configResource, allConfigs, existingConfigsMap);"},
+            {"file": KAFKA_SRC + "/metadata/src/main/java/org/apache/kafka/controller/ConfigurationControlManager.java",
+             "line": None, "quote": "return new ApiError(INVALID_CONFIG, e.getMessage());"},
+            {"file": KAFKA_SRC + "/metadata/src/main/java/org/apache/kafka/controller/ReplicationControlManager.java",
+             "line": None, "quote": "configurationControl.incrementalAlterConfig(configResource, keyToOps, true, forwarded);"},
+        ],
         "context_anchors": [
             anchor(APPENDIX, "|The topic configuration."),
             anchor(KTOP, "<h4><a id=\"min.insync.replicas\"></a><a id=\"topicconfigs_min.insync.replicas\""),
@@ -378,9 +413,198 @@ def build_semantic():
     return {"schema": 1, "builder": VERSION, "mechanisms": m, "memory_quantity": quantity}
 
 
+# ------------------------------------------------------------------ Java API catalogue (T1b)
+MAVEN = ROOT / "raw_catalogue" / "maven"
+CLONE = ROOT / KAFKA_SRC
+JAR_ROOTS = {"kafka-clients-4.3.2.jar": "clients", "kafka-streams-4.3.2.jar": "streams"}
+# packages (exact, or with sub-packages for the streams ones) whose public classes are catalogued;
+# any package with an "internal" or "internals" segment is left out
+EXACT_PKGS = {"org.apache.kafka.clients", "org.apache.kafka.clients.consumer", "org.apache.kafka.clients.producer",
+              "org.apache.kafka.clients.admin", "org.apache.kafka.common", "org.apache.kafka.common.config",
+              "org.apache.kafka.common.serialization", "org.apache.kafka.common.errors",
+              "org.apache.kafka.common.header", "org.apache.kafka.common.acl", "org.apache.kafka.common.resource"}
+TREE_PKGS = ("org.apache.kafka.streams",)
+CONFIG_CLASSES = {"org.apache.kafka.clients.consumer.ConsumerConfig": "consumer",
+                  "org.apache.kafka.clients.producer.ProducerConfig": "producer",
+                  "org.apache.kafka.clients.admin.AdminClientConfig": "admin",
+                  "org.apache.kafka.streams.StreamsConfig": "streams",
+                  "org.apache.kafka.clients.CommonClientConfigs": "common"}
+MODS = {"public", "protected", "private", "static", "final", "abstract", "default", "synchronized", "native",
+        "strictfp", "transient", "volatile", "sealed", "non-sealed"}
+KIND_RE = re.compile(r"\b(class|interface|enum|@interface)\s+([\w.$]+)")
+
+
+def pkg_wanted(pkg):
+    if "internal" in pkg.split(".") or "internals" in pkg.split("."):
+        return False
+    return pkg in EXACT_PKGS or any(pkg == t or pkg.startswith(t + ".") for t in TREE_PKGS)
+
+
+def split_top(text, sep):
+    """Split on `sep` outside angle brackets and parentheses."""
+    out, depth, cur = [], 0, ""
+    for ch in text:
+        if ch in "<(":
+            depth += 1
+        elif ch in ">)":
+            depth -= 1
+        if ch == sep and depth == 0:
+            if cur.strip():
+                out.append(cur.strip())
+            cur = ""
+        else:
+            cur += ch
+    if cur.strip():
+        out.append(cur.strip())
+    return out
+
+
+def split_mods(tokens):
+    mods = []
+    while tokens and tokens[0] in MODS:
+        mods.append(tokens.pop(0))
+    return mods, tokens
+
+
+def literal(raw):
+    raw = raw.strip()
+    if raw.startswith('"') and raw.endswith('"'):
+        try:
+            return json.loads(raw)
+        except ValueError:
+            return raw[1:-1]
+    return raw
+
+
+def parse_javap(text):
+    """{fqcn: record} for the public classes in javap -public -constants output."""
+    classes, cur = {}, None
+    for line in text.split("\n"):
+        if line.startswith("Compiled from") or not line.strip():
+            continue
+        if not line.startswith(" ") and line.rstrip().endswith("{"):
+            m = KIND_RE.search(line)
+            head = line[:m.start()].split()
+            cur = None
+            if "public" in head:
+                name = m.group(2)
+                cur = {"kind": m.group(1), "modifiers": [h for h in head if h in MODS], "constructors": [],
+                       "methods": [], "fields": [], "constants": {}}
+                classes[name] = cur
+            continue
+        if cur is None or not line.startswith("  ") or not line.rstrip().endswith(";"):
+            continue
+        body = line.strip()[:-1]
+        if body.startswith("static {"):
+            continue
+        if "(" in body and " = " not in body.split("(")[0]:
+            body = re.sub(r"\s+throws\s+[\w.$, <>?]+$", "", body)
+            i = body.index("(")
+            params = split_top(body[i + 1:body.rindex(")")], ",")
+            before = split_top(body[:i], " ")
+            mods, rest = split_mods(before)
+            if rest and rest[0].startswith("<"):
+                rest = rest[1:]                      # method type parameters
+            name = rest[-1]
+            rec = {"name": name.split(".")[-1], "params": params, "modifiers": mods}
+            if len(rest) == 1:
+                cur["constructors"].append(rec)
+            else:
+                rec["returns"] = " ".join(rest[:-1])
+                cur["methods"].append(rec)
+        else:
+            left, _, val = body.partition(" = ")
+            mods, rest = split_mods(split_top(left, " "))
+            if len(rest) < 2:
+                continue
+            f = {"name": rest[-1], "type": " ".join(rest[:-1]), "modifiers": mods}
+            if val and "static" in mods and "final" in mods:
+                if not f["name"].endswith("_DOC"):        # the long doc strings are not catalogued
+                    cur["constants"][f["name"]] = {"type": f["type"], "value": literal(val)}
+            else:
+                cur["fields"].append(f)
+    return classes
+
+
+def jar_classes(jar):
+    names = []
+    with zipfile.ZipFile(jar) as z:
+        for n in z.namelist():
+            if not n.endswith(".class") or n.endswith("module-info.class") or n.endswith("package-info.class"):
+                continue
+            fq = n[:-6].replace("/", ".")
+            if any(p.isdigit() for p in fq.split("$")[1:]):
+                continue                                   # anonymous classes
+            if pkg_wanted(fq.rsplit(".", 1)[0]):
+                names.append(fq)
+    return sorted(names)
+
+
+def source_of(root, fqcn):
+    """(relative path in the sparse clone, text lines) of the top-level class file, or (None, None)."""
+    top = fqcn.split("$")[0].replace(".", "/") + ".java"
+    rel = "%s/%s/src/main/java/%s" % (KAFKA_SRC, root, top)
+    return (rel, lines_of(rel)) if (ROOT / rel).is_file() else (None, None)
+
+
+def build_java():
+    """The Java API catalogue, or None when the jars or the clone are not fetched."""
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import fetch_maven_jars as fj
+    jars = {n: MAVEN / n for n in JAR_ROOTS}
+    if not all(p.is_file() for p in jars.values()) or not (CLONE / "LICENSE").is_file():
+        return None
+    for n, p in jars.items():
+        why = fj.check(p, fj.JARS[n])
+        if why:
+            raise BuildError("%s: %s" % (n, why))
+    cp = ":".join(str(p) for p in jars.values())
+    classes, sources = {}, {}
+    for n, p in jars.items():
+        names = jar_classes(p)
+        r = subprocess.run(["javap", "-public", "-constants", "-cp", cp] + names, capture_output=True, text=True)
+        if r.returncode:
+            raise BuildError("javap failed: " + r.stderr.strip()[-300:])
+        for fq, rec in parse_javap(r.stdout).items():
+            rec["jar"] = n
+            classes[fq] = rec
+    for fq in sorted(classes):
+        rec = classes[fq]
+        rel, ls = source_of(JAR_ROOTS[rec["jar"]], fq)
+        rec["source"] = rel
+        rec["line"] = None
+        if ls is not None:
+            simple = fq.split("$")[-1].rsplit(".", 1)[-1]
+            decl = re.compile(r"^\s*(?:@\w+\s+)*(?:(?:public|protected|private|static|final|abstract|sealed)\s+)*"
+                              r"(?:class|interface|enum|@interface|record)\s+%s\b" % re.escape(simple))
+            hits = [i + 1 for i, t in enumerate(ls) if decl.match(t)]
+            rec["line"] = hits[0] if len(hits) == 1 else None
+            for cname, c in rec["constants"].items():
+                ch = [i + 1 for i, t in enumerate(ls) if re.search(r"\b%s\s*=" % re.escape(cname), t)]
+                c["line"] = ch[0] if len(ch) == 1 else None
+        for k in ("constructors", "methods"):
+            rec[k].sort(key=lambda m: (m["name"], m["params"], m.get("returns", "")))
+        rec["fields"].sort(key=lambda f: f["name"])
+        rec["modifiers"] = sorted(rec["modifiers"])
+    cfg = {}
+    for fq, scope in CONFIG_CLASSES.items():
+        if fq not in classes:
+            raise BuildError("config class %s is not in the jars" % fq)
+        cfg[scope] = {}
+        for cname, c in sorted(classes[fq]["constants"].items()):
+            if cname.endswith("_CONFIG") and c["type"] == "java.lang.String":
+                cfg[scope][c["value"]] = {"constant": fq + "." + cname, "source": classes[fq]["source"],
+                                          "line": c.get("line")}
+    return {"schema": 1, "builder": VERSION, "javap": "javap -public -constants (JDK on PATH)",
+            "jars": {n: {"sha256": fj.JARS[n]["sha256"], "bytes": fj.JARS[n]["bytes"]} for n in jars},
+            "clone_commit": fj.COMMIT, "classes": classes, "client_config_names": cfg}
+
+
 # ------------------------------------------------------------------ verify every cited line
 def verify_semantic(sem):
     def check(a):
+        if a["line"] is None:                      # source-anchored entry: the line is found, not written
+            a["line"] = find_line(a["file"], a["quote"])
         if a["quote"] not in line_text(a["file"], a["line"]):
             raise BuildError("%s:%d does not contain %r" % (a["file"], a["line"], a["quote"]))
     for mech in sem["mechanisms"].values():
@@ -417,12 +641,19 @@ def main(argv=None):
         forb = build_forbidden()
         sem = build_semantic()
         verify_semantic(sem)
+        jav = build_java()
     except BuildError as e:
         print("build_catalogues_a3: FAILED: %s" % e, file=sys.stderr)
         return 2
     out.mkdir(parents=True, exist_ok=True)
     (out / "strimzi_forbidden.json").write_text(dumps(forb), encoding="utf-8")
     (out / "semantic_rules.json").write_text(dumps(sem), encoding="utf-8")
+    if jav is not None:
+        (out / "java_api.json").write_text(dumps(jav), encoding="utf-8")
+        print("java_api   %d classes, %d config names" % (len(jav["classes"]),
+              sum(len(v) for v in jav["client_config_names"].values())))
+    else:
+        print("java_api   SKIPPED: jars or sparse clone not fetched (scripts/fetch_maven_jars.py --clone)")
     man = manifest_for(out)
     (out / MANIFEST_NAME).write_text(dumps(man), encoding="utf-8")
     for k, e in forb["resources"].items():
