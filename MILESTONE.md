@@ -55,7 +55,7 @@ After the first slice:
 
 | WP | What | Depends on | Status |
 |---|---|---|---|
-| WP1c | Remaining mechanical kinds (resources, commands, client code, version traps, valid but wrong, safe order, sizing, not covered) | downloads (see 3 below), S5, S6 | resources, manifest fixes, commands and version traps were built in slice A2; plan for the other five 2026-11-19 (`runs/m4/reports/wp1c_plan.md`): 120 items by templates and programmatic checks, no model, in a separate generator and separate files, so the 496 items and their split stay byte-identical; 11 to 15 worker-days. Started: T0 (download check), T1a (forbidden-key and rule tables from the pinned text), T3 (new scorer checks). Client code needs the kafka-clients and kafka-streams 4.3.2 jars (about 8 MB, under the go of 2026-11-18 for downloads for checks, after T0) |
+| WP1c | Remaining mechanical kinds (resources, commands, client code, version traps, valid but wrong, safe order, sizing, not covered) | downloads (see 3 below), S5, S6 | resources, manifest fixes, commands and version traps were built in slice A2; plan for the other five 2026-11-19 (`runs/m4/reports/wp1c_plan.md`): 120 items by templates and programmatic checks, no model, in a separate generator and separate files, so the 496 items and their split stay byte-identical; 11 to 15 worker-days. **Done 2026-11-19:** T0 to T6 and the T8 code (tables, Java catalogue from the 4.3.2 jars, scorer checks `eval2_score/3`, Java and Python client checks, generators: 24 client code, 32 valid but wrong, 16 safe order, 24 sizing; assembly and grouped split, dry run only). **Waits:** T7 (not covered, 24 items) for K5; then the real T8 run (the split is made once), T9 review, T10 integration |
 | WP1d | Judged tier: scenarios and rubrics, the Owner's questions first | first fresh batch B1 | **B1 done 2026-11-19** (`runs/m4/B1_COVERAGE_FINAL.md`, `B1_COVERAGE_BATCH.md`): 30 scenarios, 90 answers, 180 judgments, 60 answers read blind (16 by a second reader). Judge against reader on 158 essential units: kappa 0.86 and 0.78, precision 0.98 and 0.90, recall 0.86 and 0.86 (pass 1, pass 2); supported misses confirmed 14 of 14; unverified 0.6 %; pass-to-pass kappa 0.85; readers' totals 41 and 53 on the shared answers (23 % apart); identifier check 0 false findings. The rubric chunk check before the run was 94.0 % (bar 95 %). Waits for the Owner: the gate, and writing the tier at scale |
 | WP5 | Retrieval and index coverage: candidate index and settings next to the frozen ones, one hidden-half run decides (J6) | J5 | plan, funnel tool and runtime profiles done; R2 chosen by its rule; **B1 check (T7) failed 2026-11-19** (`runs/m4/reports/wp5_t7_b1_funnel.md`): indexed must points served 56 to 77 of 166 (+12.7 points, bar +15), 12 of the 56 frozen-served lost (21 %, bar 5 %); T8 and T9 do not run; waits for the Owner (K3) |
 | WP1f | Starting-point measurement (E2) | WP1c, WP1d | not started |
@@ -412,7 +412,14 @@ and J6 come from the mechanical tier and block nothing yet):
   candidates without a pinned passage dropped, not filled in. The 496 items still score
   496 of 496 (references) and 0 of 496 (perturbed). T4 (client code, 18 Java and 6
   Python) started.
-- Next, in order: the Owner's K1 to K6; WP1c T4, then T7 (needs K5), T8 (assembly and
-  split), T9 (review), T10. For the Owner, not blocking: the essential points of
+- 2026-11-19, late evening: WP1c T4 done (18 Java, 6 Python; fixed seed per template, a
+  Streams task replaced because it sat near the training data, each Python item paired
+  with the Java item it restates), T2b (a call through Consumer, Producer or Admin now
+  counts), and the T8 code with a dry run (95 items without the not-covered kind: 48 open,
+  47 hidden, two runs identical; on the union of 591 the near-miss and scope floors are
+  missed at 13.0 % and 13.5 %, reported as the plan foresaw). Commits `8604d83`,
+  `635f7d1`, `704508f`, `be585d2`. D1 started as a code reading on a local model.
+- Next, in order: the Owner's K1 to K6; after K5, WP1c T7, then the real T8 run, T9
+  (review) and T10. D1 code reading. For the Owner, not blocking: the essential points of
   the six architecture scenarios (b1-10, b1-18, b1-19, b1-20, b1-29, b1-30). Not blocked:
   D1, the mechanical tier's hidden-half runs.
