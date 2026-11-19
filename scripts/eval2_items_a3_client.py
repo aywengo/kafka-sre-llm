@@ -34,7 +34,12 @@ wrong_signature (when an overload exists), wrong_order, invented_key and bad_imp
 fault breaks compilation (invented_constant) or removes a call that also stands in the order list (missing_call), the
 failing set is declared per kind and asserted to be exactly that.
 
-Deterministic: one random stream per template (Random("seed|catalogue hash|template")), no set iteration.
+Pairs: every item has `pair` = "client:<java template>:<variant>". A Python item restates the Java instance of the same
+variant of its paired template (consumer commit -> client_consumer_commit_sync, idempotent -> client_producer_idempotent,
+transaction -> client_producer_transaction; the parameter sets are the same), so each Python item shares its `pair` with
+exactly one Java item; Java items without a Python restatement have a pair of their own. T8 keeps a pair on one side.
+
+Deterministic: one random stream per template (Random("seed|template"); the catalogue hash is recorded, not seeded), no set iteration.
 `generate()` returns the items and writes no file. Run: .venv/bin/python scripts/eval2_items_a3_client.py
 """
 import json
@@ -366,16 +371,13 @@ public class %%cls%% {
 }
 """
 
-JAVA_STREAMS = """import java.util.Arrays;
-import java.util.Locale;
+JAVA_STREAMS = """import java.util.Locale;
 import java.util.Properties;
 import org.apache.kafka.common.serialization.Serdes;
 import org.apache.kafka.streams.KafkaStreams;
 import org.apache.kafka.streams.StreamsBuilder;
 import org.apache.kafka.streams.StreamsConfig;
 import org.apache.kafka.streams.kstream.KStream;
-import org.apache.kafka.streams.kstream.KTable;
-import org.apache.kafka.streams.kstream.Produced;
 
 public class %%cls%% {
     public static void main(String[] args) {
@@ -386,11 +388,7 @@ public class %%cls%% {
         props.put(StreamsConfig.DEFAULT_VALUE_SERDE_CLASS_CONFIG, Serdes.StringSerde.class);
 %%eos%%        StreamsBuilder builder = new StreamsBuilder();
         KStream<String, String> lines = builder.stream("%%in%%");
-        KTable<String, Long> counts = lines
-                .flatMapValues(line -> Arrays.asList(line.toLowerCase(Locale.ROOT).split("\\\\W+")))
-                .groupBy((key, word) -> word)
-                .count();
-        counts.toStream().to("%%out%%", Produced.with(Serdes.String(), Serdes.Long()));
+        lines.mapValues(value -> value.toUpperCase(Locale.ROOT)).to("%%out%%");
         KafkaStreams streams = new KafkaStreams(builder.build(), props);
         streams.start();
         Runtime.getRuntime().addShutdownHook(new Thread(streams::close));
@@ -630,38 +628,36 @@ JAVA_TEMPLATES = [
              "missing_call": ("remove", "topic.configs("),
              "wrong_order": ("move_before", "admin.close();", "result.all().get();")},
      "fails": {"missing_call": ["java_call_order", "java_calls", "java_config"]}},   # the removed line also carries both topic configs
-    {"template": "client_streams_wordcount", "source": JAVA_STREAMS, "domain": "streams",
-     "task": ("counts words with Kafka Streams: it reads lines from the topic `{in}`, splits them into lower-case words, "
-              "counts every word and writes the counts to `{out}`. Application id `{appid}`, brokers `{bs}`{eos_text}. It "
-              "starts the application."),
-     "variants": [("plain", {"cls": "WordCountApp", "in": "text-lines", "out": "word-counts", "appid": "wordcount-app",
+    {"template": "client_streams_uppercase", "source": JAVA_STREAMS, "domain": "streams",
+     "task": ("converts text with Kafka Streams: every value read from the topic `{in}` is written to `{out}` in upper "
+              "case, keys unchanged. Application id `{appid}`, brokers `{bs}`{eos_text}. It starts the application."),
+     "variants": [("plain", {"cls": "ShoutApp", "in": "notes", "out": "notes-upper", "appid": "shout-app",
                              "bs": "kafka:9092", "eos": "", "eos_text": ""}),
-                  ("eos", {"cls": "ExactlyOnceWordCount", "in": "sentences", "out": "sentence-word-counts", "appid": "wordcount-eos",
+                  ("eos", {"cls": "ExactlyOnceShout", "in": "comments", "out": "comments-upper", "appid": "shout-eos",
                            "bs": "broker-1:9093",
                            "eos": "        props.put(StreamsConfig.PROCESSING_GUARANTEE_CONFIG, StreamsConfig.EXACTLY_ONCE_V2);\n",
-                           "eos_text": ", exactly-once processing (version 2) turned on"})],
+                           "eos_text": ", using the EOS v2 mode of `processing.guarantee`"})],
      "anchors": [anchor(CFG_STREAMS, 159, "(Required) The application ID.", "application.id is required"),
                  anchor(CFG_STREAMS, 175, "(Required) The Kafka bootstrap servers.", "bootstrap.servers is required"),
                  anchor(CORE_STREAMS, 154, "set the `processing.guarantee` config value", "processing.guarantee for exactly-once"),
                  anchor(CFG_STREAMS, 856, 'exactly_once_v2', "the value of the exactly-once processing mode"),
-                 anchor(TUTORIAL, 266, "source.flatMapValues(value -> Arrays.asList(value.split(", "split lines into words with flatMapValues"),
+                 anchor("raw/apache-kafka/docs/streams/developer-guide/dsl-api.md", 714, "stream.mapValues(value -> value.toUpperCase())", "mapValues transforms each value, keys unchanged"),
                  anchor(TUTORIAL, 125, "final Topology topology = builder.build();", "the topology is built from the builder"),
                  anchor(TUTORIAL, 149, "final KafkaStreams streams = new KafkaStreams(topology, props);", "KafkaStreams from topology and config"),
                  anchor(TUTORIAL, 151, "By calling its `start()` function we can trigger the execution", "start() runs the application")],
-     "calls": [E(SB, "stream", ["java.lang.String"]), E(KS, "flatMapValues"), E(KS, "groupBy"), E(KGS, "count", []),
-               E(KT_, "toStream", []), E(KS, "to"), E(STREAMS, "<init>"), E(STREAMS, "start", [])],
-     "order": [O(SB, "stream"), O(KS, "flatMapValues"), O(KS, "groupBy"), O(KGS, "count"), O(KT_, "toStream"), O(KS, "to"),
-               O(STREAMS, "<init>"), O(STREAMS, "start")],
+     "calls": [E(SB, "stream", ["java.lang.String"]), E(KS, "mapValues"), E(KS, "to", ["java.lang.String"]), E(STREAMS, "<init>"),
+               E(STREAMS, "start", [])],
+     "order": [O(SB, "stream"), O(KS, "mapValues"), O(KS, "to"), O(STREAMS, "<init>"), O(STREAMS, "start")],
      "config": {"keys": ["application.id=%appid", "bootstrap.servers=%bs"], "scope": ["streams"],
                 "variant_keys": {"eos": ["processing.guarantee=exactly_once_v2"]}},
      "probe": ("StreamsConfig", "APPLICATION_ID_CONFIG"),
-     "ops": {"wrong_signature": ("replace", ".count();", ".count(org.apache.kafka.streams.kstream.Named.as(\"counts\"));"),
+     "ops": {"wrong_signature": ("replace", '.to("%out");', '.to("%out", org.apache.kafka.streams.kstream.Produced.with(Serdes.String(), Serdes.String()));'),
              "missing_call": ("remove", "streams.start();"),
-             "wrong_order": ("move_after", "counts.toStream().to(", "streams.start();")}},
+             "wrong_order": ("move_after", "lines.mapValues(", "streams.start();")}},
 ]
 
 PY_TEMPLATES = [
-    {"template": "client_py_consumer_commit", "source": PY_COMMIT, "domain": "kafka",
+    {"template": "client_py_consumer_commit", "pair_with": "client_consumer_commit_sync", "source": PY_COMMIT, "domain": "kafka",
      "task": ("consumes the topic `{topic}` as consumer group `{group}` from `{bs}` with auto commit turned off; for every "
               "message it processes it and only then commits that message's offset synchronously."),
      "variants": [("orders", {"topic": "orders", "group": "billing", "bs": "kafka:9092"}),
@@ -679,7 +675,7 @@ PY_TEMPLATES = [
              "invented_method": ("replace", "consumer.commit(", "consumer.commit_sync("),
              "invented_key": ("replace", '"enable.auto.commit"', '"enable.auto.commits"'),
              "bad_import": ("replace", "from confluent_kafka import Consumer", "from confluent_kafka import Consumer, %s" % BAD_PY_NAME)}},
-    {"template": "client_py_producer_idempotent", "source": PY_IDEMPOTENT, "domain": "kafka",
+    {"template": "client_py_producer_idempotent", "pair_with": "client_producer_idempotent", "source": PY_IDEMPOTENT, "domain": "kafka",
      "task": ("sends {n} messages to the topic `{topic}` on `{bs}` with an idempotent producer (idempotence enabled "
               "explicitly, acks set to all), with a delivery callback on every message, and flushes before it exits."),
      "variants": [("ticks", {"topic": "ticks", "n": "100", "bs": "kafka:9092"}),
@@ -700,7 +696,7 @@ PY_TEMPLATES = [
              "invented_method": ("replace", "producer.flush()", "producer.flush_all()"),
              "invented_key": ("replace", '"enable.idempotence"', '"enable.idempotences"'),
              "bad_import": ("replace", "from confluent_kafka import Producer", "from confluent_kafka import Producer, %s" % BAD_PY_NAME)}},
-    {"template": "client_py_producer_transaction", "source": PY_TXN, "domain": "kafka",
+    {"template": "client_py_producer_transaction", "pair_with": "client_producer_transaction", "source": PY_TXN, "domain": "kafka",
      "task": ("sends {n} messages to the topic `{topic}` on `{bs}` in one transaction with the transactional id `{txid}`: it "
               "initialises transactions once, begins the transaction, produces the messages and commits; when a "
               "KafkaException is raised it aborts the transaction."),
@@ -927,7 +923,7 @@ def build_item(tpl, lang, variant_key, params, n, rng, cats, chash, chash_a3, co
               "file": None, "line": None})],
         "versions": {"kafka": "4.3"} if lang == "java" else {"kafka": "4.3", "confluent-kafka": "2.16.1"},
         "template": name, "anchored": True, "failure_class": "client_code", "exposed": False,
-        "not_in_index": lang == "python", "catalogue_hash": chash, "catalogue_hash_a3": chash_a3, "seed": None,
+        "not_in_index": lang == "python", "pair": "client:%s:%s" % (tpl.get("pair_with", name), variant_key), "catalogue_hash": chash, "catalogue_hash_a3": chash_a3, "seed": None,
         "generator": VERSION, "dedup": dd, "chance": 0.0,
         "perturbed_reference": perts[0]["text"], "perturbed_violates": perts[0]["violates"], "perturbed": perts,
     }
@@ -1008,10 +1004,10 @@ def environment():
     return out
 
 
-def generate_with_stats(cats=None, seed=DEFAULT_SEED, corpus=None, verify=True):
+def generate_with_stats(cats=None, seed=DEFAULT_SEED, corpus=None, verify=True, a3_dir=None):
     cats = cats or Catalogues.load()
     chash = catalogue_hash(default_dir())
-    a3d = catalogue_a3.default_dir()
+    a3d = a3_dir or catalogue_a3.default_dir()        # only the recorded hash comes from here
     chash_a3 = catalogue_a3.manifest(a3d)["catalogue_hash"]
     corpus = load_corpus() if corpus is None else corpus
     env = environment()
@@ -1026,7 +1022,7 @@ def generate_with_stats(cats=None, seed=DEFAULT_SEED, corpus=None, verify=True):
                 stats["derivation_failed:%s: %s" % (lang, env[lang])] += 1
                 continue
             for tpl in templates:
-                rng = random.Random("%s|%s|%s" % (seed, chash_a3, tpl["template"]))
+                rng = random.Random("%s|%s" % (seed, tpl["template"]))   # not the catalogue hash: an unrelated catalogue change must not reshuffle
                 n = 0
                 for variant_key, params in tpl["variants"]:
                     n += 1
@@ -1044,8 +1040,8 @@ def generate_with_stats(cats=None, seed=DEFAULT_SEED, corpus=None, verify=True):
     return items, stats
 
 
-def generate(cats=None, seed=DEFAULT_SEED, verify=True):
-    return generate_with_stats(cats, seed, verify=verify)[0]
+def generate(cats=None, seed=DEFAULT_SEED, verify=True, a3_dir=None):
+    return generate_with_stats(cats, seed, verify=verify, a3_dir=a3_dir)[0]
 
 
 def max_similarity(items):

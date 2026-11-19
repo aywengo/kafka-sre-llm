@@ -190,11 +190,22 @@ class ItemTests(unittest.TestCase):
         self.assertEqual(ids, sorted(ids))
         self.assertGreaterEqual(len({i["family"] for i in built()[0] if i["language"] == "java"}), 9 if HAVE_JAVA else 0)
 
+    def test_every_python_item_shares_a_pair_with_exactly_one_java_item(self):
+        items = built()[0]
+        java = [i for i in items if i["language"] == "java"]
+        for it in items:
+            if it["language"] == "python":
+                mates = [j for j in java if j["pair"] == it["pair"]]
+                self.assertEqual(len(mates), 1, it["id"])
+                self.assertEqual([p for p in items if p["language"] == "python" and p["pair"] == it["pair"]], [it])
+        self.assertEqual(len({j["pair"] for j in java}), len(java))
+
     def test_questions_are_not_near_duplicates(self):
         for it in built()[0]:
             d = it["dedup"]
             self.assertLess(d["max_jaccard"], 0.5, it["id"])
             self.assertLess(d["max_containment"], 0.8, it["id"])
+            self.assertLessEqual(d["max_containment"], 0.7, it["id"])   # the conductor's margin (T4 follow-up)
 
     def test_questions_name_what_the_checks_need(self):
         for it in built()[0]:
@@ -211,6 +222,31 @@ class ItemTests(unittest.TestCase):
         before = snap()
         gen.generate(verify=False)
         self.assertEqual(before, snap())
+
+
+@unittest.skipUnless(NEED, "catalogues, the open file, and the jars or the Python symbol list are missing")
+class CatalogueIndependenceTests(unittest.TestCase):
+    def test_an_unrelated_catalogue_change_reshuffles_nothing(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp) / "cat"
+            shutil.copytree(REAL, d)
+            f = d / "strimzi_forbidden.json"
+            j = json.loads(f.read_text())
+            j["unrelated_extra_field"] = {"note": "no generator reads this"}
+            f.write_text(json.dumps(j))
+            self.assertNotEqual(a3.manifest(d)["catalogue_hash"], a3.manifest(REAL)["catalogue_hash"])
+            other = gen.generate(verify=False, a3_dir=d)
+        base = built()[0]
+        strip = lambda items: [{k: v for k, v in i.items() if k != "catalogue_hash_a3"} for i in items]  # noqa: E731
+        self.assertEqual(strip(base), strip(other))
+        self.assertEqual({i["catalogue_hash_a3"] for i in base}, {a3.manifest(REAL)["catalogue_hash"]})
+        self.assertEqual(len({i["catalogue_hash_a3"] for i in other}), 1)
+        self.assertNotEqual({i["catalogue_hash_a3"] for i in other}, {i["catalogue_hash_a3"] for i in base})
+
+    def test_the_seed_does_not_contain_the_hash(self):
+        text = (ROOT / "scripts" / "eval2_items_a3_client.py").read_text()
+        self.assertIn('random.Random("%s|%s" % (seed, tpl["template"]))', text)
 
 
 @unittest.skipUnless(NEED, "catalogues, the open file, and the jars or the Python symbol list are missing")
