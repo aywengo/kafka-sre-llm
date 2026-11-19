@@ -69,6 +69,8 @@ class Variant:
     runbook_cap: int = -1          # at most this many runbook chunks (-1: no cap)
     k: int = 6
     chars: int = 14000
+    additive: bool = False         # r3: the frozen pack (6 / 14,000) exactly, then lookup hits, then the rest of the
+                                   # frozen order; the runbook cap and k / chars only limit what is added
 
     @property
     def uses_reranker(self):
@@ -89,6 +91,7 @@ PRESETS = {
     "runbook1": Variant(runbook_cap=1),
     "r1": Variant(**{**R2_BASE, "fuse": ("bm25", "terms", "frozen"), "runbook_cap": 1}),
     "r2": Variant(**R2_BASE),
+    "r3": Variant(additive=True, lookup=2, runbook_cap=1, k=10, chars=24000),
     "pool100": Variant(pool=100),
     "pool200": Variant(pool=200),
     "rq_terms": Variant(rerank_query="terms"),
@@ -96,7 +99,7 @@ PRESETS = {
     "rq_short": Variant(rerank_query="short_question"),
     "oracle40": Variant(order="bm25", k=40, chars=10 ** 7),
 }
-STANDARD = ["frozen", "k8", "k10", "bm25", "rerank", "wbm2", "terms", "lookup2", "runbook1", "r1", "r2", "oracle40"]
+STANDARD = ["frozen", "k8", "k10", "bm25", "rerank", "wbm2", "terms", "lookup2", "runbook1", "r1", "r2", "r3", "oracle40"]
 EXTENDED = STANDARD + ["pool100", "pool200", "rq_terms", "rq_question_terms", "rq_short"]
 
 
@@ -368,6 +371,8 @@ def ranking(st, v, scorer):
         cands = set(rk)
     else:
         raise ValueError(v.order)
+    if v.additive:
+        return additive_ranking(st, v, rk, set(pool))
     if v.lookup:
         lk = ix.lookup.hits(st.q, st.exp, v.lookup,
                             lambda c: st.score.get(c, 0.0) if st.rank.get(c, 10 ** 9) <= LOOKUP_SCORE_DEPTH else 0.0)
@@ -382,9 +387,48 @@ def ranking(st, v, scorer):
     return rk, cands
 
 
+def additive_ranking(st, v, frozen_rk, pool):
+    """Variant r3. DRIFT GUARD: a copy of profiles.additive_pack (tests/test_profile_r3.py asserts identical packs).
+    Returns (the pack followed by the remaining candidates, candidates); st.final_n is the pack length."""
+    ix = st.ix
+    lens = ix.len
+    pack = select_ranked(frozen_rk, lens, 6, 14000)           # the frozen pack, exactly
+    used = 0
+    for c in pack:
+        used += min(lens[c], 14000 - used)
+    lk = ix.lookup.hits(st.q, st.exp, v.lookup,
+                        lambda c: st.score.get(c, 0.0) if st.rank.get(c, 10 ** 9) <= LOOKUP_SCORE_DEPTH else 0.0)
+    inpack = set(pack)
+    runbooks = 0                                              # runbook chunks added so far
+    capped, rest, full = set(), [], False
+    for c in dict.fromkeys(lk + frozen_rk):
+        if c in inpack:
+            continue
+        if full or len(pack) >= v.k or v.chars - used < 500:
+            full = True
+            rest.append(c)
+            continue
+        if ix.source[c] == "runbooks":
+            if runbooks >= v.runbook_cap:
+                capped.add(c)
+                continue
+            runbooks += 1
+        pack.append(c)
+        inpack.add(c)
+        used += min(lens[c], v.chars - used)
+    st.capped = capped
+    st.final_n = len(pack)
+    return pack + rest, set(frozen_rk) | set(lk)
+
+
+def selected(st, v, rk):
+    """The pack a ranking yields: select_ranked for the others, the first final_n for the additive variant."""
+    return rk[:st.final_n] if v.additive else select_ranked(rk, st.ix.len, v.k, v.chars)
+
+
 def pack_of(st, v, scorer):
     rk, _ = ranking(st, v, scorer)
-    return select_ranked(rk, st.ix.len, v.k, v.chars)
+    return selected(st, v, rk)
 
 
 def chunk_stage(st, v, scorer, cid):
@@ -394,7 +438,7 @@ def chunk_stage(st, v, scorer, cid):
     cache = st.__dict__.setdefault("_rk_cache", {})
     if v not in cache:
         rk, cands = ranking(st, v, scorer)
-        cache[v] = (rk, cands, st.capped, set(select_ranked(rk, st.ix.len, v.k, v.chars)))
+        cache[v] = (rk, cands, st.capped, set(selected(st, v, rk)))
     rk, cands, capped, sel = cache[v]
     if cid in capped:
         return "capped_runbook"

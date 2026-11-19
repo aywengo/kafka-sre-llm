@@ -171,9 +171,13 @@ not passed. Two decisions:
   client-code checks are taken as covered by the go of 2026-11-18 ("downloads and installs
   for catalogues and checks"), after a check of versions, hashes and licences.
 - **The rule for R3 (K3), fixed on 2026-11-19 before B2 exists.** R3 is the frozen pack
-  (the frozen six chunks, in frozen order) followed by the exact-heading lookup (2 slots)
-  and at most one runbook, up to 10 chunks and 24,000 characters; its settings hash is
-  recorded when it is built. It is run once with the funnel on B2, after B2's rubrics have
+  (the frozen six chunks, in frozen order, untouched) followed by the exact-heading lookup
+  (2 slots) and one more runbook slot (at most one runbook chunk added beyond those the
+  frozen pack holds), up to 10 chunks and 24,000 characters by the frozen cap's
+  accounting. Built 2026-11-19, settings hash `d0225486…a6b55b0`
+  (`runs/m5/PROFILE_R3.json`); development items +14 of 106 indexed points, −0; B1
+  (descriptive) 56 to 69 of 166 (+7.8 points), −0; about +5 to +6.5 s prompt time
+  (inferred). It is run once with the funnel on B2, after B2's rubrics have
   passed the chunk check (95 %) and with the search terms of B2's default run for both
   variants. An indexed must point is served when one of its chunk ids is in the pack.
   Pass only if both hold: (a) R3 serves at least 15 percentage points more indexed must

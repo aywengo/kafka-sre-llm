@@ -659,8 +659,8 @@ def build_parser():
     an.add_argument("--max-tokens", type=int, default=None)
     an.add_argument("--mode", choices=["default", "strict"], default="default")
     an.add_argument("--k", choices=["k6", "k3"], default="k6")
-    an.add_argument("--profile", choices=["frozen", "r1", "r2"], default="frozen",
-                    help="retrieval profile (default frozen); r1 and r2 are unmeasured candidates "
+    an.add_argument("--profile", choices=["frozen", "r1", "r2", "r3"], default="frozen",
+                    help="retrieval profile (default frozen); r1, r2 and r3 are unmeasured candidates "
                          "(kafka_sre_rag/candidate.json) and are recorded in the manifest")
     an.add_argument("--no-rerank", action="store_true", help="BM25 order only (unmeasured)")
     an.add_argument("--catalogue", help="catalogue directory to hash into the manifest")

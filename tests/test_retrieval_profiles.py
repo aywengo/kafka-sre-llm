@@ -61,7 +61,7 @@ class TestCandidateFile(unittest.TestCase):
         with self.assertRaises(ValueError):
             profiles.settings("frozen")
         with self.assertRaises(ValueError):
-            profiles.check("r3")
+            profiles.check("r9")
 
     def test_manifest_fields(self):
         self.assertEqual(profiles.manifest_fields("frozen"), {})
@@ -181,7 +181,7 @@ class TestCli(unittest.TestCase):
             self.assertEqual(cli.build_parser().parse_args(cmd.split()).profile, "frozen")
         self.assertEqual(cli.build_parser().parse_args(["ask", "q", "--profile", "r2"]).profile, "r2")
         with self.assertRaises(SystemExit), mock.patch("sys.stderr"):
-            cli.build_parser().parse_args(["ask", "q", "--profile", "r3"])
+            cli.build_parser().parse_args(["ask", "q", "--profile", "r9"])
 
     def test_dry_run_prints_profile_and_hash(self):
         import io

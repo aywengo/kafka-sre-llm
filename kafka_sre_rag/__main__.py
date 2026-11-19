@@ -36,7 +36,7 @@ def build_parser():
     def common(p):
         p.add_argument("--k", choices=["k6", "k3"], default="k6")
         p.add_argument("--profile", choices=list(profiles.PROFILES), default="frozen",
-                       help="retrieval profile: frozen (default, the measured one) or the candidates r1 and r2 "
+                       help="retrieval profile: frozen (default, the measured one) or the candidates r1, r2 and r3 "
                             "(kafka_sre_rag/candidate.json; every answer is marked unmeasured)")
         p.add_argument("--mode", choices=["default", "strict"], default="default")
         p.add_argument("--backend", choices=["mlx", "openai"], default="mlx")

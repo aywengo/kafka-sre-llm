@@ -1,4 +1,4 @@
-"""Retrieval profiles: `frozen` (the default, frozen.json) and the candidates `r1` and `r2` (candidate.json).
+"""Retrieval profiles: `frozen` (the default, frozen.json) and the candidates `r1`, `r2` and `r3` (candidate.json).
 
 Everything here is pure (no scripts/retrieve.py, no model); kafka_sre_rag/retrieval.py feeds it the BM25 lists.
 The ordering rules are those of scripts/retrieval_funnel.py (the funnel tool's simulation), written out here so
@@ -11,7 +11,7 @@ import re
 from . import config
 
 FROZEN = "frozen"
-CANDIDATES = ("r1", "r2")
+CANDIDATES = ("r1", "r2", "r3")
 PROFILES = (FROZEN,) + CANDIDATES
 CANDIDATE_FILE = config.PKG / "candidate.json"
 
@@ -157,6 +157,40 @@ class Lookup:
             if len(out) >= n:
                 break
         return out
+
+
+def additive_pack(prof, question, exp, *, frozen_list, bm, score, source_of, lens, lookup):
+    """Profile r3 (order "additive"): the frozen pack exactly (the first base_k of frozen_list that fit base_chars,
+    by select_ranked), then the exact-heading lookup hits, then the rest of frozen_list in its order; at most
+    `added_runbook_cap` runbook chunks ADDED after the frozen pack (runbook chunks already in the frozen pack are
+    kept and not counted), at most k chunks and max_chars characters (select_ranked's accounting, continued from the frozen pack). Added
+    chunks are dropped when a cap is hit; a frozen chunk is never displaced, dropped or reordered. Returns
+    (pack ids, ids refused by the runbook cap). frozen_list: the frozen ordering of the pool (best first)."""
+    pack = select_ranked(frozen_list, lens, prof["base_k"], prof["base_chars"])
+    used = 0
+    for c in pack:
+        used += min(lens[c], prof["base_chars"] - used)
+    rank = {c: r + 1 for r, c in enumerate(bm)}
+    depth = prof["lookup_score_depth"]
+    lk = lookup.hits(question, exp, prof["lookup"],
+                     lambda c: score.get(c, 0.0) if rank.get(c, 10 ** 9) <= depth else 0.0, prof["lookup_max_chunks"])
+    inpack = set(pack)
+    runbooks = 0   # runbook chunks added so far
+    capped = []
+    for c in list(dict.fromkeys(lk + frozen_list)):
+        if c in inpack:
+            continue
+        if len(pack) >= prof["k"] or prof["max_chars"] - used < 500:
+            break
+        if source_of[c] == "runbooks":
+            if runbooks >= prof["added_runbook_cap"]:
+                capped.append(c)
+                continue
+            runbooks += 1
+        pack.append(c)
+        inpack.add(c)
+        used += min(lens[c], prof["max_chars"] - used)
+    return pack, capped
 
 
 def order(prof, question, exp, *, bm, score, term_lists, frozen_list, source_of, lookup):

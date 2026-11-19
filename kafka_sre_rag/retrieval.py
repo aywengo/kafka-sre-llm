@@ -33,6 +33,8 @@ def _select_candidate(question, expansion, profile, index_path, rerank):
     cfg = config.load()
     prof = profiles.load_candidate()["profiles"][profile]
     path = str(index_path or profiles.index_file(profile, cfg))
+    if prof["order"] == "additive":
+        return _select_additive(question, expansion, prof, path, rerank, cfg)
     chunks = RT.index(path)[0]
     ids = [c["id"] for c in chunks]
     byid = {c["id"]: c for c in chunks}
@@ -62,6 +64,37 @@ def _select_candidate(question, expansion, profile, index_path, rerank):
     sel = profiles.select_ranked(rk, {c: len(byid[c]["text"]) for c in rk[:prof["k"]]}, prof["k"], prof["max_chars"])
     rank = {c: r + 1 for r, c in enumerate(bm)}
     return [{**byid[c], "bm25_rank": rank.get(c, 0), "ce_score": ce_of.get(c)} for c in sel]
+
+
+def _select_additive(question, expansion, prof, path, rerank, cfg):
+    """Profile r3: the frozen pack exactly, then lookup hits and the rest of the frozen order (profiles.additive_pack).
+    rerank=False: the pool in BM25 order stands in for the frozen ordering (unmeasured, already flagged)."""
+    chunks = RT.index(path)[0]
+    ids = [c["id"] for c in chunks]
+    byid = {c["id"]: c for c in chunks}
+    exp = expansion or ""
+    sc = RT.scores(question + " " + exp if exp else question, path)
+    bm = [ids[i] for i, _ in sc.most_common()]
+    score = {ids[i]: s for i, s in sc.items()}
+    pool = [ids[i] for i, _ in sc.most_common(cfg["retrieval"]["pool"])]
+    if not pool:
+        return []
+    frozen_list, ce_of = list(pool), {}
+    if rerank:
+        last = _capture_ce()
+        last.pop("ce", None)
+        ranked = RT.rank(question, exp, index_path=path)  # the frozen ordering
+        ce = last.get("ce", [])
+        if sorted(ranked) != sorted(i for i, _ in sc.most_common(cfg["retrieval"]["pool"])) or len(ce) != len(pool):
+            raise RuntimeError("retrieve.rank() no longer matches the candidate pool; retrieval changed")
+        frozen_list = [ids[i] for i in ranked]
+        ce_of = {c: round(float(ce[j]), 6) for j, c in enumerate(pool)}
+    source_of = {c["id"]: c["source"] for c in chunks}
+    lens = {c["id"]: len(c["text"]) for c in chunks}
+    pack, _ = profiles.additive_pack(prof, question, exp, frozen_list=frozen_list, bm=bm, score=score,
+                                     source_of=source_of, lens=lens, lookup=_lookup(path))
+    rank = {c: r + 1 for r, c in enumerate(bm)}
+    return [{**byid[c], "bm25_rank": rank.get(c, 0), "ce_score": ce_of.get(c)} for c in pack]
 
 
 _LOOKUPS = {}
