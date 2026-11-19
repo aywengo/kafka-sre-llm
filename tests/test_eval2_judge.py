@@ -701,18 +701,28 @@ class SupportedEssentialMiss(unittest.TestCase):
          "must_not": [], "any_of": [["m3", "m4"]]}
 
     def test_rules_chunk_path_none_no_pack(self):
+        # a rubric that carries chunk ids (here m2 has them): by chunk id only; a point without chunk ids is never supported
         pack, paths = ["c1"], ["raw/a/one.md"]
         got = ej.supported_points(self.R, ["m1", "m2", "m3"], pack, paths)
-        self.assertEqual(got, [{"id": "m1", "supported": True, "rule": "path"},
-                               {"id": "m2", "supported": False, "rule": "chunk"},      # chunk id given: the path is not consulted
-                               {"id": "m3", "supported": False, "rule": "none"}])
+        self.assertEqual(got, [{"id": "m1", "supported": False, "rule": "no_chunks"},   # its file is among the excerpts, but it has no chunk ids
+                               {"id": "m2", "supported": False, "rule": "chunk"},       # chunk id given: c2 is not in the pack
+                               {"id": "m3", "supported": False, "rule": "no_chunks"}])
         self.assertTrue(ej.supported_points(self.R, ["m2"], ["c2"], ["raw/b/two.md"])[0]["supported"])
         self.assertEqual(ej.supported_points(self.R, ["m1"], None, None), [{"id": "m1", "supported": False, "rule": "no_pack"}])
         self.assertEqual(ej.point_paths(self.R["must"][0]), ["raw/a/one.md", "raw/z/other.md"])
 
+    def test_old_file_level_rule_for_rubrics_without_chunk_ids(self):
+        old = dict(self.R, must=[{k: v for k, v in p.items() if k != "chunks"} for p in self.R["must"]])
+        self.assertFalse(ej.rubric_has_chunks(old))
+        got = ej.supported_points(old, ["m1", "m2", "m3"], ["c1"], ["raw/a/one.md"])
+        self.assertEqual(got, [{"id": "m1", "supported": True, "rule": "path"},
+                               {"id": "m2", "supported": False, "rule": "path"},
+                               {"id": "m3", "supported": False, "rule": "none"}])
+
     def test_row_flags(self):
         # m1 absent (weight 2, path in the excerpts): supported. m3 absent but its any_of alternative m4 present: no essential miss.
-        it = {"set": "s", "id": "t-2", "question": "q", "answer": "x y z", "rubric": self.R, "pack": ["c1"], "excerpt_paths": ["raw/a/one.md"]}
+        old = dict(self.R, must=[{k: v for k, v in p.items() if k != "chunks"} for p in self.R["must"]])   # no chunk ids: file-level rule
+        it = {"set": "s", "id": "t-2", "question": "q", "answer": "x y z", "rubric": old, "pack": ["c1"], "excerpt_paths": ["raw/a/one.md"]}
         j = {"must": [{"id": "m1", "verdict": "absent", "quote": ""}, {"id": "m2", "verdict": "absent", "quote": ""},
                       {"id": "m3", "verdict": "absent", "quote": ""}, {"id": "m4", "verdict": "present", "quote": "x y"},
                       {"id": "m5", "verdict": "absent", "quote": ""}], "must_not": [], "other_errors": []}
@@ -1058,6 +1068,174 @@ class ChainScript(unittest.TestCase):
                      "matched probe_nearmiss: %d answers" % n_near, "matched default_ref: 24 answers", "judge calls %d = 96 " % calls, "## Rubric probes",
                      "## Sources of the must points", "Go or no-go"):
             self.assertIn(line, r.stdout)
+
+
+class CoverageRole(unittest.TestCase):
+    """Decision J1: supported by chunk id, unverified verdicts, essential-miss units (offline, synthetic)."""
+    R = {"id": "t-9", "question": "q",
+         "must": [{"id": "m1", "text": "a", "weight": 2, "first": False, "source": "x", "chunks": ["c1", "c2"]},
+                  {"id": "m2", "text": "b", "weight": 2, "first": False, "source": "x", "chunks": ["c3"]},
+                  {"id": "m3", "text": "c", "weight": 2, "first": False, "source": "x", "chunks": ["c4"]},
+                  {"id": "m4", "text": "d", "weight": 2, "first": False, "source": "x", "chunks": ["c5"]},
+                  {"id": "m5", "text": "e", "weight": 2, "first": False, "source": "x", "not_indexed": True},
+                  {"id": "m6", "text": "f", "weight": 1, "first": False, "source": "x", "chunks": ["c6"]}],
+         "must_not": [{"id": "n1", "text": "z", "severity": "wrong"}], "any_of": [["m3", "m4"]]}
+    ANSWER = "We set a. We set b. We use c. We use d."
+
+    def test_supported_iff_a_recorded_chunk_is_in_the_pack(self):
+        got = ej.supported_points(self.R, ["m1", "m2", "m3", "m5", "m6"], ["c2", "c9"], ["raw/anything.md"])
+        self.assertEqual([(x["id"], x["supported"], x["rule"]) for x in got],
+                         [("m1", True, "chunk"), ("m2", False, "chunk"), ("m3", False, "chunk"), ("m5", False, "not_indexed"), ("m6", False, "chunk")])
+        self.assertEqual(ej.supported_points(self.R, ["m1"], [], None)[0]["rule"], "no_pack")
+
+    def test_a_point_without_chunks_and_not_indexed_is_never_supported(self):
+        r = dict(self.R, must=self.R["must"] + [{"id": "m7", "text": "g", "weight": 2, "first": False, "source": "raw/a/one.md:1"}])
+        x = ej.supported_points(r, ["m5", "m7"], ["c1"], ["raw/a/one.md"], {"raw/a/one.md": ["c1"]})
+        self.assertEqual([(y["supported"], y["rule"]) for y in x], [(False, "not_indexed"), (False, "no_chunks")])
+
+    def row(self, verdicts, quotes=None):
+        quotes = quotes or {}
+        mk = lambda k, v: {"id": k, "verdict": v, "quote": quotes.get(k, {"m1": "We set a.", "m2": "We set b.", "m3": "We use c.", "m4": "We use d."}.get(k, "We set a.")) if v != "absent" else ""}
+        j = {"must": [mk(k, verdicts.get(k, "absent")) for k in ("m1", "m2", "m3", "m4", "m5", "m6")],
+             "must_not": [{"id": "n1", "verdict": "absent", "quote": ""}], "other_errors": []}
+        it = {"set": "s", "id": "t-9", "question": "q", "answer": self.ANSWER, "rubric": self.R, "pack": ["c1", "c4"]}
+        return it, j
+
+    def test_failed_quote_is_unverified_in_coverage_mode_and_absent_otherwise(self):
+        it, j = self.row({"m1": "present"}, {"m1": "never said"})
+        old = ej.result_row(it, 1, {"key": "k", "j": j})
+        self.assertEqual(old["must"]["m1"]["verdict"], "absent")
+        new = ej.result_row(it, 1, {"key": "k", "j": j}, coverage=True)
+        self.assertEqual(new["must"]["m1"]["verdict"], "unverified")
+        self.assertEqual(new["must"]["m1"]["judge_verdict"], "present")
+        self.assertEqual((new["quote_claims"], new["quote_failed"]), (1, 1))
+        self.assertEqual(new["pack"], ["c1", "c4"])
+        self.assertNotIn("m1", [e["id"] for e in new["essential_points"]])      # not a miss
+        self.assertIn("m1", [e["id"] for e in old["essential_points"]])         # the old demotion is a miss
+        # a must-not "present" with a failed quote is unverified too, and is not a candidate error
+        j["must_not"][0] = {"id": "n1", "verdict": "present", "quote": "never said"}
+        self.assertEqual(ej.result_row(it, 1, {"key": "k", "j": j}, coverage=True)["must_not"]["n1"]["verdict"], "unverified")
+
+    def test_essential_units_one_per_point_or_group(self):
+        u = ej.essential_units(self.R, {"m1": "absent", "m2": "present", "m3": "absent", "m4": "absent", "m5": "absent", "m6": "absent"})
+        self.assertEqual([(x["ids"], x["status"]) for x in u],
+                         [(["m1"], "missed"), (["m2"], "present"), (["m3", "m4"], "missed"), (["m5"], "missed")])   # the group counts once
+        u = ej.essential_units(self.R, {"m1": "unverified", "m2": "absent", "m3": "absent", "m4": "unverified", "m5": "present"})
+        self.assertEqual([x["status"] for x in u], ["unverified", "missed", "unverified", "present"])   # unverified inside a group too
+        u = ej.essential_units(self.R, {"m1": "absent", "m3": "present", "m4": "absent"})
+        self.assertEqual(u[2]["status"], "present")
+        self.assertEqual(len(ej.essential_units(self.R, {})), 4)      # m6 has weight 1: no unit
+
+    def test_unverified_member_excuses_its_group_in_essential_points(self):
+        self.assertEqual(ej.essential_points(self.R, {"m1": "present", "m2": "present", "m3": "absent", "m4": "unverified", "m5": "present"}), [])
+        self.assertEqual(ej.essential_points(self.R, {"m3": "absent", "m4": "absent"}), ["m3", "m4"])
+
+    def test_coverage_row_reads_old_demoted_rows_as_unverified(self):
+        it, j = self.row({"m2": "present", "m1": "present"}, {"m2": "never said"})
+        old = ej.result_row(it, 1, {"key": "k", "j": j})
+        rub = self.R
+        self.assertFalse(any(x["supported"] for x in ej.coverage_row(old, rub)["units"]))     # a row made without --coverage carries no pack
+        old["pack"] = ["c1", "c4"]
+        c = ej.coverage_row(old, rub)
+        self.assertEqual(c["unverified"], 1)
+        self.assertEqual(c["demoted_raw"], 1)
+        st = {tuple(x["ids"]): (x["status"], x["supported"]) for x in c["units"]}
+        self.assertEqual(st[("m1",)], ("present", True))
+        self.assertEqual(st[("m2",)], ("unverified", False))
+        self.assertEqual(st[("m3", "m4")], ("missed", True))      # pack has c4, a member of the group: supported
+        self.assertEqual(st[("m5",)], ("missed", False))          # not indexed: never supported
+        self.assertEqual(c["rule"], "chunk")
+        self.assertAlmostEqual(c["P"], 2 / 9)                     # weights m1 2, m2 2, group 2, m5 2, m6 1 = 9; only m1 present
+
+    def test_coverage_measures_counts(self):
+        it, j = self.row({"m1": "present"})
+        rows = [ej.result_row(it, p, {"key": f"k{p}", "j": j}, coverage=True) for p in (1, 2)]
+        m = ej.coverage_measures(rows, [self.R])["s"]
+        self.assertEqual((m[1]["n"], m[1]["units"], m[1]["missed"], m[1]["supported_missed"]), (1, 4, 3, 1))
+        self.assertAlmostEqual(m[1]["missed_per10"], 30.0)
+        self.assertAlmostEqual(m[1]["mean_P"], 2 / 9)
+        self.assertEqual(m[1]["unverified"], 0)
+
+
+class ChunkPlacement(unittest.TestCase):
+    """The helper for rubric authors: source reference -> chunk ids (offline, files in a temporary directory)."""
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp())
+        (self.root / "raw" / "s").mkdir(parents=True)
+        lines = ["# Title", "", "Alpha beta gamma delta epsilon zeta eta theta.", "Second   line, with `markup` and **bold** text here today.",
+                 "", "Totally other sentence about nothing in particular at all here."] + [f"filler line number {i} with some words" for i in range(30)]
+        (self.root / "raw" / "s" / "a.md").write_text("\n".join(lines) + "\n")
+        (self.root / "raw" / "s" / "b.html").write_text('<p>First   <b>paragraph</b> of the html file has twelve words in it okay</p>\n<p>Never indexed text goes right here and nowhere else</p>\n')
+        self.chunks = {
+            "c1": {"id": "c1", "path": "raw/s/a.md", "text": "Title\n\nAlpha beta gamma delta epsilon zeta eta theta. Second line, with markup and bold text here today."},
+            "c2": {"id": "c2", "path": "raw/s/a.md", "text": "filler line number 5 with some words\nfiller line number 6 with some words"},
+            "c3": {"id": "c3", "path": "raw/s/b.html", "text": "First paragraph of the html file has twelve words in it okay."},
+        }
+
+    def test_lines_are_placed_despite_whitespace_and_markup(self):
+        r = ej.place_ref("raw/s/a.md:3-4; raw/s/b.html:1", self.chunks, self.root)
+        self.assertEqual([(x["status"], x["chunks"]) for x in r], [("placed", ["c1"]), ("placed", ["c3"])])
+        self.assertEqual(r[0]["overlap"]["c1"], 1.0)
+
+    def test_not_in_the_index_and_best_partial_match(self):
+        r = ej.place_ref("raw/s/b.html:2; raw/s/a.md:3-6", self.chunks, self.root)
+        self.assertEqual(r[0]["status"], "not in the index")
+        self.assertIsNone(r[0]["best"])                                   # nothing in common with the file's only chunk
+        self.assertEqual(r[1]["status"], "placed")                        # lines 3-6: c1 holds the first two of the four lines
+        far = ej.place_ref("raw/s/a.md:6", self.chunks, self.root)[0]
+        self.assertEqual(far["status"], "not in the index")
+        text = "\n".join(ej.describe_placement(ej.place_ref("raw/s/a.md:3-9", dict(self.chunks, c1=dict(self.chunks["c1"], text="Alpha beta gamma delta epsilon zeta eta theta and then something else entirely")), self.root, min_overlap=0.99)))
+        self.assertIn("not in the index", text)
+        self.assertIn("best partial match c1 with overlap", text)
+
+    def test_other_kinds_of_segments(self):
+        r = ej.place_ref("raw_catalogue/t/X.java:1-5; searched the docs; raw/s/a.md; raw/zz/missing.md:1", self.chunks, self.root)
+        self.assertEqual([x["status"] for x in r], ["catalogue", "no file", "no lines", "file not found"])
+
+    def test_fill_and_check_a_rubrics_file(self):
+        rub = [{"id": "r1", "must": [{"id": "m1", "text": "t", "weight": 2, "source": "raw/s/a.md:3-4"},
+                                     {"id": "m2", "text": "t", "weight": 2, "source": "raw/s/b.html:2"},
+                                     {"id": "m3", "text": "t", "weight": 1, "source": "inferred"}], "must_not": []}]
+        new, unplaced, problems = ej.fill_chunks(rub, self.chunks, self.root)
+        pts = {p["id"]: p for p in new[0]["must"]}
+        self.assertEqual(pts["m1"]["chunks"], ["c1"])
+        self.assertTrue(pts["m2"]["not_indexed"] and "chunks" not in pts["m2"])
+        self.assertEqual([(a, b) for a, b, _ in unplaced], [("r1", "m2"), ("r1", "m3")])
+        self.assertNotIn("chunks", rub[0]["must"][0])                     # the input is not changed
+        self.assertTrue(ej.rubric_has_chunks(new[0]))
+        _, _, ok = ej.fill_chunks(new, self.chunks, self.root, check=True)
+        self.assertEqual(ok, [])
+        bad = json.loads(json.dumps(new))
+        bad[0]["must"][0]["chunks"] = ["c2", "nope"]
+        bad[0]["must"][2].pop("not_indexed")
+        _, _, problems = ej.fill_chunks(bad, self.chunks, self.root, check=True)
+        text = " | ".join(t for *_, t in problems)
+        self.assertIn("chunk nope is not in the index", text)
+        self.assertIn("chunk c2 is not among the placed chunks", text)
+        self.assertIn("neither 'chunks' nor 'not_indexed'", text)
+
+    def test_command_line(self):
+        import io
+        from contextlib import redirect_stdout
+        cf = self.root / "chunks.jsonl"
+        cf.write_text("".join(json.dumps(c) + "\n" for c in self.chunks.values()))
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = ej.main(["chunks-for", "--chunks", str(cf), "--root", str(self.root), "raw/s/a.md:3-4; raw/s/b.html:2"])
+        self.assertEqual(rc, 0)
+        self.assertIn("chunk ids: c1", buf.getvalue())
+        self.assertIn("not in the index", buf.getvalue())
+        rf, out = self.root / "rub.jsonl", self.root / "out.jsonl"
+        rf.write_text(json.dumps({"id": "r1", "must": [{"id": "m1", "text": "t", "weight": 2, "source": "raw/s/a.md:3-4"},
+                                                          {"id": "m2", "text": "t", "weight": 2, "source": "inferred"}], "must_not": []}) + "\n")
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = ej.main(["fill-chunks", "--rubrics", str(rf), "--chunks", str(cf), "--root", str(self.root), "--out", str(out)])
+        self.assertEqual(rc, 0)
+        self.assertIn("could not place: r1 m2", buf.getvalue())
+        self.assertEqual(json.loads(out.read_text())["must"][0]["chunks"], ["c1"])
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(ej.main(["fill-chunks", "--rubrics", str(out), "--chunks", str(cf), "--root", str(self.root), "--check"]), 0)
 
 
 if __name__ == "__main__":

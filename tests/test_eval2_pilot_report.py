@@ -400,5 +400,196 @@ class SourceSection(unittest.TestCase):
         self.assertIn("Points that can never be a supported essential miss: 2 of 4 (1 of 3 with weight 2); of these, 1 have no source", text)
 
 
+class CoverageReport(unittest.TestCase):
+    """The coverage role's batch report on a synthetic batch of 40 answers (offline): every criterion is printed."""
+    N = 40
+    ANSWER = "We set a. We set b. We use c. We use d."
+    QUOTE = {"m1": "We set a.", "m2": "We set b.", "m3": "We use c.", "m4": "We use d."}
+
+    @staticmethod
+    def rubric(i):
+        return {"id": f"t-{i:02d}", "question": "q",
+                "must": [{"id": "m1", "text": "a", "weight": 2, "first": False, "source": "x", "chunks": ["c1"]},
+                         {"id": "m2", "text": "b", "weight": 2, "first": False, "source": "x", "chunks": ["c2"]},
+                         {"id": "m3", "text": "c", "weight": 2, "first": False, "source": "x", "chunks": ["c3"]},
+                         {"id": "m4", "text": "d", "weight": 2, "first": False, "source": "x", "chunks": ["c4"]},
+                         {"id": "m5", "text": "e", "weight": 1, "first": False, "source": "x", "not_indexed": True}],
+                "must_not": [{"id": "n1", "text": "z", "severity": "wrong"}], "any_of": [["m3", "m4"]]}
+
+    @staticmethod
+    def truth(i):
+        """Units missed in answer i: m1 if i % 4 == 0, m2 if i % 3 == 0, the group {m3, m4} if i % 5 == 0."""
+        return {"m1": i % 4 == 0, "m2": i % 3 == 0, "m34": i % 5 == 0}
+
+    def judge_rows(self, bad_quote_pass1=1):
+        rows = []
+        for i in range(self.N):
+            t = self.truth(i)
+            for p in (1, 2):
+                v = {"m1": "absent" if t["m1"] else "present", "m2": "absent" if t["m2"] else "present",
+                     "m3": "absent" if t["m34"] else "present", "m4": "absent", "m5": "absent"}
+                quotes = dict(self.QUOTE)
+                if p == 1 and i == bad_quote_pass1:
+                    quotes["m2"] = "text the answer never had"
+                j = {"must": [{"id": k, "verdict": x, "quote": quotes.get(k, "We set a.") if x != "absent" else ""} for k, x in v.items()],
+                     "must_not": [{"id": "n1", "verdict": "absent", "quote": ""}], "other_errors": []}
+                it = {"set": "default" if i % 2 == 0 else "strict", "id": f"t-{i:02d}", "question": "q", "answer": self.ANSWER, "rubric": self.rubric(i),
+                      "pack": ["c1", "c3"]}
+                rows.append(ej.result_row(it, p, {"key": f"{i}{p}", "j": j, "instruction": "v2"}, coverage=True))
+        return rows
+
+    def findings(self, second_reader_extra=0):
+        sets_ = lambda i: "default" if i % 2 == 0 else "strict"
+        f = [{"set": sets_(i), "id": f"t-{i:02d}", "reader": "A", "kind": "read"} for i in range(self.N)]    # marker: answer read by A
+        for i in range(self.N):
+            t = self.truth(i)
+            sid = "default" if i % 2 == 0 else "strict"
+            base = {"set": sid, "id": f"t-{i:02d}", "reader": "A"}
+            if t["m1"]:
+                f.append({**base, "kind": "omission", "point": "m1", "supported": True})
+            if t["m2"]:
+                f.append({**base, "kind": "omission", "point": "m2", "supported": False})
+            if t["m34"]:
+                f.append({**base, "kind": "omission", "point": "m3|m4"})
+            if i % 3 == 1:
+                f.append({**base, "kind": "wrong", "quote": "w"})
+            if i % 10 == 2:
+                f.append({**base, "kind": "harmful", "quote": "h"})
+            if i < 10:     # reader B reads the first ten answers as well
+                f.append({"set": sid, "id": f"t-{i:02d}", "reader": "B", "kind": "wrong" if i % 3 == 1 else "invented", "quote": "x"})
+                if i % 3 == 1:
+                    f.append({"set": sid, "id": f"t-{i:02d}", "reader": "B", "kind": "invented", "quote": "y", "minor": True})
+        return f
+
+    def report(self, findings=None, rows=None, **kw):
+        rubs = [self.rubric(i) for i in range(self.N)]
+        return pr.build_report_coverage(rows or self.judge_rows(), rubs, findings if findings is not None else self.findings(), **kw)
+
+    def test_every_criterion_is_printed_and_the_numbers_are_hand_computed(self):
+        text, num = self.report(idcheck_false=0)
+        for c in ("C1", "C2", "C3", "C4", "C5", "C6", "Descriptive, not criteria", "Paired difference"):
+            self.assertIn(c, text)
+        # 120 units per pass (3 per answer). Pass 2: judge and reader agree on all of them.
+        self.assertEqual(num["c1_pass2"]["units"], 120)
+        self.assertEqual((num["c1_pass2"]["judge_only"], num["c1_pass2"]["reader_only"]), (0, 0))
+        self.assertAlmostEqual(num["c1_pass2"]["kappa"], 1.0)
+        # Pass 1: in answer 1 the judge says m2 present but its quote is not found: unverified, not a miss (the old rule made it a judge-only miss).
+        self.assertEqual((num["c1_pass1"]["judge_only"], num["c1_pass1"]["reader_only"]), (0, 0))
+        self.assertEqual(num["c1_pass1"]["both"], num["c1_pass2"]["both"])
+        self.assertEqual(num["c3"]["unverified"], 1)
+        self.assertEqual(num["c3"]["must_verdicts"], 40 * 2 * 5)
+        self.assertEqual(num["c3"]["raw_demoted"], 0)
+        self.assertEqual(num["criteria"]["C1 essential-miss units, judge against reader"], "PASS")
+        self.assertEqual(num["criteria"]["C3 unverified verdicts"], "PASS")
+        self.assertEqual(num["criteria"]["C6 identifier check"], "PASS")
+
+    def test_supported_misses_are_confirmed_by_a_reader_omission_with_supported_true(self):
+        _, num = self.report()
+        # pack = c1, c3: m1 (c1) and the group (c3 is a member's chunk) are supported; m2 (c2) is not.
+        # Judge-supported miss units per pass: m1 missed 10 answers (i % 4 == 0), group missed 8 (i % 5 == 0) -> 18 per pass, 36 in all.
+        self.assertEqual(num["c2"]["flags"], 36)
+        # The reader confirms m1 (supported true): 10 per pass; its group rows carry no 'supported' field = true: 8 per pass.
+        self.assertEqual(num["c2"]["confirmed"], 36)
+        self.assertEqual(num["criteria"]["C2 supported misses confirmed by the reader"], "PASS")
+        # now the reader says the excerpts lacked the m1 passage: 20 of 36 flags lose their confirmation
+        f = [dict(x, supported=False) if x.get("point") == "m1" else x for x in self.findings()]
+        _, num2 = self.report(f)
+        self.assertEqual((num2["c2"]["confirmed"], num2["c2"]["flags"]), (16, 36))
+        self.assertEqual(num2["criteria"]["C2 supported misses confirmed by the reader"], "FAIL")
+
+    def test_two_readers_totals_and_table(self):
+        text, num = self.report()
+        c5 = num["c5"]
+        self.assertEqual(c5["answers"], 10)
+        # A on answers 0..9: wrong at i % 3 == 1 (1, 4, 7) = 3, harmful at i % 10 == 2 (2) = 1 -> 4. B: wrong 1, 4, 7 and invented on 0, 2, 3, 5, 6, 8, 9
+        # (7) plus 3 minor invented -> 3 + 7 + 3 = 13
+        self.assertEqual((c5["total_a"], c5["total_b"]), (4, 13))
+        self.assertAlmostEqual(c5["difference"], 9 / 13)
+        self.assertEqual(num["criteria"]["C5 two readers agree on totals"], "FAIL")
+        self.assertIn("Readings not usable for a bar", text)
+        self.assertIn("| default | t-00 | 0 | 1 |", text)
+        self.assertIn("without findings marked minor", text)
+        # readers within 30 %: drop B's findings to match A's total of 4
+        f = [x for x in self.findings() if x.get("reader") != "B"]
+        f += [{"set": "default" if i % 2 == 0 else "strict", "id": f"t-{i:02d}", "reader": "B", "kind": "wrong", "quote": "x"} for i in (1, 4, 7, 2)]
+        _, num2 = self.report(f)
+        self.assertEqual((num2["c5"]["total_a"], num2["c5"]["total_b"]), (4, 4))
+        self.assertEqual(num2["criteria"]["C5 two readers agree on totals"], "PASS")
+
+    def test_waiting_and_failing_criteria_and_the_go_rule(self):
+        text, num = self.report()
+        self.assertEqual(num["criteria"]["C6 identifier check"], "WAITING")
+        self.assertFalse(num["go"])
+        self.assertIn("Go or no-go: NO-GO", text)          # C5 fails
+        f = [x for x in self.findings() if x.get("reader") != "B"]
+        _, n1 = self.report(f, idcheck_false=0)            # no second reader: C5 waits
+        self.assertEqual(n1["criteria"]["C5 two readers agree on totals"], "WAITING")
+        self.assertFalse(n1["go"])
+        _, n2 = self.report(f, idcheck_false=3)
+        self.assertEqual(n2["criteria"]["C6 identifier check"], "FAIL")
+        # all six hold: add a second reader within 30 %
+        f2 = f + [{"set": "default" if i % 2 == 0 else "strict", "id": f"t-{i:02d}", "reader": "B", "kind": "wrong", "quote": "x"} for i in (1, 4, 7, 2)]
+        text3, n3 = self.report(f2, idcheck_false=0)
+        self.assertTrue(n3["go"], text3)
+        self.assertIn("Go or no-go: GO", text3)
+
+    def test_fewer_than_100_units_waits_and_rows_that_do_not_map_are_listed(self):
+        rubs = [self.rubric(i) for i in range(self.N)]
+        rows = [r for r in self.judge_rows() if int(r["id"][2:]) < 20]
+        f = [x for x in self.findings() if int(x["id"][2:]) < 20]
+        f.append({"set": "default", "id": "t-00", "reader": "A", "kind": "omission", "point": "m1|m2"})     # not an any_of group
+        f.append({"set": "default", "id": "t-02", "reader": "A", "kind": "omission", "point": "m5"})        # weight 1: not a unit
+        text, num = pr.build_report_coverage(rows, rubs, f)
+        self.assertEqual(num["criteria"]["C1 essential-miss units, judge against reader"], "WAITING")
+        self.assertIn("fewer than 100 units", text)
+        self.assertIn("do not map to a unit (not used): 2", text)
+        self.assertIn("several points that are not one any_of group", text)
+        self.assertIn("not a weight-2 unit", text)
+
+    def test_rows_made_without_the_coverage_option_fail_c3_and_say_so(self):
+        # the old demotion stored as absent: C3 needs 0 such verdicts
+        rows = self.judge_rows()
+        r = next(x for x in rows if x["id"] == "t-01" and x["pass"] == 1)
+        r["must"]["m2"] = dict(r["must"]["m2"], verdict="absent")
+        text, num = self.report(rows=rows)
+        self.assertEqual(num["c3"]["raw_demoted"], 1)
+        self.assertEqual(num["criteria"]["C3 unverified verdicts"], "FAIL")
+
+    def test_command_line_end_to_end_with_two_readers(self):
+        import io
+        tmp = Path(tempfile.mkdtemp())
+        (tmp / "res.jsonl").write_text("".join(json.dumps(x) + "\n" for x in self.judge_rows()))
+        (tmp / "rub.jsonl").write_text("".join(json.dumps(self.rubric(i)) + "\n" for i in range(self.N)))
+        (tmp / "f.jsonl").write_text("".join(json.dumps(x) + "\n" for x in self.findings()))
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = pr.main(["--coverage", "--results", str(tmp / "res.jsonl"), "--rubrics", str(tmp / "rub.jsonl"), "--findings", str(tmp / "f.jsonl"),
+                          "--idcheck-false-invented", "0"])
+        self.assertEqual(rc, 0)
+        out = buf.getvalue()
+        for c in ("C1 essential-miss", "C2 supported", "C3 unverified", "C4 kappa", "C5 two readers", "C6 identifier"):
+            self.assertIn(c, out)
+
+    def test_paired_difference_between_sets_with_its_standard_error(self):
+        rows = [dict(r, set=name) for r in self.judge_rows() if int(r["id"][2:]) < 3 for name in ("default", "strict")]
+        rubs = [self.rubric(i) for i in range(3)]
+        f = []
+        for name, counts in (("default", (2, 1, 3)), ("strict", (0, 1, 1))):
+            for i, n in enumerate(counts):
+                f.append({"set": name, "id": f"t-{i:02d}", "reader": "A", "kind": "read"})
+                f += [{"set": name, "id": f"t-{i:02d}", "reader": "A", "kind": "wrong", "quote": "w"}] * n
+        text, _ = pr.build_report_coverage(rows, rubs, f)
+        # d = (2, 0, 2): mean 1.333, SD 1.1547, SE 0.667; per 10 answers: default 20.0 (5.8), strict 6.7 (3.3)
+        self.assertIn("| reader_wih | default - strict | 3 | 1.333 (0.667) |", text)
+        self.assertIn("| default | 3 | 20.0 (5.8) |", text)
+        self.assertIn("| strict | 3 | 6.7 (3.3) |", text)
+
+    def test_old_modes_still_print_their_reports(self):
+        # the first pilot's and the second pilot's modes are untouched by the coverage mode (their own tests above); the v2 report still builds
+        text, _ = pr.build_report_v2([row2("default", "p-1", 1, {"m1": "present", "m2": "absent", "m3": "present"}),
+                                      row2("default", "p-1", 2, {"m1": "present", "m2": "absent", "m3": "present"})])
+        self.assertIn("## The five criteria", text)
+
+
 if __name__ == "__main__":
     unittest.main()

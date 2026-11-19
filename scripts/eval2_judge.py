@@ -49,6 +49,20 @@ Version 2 of the judge step (runs/m4/reports/s5_pilot_analysis.md, design change
   flags                 write the candidate errors of a results file to a review file (columns confirmed, note left empty)
   gen-probes            second pilot: the probe answer sets (generic, correct_alternative, reference, near-miss) and their rubrics file
   confirmed             read a filled review file back: confirmed wrong and harmful items per 10 answers per answer set
+
+Coverage role (decision J1 of MILESTONE.md; the judge reports rubric coverage only, its other-errors output is never counted):
+  run --coverage        a present/contradicted verdict whose quote is not found becomes "unverified" (not present, not a miss); rows carry
+                        the answer's pack; cache keys are unchanged, so `run --rescore --coverage` reuses a cache
+  supported             rubrics that carry chunk ids (a must point with "chunks" or "not_indexed"): a point is supported if and only if one of its
+                        "chunks" is in the answer's pack; an any_of group if any member is; a point without "chunks" never. The file-level rule
+                        remains only for rubrics without chunk ids (the two pilots); a report that uses it says so
+  essential-miss unit   one per weight-2 point, an any_of group counting once (essential_units, coverage_row, coverage_measures)
+  chunks-for --chunks IDX [--root .] "raw/x.md:120-130; raw/y.html:40"
+                        ids of the index chunks whose text contains those lines (word 4-grams, so whitespace and markup do not matter; a chunk
+                        counts with at least 30 % of a cited range); "not in the index" with the best partial match when none does
+  fill-chunks --rubrics R --chunks IDX --out R2 [--check] [--overwrite]
+                        fills "chunks" of every must point from its "source" (a point that places nothing gets "not_indexed": true) and lists
+                        the points it could not place; --check only verifies recorded ids and exits 1 on a problem
 """
 import argparse
 import hashlib
@@ -400,9 +414,39 @@ def essential_points(rubric, must_v):
     for p in rubric["must"]:
         if p["weight"] == 2 and must_v.get(p["id"]) == "absent":
             g = in_group.get(p["id"])
-            if g and any(must_v.get(i) == "present" for i in g if i != p["id"]):
+            if g and any(must_v.get(i) in ("present", "unverified") for i in g if i != p["id"]):
                 continue
             out.append(p["id"])
+    return out
+
+
+def essential_units(rubric, must_v):
+    """Essential-miss units of one answer (coverage role): one per weight-2 must point that is in no any_of group, and one per any_of
+    group whose weight (the highest of its members) is 2. -> [{"ids": [member ids in rubric order], "status": s}] with s
+      "present"     the point, or any member of the group, is present;
+      "unverified"  no member present, but the judge said present or contradicted for one and its quote was not found (kind of
+                    verdict "unverified": it is neither present nor a miss);
+      "missed"      no member present or unverified, and at least one member absent;
+      "other"       nothing present, nothing absent (contradicted only).
+    must_v: {id: 'present'|'absent'|'contradicted'|'unverified'}."""
+    weight = {p["id"]: p["weight"] for p in rubric["must"]}
+    order = [p["id"] for p in rubric["must"]]
+    groups = groups_of(rubric)
+    in_group = {i for g in groups for i in g}
+    sets = [{i} for i in order if i not in in_group and weight[i] == 2]
+    sets += [{i for i in g if i in weight} for g in groups if g and max(weight.get(i, 0) for i in g) == 2]
+    out = []
+    for g in sorted(sets, key=lambda g: min(order.index(i) for i in g)):
+        vs = [must_v.get(i) for i in g]
+        if "present" in vs:
+            st = "present"
+        elif "unverified" in vs:
+            st = "unverified"
+        elif "absent" in vs:
+            st = "missed"
+        else:
+            st = "other"
+        out.append({"ids": [i for i in order if i in g], "status": st})
     return out
 
 
@@ -463,13 +507,22 @@ def point_chunks(point, index_paths):
     return sorted({c for x in point_paths(point) for c in index_paths.get(x, [])})
 
 
+def rubric_has_chunks(rubric):
+    """Does the rubric carry chunk ids (written by the rubric author before any answer exists)? Yes if any must point has a 'chunks'
+    or a 'not_indexed' field."""
+    return any("chunks" in p or "not_indexed" in p for p in rubric["must"])
+
+
 def supported_points(rubric, point_ids, pack, excerpt_paths, index_paths=None):
     """For essential-miss points: is the point's source among the answer's own excerpts?
-    Rule: by chunk id when the point gives 'chunks' (ids), otherwise by source file path against the excerpts' canonical paths.
-    -> [{"id", "supported": bool, "rule": "chunk"|"path"|"none"|"no_pack"|"not_indexed"|"catalogue"}]. 'none': the point names no file;
-    with index_paths given: 'not_indexed' (a raw/ or data/ path that has no chunk in the index) and 'catalogue' (only a
-    raw_catalogue path): such a point can never be a supported miss."""
+    Rubrics that carry chunk ids (rubric_has_chunks): a point is supported if and only if one of its 'chunks' is in the pack; a point
+    without 'chunks' is never supported ('not_indexed' when it says so, otherwise 'no_chunks'). Rubrics without chunk ids (the two
+    pilots): the old file-level rule, by source file path against the excerpts' canonical paths.
+    -> [{"id", "supported": bool, "rule": "chunk"|"not_indexed"|"no_chunks"|"path"|"none"|"no_pack"|"catalogue"}]. File-level rule: 'none':
+    the point names no file; with index_paths given: 'not_indexed' (a raw/ or data/ path that has no chunk in the index) and 'catalogue'
+    (only a raw_catalogue path): such a point can never be a supported miss."""
     pts = {p["id"]: p for p in rubric["must"]}
+    by_chunk = rubric_has_chunks(rubric)
     out = []
     for pid in point_ids:
         p = pts[pid]
@@ -477,6 +530,8 @@ def supported_points(rubric, point_ids, pack, excerpt_paths, index_paths=None):
             out.append({"id": pid, "supported": False, "rule": "no_pack"})
         elif p.get("chunks"):
             out.append({"id": pid, "supported": any(c in set(pack) for c in p["chunks"]), "rule": "chunk"})
+        elif by_chunk:
+            out.append({"id": pid, "supported": False, "rule": "not_indexed" if p.get("not_indexed") else "no_chunks"})
         elif point_paths(p):
             if index_paths is not None and not any(x in index_paths for x in point_paths(p)):
                 out.append({"id": pid, "supported": False, "rule": "not_indexed"})
@@ -489,12 +544,14 @@ def supported_points(rubric, point_ids, pack, excerpt_paths, index_paths=None):
     return out
 
 
-def validate_reply(rubric, answer, j, instruction="v1", source=None, excerpts=None):
+def validate_reply(rubric, answer, j, instruction="v1", source=None, excerpts=None, unverified=False):
     """Check a parsed reply against the rubric and the answer.
     -> (must {id: {verdict, quote, quote_ok, judge_verdict}}, must_not {...}, other_errors [...], errors [str], n_claims, n_failed).
     A point without a usable verdict, or a present/contradicted verdict whose quote is not in the answer (fair matching, see
     quote_found), is "absent". Instruction v2: an other-errors entry whose "source_quote" is not found in the source passages
-    and the answer excerpts (the texts the judge was shown) is dropped and logged as "source_quote_not_found:other"."""
+    and the answer excerpts (the texts the judge was shown) is dropped and logged as "source_quote_not_found:other".
+    unverified=True (coverage role): a present/contradicted verdict whose quote is not found becomes "unverified" instead of "absent"
+    (for must and must-not points; judge_verdict keeps what the judge said, quote_ok is False); it is still counted in n_failed."""
     ans = fair_norm(answer)
     errors, n_claims, n_failed = [], 0, 0
 
@@ -527,7 +584,7 @@ def validate_reply(rubric, answer, j, instruction="v1", source=None, excerpts=No
             if not ok:
                 n_failed += 1
                 errors.append(f"quote_not_found:{p['id']}")
-            out[p["id"]] = {"verdict": v if ok else "absent", "quote": q, "quote_ok": ok, "judge_verdict": v}
+            out[p["id"]] = {"verdict": v if ok else ("unverified" if unverified else "absent"), "quote": q, "quote_ok": ok, "judge_verdict": v}
         return out
 
     must = one(rubric["must"], j.get("must"), MUST_VERDICTS, "must")
@@ -586,8 +643,9 @@ def candidate_errors(rubric, must, must_not, other):
     return groups
 
 
-def result_row(item, pass_no, entry):
-    """One output row from a cache entry (reply parsed or None)."""
+def result_row(item, pass_no, entry, coverage=False):
+    """One output row from a cache entry (reply parsed or None). coverage=True: the coverage role's rules (failed-quote verdicts are
+    "unverified"; the row also carries 'pack', the answer's chunk ids, so that supported misses can be rescored by chunk id)."""
     usage = entry.get("usage") if isinstance(entry.get("usage"), dict) else None
     base = {"set": item["set"], "id": item["id"], "question": item["question"], "pass": pass_no,
             "answer": item["answer"], "key": entry["key"], "seconds": entry.get("seconds"),
@@ -602,7 +660,7 @@ def result_row(item, pass_no, entry):
         return {**base, "valid_reply": False, "judge_errors": ["invalid_json"]}
     ins = base["instruction"]
     must, must_not, other, errors, n_claims, n_failed = validate_reply(
-        item["rubric"], item["answer"], j, ins, item.get("source"), item.get("excerpts"))
+        item["rubric"], item["answer"], j, ins, item.get("source"), item.get("excerpts"), unverified=coverage)
     must_v = {k: v["verdict"] for k, v in must.items()}
     sc = score_item(item["rubric"], must_v, {k: v["verdict"] for k, v in must_not.items()})
     ess = supported_points(item["rubric"], essential_points(item["rubric"], must_v), item.get("pack"), item.get("excerpt_paths"), item.get("index_paths"))
@@ -612,7 +670,7 @@ def result_row(item, pass_no, entry):
             "judge_errors": errors, "quote_claims": n_claims, "quote_failed": n_failed, **sc,
             "pack_n": len(item["pack"]) if item.get("pack") else None, "essential_points": ess,
             "supported_essential_miss": any(x["supported"] for x in ess),
-            "candidates": cands, "n_candidates": len(cands)}
+            "candidates": cands, "n_candidates": len(cands), **({"pack": item.get("pack"), "coverage_rules": True} if coverage else {})}
 
 
 # ---------------------------------------------------------------- judge call
@@ -728,7 +786,7 @@ def job_keys(items, passes, chunks, cap, model, setting=DEFAULT_SETTING, instruc
 
 def run(items, passes, judge, model, chunks, cap, cache_path, concurrency=1, retry_invalid=False, calls=True,
         say=lambda s: print(s, flush=True), setting=DEFAULT_SETTING, write_cache=True, instruction="v1",
-        excerpt_cap=DEFAULT_EXCERPT_CHARS):
+        excerpt_cap=DEFAULT_EXCERPT_CHARS, coverage=False):
     """Judge every (item, pass) not in the cache. -> list of result rows in a fixed order.
     Every progress line is flushed. write_cache False: the cache is read but not written (dry run)."""
     cache = load_cache(cache_path, retry_invalid)
@@ -753,7 +811,7 @@ def run(items, passes, judge, model, chunks, cap, cache_path, concurrency=1, ret
                 Path(cache_path).parent.mkdir(parents=True, exist_ok=True)
                 with open(cache_path, "a") as f:
                     f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-            row = result_row(it, p, entry)
+            row = result_row(it, p, entry, coverage)
             say(f"[judge] {len(cache)} cached  {it['set']} {it['id']} p{p} valid={row['valid_reply']}"
                 + (f" quotes_failed={row['quote_failed']}/{row['quote_claims']} S={row['S']:.2f} candidates={row['n_candidates']}"
                    if row["valid_reply"] else "")
@@ -766,7 +824,7 @@ def run(items, passes, judge, model, chunks, cap, cache_path, concurrency=1, ret
     rows = []
     for it, p, _, _, key in jobs:
         if key in cache:
-            rows.append(result_row(it, p, cache[key]))
+            rows.append(result_row(it, p, cache[key], coverage))
     return rows, len(todo) if calls else 0, len(jobs)
 
 
@@ -824,6 +882,216 @@ def make_probes(rubrics, items_by_id):
             near.append({**base, "id": pid, "probe_of": r["id"]})
             sets[PROBE_NEARMISS].append({"id": pid, "label": PROBE_NEARMISS, "text": norm_ws(r["reference"]) + " " + norm_ws(nm)})
     return out_rubrics + near, sets
+
+
+# ---------------------------------------------------------------- coverage role
+
+def coverage_row(row, rubric):
+    """The coverage role's view of one result row (valid reply). Verdicts: a present or contradicted verdict whose quote was not found
+    is "unverified", whether the row was made with coverage rules (it says "unverified" already) or without (it says "absent" with
+    judge_verdict present/contradicted and quote_ok False: the old demotion, undone here). Unverified is not present and not a miss.
+    Supported: rubrics with chunk ids: by chunk id against the row's 'pack' (rows made with --coverage carry it; without it nothing is
+    supported); rubrics without chunk ids: the file-level result stored in the row's essential_points (members that were not listed
+    there count as unsupported). A unit is supported if any member is.
+    -> {"P", "units": [{"ids", "status", "supported"}], "must_not_present", "unverified", "must_verdicts", "demoted_raw", "rule"}."""
+    must_v, demoted = {}, 0
+    for pid, e in row["must"].items():
+        v = e["verdict"]
+        if v == "absent" and e.get("quote_ok") is False and e.get("judge_verdict") in ("present", "contradicted"):
+            v, demoted = "unverified", demoted + 1
+        must_v[pid] = v
+    mn_v = {pid: ("unverified" if e["verdict"] == "absent" and e.get("quote_ok") is False and e.get("judge_verdict") == "present"
+                  else e["verdict"]) for pid, e in row["must_not"].items()}
+    sc = score_item(rubric, must_v, mn_v)
+    units = essential_units(rubric, must_v)
+    by_chunk = rubric_has_chunks(rubric)
+    if by_chunk:
+        sup = {x["id"]: x["supported"] for x in supported_points(rubric, [p["id"] for p in rubric["must"]], row.get("pack"), None)}
+    else:
+        sup = {x["id"]: x["supported"] for x in row.get("essential_points") or []}
+    for u in units:
+        u["supported"] = any(sup.get(i) for i in u["ids"])
+    return {"P": sc["P"], "units": units, "must_not_present": sum(1 for v in mn_v.values() if v == "present"),
+            "unverified": sum(1 for v in must_v.values() if v == "unverified"), "must_verdicts": len(must_v),
+            "demoted_raw": demoted + sum(1 for pid, e in row["must_not"].items() if mn_v[pid] == "unverified" and e["verdict"] == "absent"),
+            "rule": "chunk" if by_chunk else "file"}
+
+
+def coverage_measures(rows, rubrics):
+    """Per answer set and pass, from result rows: answers, mean coverage P, essential-miss units (count, per 10 answers), supported
+    essential-miss units (count, per 10), must-not points present, unverified must verdicts and their share of all must verdicts.
+    -> {set: {pass: {...}}}."""
+    rub = {r["id"]: r for r in rubrics}
+    out = {}
+    for r in rows:
+        if not r.get("valid_reply"):
+            continue
+        c = coverage_row(r, rub[r["id"]])
+        m = out.setdefault(r["set"], {}).setdefault(r["pass"], {"n": 0, "P": 0.0, "units": 0, "missed": 0, "supported_missed": 0,
+                                                                  "must_not_present": 0, "unverified": 0, "must_verdicts": 0})
+        m["n"] += 1
+        m["P"] += c["P"]
+        m["units"] += len(c["units"])
+        m["missed"] += sum(1 for u in c["units"] if u["status"] == "missed")
+        m["supported_missed"] += sum(1 for u in c["units"] if u["status"] == "missed" and u["supported"])
+        m["must_not_present"] += c["must_not_present"]
+        m["unverified"] += c["unverified"]
+        m["must_verdicts"] += c["must_verdicts"]
+    for per in out.values():
+        for m in per.values():
+            m["mean_P"] = m["P"] / m["n"]
+            m["missed_per10"] = 10 * m["missed"] / m["n"]
+            m["supported_missed_per10"] = 10 * m["supported_missed"] / m["n"]
+            m["unverified_share"] = m["unverified"] / m["must_verdicts"] if m["must_verdicts"] else float("nan")
+    return out
+
+
+# ---------------------------------------------------------------- chunk ids of rubric points (helper for rubric authors)
+
+import html as _html
+
+PLACE_MIN_OVERLAP = 0.3   # a chunk is placed for a source range if it holds at least this share of the range's text (word 4-grams)
+_SHINGLE = 4
+_TAGS = re.compile(r"<[^>]+>")
+_MD_LINK_URL = re.compile(r"\]\([^)]*\)")
+
+
+def _tokens(text):
+    """Words of a text for matching: markup (html tags, markdown link targets, emphasis, backticks), case and whitespace do not matter."""
+    t = _html.unescape(_TAGS.sub(" ", _MD_LINK_URL.sub("]", text or ""))).lower()
+    return re.findall(r"[a-z0-9]+", t)
+
+
+def _shingles(toks, n=_SHINGLE):
+    n = max(1, min(n, len(toks)))
+    return {tuple(toks[i:i + n]) for i in range(len(toks) - n + 1)}, n
+
+
+def parse_source_ref(ref):
+    """'raw/a/b.md:120-130; data/x.md:5,9-12; inferred ...' -> [{"ref", "path", "lines": [(a, b)] or None, "kind"}] with kind
+    'index' (raw/ or data/), 'catalogue' (raw_catalogue/) or 'none' (a segment that names no file)."""
+    out = []
+    for seg in (ref or "").split(";"):
+        seg = seg.strip()
+        if not seg:
+            continue
+        w = seg.split()[0].rstrip(",.)")
+        m = re.fullmatch(r"(.+?):(\d[\d,\-]*)", w)
+        path, spec = (m.group(1), m.group(2)) if m else (w, None)
+        kind = "catalogue" if path.startswith("raw_catalogue/") else "index" if path.startswith(("raw/", "data/")) else "none"
+        lines = None
+        if spec:
+            lines = []
+            for part in spec.split(","):
+                a, _, b = part.partition("-")
+                if a.isdigit():
+                    lines.append((int(a), int(b) if b.isdigit() else int(a)))
+        out.append({"ref": seg, "path": path if kind != "none" else None, "lines": lines or None, "kind": kind})
+    return out
+
+
+def place_ref(ref, chunks, root=".", min_overlap=PLACE_MIN_OVERLAP):
+    """Index chunks whose text contains the lines a source reference cites. chunks: {id: chunk} of the frozen index. The cited lines of
+    the file under `root` are matched against the text of the chunks of that file (word 4-grams, so whitespace, case, markup and chunk
+    boundaries do not matter); a chunk is placed if it holds at least `min_overlap` of the range's 4-grams.
+    -> [{"ref", "path", "status", "chunks": [ids], "overlap": {id: share}, "best": (id, share) or None, "note"}] one per segment;
+    status 'placed', 'not in the index' (nothing reaches min_overlap, or the file has no chunk), 'catalogue' (a tool source, not in
+    the index), 'no file' (a segment without a file path), 'no lines' or 'file not found' (cannot be matched)."""
+    by_path = index_paths_of(chunks)
+    out = []
+    for seg in parse_source_ref(ref):
+        res = {"ref": seg["ref"], "path": seg["path"], "status": None, "chunks": [], "overlap": {}, "best": None, "note": ""}
+        out.append(res)
+        if seg["kind"] == "none":
+            res["status"] = "no file"
+            continue
+        if seg["kind"] == "catalogue":
+            res["status"] = "catalogue"
+            continue
+        if not seg["lines"]:
+            res["status"], res["note"] = "no lines", "the reference gives no line numbers"
+            continue
+        f = Path(root) / seg["path"]
+        if not f.is_file():
+            res["status"] = "file not found"
+            continue
+        lines = f.read_text(errors="replace").splitlines()
+        ranges = []   # one target per cited range (a list like 146,289,311 are separate places, not one text)
+        for a, b in seg["lines"]:
+            toks = _tokens("\n".join(lines[max(a - 1, 0):b]))
+            if toks:
+                ranges.append(_shingles(toks))
+        ids = by_path.get(seg["path"], [])
+        if not ranges:
+            res["status"], res["note"] = "no lines", "the cited lines have no text"
+            continue
+        if not ids:
+            res["status"], res["note"] = "not in the index", "the file has no chunk in the index"
+            continue
+        for cid in ids:
+            ctoks = _tokens(chunks[cid]["text"])
+            ov = max(len(sh & _shingles(ctoks, n)[0]) / len(sh) for sh, n in ranges)
+            if ov > 0:
+                res["overlap"][cid] = round(ov, 3)
+        if res["overlap"]:
+            res["best"] = max(res["overlap"].items(), key=lambda kv: kv[1])
+        res["chunks"] = sorted(c for c, ov in res["overlap"].items() if ov >= min_overlap)
+        res["status"] = "placed" if res["chunks"] else "not in the index"
+        short = min(n for _, n in ranges) < _SHINGLE
+        if res["chunks"] and (len(res["chunks"]) > 3 or short):
+            res["note"] = (f"{len(res['chunks'])} chunks" if len(res["chunks"]) > 3 else "a cited range of fewer than 4 words") + \
+                ": a short or common text can be in chunks that do not hold the point; check by hand"
+    return out
+
+
+def describe_placement(places):
+    L = []
+    for r in places:
+        if r["status"] == "placed":
+            L.append(f"{r['ref']}: " + ", ".join(f"{c} ({r['overlap'][c]:.2f})" for c in r["chunks"]) + (f" [{r['note']}]" if r["note"] else ""))
+        else:
+            b = f"; best partial match {r['best'][0]} with overlap {r['best'][1]:.2f}" if r["best"] else ""
+            L.append(f"{r['ref']}: " + ("not in the index" if r["status"] == "not in the index" else r["status"]) + (f" ({r['note']})" if r["note"] else "") + b)
+    return L
+
+
+def fill_chunks(rubrics, chunks, root=".", overwrite=False, check=False):
+    """Fill 'chunks' of every must point from its 'source' (or, with check=True, only check). A point with placed segments gets the union
+    of their chunk ids; a point with none gets 'not_indexed': true and no 'chunks'. A point that already has 'chunks' keeps them unless
+    overwrite. Check: a recorded chunk id that is not in the index, or that is not among the placed chunks of the point's source, is a
+    problem; so is a point with neither 'chunks' nor 'not_indexed'.
+    -> (rubrics (filled copies; the input in check mode), unplaced [(rubric id, point id, reason)], problems [(rubric id, point id, text)])."""
+    out, unplaced, problems = [], [], []
+    for r in rubrics:
+        r2 = json.loads(json.dumps(r))
+        for p in r2["must"]:
+            places = place_ref(p.get("source"), chunks, root)
+            ids = sorted({c for x in places for c in x["chunks"]})
+            if check:
+                have = p.get("chunks") or []
+                if not have and not p.get("not_indexed"):
+                    problems.append((r["id"], p["id"], "neither 'chunks' nor 'not_indexed'"))
+                for c in have:
+                    if c not in chunks:
+                        problems.append((r["id"], p["id"], f"chunk {c} is not in the index"))
+                    elif ids and c not in ids:
+                        problems.append((r["id"], p["id"], f"chunk {c} is not among the placed chunks {ids}"))
+                if have and not ids:
+                    problems.append((r["id"], p["id"], "has chunks but its source places none: " + "; ".join(describe_placement(places))))
+                if p.get("not_indexed") and ids:
+                    problems.append((r["id"], p["id"], f"says not_indexed but its source places chunks {ids}"))
+                continue
+            if p.get("chunks") and not overwrite:
+                continue
+            if ids:
+                p["chunks"] = ids
+                p.pop("not_indexed", None)
+            else:
+                p.pop("chunks", None)
+                p["not_indexed"] = True
+                unplaced.append((r["id"], p["id"], "; ".join(describe_placement(places)) or "no source"))
+        out.append(r2)
+    return (rubrics if check else out), unplaced, problems
 
 
 # ---------------------------------------------------------------- measures, review file
@@ -939,6 +1207,17 @@ def main(argv=None):
     cf = sub.add_parser("confirmed", help="confirmed wrong and harmful items per 10 answers from a filled review file")
     cf.add_argument("--review", required=True)
     cf.add_argument("--results", nargs="+", required=True)
+    cfor = sub.add_parser("chunks-for", help="index chunk ids whose text contains the lines of a source reference ('raw/x.md:120-130; ...')")
+    cfor.add_argument("ref")
+    cfor.add_argument("--chunks", required=True)
+    cfor.add_argument("--root", default=".", help="directory that holds raw/ and data/")
+    cfor.add_argument("--min-overlap", type=float, default=PLACE_MIN_OVERLAP)
+    fc = sub.add_parser("fill-chunks", parents=[common], help="fill (or --check) 'chunks' of every must point of a rubrics file from its 'source'")
+    fc.add_argument("--chunks", required=True)
+    fc.add_argument("--root", default=".")
+    fc.add_argument("--out", help="the filled rubrics file (not written with --check)")
+    fc.add_argument("--check", action="store_true", help="only check the recorded chunk ids; exit 1 on a problem")
+    fc.add_argument("--overwrite", action="store_true", help="replace existing 'chunks' too")
     g = sub.add_parser("gen-generic", parents=[common], help="write the generic-answer probe file")
     g.add_argument("--out", required=True)
     gp = sub.add_parser("gen-probes", parents=[common], help="write the probe answer sets and the probe rubrics file (second pilot)")
@@ -974,6 +1253,8 @@ def main(argv=None):
     r.add_argument("--retry-invalid", action="store_true", help="redo cached calls whose reply was not valid JSON")
     r.add_argument("--stub", action="store_true", help="dry run: stub judge, no server; prints matches, largest prompt, estimate")
     r.add_argument("--rescore", action="store_true", help="no calls: rebuild --out from --cache")
+    r.add_argument("--coverage", action="store_true",
+                   help="coverage role: a failed-quote verdict becomes 'unverified' (not absent); rows carry the answer's pack; the cache key is unchanged")
     a = ap.parse_args(argv)
 
     if a.cmd == "flags":
@@ -994,6 +1275,33 @@ def main(argv=None):
         for name, m in confirmed_summary(rev, rows).items():
             print(f"| {name} | {m['answers']} | {m['flags']} | {m['undecided']} | {m['confirmed_wrong']} | {m['wrong_per10']:.1f} | "
                   f"{m['confirmed_harmful']} | {m['harmful_per10']:.1f} |")
+        return 0
+    if a.cmd == "chunks-for":
+        idx = {c["id"]: c for c in rd(a.chunks)}
+        places = place_ref(a.ref, idx, a.root, a.min_overlap)
+        for line in describe_placement(places):
+            print(line)
+        ids = sorted({c for x in places for c in x["chunks"]})
+        print("chunk ids: " + (" ".join(ids) if ids else "none"))
+        return 0 if ids else 1
+    if a.cmd == "fill-chunks":
+        idx = {c["id"]: c for c in rd(a.chunks)}
+        rubs = rd(a.rubrics)
+        new, unplaced, problems = fill_chunks(rubs, idx, a.root, a.overwrite, a.check)
+        npts = sum(len(r["must"]) for r in rubs)
+        if a.check:
+            for rid, pid, t in problems:
+                print(f"problem: {rid} {pid}: {t}")
+            print(f"checked {npts} must points: {len(problems)} problems")
+            return 1 if problems else 0
+        if not a.out:
+            ap.error("fill-chunks needs --out (or --check)")
+        Path(a.out).parent.mkdir(parents=True, exist_ok=True)
+        Path(a.out).write_text("".join(json.dumps(x, ensure_ascii=False) + "\n" for x in new))
+        for rid, pid, why in unplaced:
+            print(f"could not place: {rid} {pid}: {why}")
+        print(f"{npts} must points: {sum(1 for r in new for p in r['must'] if p.get('chunks'))} with chunks, "
+              f"{len(unplaced)} could not be placed (marked not_indexed); wrote {a.out}")
         return 0
     rubrics = rd(a.rubrics)
     qmap = load_qmap(a.qmap)
@@ -1097,7 +1405,7 @@ def main(argv=None):
     print(f"settings {a.settings_name}, instruction {a.instruction}: {reused} of {n_calls} judgments already in the cache", flush=True)
     rows, n_new, n_jobs = run(items, a.passes, judge, a.judge_model, chunks, a.source_chars, cache_path,
                               a.concurrency, a.retry_invalid, calls=not a.rescore, setting=a.settings_name,
-                              write_cache=not a.stub, instruction=a.instruction, excerpt_cap=a.excerpt_chars)
+                              write_cache=not a.stub, instruction=a.instruction, excerpt_cap=a.excerpt_chars, coverage=a.coverage)
     invalid = sum(not r["valid_reply"] for r in rows)
     print(f"{n_jobs} judgments, {n_new} called now, {len(rows) - invalid} valid replies, {invalid} unscored", flush=True)
     if a.out:

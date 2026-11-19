@@ -48,7 +48,29 @@ Reviewer's files: the review file written by `eval2_judge.py flags` with 'confir
    of an omission, "flag": optional flag_id(s) of the review file that the finding is about, "supported": false if the answer's own
    excerpts did not contain the omitted point (default true)}.
 Criteria 4 and 5 and the ordering wait for these files; the verdict is GO only when every criterion has passed.
+
+Coverage role (--coverage; decision J1 of MILESTONE.md, runs/m4/reports/s5b_pilot2_analysis.md sections 1, 3, 6, 7): the local judge reports
+rubric coverage only; wrong, invented and harmful statements come from blind readers and the identifier check. Inputs: --results (the
+--out file of `eval2_judge.py run --coverage`; rows made without it are read as well: a demoted failed-quote verdict is turned back into
+"unverified"), --rubrics (with chunk ids: `eval2_judge.py fill-chunks`), --findings (the readers' file: the format above with a "reader"
+field, optional "minor": true, and optional marker rows {"set","id","reader","kind":"read"} for an answer read with no finding; --reads
+adds a JSONL of such markers; --all-read says every answer was read by the reader named on its rows). Criteria, each PASS, FAIL or WAITING:
+  C1 essential-miss units, judge against reader, in each pass, on at least 100 weight-2 units: kappa >= 0.6, precision >= 0.75, recall >= 0.75.
+     A unit is a weight-2 point or an any_of group with weight 2. A reader's omission row names a point ("m4") or several ("m4|m5"); several
+     must equal one any_of group's members; a row that does not map to a unit is listed and not used. The reader of an answer is the first
+     reader who has a row or marker on it (--primary-reader NAME forces one). A judge's unverified unit is not a miss.
+  C2 at least 60 % of the judge's supported essential-miss units (answers x passes) are confirmed by that reader's omission with supported true.
+  C3 unverified verdicts at most 3 % of all must verdicts, and none stored as absent (the rows were made with --coverage).
+  C4 kappa between the judge's two passes at least 0.7 (must and must-not verdicts pooled, unverified a category of its own).
+  C5 on answers read by two readers: the totals of wrong + invented + harmful findings differ by at most 30 % of the larger, otherwise
+     "readings not usable for a bar"; both totals and the per-answer table are printed.
+  C6 identifier check: the number of false "invented" findings on the stored answers, from the identifier check's own report
+     (--idcheck-false-invented N; WAITING without it); PASS only for 0.
+Go only if all six pass. Descriptive, not criteria: the readers' wrong + invented + harmful per 10 answers and harmful count per answer
+set (between-item standard error), essential omissions per set, the judge's measures, and for each measure the paired difference between
+sets with its standard error.
 """
+
 import argparse
 import difflib
 import json
@@ -830,6 +852,322 @@ def build_report_v2(results, review=None, findings=None, title="Judge pilot 2", 
                                   "criteria": cs, "go": go, "precision_recall": pr_by_pass}
 
 
+# ---------------------------------------------------------------- coverage role
+
+COV_KAPPA, COV_PRECISION, COV_RECALL, COV_MIN_UNITS = 0.6, 0.75, 0.75, 100
+COV_CONFIRMED, COV_UNVERIFIED, COV_PASS_KAPPA, COV_READER_DIFF = 0.6, 0.03, 0.7, 0.30
+WIH = ("wrong", "invented", "harmful")
+
+
+def split_point_ids(point):
+    return [x.strip() for x in re.split(r"[|,+/ ]+", point or "") if x.strip()]
+
+
+def reader_table(findings, reads=None, all_read=False, answers=(), primary=None):
+    """-> ({(set, id): [readers who read it, first first]}, {(set, id, reader): [finding rows]}).
+    An answer is read by a reader with a row or a marker (kind 'read') on it, or in `reads`; rows without a "reader" field belong to
+    reader "r1". all_read: every answer of `answers` that no reader has on it is read by "r1" (no finding)."""
+    readers, rows = OrderedDict(), defaultdict(list)
+    for f in list(findings) + list(reads or []):
+        k = (f["set"], f["id"])
+        who = f.get("reader") or "r1"
+        if who not in readers.setdefault(k, []):
+            readers[k].append(who)
+        if f.get("kind") != "read":
+            rows[(f["set"], f["id"], who)].append(f)
+    if all_read:
+        for k in answers:
+            readers.setdefault(k, ["r1"])
+    if primary:
+        for k, v in readers.items():
+            if primary in v:
+                v.remove(primary)
+                v.insert(0, primary)
+    return readers, rows
+
+
+def map_omissions(rows, units):
+    """Reader omission rows of one answer and reader -> ({unit index: [rows]}, [unmapped rows with a reason]). A row naming one point
+    maps to the unit that holds it; a row naming several must equal the member set of one unit (an any_of group)."""
+    mapped, bad = defaultdict(list), []
+    for f in rows:
+        if f.get("kind") != "omission":
+            continue
+        ids = split_point_ids(f.get("point"))
+        if not ids:
+            bad.append((f, "no point named"))
+            continue
+        hit = [i for i, u in enumerate(units) if set(ids) <= set(u["ids"])]
+        if not hit:
+            known = all(any(x in u["ids"] for u in units) for x in ids)
+            bad.append((f, "several points that are not one any_of group" if len(ids) > 1 and known else "not a weight-2 unit"))
+        elif len(ids) > 1 and set(ids) != set(units[hit[0]]["ids"]):
+            bad.append((f, "several points that are not one any_of group"))
+        else:
+            mapped[hit[0]].append(f)
+    return mapped, bad
+
+
+def _mean_se(xs):
+    n = len(xs)
+    if not n:
+        return float("nan"), float("nan")
+    m = sum(xs) / n
+    return m, (st.stdev(xs) / math.sqrt(n) if n > 1 else float("nan"))
+
+
+def build_report_coverage(results, rubrics, findings, reads=None, all_read=False, primary=None, idcheck_false=None,
+                          title="Coverage role: batch report"):
+    """The batch report of the coverage role (module docstring). -> (text, numbers)."""
+    L = []
+    out = L.append
+    rub = {r["id"]: r for r in rubrics}
+    valid = [r for r in results if r.get("valid_reply") and not r.get("reference_given") and r["id"] in rub]
+    sets = list(OrderedDict.fromkeys(r["set"] for r in valid))
+    cov = {(r["set"], r["id"], r["pass"]): ej.coverage_row(r, rub[r["id"]]) for r in valid}
+    answers = sorted({(r["set"], r["id"]) for r in valid})
+    both = [k for k in answers if (k[0], k[1], 1) in cov and (k[0], k[1], 2) in cov]
+    passes = sorted({r["pass"] for r in valid})
+    readers, frows = reader_table(findings, reads, all_read, answers, primary)
+    read_answers = [k for k in answers if readers.get(k)]
+    with_chunks = sum(1 for r in rubrics if ej.rubric_has_chunks(r))
+    rules = Counter(c["rule"] for c in cov.values())
+    out(f"# {title}")
+    out("")
+    out(f"Judgments: {len(valid)} valid rows on {len(answers)} answers ({len(both)} in both passes); answer sets: {', '.join(sets)}. "
+        f"Answers with a reader: {len(read_answers)}; with two readers: {sum(1 for k in answers if len(readers.get(k, [])) >= 2)}.")
+    if rules.get("file"):
+        out(f"**Supported rule: for {rules['file']} of {len(cov)} judgments (rubrics without chunk ids) the old file-level rule is used (source "
+            f"file against the excerpts' files); for {rules.get('chunk', 0)} the rule is by chunk id.** Rubrics with chunk ids: {with_chunks} of {len(rubrics)}.")
+    else:
+        out(f"Supported rule: by chunk id for all {len(cov)} judgments (rubrics with chunk ids: {with_chunks} of {len(rubrics)}); a point without chunk ids is never supported.")
+    out("")
+
+    # ---- measures
+    m = ej.coverage_measures(valid, rubrics)
+    out("## Judge measures per answer set and pass")
+    out("")
+    out("| answer set | pass | answers | coverage P | essential-miss units per 10 (count) | supported essential-miss units per 10 (count) | must-not present | unverified share (count) |")
+    out("|---|---|---|---|---|---|---|---|")
+    for name, per in m.items():
+        for p, x in sorted(per.items()):
+            out(f"| {name} | {p} | {x['n']} | {fmt(x['mean_P'])} | {fmt(x['missed_per10'], 1)} ({x['missed']}) | "
+                f"{fmt(x['supported_missed_per10'], 1)} ({x['supported_missed']}) | {x['must_not_present']} | {fmt(100 * x['unverified_share'], 1)} % ({x['unverified']}) |")
+    out("")
+    out("Essential-miss unit: a weight-2 point, or an any_of group of weight 2 counted once; missed = no member present and none unverified. "
+        "Unverified (the judge said present or contradicted, the quote was not found) is not present and not a miss; P counts it as not present. "
+        "The judge's other-errors output is not used here.")
+    out("")
+
+    # ---- unit-level agreement with the reader
+    unmapped, unit_rows = [], {p: [] for p in passes}
+    conf_ok = defaultdict(lambda: [0, 0])   # per pass: [confirmed, flags]
+    confirmed_flags = []
+    per_answer_reader = {}                  # (set, id) -> {"omissions": n, "wih": n, "harmful": n, "minor": n}
+    for k in answers:
+        rd_ = readers.get(k)
+        if not rd_:
+            continue
+        who = rd_[0]
+        fr = frows.get((k[0], k[1], who), [])
+        per_answer_reader[k] = {"reader": who, "wih": sum(1 for f in fr if f.get("kind") in WIH), "harmful": sum(1 for f in fr if f.get("kind") == "harmful"),
+                                "minor": sum(1 for f in fr if f.get("kind") in WIH and f.get("minor")),
+                                "omissions": 0}
+        for p in passes:
+            c = cov.get((k[0], k[1], p))
+            if c is None:
+                continue
+            mapped, bad = map_omissions(fr, c["units"])
+            if p == passes[0]:
+                unmapped += [(k, who, f, why) for f, why in bad]
+                per_answer_reader[k]["omissions"] = len(mapped)
+            for i, u in enumerate(c["units"]):
+                rows_u = mapped.get(i, [])
+                unit_rows[p].append((u["status"] == "missed", bool(rows_u)))
+                if u["status"] == "missed" and u["supported"]:
+                    conf_ok[p][1] += 1
+                    ok = any(f.get("supported", True) for f in rows_u)
+                    conf_ok[p][0] += ok
+    out("## Criteria")
+    out("")
+    cs, numbers = OrderedDict(), {}
+
+    def status3(ok_list, enough=True):
+        if not enough:
+            return WAITING
+        return "PASS" if all(ok_list) else "FAIL"
+
+    # C1
+    c1_ok, c1_lines, enough = [], [], True
+    for p in passes:
+        pairs = [("miss" if j else "ok", "miss" if r else "ok") for j, r in unit_rows[p]]
+        kappa, po, pe, n, conf = cohen_kappa(pairs)
+        both_n, jo, ro = conf[("miss", "miss")], conf[("miss", "ok")], conf[("ok", "miss")]
+        prec = both_n / (both_n + jo) if both_n + jo else float("nan")
+        rec = both_n / (both_n + ro) if both_n + ro else float("nan")
+        ok = all(not math.isnan(x) for x in (kappa, prec, rec)) and kappa >= COV_KAPPA and prec >= COV_PRECISION and rec >= COV_RECALL
+        c1_ok.append(ok)
+        enough = enough and n >= COV_MIN_UNITS
+        numbers[f"c1_pass{p}"] = {"units": n, "kappa": kappa, "precision": prec, "recall": rec, "both": both_n, "judge_only": jo, "reader_only": ro}
+        c1_lines.append(f"   - pass {p}: {n} weight-2 units, both miss {both_n}, judge only {jo}, reader only {ro}; kappa {fmt(kappa)} "
+                        f"(at least {COV_KAPPA}), precision {fmt(prec)} (at least {COV_PRECISION}), recall {fmt(rec)} (at least {COV_RECALL}): {pf(ok)}")
+    cs["C1 essential-miss units, judge against reader"] = status3(c1_ok, enough) if passes else WAITING
+    out(f"**C1 essential-miss units, judge against reader (kappa, precision, recall in each pass, at least {COV_MIN_UNITS} units): {cs['C1 essential-miss units, judge against reader']}**"
+        + ("" if enough else f" (fewer than {COV_MIN_UNITS} units in a pass: not decided)"))
+    L.extend(c1_lines)
+    out(f"   - reader omission rows that do not map to a unit (not used): {len(unmapped)}")
+    for k, who, f, why in unmapped:
+        out(f"     - {k[0]} {k[1]} ({who}) point {f.get('point')!r}: {why}")
+    out("")
+
+    # C2
+    tot_c, tot_f = sum(v[0] for v in conf_ok.values()), sum(v[1] for v in conf_ok.values())
+    share = tot_c / tot_f if tot_f else float("nan")
+    cs["C2 supported misses confirmed by the reader"] = WAITING if not tot_f else _status(share >= COV_CONFIRMED)
+    numbers["c2"] = {"confirmed": tot_c, "flags": tot_f, "share": share}
+    out(f"**C2 supported essential-miss units confirmed by a reader's omission with supported true: {fmt(100 * share, 1)} %** ({tot_c} of {tot_f}, "
+        f"answers x passes; at least {int(100 * COV_CONFIRMED)} %): **{cs['C2 supported misses confirmed by the reader']}**")
+    for p in passes:
+        out(f"   - pass {p}: {conf_ok[p][0]} of {conf_ok[p][1]}")
+    out("")
+
+    # C3
+    must_n = sum(c["must_verdicts"] for c in cov.values())
+    unv = sum(c["unverified"] for c in cov.values())
+    claims = sum(r["quote_claims"] for r in valid)
+    raw_demoted = sum(1 for r in valid for e in list(r["must"].values()) + list(r["must_not"].values())
+                      if e["verdict"] == "absent" and e.get("quote_ok") is False and e.get("judge_verdict") in ("present", "contradicted"))
+    ush = unv / must_n if must_n else float("nan")
+    ok3 = not math.isnan(ush) and ush <= COV_UNVERIFIED and raw_demoted == 0
+    cs["C3 unverified verdicts"] = _status(ok3)
+    numbers["c3"] = {"unverified": unv, "must_verdicts": must_n, "share": ush, "raw_demoted": raw_demoted}
+    out(f"**C3 unverified verdicts: {fmt(100 * ush, 1)} % of must verdicts** ({unv} of {must_n}; {unv} of {claims} present or contradicted claims; at most "
+        f"{int(100 * COV_UNVERIFIED)} %), verdicts stored as absent although the judge said present or contradicted: {raw_demoted} (must be 0: run with --coverage): **{cs['C3 unverified verdicts']}**")
+    out("")
+
+    # C4
+    byk = {(r["set"], r["id"], r["pass"]): r for r in valid}
+    pairs4, pairs4m = [], []
+    for k in both:
+        r1, r2 = byk[(k[0], k[1], 1)], byk[(k[0], k[1], 2)]
+        for kind in ("must", "must_not"):
+            for pid in r1[kind]:
+                pr_ = (_view_verdict(r1[kind][pid]), _view_verdict(r2[kind][pid]))
+                pairs4.append(pr_)
+                if kind == "must":
+                    pairs4m.append(pr_)
+    k4, po4, _, n4, _ = cohen_kappa(pairs4)
+    k4m = cohen_kappa(pairs4m)[0]
+    cs["C4 kappa between the passes"] = WAITING if not n4 else _status(k4 >= COV_PASS_KAPPA)
+    numbers["c4"] = {"kappa": k4, "kappa_must": k4m, "pairs": n4}
+    out(f"**C4 kappa between the judge's two passes: {fmt(k4)}** ({n4} point verdict pairs, must and must-not pooled, agreement {fmt(po4, 3)}; must only: {fmt(k4m)}; "
+        f"at least {COV_PASS_KAPPA}): **{cs['C4 kappa between the passes']}**")
+    out("")
+
+    # C5
+    two = [k for k in answers if len(readers.get(k, [])) >= 2]
+    out_c5 = WAITING
+    if two:
+        ra, rb_ = None, None
+        names = Counter(w for k in two for w in readers[k][:2])
+        ra, rb_ = [n for n, _ in names.most_common(2)] if len(names) >= 2 else (None, None)
+        tab, ta, tb, ta_nm, tb_nm = [], 0, 0, 0, 0
+        for k in two:
+            fa = [f for f in frows.get((k[0], k[1], ra), []) if f.get("kind") in WIH]
+            fb = [f for f in frows.get((k[0], k[1], rb_), []) if f.get("kind") in WIH]
+            tab.append((k, len(fa), len(fb)))
+            ta, tb = ta + len(fa), tb + len(fb)
+            ta_nm += sum(1 for f in fa if not f.get("minor"))
+            tb_nm += sum(1 for f in fb if not f.get("minor"))
+        big = max(ta, tb)
+        diff = abs(ta - tb) / big if big else 0.0
+        ok5 = diff <= COV_READER_DIFF
+        out_c5 = "PASS" if ok5 else "FAIL"
+        numbers["c5"] = {"answers": len(two), "reader_a": ra, "reader_b": rb_, "total_a": ta, "total_b": tb, "difference": diff}
+        out(f"**C5 two readers on the same answers: {ra} {ta}, {rb_} {tb} wrong + invented + harmful findings on {len(two)} answers "
+            f"({fmt(100 * len(two) / len(answers), 0)} % of the answers; the plan asks for at least 25 %); difference {fmt(100 * diff, 0)} % of the larger "
+            f"(at most {int(100 * COV_READER_DIFF)} %): {out_c5}**" + ("" if ok5 else " Readings not usable for a bar."))
+        out(f"   - without findings marked minor: {ra} {ta_nm}, {rb_} {tb_nm} (not the criterion).")
+        out("")
+        out(f"   | set | answer | {ra} | {rb_} |")
+        out("   |---|---|---|---|")
+        for k, x, y in tab:
+            out(f"   | {k[0]} | {k[1]} | {x} | {y} |")
+    else:
+        out("**C5 two readers on the same answers: WAITING** (no answer has two readers).")
+    cs["C5 two readers agree on totals"] = out_c5
+    out("")
+
+    # C6
+    if idcheck_false is None:
+        cs["C6 identifier check"] = WAITING
+        out("**C6 identifier check: WAITING** (no number given; pass the false 'invented' count of the identifier check's report with --idcheck-false-invented N).")
+    else:
+        cs["C6 identifier check"] = _status(idcheck_false == 0)
+        out(f"**C6 identifier check: {idcheck_false} false 'invented' findings** (from the identifier check's own report; must be 0): **{cs['C6 identifier check']}**")
+    out("")
+    out("| criterion | result |")
+    out("|---|---|")
+    for k, v in cs.items():
+        out(f"| {k} | {v} |")
+    out("")
+    failed_c = [k for k, v in cs.items() if v == "FAIL"]
+    waiting = [k for k, v in cs.items() if v == WAITING]
+    go = not failed_c and not waiting
+    out(f"**Go or no-go: {'GO' if go else 'NO-GO' if failed_c else 'WAITING'}** ({sum(v == 'PASS' for v in cs.values())} of {len(cs)} criteria passed, "
+        f"{len(failed_c)} failed, {len(waiting)} waiting). Go only if all six hold.")
+    out("")
+
+    # descriptive
+    out("## Descriptive, not criteria")
+    out("")
+    out("Readers (first reader of each answer; findings marked minor are included): wrong + invented + harmful, harmful and essential omissions "
+        "(mapped units), mean per answer, shown per 10 answers with the between-item standard error. Judge: mean over the passes.")
+    out("")
+    out("| answer set | answers read | reader w+i+h per 10 (SE) | reader harmful (count) | reader omissions per 10 (SE) | judge P (SE) | judge essential-miss units per 10 (SE) | judge supported units per 10 (SE) |")
+    out("|---|---|---|---|---|---|---|---|")
+    per = {}   # (measure, set) -> {id: value}
+    for k in answers:
+        for name, val in (("judge_P", sum(cov[(k[0], k[1], p)]["P"] for p in passes if (k[0], k[1], p) in cov) / max(1, sum(1 for p in passes if (k[0], k[1], p) in cov))),
+                          ("judge_missed", sum(sum(1 for u in cov[(k[0], k[1], p)]["units"] if u["status"] == "missed") for p in passes if (k[0], k[1], p) in cov)
+                           / max(1, sum(1 for p in passes if (k[0], k[1], p) in cov))),
+                          ("judge_supported", sum(sum(1 for u in cov[(k[0], k[1], p)]["units"] if u["status"] == "missed" and u["supported"]) for p in passes if (k[0], k[1], p) in cov)
+                           / max(1, sum(1 for p in passes if (k[0], k[1], p) in cov)))):
+            per.setdefault((name, k[0]), {})[k[1]] = val
+        if k in per_answer_reader:
+            x = per_answer_reader[k]
+            for name, val in (("reader_wih", x["wih"]), ("reader_harmful", x["harmful"]), ("reader_omissions", x["omissions"])):
+                per.setdefault((name, k[0]), {})[k[1]] = val
+    for s_ in sets:
+        def cell(name, scale=10):
+            mm, se = _mean_se(list(per.get((name, s_), {}).values()))
+            return f"{fmt(scale * mm, 1 if scale == 10 else 2)} ({fmt(scale * se, 1 if scale == 10 else 2)})"
+        hv = sum(per.get(("reader_harmful", s_), {}).values())
+        out(f"| {s_} | {len(per.get(('reader_wih', s_), {}))} | {cell('reader_wih')} | {int(hv)} | {cell('reader_omissions')} | {cell('judge_P', 1)} | {cell('judge_missed')} | {cell('judge_supported')} |")
+    out("")
+    if len(sets) >= 2:
+        out("Paired difference between answer sets, per item (first minus second), mean (standard error), items in both sets with a value:")
+        out("")
+        out("| measure | pair | items | mean difference (SE) |")
+        out("|---|---|---|---|")
+        for name in ("reader_wih", "reader_harmful", "reader_omissions", "judge_P", "judge_missed", "judge_supported"):
+            for i, a in enumerate(sets):
+                for b in sets[i + 1:]:
+                    da, db = per.get((name, a), {}), per.get((name, b), {})
+                    d = [da[q] - db[q] for q in sorted(set(da) & set(db))]
+                    mm, se = _mean_se(d)
+                    out(f"| {name} | {a} - {b} | {len(d)} | {fmt(mm, 3)} ({fmt(se, 3)}) |")
+        out("")
+    return "\n".join(L) + "\n", {"criteria": dict(cs), "go": go, **numbers}
+
+
+def _view_verdict(e):
+    """A per-point verdict as the coverage role reads it: a demoted failed-quote verdict is 'unverified'."""
+    if e["verdict"] == "absent" and e.get("quote_ok") is False and e.get("judge_verdict") in ("present", "contradicted"):
+        return "unverified"
+    return e["verdict"]
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--results", required=True, help="--out file of eval2_judge.py")
@@ -845,7 +1183,19 @@ def main(argv=None):
     ap.add_argument("--title", default="Judge pilot 2")
     ap.add_argument("--probes", help="--v2: --out file of eval2_judge.py run on the probe sets (needs --rubrics, the ORIGINAL rubrics file)")
     ap.add_argument("--chunks", help="--v2: chunk index (JSONL); with --rubrics adds the section on the sources of the must points")
+    ap.add_argument("--coverage", action="store_true", help="the coverage role's batch report (criteria C1 to C6; module docstring)")
+    ap.add_argument("--reads", help="--coverage: JSONL of {set, id, reader} for answers read with no finding")
+    ap.add_argument("--all-read", action="store_true", help="--coverage: every answer was read (by reader r1 unless rows say otherwise)")
+    ap.add_argument("--primary-reader", help="--coverage: the reader whose findings are used on answers with two readers")
+    ap.add_argument("--idcheck-false-invented", type=int, help="--coverage: false 'invented' findings in the identifier check's report (C6)")
     a = ap.parse_args(argv)
+    if a.coverage:
+        if not a.findings:
+            ap.error("--coverage needs --findings")
+        text, _ = build_report_coverage(rd(a.results), rd(a.rubrics), rd(a.findings), rd(a.reads) if a.reads else None, a.all_read,
+                                        a.primary_reader, a.idcheck_false_invented, a.title if a.title != "Judge pilot 2" else "Coverage role: batch report")
+        sys.stdout.write(text)
+        return 0
     if a.v2:
         rubs = rd(a.rubrics) if (a.probes or a.chunks) else None
         chunks = {c["id"]: c for c in rd(a.chunks)} if a.chunks else None
