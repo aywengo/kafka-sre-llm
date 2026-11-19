@@ -402,7 +402,17 @@ and J6 come from the mechanical tier and block nothing yet):
   (the check reads T1a's table through one function; `strimzi.io/restart` accepts only the
   documented forms; every oracle rule carries an anchored flag). T1b (jars, sparse Kafka
   clone, Java API catalogue) and T6 (safe-order and sizing generators) started.
-- Next, in order: the Owner's K1 to K6; WP1c T1b, T3's follow-up and T6, then T5, T2 and
-  T4. For the Owner, not blocking: the essential points of
+- 2026-11-19, evening: WP1c T1b, T2, T3, T5 and T6 done and committed (`3572c40`,
+  `f6d62a9`, `7d52eb3`, `eaa4546`, `628b473`). Kafka 4.3.2 client jars and a sparse clone
+  at the tag's commit, hash-checked; Java API catalogue (812 classes). V8 is settled by the
+  Kafka source (an unknown topic config name is rejected), so it is not a valid-but-wrong
+  rule; V4 stays without a pinned source. Python symbols from confluent-kafka 2.16.1 (the
+  newest release at least 14 days old; 2.16.2 came out on 2026-11-18). Generators: 32
+  valid-but-wrong, 16 safe-order, 24 sizing items, every rule with file and line; five
+  candidates without a pinned passage dropped, not filled in. The 496 items still score
+  496 of 496 (references) and 0 of 496 (perturbed). T4 (client code, 18 Java and 6
+  Python) started.
+- Next, in order: the Owner's K1 to K6; WP1c T4, then T7 (needs K5), T8 (assembly and
+  split), T9 (review), T10. For the Owner, not blocking: the essential points of
   the six architecture scenarios (b1-10, b1-18, b1-19, b1-20, b1-29, b1-30). Not blocked:
   D1, the mechanical tier's hidden-half runs.
