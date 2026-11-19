@@ -55,7 +55,7 @@ After the first slice:
 
 | WP | What | Depends on | Status |
 |---|---|---|---|
-| WP1c | Remaining mechanical kinds (resources, commands, client code, version traps, valid but wrong, safe order, sizing, not covered) | downloads (see 3 below), S5, S6 | not started |
+| WP1c | Remaining mechanical kinds (resources, commands, client code, version traps, valid but wrong, safe order, sizing, not covered) | downloads (see 3 below), S5, S6 | resources, manifest fixes, commands and version traps were built in slice A2; plan for the other five 2026-11-19 (`runs/m4/reports/wp1c_plan.md`): 120 items by templates and programmatic checks, no model, in a separate generator and separate files, so the 496 items and their split stay byte-identical; 11 to 15 worker-days. Started: T0 (download check), T1a (forbidden-key and rule tables from the pinned text), T3 (new scorer checks). Client code needs the kafka-clients and kafka-streams 4.3.2 jars (about 8 MB, under the go of 2026-11-18 for downloads for checks, after T0) |
 | WP1d | Judged tier: scenarios and rubrics, the Owner's questions first | first fresh batch B1 | **B1 done 2026-11-19** (`runs/m4/B1_COVERAGE_FINAL.md`, `B1_COVERAGE_BATCH.md`): 30 scenarios, 90 answers, 180 judgments, 60 answers read blind (16 by a second reader). Judge against reader on 158 essential units: kappa 0.86 and 0.78, precision 0.98 and 0.90, recall 0.86 and 0.86 (pass 1, pass 2); supported misses confirmed 14 of 14; unverified 0.6 %; pass-to-pass kappa 0.85; readers' totals 41 and 53 on the shared answers (23 % apart); identifier check 0 false findings. The rubric chunk check before the run was 94.0 % (bar 95 %). Waits for the Owner: the gate, and writing the tier at scale |
 | WP5 | Retrieval and index coverage: candidate index and settings next to the frozen ones, one hidden-half run decides (J6) | J5 | plan, funnel tool and runtime profiles done; R2 chosen by its rule; **B1 check (T7) failed 2026-11-19** (`runs/m4/reports/wp5_t7_b1_funnel.md`): indexed must points served 56 to 77 of 166 (+12.7 points, bar +15), 12 of the 56 frozen-served lost (21 %, bar 5 %); T8 and T9 do not run; waits for the Owner (K3) |
 | WP1f | Starting-point measurement (E2) | WP1c, WP1d | not started |
@@ -162,6 +162,12 @@ not passed. Two decisions:
   design; the code fixes (R0) and inline marks (R1) now;
   (f) no catalogue change now;
   (g) E3 is measured on the hidden judged half after E2 (needs K2).
+- **K5. WP1c: may the item generator read the frozen index** (read-only, hash checked),
+  to prove for each "not covered" item that its terms have no chunk in the index? The
+  scorer already may (J5). Recommended: yes. Nothing waits for it before the not-covered
+  generator (T7). Not a decision but for the Owner to know: the jar downloads for the
+  client-code checks are taken as covered by the go of 2026-11-18 ("downloads and installs
+  for catalogues and checks"), after a check of versions, hashes and licences.
 
 **Decided on 2026-11-19, afternoon: the Owner agreed with the recommendations J1 to J6
 below (see "Decisions").** The second judging pilot failed on 2026-11-19 (3 of 5). The analysis (`runs/m4/reports/s5b_pilot2_analysis.md`)
