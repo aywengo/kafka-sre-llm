@@ -5,7 +5,7 @@ Working name "M4"; the release number is decided at the end. Started 2026-11-18,
 release of v3.0.0 and v3.0.1. `GOAL.md` says where the project is going; this file says
 where the current milestone stands.
 
-Last updated: 2026-11-19, 14:05.
+Last updated: 2026-11-19, 14:15.
 
 ## What this milestone is for
 
@@ -226,6 +226,13 @@ and J6 come from the mechanical tier and block nothing yet):
 - 2026-11-19, 14:05: analysis of strict mode's 8-point loss on the open mechanical half
   back (decision J5). The strict prompt is not changed: at most 7 items could be gained,
   below what the tier can detect.
+- 2026-11-19, 14:15: the item generator's list of Kafka settings that Strimzi forbids
+  under `spec.kafka.config` was checked against the pinned API reference by a local-model
+  worker: it is broader than the source everywhere, so no generated manifest can ask for a
+  forbidden broker setting. One gap for connectors: `connector.plugin.version` is forbidden
+  in a `KafkaConnector` but not skipped; no open item uses it, the hidden half was not
+  looked at. To fix when the remaining mechanical kinds are generated (WP1c), not before:
+  a change to the pool would reshuffle the existing items.
 - Next: the Owner's decisions J1 to J6. Not blocked by them: the load test, the checker's
   extraction gaps the pilot showed (the pilot items behind them are listed in the analysis
   and go into the change's record), D1, the mechanical tier's hidden-half runs.
