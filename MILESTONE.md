@@ -616,7 +616,7 @@ and J6 come from the mechanical tier and block nothing yet):
   oq-049 m3 and m4, oq-050 m2). Final files `tier_b_owner_{items,rubrics}_final5` (25
   items; oq-010 is a different family from oq-002). **The hidden judged half has 61
   scenarios.**
-- 2026-11-20, 09:15 to 13:40: done before the go for E2: the hidden reports print totals
+- 2026-11-20, 09:15 to 11:15: done before the go for E2: the hidden reports print totals
   with and without tagged items (`f12324b`); the 7 hidden valid-but-wrong items redrawn
   and checked a fourth time, with three fixes (`00aefe4`, `6e51062`: hidden tags now 7,
   5 safe order and 2 works controls, no hidden fault tagged; open file unchanged); the
