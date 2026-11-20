@@ -540,6 +540,13 @@ and J6 come from the mechanical tier and block nothing yet):
   on B1, and the hidden judged batch B3 (36 scenarios, three sealed writers: coding 12,
   configuration 9, debugging 9, diagnostics 6; no architecture items, because the 15
   that count without the Owner's review exist).
+- Where the frozen retrieval loses the indexed must points (funnel files, counts as the
+  tool gives them): B2, 149 points: 37 served; 63 are among the 40 BM25 candidates but
+  ranked below the six-chunk pack; 44 are never among the 40 candidates; 5 are cut by
+  the character limit. B1, 166 points: 56 served, 68 below the pack, 41 never among the
+  candidates, 1 cut. So ranking loses more than search does, on both batches. A next
+  retrieval work package would start there; it would be the Owner's decision, would
+  need a fresh batch for its out-of-sample check, and is not planned before E2.
 - Waiting for the Owner, not blocking: redraw the 7 tagged valid-but-wrong hidden items
   or keep the tag only; the review lists above. The Owner sees the failed R3 check here;
   nothing further runs in WP5.
