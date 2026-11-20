@@ -98,6 +98,8 @@ MDE_FACTOR = 2.80
 
 
 def rd(path):
+    if ej.is_hidden(path):   # .enc: decrypted in memory (scripts/eval2.py)
+        return ej.rd(path)
     return [json.loads(line) for line in Path(path).read_text().splitlines() if line.strip()]
 
 
@@ -916,9 +918,41 @@ def _mean_se(xs):
     return m, (st.stdev(xs) / math.sqrt(n) if n > 1 else float("nan"))
 
 
+BY_KIND_MIN = 5   # a kind with fewer items is merged into "other"; "other" itself is not shown below this size (hidden rows)
+
+
+def kind_section(valid, rubrics, items, min_n=BY_KIND_MIN):
+    """Totals per item kind (the 'kind' of the items file) as lines of a table; kinds with fewer than min_n items go to 'other', and
+    'other' is left out if it too has fewer than min_n. Totals only: no ids. -> list of lines."""
+    kind_of = {x["id"]: (x.get("kind") or "other") for x in items}
+    ids_of = defaultdict(set)
+    for r in valid:
+        ids_of[kind_of.get(r["id"], "other")].add(r["id"])
+    group = {k: (k if len(v) >= min_n else "other") for k, v in ids_of.items()}
+    members = defaultdict(set)
+    for k, v in ids_of.items():
+        members[group[k]] |= v
+    L = ["## Totals per kind (kinds with fewer than %d items are merged into 'other'; 'other' is shown only with at least %d items)" % (min_n, min_n), "",
+         "| kind | answer set | pass | answers | coverage P | essential-miss units per 10 (count) | supported essential-miss units per 10 (count) | must-not present | unverified share (count) |",
+         "|---|---|---|---|---|---|---|---|---|"]
+    for g in sorted(members, key=lambda g: (g == "other", g)):
+        if len(members[g]) < min_n:
+            continue
+        m = ej.coverage_measures([r for r in valid if r["id"] in members[g]], rubrics)
+        for name, per in m.items():
+            for p, x in sorted(per.items()):
+                L.append(f"| {g} | {name} | {p} | {x['n']} | {fmt(x['mean_P'])} | {fmt(x['missed_per10'], 1)} ({x['missed']}) | "
+                         f"{fmt(x['supported_missed_per10'], 1)} ({x['supported_missed']}) | {x['must_not_present']} | "
+                         f"{fmt(100 * x['unverified_share'], 1)} % ({x['unverified']}) |")
+    L.append("")
+    return L
+
+
 def build_report_coverage(results, rubrics, findings, reads=None, all_read=False, primary=None, idcheck_false=None,
-                          title="Coverage role: batch report"):
-    """The batch report of the coverage role (module docstring). -> (text, numbers)."""
+                          title="Coverage role: batch report", hidden=False, items=None):
+    """The batch report of the coverage role (module docstring). -> (text, numbers).
+    hidden: totals only: no list of reader rows that map to no unit and no per-answer table of the two readers (both name ids);
+    items (with 'kind'): adds the totals per kind."""
     L = []
     out = L.append
     rub = {r["id"]: r for r in rubrics}
@@ -1018,7 +1052,7 @@ def build_report_coverage(results, rubrics, findings, reads=None, all_read=False
         + (f"; computed on the {len(read_answers)} read answers of {len(answers)}" if read_answers else ""))
     L.extend(c1_lines)
     out(f"   - reader omission rows that do not map to a unit (not used): {len(unmapped)}")
-    for k, who, f, why in unmapped:
+    for k, who, f, why in ([] if hidden else unmapped):
         out(f"     - {k[0]} {k[1]} ({who}) point {f.get('point')!r}: {why}")
     out("")
 
@@ -1091,10 +1125,11 @@ def build_report_coverage(results, rubrics, findings, reads=None, all_read=False
             f"(at most {int(100 * COV_READER_DIFF)} %): {out_c5}**" + ("" if ok5 else " Readings not usable for a bar."))
         out(f"   - without findings marked minor: {ra} {ta_nm}, {rb_} {tb_nm} (not the criterion).")
         out("")
-        out(f"   | set | answer | {ra} | {rb_} |")
-        out("   |---|---|---|---|")
-        for k, x, y in tab:
-            out(f"   | {k[0]} | {k[1]} | {x} | {y} |")
+        if not hidden:
+            out(f"   | set | answer | {ra} | {rb_} |")
+            out("   |---|---|---|---|")
+            for k, x, y in tab:
+                out(f"   | {k[0]} | {k[1]} | {x} | {y} |")
     else:
         out("**C5 two readers on the same answers: WAITING** (no answer has two readers).")
     cs["C5 two readers agree on totals"] = out_c5
@@ -1163,6 +1198,8 @@ def build_report_coverage(results, rubrics, findings, reads=None, all_read=False
                     mm, se = _mean_se(d)
                     out(f"| {name} | {a} - {b} | {len(d)} | {fmt(mm, 3)} ({fmt(se, 3)}) |")
         out("")
+    if items is not None:
+        L.extend(kind_section(valid, rubrics, items))
     return "\n".join(L) + "\n", {"criteria": dict(cs), "go": go, **numbers}
 
 
@@ -1193,12 +1230,29 @@ def main(argv=None):
     ap.add_argument("--all-read", action="store_true", help="--coverage: every answer was read (by reader r1 unless rows say otherwise)")
     ap.add_argument("--primary-reader", help="--coverage: the reader whose findings are used on answers with two readers")
     ap.add_argument("--idcheck-false-invented", type=int, help="--coverage: false 'invented' findings in the identifier check's report (C6)")
+    ap.add_argument("--items", help="--coverage --by-kind: items file (id, kind), open or .enc as the results")
+    ap.add_argument("--by-kind", action="store_true",
+                    help="--coverage: add totals per item kind (needs --items); kinds with fewer than %d items are merged into 'other'" % BY_KIND_MIN)
     a = ap.parse_args(argv)
     if a.coverage:
         if not a.findings:
             ap.error("--coverage needs --findings")
-        text, _ = build_report_coverage(rd(a.results), rd(a.rubrics), rd(a.findings), rd(a.reads) if a.reads else None, a.all_read,
-                                        a.primary_reader, a.idcheck_false_invented, a.title if a.title != "Judge pilot 2" else "Coverage role: batch report")
+        if a.by_kind and not a.items:
+            ap.error("--by-kind needs --items")
+        paths = [a.results, a.rubrics, a.findings] + [x for x in (a.reads, a.items) if x]
+        if len({ej.is_hidden(x) for x in paths}) > 1:
+            print("open and hidden (.enc) files are never mixed in one report (results, rubrics, findings, reads, items)", file=sys.stderr)
+            return 2
+        hidden = ej.is_hidden(a.results)
+        try:
+            text, _ = build_report_coverage(rd(a.results), rd(a.rubrics), rd(a.findings), rd(a.reads) if a.reads else None, a.all_read,
+                                            a.primary_reader, a.idcheck_false_invented, a.title if a.title != "Judge pilot 2" else "Coverage role: batch report",
+                                            hidden=hidden, items=rd(a.items) if a.by_kind else None)
+        except Exception as e:
+            if not hidden:
+                raise
+            print(f"hidden report stopped: {type(e).__name__} (details are not shown for hidden input)", file=sys.stderr)
+            return 1
         sys.stdout.write(text)
         return 0
     if a.v2:

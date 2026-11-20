@@ -63,6 +63,16 @@ Coverage role (decision J1 of MILESTONE.md; the judge reports rubric coverage on
   fill-chunks --rubrics R --chunks IDX --out R2 [--check] [--overwrite]
                         fills "chunks" of every must point from its "source" (a point that places nothing gets "not_indexed": true) and lists
                         the points it could not place; --check only verifies recorded ids and exits 1 on a problem
+
+Hidden run (agents/m4-evaluation.md, "The hidden part"): `run` with --rubrics, --answers (and --items, --packs, --qmap) all ending in .enc.
+Inputs are decrypted in memory through scripts/eval2.py (key: EVAL_HIDDEN_KEY or ~/.config/kafka-sre-llm/eval_hidden.key); --cache and --out
+must end in .enc too and are rewritten whole (atomically, encrypted) after each call; no plain-text file is written. Open and hidden inputs
+are never mixed in one run (refused), nor an open output with hidden inputs or the other way round. Progress lines and errors name answer
+sets, ids, counts and timings only; an unexpected exception is reported by its class alone. The judge model gets the item, rubric points,
+answer and excerpts as in an open run. The chunks file (the frozen index) is open. The commands flags, confirmed, gen-generic, gen-probes,
+fill-chunks and chunks-for refuse .enc paths.
+  run --stub-calls      like --stub, but the cache is written (for tests of the chain); needs --settings-name starting with "stub", so that
+                        stub replies never share a key with real ones
 """
 import argparse
 import hashlib
@@ -130,8 +140,32 @@ SECONDS_PER_ITEM_DESIGN = 90      # design, "Cost of a run": 1.5 minutes per ite
 SECONDS_PER_CALL_V3_MEDIAN = 160  # v3: median per head-to-head call (sequential; divide by the concurrency)
 
 
+def is_hidden(path):
+    return str(path).endswith(".enc")
+
+
+def _eval2():
+    """scripts/eval2.py, imported only when a hidden (.enc) file is read or written."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import eval2
+    return eval2
+
+
 def rd(path):
+    if is_hidden(path):
+        return _eval2().read_jsonl(path)
     return [json.loads(line) for line in Path(path).read_text().splitlines() if line.strip()]
+
+
+def write_rows(path, rows):
+    """JSONL file; encrypted, atomically, when the name ends in .enc."""
+    if is_hidden(path):
+        _eval2().write_jsonl(path, rows)
+        return
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    tmp = str(path) + ".tmp"
+    Path(tmp).write_text("".join(json.dumps(x, ensure_ascii=False) + "\n" for x in rows))
+    os.replace(tmp, path)
 
 
 def norm_ws(s):
@@ -764,12 +798,10 @@ def cache_key(model, pass_no, item, system, user, setting=DEFAULT_SETTING, instr
 def load_cache(path, retry_invalid=False):
     cache = {}
     if path and Path(path).exists():
-        for line in Path(path).read_text().splitlines():
-            if line.strip():
-                c = json.loads(line)
-                if retry_invalid and not isinstance(c.get("j"), dict):
-                    continue
-                cache[c["key"]] = c
+        for c in rd(path):
+            if retry_invalid and not isinstance(c.get("j"), dict):
+                continue
+            cache[c["key"]] = c
     return cache
 
 
@@ -808,9 +840,12 @@ def run(items, passes, judge, model, chunks, cap, cache_path, concurrency=1, ret
         with lock:
             cache[key] = entry
             if cache_path and write_cache:
-                Path(cache_path).parent.mkdir(parents=True, exist_ok=True)
-                with open(cache_path, "a") as f:
-                    f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+                if is_hidden(cache_path):   # an encrypted file cannot be appended to: rewritten whole, atomically
+                    write_rows(cache_path, list(cache.values()))
+                else:
+                    Path(cache_path).parent.mkdir(parents=True, exist_ok=True)
+                    with open(cache_path, "a") as f:
+                        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
             row = result_row(it, p, entry, coverage)
             say(f"[judge] {len(cache)} cached  {it['set']} {it['id']} p{p} valid={row['valid_reply']}"
                 + (f" quotes_failed={row['quote_failed']}/{row['quote_claims']} S={row['S']:.2f} candidates={row['n_candidates']}"
@@ -952,7 +987,9 @@ import html as _html
 
 PLACE_MIN_OVERLAP = 0.3   # a chunk is placed for a source range if it holds at least this share of the range's text (word 4-grams)
 _SHINGLE = 4
-_TAGS = re.compile(r"<[^>]+>")
+# Real markup only: an html comment, a declaration (<!DOCTYPE ...>), or a tag that starts with a letter (optionally after "/") and ends at the
+# first ">". Text such as "<-- x -->" (an arrow in a diagram or a command) is not markup and is kept.
+_TAGS = re.compile(r"<!--.*?-->|<![A-Za-z][^>]*>|</?[A-Za-z][^<>]*>", re.S)
 _MD_LINK_URL = re.compile(r"\]\([^)]*\)")
 
 
@@ -1195,7 +1232,23 @@ def estimate(n_calls, concurrency):
     return lo, design
 
 
+_HIDDEN_RUN = [False]   # set by _main once a run is known to be hidden: unexpected exceptions are then reported by class only
+
+
 def main(argv=None):
+    try:
+        return _main(argv)
+    except Exception as e:
+        if not _HIDDEN_RUN[0]:
+            raise
+        if type(e).__name__ == "EvalError":   # eval2.EvalError messages name fields, never values
+            print(f"hidden run stopped: {e}", file=sys.stderr)
+        else:
+            print(f"hidden run stopped: {type(e).__name__} (details are not shown for hidden input)", file=sys.stderr)
+        return 1
+
+
+def _main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     common = argparse.ArgumentParser(add_help=False)
@@ -1252,10 +1305,35 @@ def main(argv=None):
     r.add_argument("--concurrency", type=int, default=3)
     r.add_argument("--retry-invalid", action="store_true", help="redo cached calls whose reply was not valid JSON")
     r.add_argument("--stub", action="store_true", help="dry run: stub judge, no server; prints matches, largest prompt, estimate")
+    r.add_argument("--stub-calls", action="store_true",
+                   help="like --stub but the cache is written (tests of the chain); needs --settings-name starting with 'stub'")
     r.add_argument("--rescore", action="store_true", help="no calls: rebuild --out from --cache")
     r.add_argument("--coverage", action="store_true",
                    help="coverage role: a failed-quote verdict becomes 'unverified' (not absent); rows carry the answer's pack; the cache key is unchanged")
     a = ap.parse_args(argv)
+
+    if a.cmd != "run":
+        enc = [v for k, v in vars(a).items() if k != "cmd" for v in (v if isinstance(v, list) else [v]) if isinstance(v, str) and is_hidden(v)]
+        if enc:
+            print(f"{a.cmd}: hidden (.enc) files are not supported by this command", file=sys.stderr)
+            return 2
+    else:
+        in_paths = [a.rubrics, *[spec.partition("=")[2] for spec in a.answers], *[spec.partition("=")[2] for spec in a.packs],
+                    *[spec.partition("=")[2] for spec in a.qmap]] + ([a.items] if a.items else [])
+        if len({is_hidden(x) for x in in_paths}) > 1:
+            print("open and hidden (.enc) inputs are never mixed in one run (rubrics, answers, items, packs, qmap)", file=sys.stderr)
+            return 2
+        hidden = is_hidden(in_paths[0])
+        _HIDDEN_RUN[0] = hidden
+        for opt, v in (("--cache", a.cache), ("--out", a.out)):
+            if v and is_hidden(v) != hidden:
+                print(f"{opt}: a hidden run writes only .enc files, and an open run no .enc file", file=sys.stderr)
+                return 2
+        if a.stub_calls:
+            if not a.settings_name.startswith("stub"):
+                print("--stub-calls needs --settings-name starting with 'stub'", file=sys.stderr)
+                return 2
+            a.stub = True
 
     if a.cmd == "flags":
         rows = [x for f in a.results for x in rd(f)]
@@ -1405,14 +1483,11 @@ def main(argv=None):
     print(f"settings {a.settings_name}, instruction {a.instruction}: {reused} of {n_calls} judgments already in the cache", flush=True)
     rows, n_new, n_jobs = run(items, a.passes, judge, a.judge_model, chunks, a.source_chars, cache_path,
                               a.concurrency, a.retry_invalid, calls=not a.rescore, setting=a.settings_name,
-                              write_cache=not a.stub, instruction=a.instruction, excerpt_cap=a.excerpt_chars, coverage=a.coverage)
+                              write_cache=(not a.stub) or a.stub_calls, instruction=a.instruction, excerpt_cap=a.excerpt_chars, coverage=a.coverage)
     invalid = sum(not r["valid_reply"] for r in rows)
     print(f"{n_jobs} judgments, {n_new} called now, {len(rows) - invalid} valid replies, {invalid} unscored", flush=True)
     if a.out:
-        Path(a.out).parent.mkdir(parents=True, exist_ok=True)
-        tmp = a.out + ".tmp"
-        Path(tmp).write_text("".join(json.dumps(x, ensure_ascii=False) + "\n" for x in rows))
-        os.replace(tmp, a.out)
+        write_rows(a.out, rows)
         print(f"wrote {a.out}", flush=True)
     return 0
 
