@@ -46,7 +46,7 @@ SMOKE_FILE = ROOT / "eval/m4/smoke_ids.json"
 MAGIC = b"EVAL2ENC1\n"
 TIERS = ("A", "B", "legacy")
 REQUIRED = ("id", "tier", "kind", "family", "domain", "question")
-MANIFEST_VOLATILE = ("started", "ended")  # not compared on resume
+MANIFEST_VOLATILE = ("started", "ended", "runtime_git_commits")  # not compared on resume (the list exists only after --allow-commit-change)
 # The M4 reference configuration (MILESTONE.md "Decisions", 2026-11-18): the 4-bit build on the server path. A run is
 # labelled as on the reference when the server lists exactly this model (the manifest records both, see build_manifest).
 M4_REFERENCE_BACKEND = "openai"
@@ -687,7 +687,15 @@ def cmd_answer(a, out=sys.stdout):
         if comparable(old) != comparable(manifest):
             diff = sorted(k for k in set(comparable(old)) | set(comparable(manifest))
                           if comparable(old).get(k) != comparable(manifest).get(k))
-            raise EvalError(f"manifest differs from the existing run in {diff}; not resuming")
+            if getattr(a, "allow_commit_change", False) and diff == ["runtime_git_commit"]:
+                # only the head commit differs and the caller vouches for the code (the E2 chain pins the files): resume, record every commit
+                first = old.get("runtime_git_commits") or [old.get("runtime_git_commit")]
+                manifest["runtime_git_commits"] = first + [manifest["runtime_git_commit"]]
+                manifest["run"] = old["run"]   # the run keeps its identity (replays and reports refer to it)
+            else:
+                raise EvalError(f"manifest differs from the existing run in {diff}; not resuming")
+        elif old.get("runtime_git_commits"):
+            manifest["runtime_git_commits"] = old["runtime_git_commits"]
         manifest["started"] = old["started"]
     elif store.rows:
         raise EvalError("answers file has rows but no manifest; not resuming")
@@ -906,6 +914,7 @@ def build_parser():
     an.add_argument("--catalogue", help="catalogue directory to hash into the manifest")
     an.add_argument("--host-class", default=None, help='free text, for example "Mac Studio"')
     an.add_argument("--replay-packs", help="answers file of another run: use its stored chunk ids")
+    an.add_argument("--allow-commit-change", action="store_true", help="resume an unfinished answers file when only runtime_git_commit differs; the manifest lists every commit (runtime_git_commits)")
     an.add_argument("--revise-from", metavar="ANSWERS",
                     help="run the revise step (R1 marks) on the stored answers and packs of this answers file; "
                          "no generation; records go to --out (default: next to the answers). Needs --catalogue")

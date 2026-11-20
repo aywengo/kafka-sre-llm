@@ -9,48 +9,64 @@
 #   PREPARE  the manifest runs/m4/E2_MANIFEST.json (index, reranker, catalogues, golden prompts, scorer, identifier check, judge settings,
 #            revise version and prompt hash, checker version, chunks file, the hidden files by sha256 of the .enc files, SPLIT*.json, server
 #            version, model names as the server lists them; the chunks file and the S6 A1 answers of gate G are hashed too). Written once, never overwritten; the hidden gate compares with it.
+#            The run is pinned by FILES, not by the head commit: one hash over the tracked files under scripts/, kafka_sre_rag/, tests/golden/,
+#            eval/m4/ (open items, splits, the tag file), requirements.txt, taken from the working tree at prepare, plus the hidden .enc files.
+#            A change to any of them refuses at the gate and before every hidden stage (pin-check); a commit that touches only other files
+#            (MILESTONE.md, agents/, runs/, README.md) does not. The head commit is recorded for information only.
 #   G        byte-identity gate: the 60 open smoke items in Q4D against the stored A1 answers of S6 (work/m4/s6/ans_A1.jsonl).
 #   O        open rehearsal: the 88 open a3 items in Q4D; P0 (closed book) on the smoke set (60 mechanical, the 24 open judged scenarios of
 #            eval/m4/pilot2); scored, identifier check, judged (DeepSeek, 2 passes).
 #   (shape)  before the gate: `m4_e2_manifest.py shape` on the hidden judged and mechanical files: key names and counts only, what the answer step,
 #            the judge, the bundles and the scorer read, a stub run of each on the real files (temporary .enc files, removed).
-#   (gate)   the hidden gate, before the first hidden item of every launch: tests and verify pass, clean tree, commit equals the manifest's,
-#            every manifest hash matches, ledger rows 1 and 2 present with a decision rule (the chain reads the ledger, never writes it),
-#            the hidden files hold 245, 60, 24 and 36 rows, G and O passed, no plain-text file with a hidden id or hidden text under the work folder,
+#   (gate)   the hidden gate, before the first hidden item of every launch: tests and verify pass, no uncommitted change in a pinned path,
+#            every manifest hash and the pinned-files hash match (the head commit is information only), ledger rows 1 and 2 present with a decision rule (the chain reads the ledger, never writes it),
+#            the hidden files hold 245, 60, 25 and 36 rows, G and O passed, no plain-text file with a hidden id or hidden text under the work folder,
 #            this run's logs and the heartbeat.
-#   H1       Q4D and Q4S (packs replayed from Q4D) on the hidden judged 60; R1 on the Q4D answers (R2 only with --r2); the blind bundles of
+#   H1       Q4D and Q4S (packs replayed from Q4D) on the hidden judged 61 (25 + 36); R1 on the Q4D answers (R2 only with --r2); the blind bundles of
 #            the sealed reading (default and strict; default only is refused, see --reading); the marker "readings_ready".
-#   H2       Q4D, Q4S and P0 on the hidden mechanical 305 (245 + 60 a3); P0 on the hidden judged 60.
-#   H3       the full-precision build: F and FR (packs from Q4D) on the 305; F on the judged 60 (packs from Q4D) only with --f-judged.
+#   H2       Q4D, Q4S and P0 on the hidden mechanical 305 (245 + 60 a3); P0 on the hidden judged 61.
+#   H3       the full-precision build: F and FR (packs from Q4D) on the 305; F on the judged 61 (packs from Q4D) only with --f-judged.
 #   H4       the judge (DeepSeek, instruction v2, coverage role, 2 passes) on the hidden judged sets.
 #   H5       the second judge (GLM, thinking) on a seeded 24-answer subset of Q4D, pass 1, unless --no-cross-judge; agreement as totals.
 #   SCORE    hidden scoring, identifier-check totals, coverage report, eval2_compare.py e2, the report runs/m4/E2_STARTING_POINT.md
-#            (totals only). The verdict of rule 1(a) is printed only with --margin-reading one-sided|two-sided; without it both readings
-#            are shown labelled "not a verdict".  (CPU; needs no server.)
+#            (totals only; the coverage report, the sealed reading's totals and the comparison give their figures for all items and again
+#            without the items tagged in eval/m4/HIDDEN_TAGS.json, --tag-file). The verdict of rule 1(a) uses the Owner's one-sided margin
+#            reading (decision of 2026-11-20); --margin-reading two-sided changes it, --margin-reading none shows both readings labelled
+#            "not a verdict".  (CPU; needs no server.)
 #   E4       first words and the 60 s bar through the service on open items (scripts/eval2_first_words.py). Its own step, not part of the
 #            hidden look, and not in the default list.
 # Before every model run the chain checks that the server has no active or waiting request and that no model other than the one the run
 # needs is loaded; our models that are not needed are unloaded (a swap goes to runs/v3/HEARTBEAT.md); a model that is not ours is waited
 # for up to 60 min, then the chain stops.
 #
-# Running time, hours (basis: e2_plan.md section 6; S6 rates 28 s Q4D and about 12 s Q4S per mechanical answer, 50 s F, 27 s FR; B1/B2
-# 85 s Q4D and 53 to 63 s Q4S per judged answer, judge 10 to 11 s per call at 3 in parallel, GLM 485 to 691 s per call; P0 unmeasured):
-#   G 0.4-0.5 | O 1.5-2 | H1 2.3-2.5 | H2 4.5-7 | H3 6.5-9.5 (+2 to 3.3 with --f-judged) | H4 1.0-1.1 | H5 1.1-2.7 | E4 about 1.8
-#   loads, checks, CPU scoring 0.5 | total about 20 to 29 h (E4 included in the plan's figure); corrected when a rate is known.
+# Running time, hours (basis: the rehearsal's measured medians, runs/m4/reports/e2_rehearsal_run.md: per mechanical answer Q4D 29.0 s,
+# Q4S 13.2 s, P0 10.4 s, F 50.3 s, FR 18.7 s; per judged answer Q4D 76.0 s, Q4S 65.7 s, P0 76.5 s; G smoke 27.4 s, O a3 24.8 s, O P0 smoke
+# 6.2 s, O P0 judged 61.3 s; DeepSeek judge 24.9 s per call at 3 in parallel = about 10.8 s of wall time (36 calls in 6.5 min); GLM oQ8e
+# 684 to 974 s per call, 24 calls, 3 in parallel; the gate's full test run 23 min):
+#   G 0.4-0.5 | O 1.3-1.7 | H1 2.4-2.6 | H2 5.5-6.2 | H3 5.9-6.3 (+2 to 3.3 with --f-judged, the plan's figure, unmeasured) | H4 1.1-1.3 | H5 1.5-2.4 | gate, shape, loads, CPU scoring 0.8-1.0 | total about 19 to 22 h; E4 (not measured, about 1.8 h) is its
+#   own step and not in this figure. Corrected when a rate is known.
+#
+# A restart after a crash and a re-run of the scoring stage are the same look: every stage resumes from its output files, nothing already
+# answered or judged is regenerated, and no further look at the hidden half is taken.
 #
 #   scripts/m4_e2_starting_point.sh [options] > runs/m4/logs/m4_e2_starting_point.out 2>&1 &
 # Options (defaults):
 #   --stages LIST            comma list of PREPARE is implicit, G,O,H1,H2,H3,H4,H5,SCORE,E4 (default G,O,H1,H2,H3,H4,H5,SCORE)
-#   --hidden-judged-items F24 F36 --hidden-judged-rubrics R24 R36    the judged hidden files (24 and 36 rows; no default: required)
+#   --hidden-judged-items F25 F36 --hidden-judged-rubrics R25 R36    the judged hidden files (25 and 36 rows), default (the Owner's final files,
+#                            2026-11-20): eval/hidden/tier_b_owner_items_final5.jsonl.enc tier_b_b3_items_final.jsonl.enc, and the rubrics
+#                            eval/hidden/tier_b_owner_rubrics_final5.jsonl.enc tier_b_b3_rubrics_final.jsonl.enc (61 answers: E3 needs at least 60)
 #   --hidden-a FILE (eval/hidden/tier_a.jsonl.enc)  --hidden-a3 FILE (eval/hidden/tier_a3.jsonl.enc)
 #   --reading both          blind bundles of default and strict (the only value: "default" is refused, see the gap in the report of B6:
 #                           eval2_sealed_reading.py bundle needs two or more answer sets)
 #   --r2                     R2 patch with re-check in H1 (off); adds a reading bundle of the patched answers
 #   --f-judged               F on the judged tier (off)        --no-cross-judge   skip H5 (the cross-check is on)
-#   --margin-reading one-sided|two-sided   no default: without it no verdict of rule 1(a) is printed
+#   --margin-reading one-sided|two-sided|none   (one-sided: the Owner's decision of 2026-11-20); none: no verdict, both readings shown as "not a verdict"
+#   --tag-file FILE (eval/m4/HIDDEN_TAGS.json)   items tagged conductor_exposed: totals for all items and again without them (ids only in the file)
 #   --reading-json FILE      totals of the sealed reading for rule 1(b) (default: none, the rule waits for the reading)
 #   --ledger FILE (runs/m4/HIDDEN_LEDGER.md)  --manifest FILE (runs/m4/E2_MANIFEST.json)  --report FILE (runs/m4/E2_STARTING_POINT.md)
 #   --bundle-seed S (20261119)   --dry-run [--work DIR] [--synth-marker STR] [--synth-drop-a N] [--ledger FILE] [--allow-dirty]
+# Defaults of the real run (the Owner's decisions of 2026-11-20): margin reading one-sided; R2 off; the reading holds default and strict
+# answers; the cross-judge on 24 scenarios on; no full-precision run on the judged tier; the four hidden judged files above.
 # --rehearsal: every stage above on OPEN items encrypted as if hidden, with the real backend and the real server, without a look. Own work folder
 #   (work/m4/e2_rehearsal, git-ignored), own temporary key (never the real one), own ledger and manifest in it, markers and report prefixed REHEARSAL
 #   (runs/m4/E2_REHEARSAL.md; logs runs/m4/logs/REHEARSAL_m4_e2_starting_point.*). Sample: 10 tier A (none a smoke item), 10 a3 (pairs together), 6 B2
@@ -60,14 +76,17 @@
 # work folder (a temporary directory unless --work); nothing real is started, the real heartbeat, status and ledger are not touched.
 # Markers: runs/m4/logs/m4_e2_starting_point.done or .failed, .readings_ready (H1).
 set -e
-DRY=no; STAGES="G,O,H1,H2,H3,H4,H5,SCORE"; R2=no; READING=both; FJ=no; CROSS=yes; MARGIN=""; RJSON=""; BSEED=20261119
-HID_A=eval/hidden/tier_a.jsonl.enc; HID_A3=eval/hidden/tier_a3.jsonl.enc; HID_J1=""; HID_J2=""; HID_R1=""; HID_R2=""
+DRY=no; STAGES="G,O,H1,H2,H3,H4,H5,SCORE"; R2=no; READING=both; FJ=no; CROSS=yes; MARGIN=one-sided; RJSON=""; BSEED=20261119
+TAGF=eval/m4/HIDDEN_TAGS.json
+HID_A=eval/hidden/tier_a.jsonl.enc; HID_A3=eval/hidden/tier_a3.jsonl.enc
+HID_J1=eval/hidden/tier_b_owner_items_final5.jsonl.enc; HID_J2=eval/hidden/tier_b_b3_items_final.jsonl.enc
+HID_R1=eval/hidden/tier_b_owner_rubrics_final5.jsonl.enc; HID_R2=eval/hidden/tier_b_b3_rubrics_final.jsonl.enc
 LEDGER=runs/m4/HIDDEN_LEDGER.md; MANIFEST=runs/m4/E2_MANIFEST.json; REPORT=runs/m4/E2_STARTING_POINT.md
 REH=no; HSET=no; W=work/m4/e2; WSET=no; MARK=SYNTHMARK; DROPA=0; DIRTY_OK=no; LSET=no; MSET=no; RSET=no; FAKE_LOADED='[]'
-usage() { echo "usage: scripts/m4_e2_starting_point.sh [--dry-run] [--stages LIST] [--hidden-judged-items F F --hidden-judged-rubrics R R] [--reading default|both] [--r2] [--f-judged] [--no-cross-judge] [--rehearsal] [--margin-reading one-sided|two-sided] [--reading-json FILE] [--ledger F] [--manifest F] [--report F] (see the header)" >&2; exit 2; }
+usage() { echo "usage: scripts/m4_e2_starting_point.sh [--dry-run] [--stages LIST] [--hidden-judged-items F F --hidden-judged-rubrics R R] [--reading default|both] [--r2] [--f-judged] [--no-cross-judge] [--rehearsal] [--margin-reading one-sided|two-sided|none] [--tag-file FILE] [--reading-json FILE] [--ledger F] [--manifest F] [--report F] (see the header)" >&2; exit 2; }
 while [ $# -gt 0 ]; do case $1 in
   --dry-run) DRY=yes;; --rehearsal) REH=yes;; --stages) STAGES=${2:?}; shift;; --r2) R2=yes;; --f-judged) FJ=yes;; --no-cross-judge) CROSS=no;;
-  --reading) READING=${2:?}; shift;; --margin-reading) MARGIN=${2:?}; shift;; --reading-json) RJSON=${2:?}; shift;;
+  --reading) READING=${2:?}; shift;; --margin-reading) MARGIN=${2:?}; shift;; --tag-file) TAGF=${2:?}; shift;; --reading-json) RJSON=${2:?}; shift;;
   --hidden-judged-items) HID_J1=${2:?}; HID_J2=${3:?}; HSET=yes; shift 2;; --hidden-judged-rubrics) HID_R1=${2:?}; HID_R2=${3:?}; HSET=yes; shift 2;;
   --hidden-a) HID_A=${2:?}; HSET=yes; shift;; --hidden-a3) HID_A3=${2:?}; HSET=yes; shift;;
   --ledger) LEDGER=${2:?}; LSET=yes; shift;; --manifest) MANIFEST=${2:?}; MSET=yes; shift;; --report) REPORT=${2:?}; RSET=yes; shift;;
@@ -75,7 +94,7 @@ while [ $# -gt 0 ]; do case $1 in
   --allow-dirty) DIRTY_OK=yes;; --fake-loaded) FAKE_LOADED=${2:?}; shift;;
   *) usage;; esac; shift; done
 case $READING in both) ;; default) echo "REFUSED: --reading default is not possible with the present tools: scripts/eval2_sealed_reading.py bundle refuses fewer than two answer sets (cmd_bundle: len(sets) < 2). Relax that check, or read both sets; nothing started" >&2; exit 2;; *) usage;; esac
-case $MARGIN in ""|one-sided|two-sided) ;; *) usage;; esac
+case $MARGIN in one-sided|two-sided) ;; none) MARGIN="";; *) usage;; esac
 if [ $REH = yes ]; then   # a rehearsal runs on open items encrypted with its own temporary key: never with the real hidden files, ledger or manifest
   [ $HSET = no ] || { echo "REFUSED: --rehearsal is never combined with the real hidden files (--hidden-*); nothing started" >&2; exit 2; }
   [ $LSET = no ] && [ $MSET = no ] || { echo "REFUSED: --rehearsal has its own ledger and manifest in its work folder (--ledger and --manifest are for the real run); nothing started" >&2; exit 2; }
@@ -99,8 +118,8 @@ PYH=".venv/bin/python scripts/m4_e2_manifest.py"
 SLEEP=30; WAITN=120
 
 SCANX=""; HNEED=yes; BSR=0.25; RTAG=""
-# the numbers of the run (real: 245 + 60 mechanical, 24 + 36 judged); a rehearsal has its own (10 + 10, 2 + 4) and its own plain open inputs
-NA=245; NA3=60; NJ1=24; NJ2=36; NJ=60; NM=305; NG=60; NOA3=88; NP0S=60; NP0J=24; FS=6; SS=2; XN=24
+# the numbers of the run (real: 245 + 60 mechanical, 25 + 36 judged); a rehearsal has its own (10 + 10, 2 + 4) and its own plain open inputs
+NA=245; NA3=60; NJ1=25; NJ2=36; NJ=61; NM=305; NG=60; NOA3=88; NP0S=60; NP0J=24; FS=6; SS=2; XN=24
 G_ITEMS=$OPEN_A; G_SUB="--subset smoke"; O_A3=$OPEN_A3; P0S_ITEMS=$OPEN_A; P0S_SUB="--subset smoke"
 if [ $REH = yes ]; then
   N=REHEARSAL_m4_e2_starting_point; PHASE="REHEARSAL (open items encrypted as hidden) of M4 E2"; HNEED=no; RTAG="REHEARSAL "
@@ -216,9 +235,10 @@ if [ $DRY = no ]; then
     BASE=${OMLX_URL%/}; BASE=${BASE%/v1}
   fi
   if want G || want O || want H1 || want H2 || want H3 || want H4 || want H5 || want SCORE; then
-    for v in "$HID_J1" "$HID_J2" "$HID_R1" "$HID_R2"; do
-      [ -n "$v" ] || { echo "REFUSED: --hidden-judged-items and --hidden-judged-rubrics (two files each, 24 and 36 rows) are required; nothing started" >&2; exit 2; }
+    for v in "$HID_A" "$HID_A3" "$HID_J1" "$HID_J2" "$HID_R1" "$HID_R2"; do
+      [ -s "$v" ] || { echo "REFUSED: a hidden input file is missing or empty (the defaults are the Owner's final files; --hidden-a, --hidden-a3, --hidden-judged-items and --hidden-judged-rubrics name others): $v; nothing started" >&2; exit 2; }
     done
+    [ -s "$TAGF" ] || { echo "REFUSED: the tag file $TAGF is missing or empty; nothing started" >&2; exit 2; }
   fi
 else
   # the temporary key, the synthetic hidden files, the fake server, a stub ledger
@@ -241,6 +261,10 @@ else
   echo "dry run in $W (stub generator, stub judge, fake server status, temporary key, $([ $REH = yes ] && echo "REHEARSAL copies of open items" || echo "synthetic hidden files"))"
 fi
 OURS="$DS $GLM8 $GLM4"
+if [ $DRY = yes ] || [ $REH = yes ]; then   # the real tag file names real hidden ids: a dry run or a rehearsal tags two of its own judged ids, in a folder outside the work folder
+  TAGDIR=$(mktemp -d "${TMPDIR:-/tmp}/m4_e2_tags.XXXXXX"); trap 'rm -rf "$TAGDIR"' EXIT; TAGF=$TAGDIR/HIDDEN_TAGS.json
+  $PYH tags-synth --out $TAGF --hidden judged_1=$HID_J1 judged_2=$HID_J2 > /dev/null || { echo "DRY RUN FAILED: the stand-in tag file could not be made"; exit 1; }
+fi
 HIDDEN_ARGS="tier_a=$HID_A tier_a3=$HID_A3 judged_1=$HID_J1 judged_2=$HID_J2 rubrics_1=$HID_R1 rubrics_2=$HID_R2"
 MI="$HID_A $HID_A3"                                   # the hidden mechanical items, 245 + 60 (a3)
 JI=$H/judged_items.jsonl.enc; JR=$H/judged_rubrics.jsonl.enc   # the hidden judged items and rubrics, merged, harness-normalised
@@ -281,7 +305,7 @@ answer_run() { # NAME MODEL MODE OUT EXPECTED "ITEMS..." [more harness arguments
   while :; do
     prepare_server $name $model
     $G --stall-min 40 --log $L/$N.$name.log -- .venv/bin/python scripts/eval2.py answer --items $items --out $out \
-      --config e2-$name $GA --extra-body "$EB" --mode $mode --catalogue $CATS --host-class "Mac Studio" "$@" \
+      --config e2-$name $GA --extra-body "$EB" --mode $mode --catalogue $CATS --host-class "Mac Studio" --allow-commit-change "$@" \
       || fail "$name: answering failed (see $L/$N.$name.log)"
     simulate_load $model
     $PYH check-answers --file $out --expect $want_n $CK && break
@@ -320,9 +344,14 @@ judge_run() { # TAG MODEL SETTING EXTRA_BODY SRCCHARS PASSES CONCURRENCY RUBRICS
 mark_passed() { # STAGE
   .venv/bin/python - "$1" $MANIFEST $W <<'PY'
 import json, sys
-json.dump({"stage": sys.argv[1], "passed": True, "commit": json.load(open(sys.argv[2]))["commit"]}, open(f"{sys.argv[3]}/{sys.argv[1]}.passed", "w"))
+m = json.load(open(sys.argv[2]))
+json.dump({"stage": sys.argv[1], "passed": True, "pin": m["pinned"]["sha256"], "commit": m["commit"]}, open(f"{sys.argv[3]}/{sys.argv[1]}.passed", "w"))
 PY
 }
+pin_check() { # STAGE: the pinned files and the hidden .enc files against the manifest, before every hidden stage (the head commit is information only)
+  PCA=""; [ $DRY = no ] || PCA="--allow-dirty"
+  $PYH pin-check --manifest $MANIFEST $PCA --hidden $HIDDEN_ARGS > $W/pin_check.out 2>&1 || { cat $W/pin_check.out; fail "$1: a pinned file or a hidden file changed since prepare (see above); no hidden item was run"; }
+  echo "$1: $(cat $W/pin_check.out)"; }
 
 # ---------------------------------------------------------------- G: byte-identity gate
 if want G; then
@@ -391,19 +420,22 @@ if want H1 || want H2 || want H3 || want H4 || want H5; then
   cat $W/hidden_gate.out
   .venv/bin/python - $MANIFEST $W <<'PY'
 import json, sys
-json.dump({"opened": True, "commit": json.load(open(sys.argv[1]))["commit"]}, open(f"{sys.argv[2]}/GATE.opened", "w"))
+m = json.load(open(sys.argv[1]))
+json.dump({"opened": True, "pin": m["pinned"]["sha256"], "commit": m["commit"]}, open(f"{sys.argv[2]}/GATE.opened", "w"))
 PY
   hb "$N: hidden gate open (all conditions hold)"
 elif want SCORE; then
   [ -f $W/GATE.opened ] || fail "SCORE: the hidden gate has not opened for this work folder (no $W/GATE.opened): run a hidden stage first"
 fi
+# before every hidden stage: the pinned files and the hidden files are still the ones the manifest records
+if want H1; then pin_check H1; fi
 done_hidden_files() { [ -s $JI ] && [ -s $JR ]; }
 if want H1 || want H2 || want H3 || want H4 || want H5 || want SCORE; then
   done_hidden_files || { $PYH merge --out $JI --in $HID_J1 $HID_J2 --normalize-items e2 > /dev/null && $PYH merge --out $JR --in $HID_R1 $HID_R2 > /dev/null; } \
     || fail "the hidden judged files could not be merged"
 fi
 
-# ---------------------------------------------------------------- H1: Q4D and Q4S on the judged 60, R1, the blind bundles
+# ---------------------------------------------------------------- H1: Q4D and Q4S on the judged 61, R1, the blind bundles
 if want H1; then
   hb "$N: H1 started: Q4D and Q4S on the hidden judged $NJ, R1, bundles for the sealed reading"
   status RUNNING no "$N running: H1; markers $L/$N.done / .failed"
@@ -434,8 +466,9 @@ if want H1; then
   hb "$N: H1 done; the blind bundles are in $H/bundles: the readings can start (brief agents/m4-sealed-reading.md)" $HNEED
 fi
 
-# ---------------------------------------------------------------- H2: Q4D, Q4S, P0 on the mechanical 305; P0 on the judged 60
+# ---------------------------------------------------------------- H2: Q4D, Q4S, P0 on the mechanical 305; P0 on the judged 61
 if want H2; then
+  pin_check H2
   hb "$N: H2 started: Q4D, Q4S, P0 on the hidden mechanical $NM, P0 on the hidden judged $NJ"
   status RUNNING no "$N running: H2; markers $L/$N.done / .failed"
   answer_run H2_Q4D $Q4 default $H/ans_Q4D_mech.jsonl.enc $NM "$MI"
@@ -447,6 +480,7 @@ fi
 
 # ---------------------------------------------------------------- H3: the full-precision build
 if want H3; then
+  pin_check H3
   hb "$N: H3 started: F and FR on the hidden mechanical $NM$([ $FJ = yes ] && echo ", F on the judged $NJ")"
   status RUNNING no "$N running: H3; markers $L/$N.done / .failed"
   [ $DRY = yes ] || { unload $Q4; hb "$N: $Q4 unloaded; the full-precision model loads on the first request"; }
@@ -461,6 +495,7 @@ fi
 JSETS="Q4D=$H/ans_Q4D_judged.jsonl.enc Q4S=$H/ans_Q4S_judged.jsonl.enc P0=$H/ans_P0_judged.jsonl.enc"; NJS=3
 [ $FJ = no ] || { JSETS="$JSETS F=$H/ans_F_judged.jsonl.enc"; NJS=4; }
 if want H4; then
+  pin_check H4
   hb "$N: H4 started: the judge $DS on $NJS answer sets of the hidden judged $NJ (2 passes, $((NJS * NJ * 2)) calls)"
   status RUNNING no "$N running: H4 (judge); markers $L/$N.done / .failed"
   [ $DRY = yes ] || unload $Q4
@@ -468,6 +503,7 @@ if want H4; then
   [ $DRY = yes ] || { unload $DS; hb "$N: judging finished, $DS unloaded"; }
 fi
 if want H5 && [ $CROSS = yes ]; then
+  pin_check H5
   hb "$N: H5 started: the second judge $GLM8 on a seeded $XN-answer subset of Q4D (pass 1)"
   status RUNNING no "$N running: H5 (cross-check); markers $L/$N.done / .failed"
   $PYH subset --in $H/ans_Q4D_judged.jsonl.enc --out $H/ans_Q4D_cross.jsonl.enc --n $XN --seed 1 > /dev/null || fail "H5: the subset could not be drawn"
@@ -495,6 +531,7 @@ if want E4; then
 fi
 # ---------------------------------------------------------------- SCORE: scoring, identifier check, coverage report, compare, report (CPU)
 if want SCORE; then
+  pin_check SCORE
   hb "$N: scoring and the report (CPU)"
   CFGS="Q4D Q4S P0 F FR"; JCFGS="Q4D Q4S P0"; [ $FJ = no ] || JCFGS="$JCFGS F"
   for c in $CFGS; do [ -s $H/ans_${c}_mech.jsonl.enc ] || fail "SCORE: $H/ans_${c}_mech.jsonl.enc is missing (stage H2 or H3 has not finished)"; done
@@ -509,21 +546,21 @@ if want SCORE; then
   done
   [ -s $H/findings_none.jsonl.enc ] || $PYH empty-enc --out $H/findings_none.jsonl.enc > /dev/null
   .venv/bin/python scripts/eval2_pilot_report.py --coverage --results $H/judge_results.jsonl.enc --rubrics $JR --findings $H/findings_none.jsonl.enc \
-    --items $JI --by-kind --title "E2: coverage role, hidden judged sets" > $W/coverage_report.md 2> $W/coverage_report.err || fail "the coverage report failed (see $W/coverage_report.err)"
+    --items $JI --by-kind --tag-file $TAGF --title "E2: coverage role, hidden judged sets" > $W/coverage_report.md 2> $W/coverage_report.err || fail "the coverage report failed (see $W/coverage_report.err)"
   if [ $REH = yes ]; then   # the rehearsal writes fake findings (sealed with its key) and runs the totals and the JSON hand-over to compare e2
     $PYH rehearsal-findings --dir $H/bundles || fail "the fake findings could not be written"
-    [ -s $H/reading_totals.json.enc ] || .venv/bin/python scripts/eval2_sealed_reading.py totals --dir $H/bundles --json-out $H/reading_totals.json.enc > $W/reading_totals.txt || fail "the totals of the fake findings failed (see $W/reading_totals.txt)"
+    [ -s $H/reading_totals.json.enc ] || .venv/bin/python scripts/eval2_sealed_reading.py totals --dir $H/bundles --tag-file $TAGF --json-out $H/reading_totals.json.enc > $W/reading_totals.txt || fail "the totals of the fake findings failed (see $W/reading_totals.txt)"
     RJSON=$H/reading_totals.json.enc
   fi
   CA=""; for c in $CFGS; do CA="$CA --config $c=$H/${c}_mech.scores.jsonl.enc"; done
   RD=""; [ -z "$RJSON" ] || RD="--reading-json $RJSON"
   .venv/bin/python scripts/eval2_compare.py e2 --items $HID_A --items $HID_A3 $CA --judged-results $H/judge_results.jsonl.enc --rubrics $JR \
-    --judged-items $JI $RD --resamples 10000 --seed 1 --json $H/e2_compare.json.enc > $W/compare_e2.txt 2> $W/compare_e2.err || fail "eval2_compare.py e2 failed (see $W/compare_e2.err)"
+    --judged-items $JI $RD --tag-file $TAGF --resamples 10000 --seed 1 --json $H/e2_compare.json.enc > $W/compare_e2.txt 2> $W/compare_e2.err || fail "eval2_compare.py e2 failed (see $W/compare_e2.err)"
   $PYH verdict --compare-out $W/compare_e2.txt ${MARGIN:+--reading $MARGIN} > $W/verdict.txt || fail "the verdict line could not be built"
   {
     echo "# ${RTAG}E2: the starting point on the hidden half (4-bit, plain base, full precision)$([ $REH = yes ] && echo ' [REHEARSAL: open items encrypted as if hidden, 20 mechanical and 6 judged items; every figure is a test of the chain, a verdict on 20 items means nothing, no look was used]')$([ $DRY = yes ] && echo ' [DRY RUN: stub generator, stub judge, synthetic hidden files; every number below is stub data]')"
     echo
-    echo "Totals only: no item, answer, quote or per-item result is in this file. Written by \`scripts/m4_e2_starting_point.sh\`$([ $REH = yes ] && echo ' --rehearsal'). Manifest: \`$MANIFEST\` (sha256 $(shasum -a 256 $MANIFEST | cut -c1-16)...); ledger rows 1 and 2 of \`$LEDGER\` hold the decision rules written before the run. Options: R2 $R2, reading $READING, F on the judged tier $FJ, cross-check $CROSS, margin reading: ${MARGIN:-not chosen}."
+    echo "Totals only: no item, answer, quote or per-item result is in this file. Written by \`scripts/m4_e2_starting_point.sh\`$([ $REH = yes ] && echo ' --rehearsal'). Manifest: \`$MANIFEST\` (sha256 $(shasum -a 256 $MANIFEST | cut -c1-16)...); ledger rows 1 and 2 of \`$LEDGER\` hold the decision rules written before the run. Options: R2 $R2, reading $READING, F on the judged tier $FJ, cross-check $CROSS, margin reading: ${MARGIN:-none (both readings shown, no verdict)}, tag file $([ $DRY = yes ] || [ $REH = yes ] && echo 'a stand-in with two ids of this run' || echo "$TAGF") (every total is given for all items and again without the tagged ones). A restart after a crash and a re-run of the scoring stage are the same look: they resume, nothing already answered is regenerated."
     echo
     [ $REH != yes ] || { echo "**REHEARSAL.** The items are open items (10 tier A, 10 a3, 6 B2 scenarios) encrypted with a temporary key; no hidden item was run and no look was used. Both readings of rule 1(a) are shown below and a verdict on 20 items means nothing: the intervals are far too wide. The sealed reading is made of fake findings written by the rehearsal itself. What this run shows is that every stage, tool and hand-over runs on the real server."; echo; }
     echo "## Rule 1(a): the cost of 4-bit, and the starting figures (eval2_compare.py e2)"
@@ -558,7 +595,8 @@ if want SCORE; then
     echo
     echo "## Sealed reading and rule 1(b), E3"
     echo
-    echo "The readings are made by sealed sessions from the bundles in \`$H/bundles\` (R1 marks do not change a count; the bundles hold the first-pass answers, so the reader cannot tell the configurations apart). The totals come from \`scripts/eval2_sealed_reading.py totals --dir $H/bundles\`; they enter rule 1(b) through \`--reading-json\`. $([ -n "$RJSON" ] && echo "Reading totals given: $RJSON." || echo "Not given: rule 1(b) waits for the reading.")"
+    echo "The readings are made by sealed sessions from the bundles in \`$H/bundles\` (R1 marks do not change a count; the bundles hold the first-pass answers, so the reader cannot tell the configurations apart). The totals come from \`scripts/eval2_sealed_reading.py totals --dir $H/bundles --tag-file $TAGF\` (all items, and again without the tagged ones); they enter rule 1(b) through \`--reading-json\`. $([ -n "$RJSON" ] && echo "Reading totals given: $RJSON." || echo "Not given: rule 1(b) waits for the reading.")"
+    if [ -s $W/reading_totals.txt ]; then echo; echo "Totals of the sealed reading (all items, and again without the tagged ones):"; echo; echo '```'; cat $W/reading_totals.txt; echo '```'; fi
     echo
     echo "## Revise step (R1$([ $R2 = yes ] && echo ' and R2'))"
     echo

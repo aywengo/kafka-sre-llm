@@ -37,6 +37,35 @@ def helper(*args, env=None, timeout=300):
     return subprocess.run([str(PY), str(HELP), *args], cwd=ROOT, capture_output=True, text=True, timeout=timeout, env=e)
 
 
+def make_repo(parent):
+    """A temporary git repository holding a copy of the tracked files of this checkout as they are in the working tree (a worker's uncommitted
+    edit included), with `work` and `runs` linked to the real ones (git-ignored there, and excluded here), one commit. Tests that commit,
+    edit or reset do it here, never in the real repository."""
+    repo = Path(parent) / "repo"
+    repo.mkdir()
+    names = subprocess.run(["git", "ls-files", "-z"], cwd=ROOT, capture_output=True, check=True).stdout.decode().split("\0")
+    for n in filter(None, names):
+        if n.split("/")[0] == "runs" or not (ROOT / n).is_file():
+            continue
+        (repo / n).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / n, repo / n)
+    for d in ("work", "runs"):
+        os.symlink(ROOT / d, repo / d)
+    for c in (["init", "-q"], ["config", "user.email", "t@t"], ["config", "user.name", "t"], ["config", "commit.gpgsign", "false"]):
+        subprocess.run(["git", *c], cwd=repo, check=True)
+    (repo / ".git/info/exclude").write_text("/work\n/runs\n")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "base"], cwd=repo, check=True, capture_output=True)
+    return repo
+
+
+def tgit(repo, *args):
+    """git in a temporary repository only."""
+    assert Path(repo).resolve() != ROOT and "e2_" in str(repo), "tgit is for the temporary repositories of these tests only"
+    r = subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True, check=True)
+    return r.stdout.strip()
+
+
 class Static(unittest.TestCase):
     def test_syntax_and_executable(self):
         self.assertTrue(os.access(SH, os.X_OK))
@@ -107,7 +136,44 @@ class Static(unittest.TestCase):
         self.assertEqual(gone.returncode, 1)
         self.assertIn("answered 000", gone.stdout)
 
-    def test_no_default_for_the_margin_reading_and_the_verdict_is_withheld(self):
+    def test_the_owners_decisions_are_the_defaults_and_each_is_still_an_option(self):
+        t = SH.read_text()
+        for need in ('MARGIN=one-sided', 'R2=no', 'READING=both', 'FJ=no', 'CROSS=yes', "none) MARGIN=\"\"",
+                     "HID_J1=eval/hidden/tier_b_owner_items_final5.jsonl.enc", "HID_J2=eval/hidden/tier_b_b3_items_final.jsonl.enc",
+                     "HID_R1=eval/hidden/tier_b_owner_rubrics_final5.jsonl.enc", "HID_R2=eval/hidden/tier_b_b3_rubrics_final.jsonl.enc",
+                     "NA=245; NA3=60; NJ1=25; NJ2=36; NJ=61; NM=305", "TAGF=eval/m4/HIDDEN_TAGS.json", "--margin-reading) MARGIN=", "--r2) R2=yes",
+                     "--f-judged) FJ=yes", "--no-cross-judge) CROSS=no", "--tag-file) TAGF="):
+            self.assertIn(need, t)
+        h = HELP.read_text()
+        self.assertIn('"judged_1": 25, "judged_2": 36', h)
+        self.assertIn('"tier_a": 245, "tier_a3": 60', h)
+        self.assertEqual(sh("--dry-run", "--margin-reading", "sideways").returncode, 2)
+
+    def test_the_tag_file_goes_to_the_three_report_tools(self):
+        t = SH.read_text()
+        # the coverage report, the sealed reading's totals, eval2_compare.py e2, and the sentence of the report that names the totals command
+        self.assertEqual(t.count("--tag-file $TAGF"), 4)
+        self.assertIn("--by-kind --tag-file $TAGF --title", t)
+        self.assertIn("eval2_sealed_reading.py totals --dir $H/bundles --tag-file $TAGF --json-out", t)
+        self.assertIn("--judged-items $JI $RD --tag-file $TAGF --resamples", t)
+
+    def test_the_hours_in_the_header_use_the_rehearsals_rates(self):
+        t = SH.read_text()
+        self.assertIn("runs/m4/reports/e2_rehearsal_run.md", t)
+        self.assertIn("total about 19 to 22 h", t)
+        self.assertIn("A restart after a crash and a re-run of the scoring stage are the same look", t)
+
+    def test_every_answer_call_allows_a_commit_change_because_the_pin_guards_the_code(self):
+        t = SH.read_text()
+        self.assertIn('--host-class "Mac Studio" --allow-commit-change "$@"', t)
+
+    def test_every_hidden_stage_checks_the_pinned_files(self):
+        t = SH.read_text()
+        for st in ("H1", "H2", "H3", "H4", "H5", "SCORE"):
+            self.assertIn(f"pin_check {st}", t)
+        self.assertIn('--hidden $HIDDEN_ARGS', t)
+
+    def test_the_margin_reading_option_and_the_manifest_option_guards(self):
         r = sh("--dry-run", "--margin-reading", "sideways")
         self.assertEqual(r.returncode, 2)
         r = sh("--reading", "default", "--dry-run")
@@ -155,8 +221,8 @@ class HelperUnits(unittest.TestCase):
         self.assertEqual(self.mm.ledger_problems(self.tmp / "absent.md"), ["the ledger file is missing"])
 
     def test_counts(self):
-        h = {"tier_a": self.rows("a.enc", 245, "a"), "tier_a3": self.rows("a3.enc", 60, "c"), "judged_1": self.rows("j1.enc", 24, "j"),
-             "judged_2": self.rows("j2.enc", 36, "k"), "rubrics_1": self.rows("r1.enc", 24, "j"), "rubrics_2": self.rows("r2.enc", 36, "k")}
+        h = {"tier_a": self.rows("a.enc", 245, "a"), "tier_a3": self.rows("a3.enc", 60, "c"), "judged_1": self.rows("j1.enc", 25, "j"),
+             "judged_2": self.rows("j2.enc", 36, "k"), "rubrics_1": self.rows("r1.enc", 25, "j"), "rubrics_2": self.rows("r2.enc", 36, "k")}
         self.assertEqual(self.mm.count_problems(h), [])
         bad = dict(h, tier_a=self.rows("a_short.enc", 244, "a"))
         self.assertEqual(self.mm.count_problems(bad), ["tier_a: 244 rows, expected 245"])
@@ -183,17 +249,23 @@ class HelperUnits(unittest.TestCase):
         (r / "eval/hidden").mkdir(parents=True)
         for c in (["init", "-q"], ["config", "user.email", "t@t"], ["config", "user.name", "t"]):
             subprocess.run(["git", *c], cwd=r, check=True)
-        (r / "a.txt").write_text("a")
-        subprocess.run(["git", "add", "a.txt"], cwd=r, check=True)
+        (r / "scripts").mkdir()
+        (r / "scripts/a.txt").write_text("a")
+        (r / "MILESTONE.md").write_text("m")
+        subprocess.run(["git", "add", "scripts/a.txt", "MILESTONE.md"], cwd=r, check=True)
         subprocess.run(["git", "commit", "-qm", "x"], cwd=r, check=True)
         self.assertEqual(self.mm.tree_dirty(r), [])
         (r / "eval/hidden/x.enc").write_bytes(b"x")
         self.assertEqual(self.mm.tree_dirty(r), [])
-        (r / "new.sh").write_text("x")
+        (r / "MILESTONE.md").write_text("changed, but not a pinned path")
+        (r / "new_root_file.sh").write_text("x")
+        self.assertEqual(self.mm.tree_dirty(r), [])
+        (r / "scripts/new.sh").write_text("x")
         self.assertEqual(len(self.mm.tree_dirty(r)), 1)
-        (r / "new.sh").unlink()
-        (r / "a.txt").write_text("changed")
+        (r / "scripts/new.sh").unlink()
+        (r / "scripts/a.txt").write_text("changed")
         self.assertEqual(len(self.mm.tree_dirty(r)), 1)
+        self.assertEqual(self.mm.compute_pins(r)["count"], 1)
 
     def test_gate_g_needs_identical_texts_and_packs(self):
         st, got = self.tmp / "st.jsonl", self.tmp / "got.jsonl"
@@ -318,6 +390,7 @@ class HiddenGate(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.tmp = Path(tempfile.mkdtemp(prefix="e2_gate_"))
+        cls.repo = make_repo(cls.tmp)   # the gate and the manifest look at this copy: a worker's edit in the real tree cannot disturb the tests
         cls.env = {"EVAL_HIDDEN_KEY": str(cls.tmp / "k.key")}
         subprocess.run([str(PY), str(ROOT / "scripts/eval2.py"), "keygen", "--path", cls.env["EVAL_HIDDEN_KEY"]], cwd=ROOT, check=True, capture_output=True)
         cls.sd = cls.tmp / "syn"
@@ -331,14 +404,16 @@ class HiddenGate(unittest.TestCase):
         cls.ledger.write_text(f"| 1 | 2026-11-21 | E2 | cfg | {rule} | | conductor |\n| 2 | 2026-11-21 | E3 | cfg | {rule} | | conductor |\n")
         cls.hidden = cls.hargs(cls.sd)
         cls.manifest = cls.tmp / "m.json"
-        r = helper("prepare", "--out", str(cls.manifest), "--server-json", str(cls.tmp / "server.json"), "--models-json", str(cls.tmp / "models.json"),
-                   "--hidden", *cls.hidden, env=cls.env)
+        r = helper("prepare", "--repo", str(cls.repo), "--out", str(cls.manifest), "--server-json", str(cls.tmp / "server.json"),
+                   "--models-json", str(cls.tmp / "models.json"), "--hidden", *cls.hidden, env=cls.env)
         assert r.returncode == 0, r.stdout + r.stderr
         cls.work = cls.tmp / "work"
         cls.work.mkdir()
         cls.commit = json.loads(cls.manifest.read_text())["commit"]
+        cls.pin = json.loads(cls.manifest.read_text())["pinned"]["sha256"]
+        cls.base = cls.commit
         for s in ("G", "O"):
-            (cls.work / f"{s}.passed").write_text(json.dumps({"stage": s, "passed": True, "commit": cls.commit}))
+            (cls.work / f"{s}.passed").write_text(json.dumps({"stage": s, "passed": True, "pin": cls.pin, "commit": cls.commit}))
 
     @classmethod
     def tearDownClass(cls):
@@ -350,10 +425,18 @@ class HiddenGate(unittest.TestCase):
                 f"judged_2={sd}/judged_2_items.jsonl.enc", f"rubrics_1={sd}/judged_1_rubrics.jsonl.enc", f"rubrics_2={sd}/judged_2_rubrics.jsonl.enc"]
 
     def gate(self, manifest=None, ledger=None, hidden=None, markers=None, extra=(), work=None):
-        r = helper("gate", "--manifest", str(manifest or self.manifest), "--ledger", str(ledger or self.ledger), "--work-dir", str(work or self.work),
-                   "--markers", str(markers or self.work), "--server-json", str(self.tmp / "server.json"), "--models-json", str(self.tmp / "models.json"),
-                   "--tests", "skip", "--allow-dirty", "--hidden", *(hidden or self.hidden), *extra, env=self.env, timeout=600)
+        r = helper("gate", "--repo", str(self.repo), "--manifest", str(manifest or self.manifest), "--ledger", str(ledger or self.ledger),
+                   "--work-dir", str(work or self.work), "--markers", str(markers or self.work), "--server-json", str(self.tmp / "server.json"),
+                   "--models-json", str(self.tmp / "models.json"), "--tests", "skip", "--hidden", *(hidden or self.hidden), *extra, env=self.env, timeout=600)
         return r.returncode, r.stdout + r.stderr
+
+    def reset(self):
+        """Back to the base commit and a clean tree (the temporary repository only)."""
+        tgit(self.repo, "reset", "-q", "--hard", self.base)
+        tgit(self.repo, "clean", "-fdq")
+
+    def setUp(self):
+        self.reset()
 
     def failed(self, out):
         return [l for l in out.splitlines() if l.startswith("gate FAIL")]
@@ -403,8 +486,8 @@ class HiddenGate(unittest.TestCase):
         self.assertEqual(helper("synth", "--dir", str(sd2), "--marker", MARK, "--drop-a", "1", env=self.env).returncode, 0)
         h2 = self.hargs(sd2)
         man = self.tmp / "m_short.json"
-        r = helper("prepare", "--out", str(man), "--server-json", str(self.tmp / "server.json"), "--models-json", str(self.tmp / "models.json"),
-                   "--hidden", *h2, env=self.env)
+        r = helper("prepare", "--repo", str(self.repo), "--out", str(man), "--server-json", str(self.tmp / "server.json"),
+                   "--models-json", str(self.tmp / "models.json"), "--hidden", *h2, env=self.env)
         self.assertEqual(r.returncode, 0, r.stderr)
         rc, out = self.gate(manifest=man, hidden=h2)
         self.assertEqual(rc, 1)
@@ -415,14 +498,16 @@ class HiddenGate(unittest.TestCase):
     def test_refuses_when_g_or_o_did_not_pass(self):
         mk = self.tmp / "marks"
         mk.mkdir()
-        (mk / "O.passed").write_text(json.dumps({"stage": "O", "passed": True, "commit": self.commit}))
+        (mk / "O.passed").write_text(json.dumps({"stage": "O", "passed": True, "pin": self.pin}))
         rc, out = self.gate(markers=mk)
         self.assertEqual(rc, 1)
         self.assertIn("gate FAIL: stage G passed", out)
         self.assertNotIn("gate FAIL: stage O passed", out)
-        (mk / "G.passed").write_text(json.dumps({"stage": "G", "passed": False, "commit": self.commit}))
+        (mk / "G.passed").write_text(json.dumps({"stage": "G", "passed": False, "pin": self.pin}))
         self.assertIn("gate FAIL: stage G passed", self.gate(markers=mk)[1])
-        (mk / "G.passed").write_text(json.dumps({"stage": "G", "passed": True, "commit": "deadbeef"}))   # a marker of another commit
+        (mk / "G.passed").write_text(json.dumps({"stage": "G", "passed": True, "pin": "0" * 64}))   # a marker of other pinned files
+        self.assertIn("gate FAIL: stage G passed", self.gate(markers=mk)[1])
+        (mk / "G.passed").write_text(json.dumps({"stage": "G", "passed": True, "commit": self.commit}))   # a marker that knows only the commit
         self.assertIn("gate FAIL: stage G passed", self.gate(markers=mk)[1])
 
     def test_refuses_a_plain_text_file_with_a_hidden_id(self):
@@ -435,21 +520,16 @@ class HiddenGate(unittest.TestCase):
         self.assertNotIn("hj-001", out)   # the file is named, the id is not
 
     def test_refuses_failing_tests_and_a_dirty_tree(self):
-        r = helper("gate", "--manifest", str(self.manifest), "--ledger", str(self.ledger), "--work-dir", str(self.work), "--markers", str(self.work),
-                   "--server-json", str(self.tmp / "server.json"), "--models-json", str(self.tmp / "models.json"), "--tests", "run", "--test-cmd", "false",
-                   "--allow-dirty", "--hidden", *self.hidden, env=self.env, timeout=600)
-        self.assertEqual(r.returncode, 1)
-        self.assertIn("gate FAIL: tests", r.stdout)
-        # without --allow-dirty the tree of this checkout decides: when it is dirty the gate says so, when clean it does not
-        r = helper("gate", "--manifest", str(self.manifest), "--ledger", str(self.ledger), "--work-dir", str(self.work), "--markers", str(self.work),
-                   "--server-json", str(self.tmp / "server.json"), "--models-json", str(self.tmp / "models.json"), "--tests", "skip",
-                   "--hidden", *self.hidden, env=self.env, timeout=600)
-        dirty = self.mm_dirty()
-        self.assertEqual("gate FAIL: clean tree" in r.stdout, bool(dirty))
-
-    def mm_dirty(self):
-        import m4_e2_manifest as mm
-        return mm.tree_dirty(ROOT)
+        rc, out = self.gate(extra=("--tests", "run", "--test-cmd", "false"))
+        self.assertEqual(rc, 1)
+        self.assertIn("gate FAIL: tests", out)
+        # an uncommitted change in a pinned path: the gate says so (and the pinned-files condition names the file); nowhere else it is clean
+        self.assertEqual(self.gate()[0], 0)
+        (self.repo / "scripts/eval2_judge.py").write_text((self.repo / "scripts/eval2_judge.py").read_text() + "\n# changed\n")
+        rc, out = self.gate()
+        self.assertEqual(rc, 1)
+        self.assertIn("gate FAIL: no uncommitted change in a pinned path (1 changed file(s): scripts/eval2_judge.py)", out)
+        self.assertIn("gate FAIL: pinned files (a pinned file changed since prepare: scripts/eval2_judge.py)", out)
 
     def test_a_changed_chunks_file_or_s6_reference_fails_the_gate_and_prepare(self):
         ch = self.tmp / "chunks_changed.jsonl"
@@ -483,6 +563,131 @@ class HiddenGate(unittest.TestCase):
             else:
                 os.environ["EVAL_HIDDEN_KEY"] = old
 
+    # ---------------------------------------------------------------- pinned files, not the head commit
+
+    def make_commit(self, **files):
+        """Write the files (path -> text, appended to the existing text when the file exists) in the temporary repository and commit them."""
+        for rel, text in files.items():
+            f = self.repo / rel
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text((f.read_text() if f.exists() else "") + text)
+            tgit(self.repo, "add", rel)
+        tgit(self.repo, "commit", "-qm", "change " + ", ".join(files))
+
+    def pin_check(self, manifest=None, extra=()):
+        r = helper("pin-check", "--repo", str(self.repo), "--manifest", str(manifest or self.manifest), "--hidden", *self.hidden, *extra, env=self.env)
+        return r.returncode, r.stdout + r.stderr
+
+    def test_a_commit_touching_only_unpinned_files_does_not_refuse_the_gate_or_a_hidden_stage(self):
+        head = tgit(self.repo, "rev-parse", "HEAD")
+        self.make_commit(**{"MILESTONE.md": "\nnotes of the day\n", "agents/e2-note.md": "a note\n", "README.md": "\nreadme line\n",
+                       "tests/test_unpinned_elsewhere.py": "# a test file outside tests/golden\n"})
+        self.assertNotEqual(tgit(self.repo, "rev-parse", "HEAD"), head)
+        rc, out = self.gate()
+        self.assertEqual(rc, 0, out)
+        self.assertIn("hidden gate: OPEN", out)
+        self.assertIn("gate PASS: commit (information only) (HEAD ", out)
+        self.assertIn("differs from the manifest's", out)
+        self.assertIn("gate PASS: pinned files (", out)
+        rc, out = self.pin_check()                  # the check before every hidden stage
+        self.assertEqual(rc, 0, out)
+        self.assertIn("information only", out)
+        # an uncommitted change outside the pinned paths does not count either
+        (self.repo / "MILESTONE.md").write_text("another edit, not committed\n")
+        (self.repo / "notes_untracked.md").write_text("x\n")
+        self.assertEqual(self.gate()[0], 0)
+        self.assertEqual(self.pin_check()[0], 0)
+
+    def test_a_change_to_a_pinned_file_refuses_whether_committed_or_not(self):
+        # one file of every pinned path: scripts/, kafka_sre_rag/, tests/golden/, eval/m4/ (the tag file), requirements.txt
+        for rel in ("scripts/eval2_score.py", "kafka_sre_rag/pipeline.py", "tests/golden/make_golden.py", "eval/m4/HIDDEN_TAGS.json", "requirements.txt",
+                    "scripts/m4_e2_starting_point.sh"):
+            self.reset()
+            self.make_commit(**{rel: "\n# one more line\n" if not rel.endswith(".json") else "\n"})
+            rc, out = self.gate()
+            self.assertEqual(rc, 1, rel + out)
+            self.assertIn("gate FAIL: pinned files (a pinned file changed since prepare: " + rel + ")", out, rel)
+            self.assertIn("gate FAIL: manifest hashes (differs in: ", out, rel)
+            self.assertIn("pinned.files." + rel, out, rel)
+            rc, out = self.pin_check()
+            self.assertEqual(rc, 1, rel + out)
+            self.assertIn("pin REFUSED: a pinned file changed since prepare: " + rel, out, rel)
+            # the same change not committed: the dirty condition names it too
+            self.reset()
+            f = self.repo / rel
+            f.write_text(f.read_text() + ("\n# one more line\n" if not rel.endswith(".json") else "\n"))
+            rc, out = self.gate()
+            self.assertEqual(rc, 1, rel + out)
+            self.assertIn("gate FAIL: no uncommitted change in a pinned path (1 changed file(s): " + rel + ")", out, rel)
+            self.assertEqual(self.pin_check()[0], 1, rel)
+            self.assertEqual(self.pin_check(extra=("--allow-dirty",))[0], 1, rel)   # --allow-dirty (dry runs) skips only the dirty condition, not the hash
+        # a new tracked file under a pinned path, and a new untracked one
+        self.reset()
+        self.make_commit(**{"scripts/e2_new_helper.py": "print(1)\n"})
+        self.assertIn("pinned files (a pinned file changed since prepare: scripts/e2_new_helper.py)", self.gate()[1])
+        self.reset()
+        (self.repo / "eval/m4/untracked_note.json").write_text("{}\n")
+        rc, out = self.gate()
+        self.assertEqual(rc, 1)
+        self.assertIn("no uncommitted change in a pinned path (1 changed file(s): eval/m4/untracked_note.json)", out)
+
+    def test_the_pin_is_the_content_of_the_files_not_the_commit(self):
+        self.make_commit(**{"scripts/eval2_score.py": "\n# temporary\n"})
+        self.assertEqual(self.gate()[0], 1)
+        (self.repo / "scripts/eval2_score.py").write_text(tgit(self.repo, "show", self.base + ":scripts/eval2_score.py") + "\n")   # restored (the text has a final newline)
+        tgit(self.repo, "add", "scripts/eval2_score.py")
+        tgit(self.repo, "commit", "-qm", "restore", "--allow-empty")
+        rc, out = self.gate()
+        if rc != 0:   # the restored text may differ from the original by the final newline only: then restore the exact bytes
+            tgit(self.repo, "checkout", self.base, "--", "scripts/eval2_score.py")
+            tgit(self.repo, "commit", "-qm", "restore exactly", "--allow-empty")
+            rc, out = self.gate()
+        self.assertEqual(rc, 0, out)
+        self.assertNotEqual(tgit(self.repo, "rev-parse", "HEAD"), self.base)
+
+    def test_pin_check_refuses_a_changed_hidden_file_and_a_manifest_without_pins(self):
+        rc, out = self.pin_check()
+        self.assertEqual(rc, 0, out)
+        self.assertIn("6 hidden files match", out)
+        sd2 = self.tmp / "syn_other"
+        self.assertEqual(helper("synth", "--dir", str(sd2), "--marker", MARK + "X", env=self.env).returncode, 0)
+        r = helper("pin-check", "--repo", str(self.repo), "--manifest", str(self.manifest), "--hidden", *self.hargs(sd2), env=self.env)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("pin REFUSED: hidden file tier_a differs from the manifest", r.stdout)
+        self.assertNotIn(MARK, r.stdout + r.stderr)
+        m = json.loads(self.manifest.read_text())
+        m.pop("pinned")
+        old = self.tmp / "m_no_pins.json"
+        old.write_text(json.dumps(m))
+        rc, out = self.pin_check(manifest=old)
+        self.assertEqual(rc, 1)
+        self.assertIn("the manifest records no pinned files", out)
+
+    def test_the_tests_are_rerun_only_when_a_pinned_file_changed(self):
+        ok = self.tmp / "tests.ok"
+        ok.unlink(missing_ok=True)
+        rc, out = self.gate(extra=("--tests", "run", "--test-cmd", "true", "--tests-ok-file", str(ok)))
+        self.assertEqual(rc, 0, out)
+        self.assertIn("gate PASS: tests", out)
+        self.make_commit(**{"MILESTONE.md": "\nnotes\n"})   # an unpinned commit: the earlier pass counts, the (failing) command is not run again
+        rc, out = self.gate(extra=("--tests", "run", "--test-cmd", "false", "--tests-ok-file", str(ok)))
+        self.assertEqual(rc, 0, out)
+        self.assertIn("passed earlier on these pinned files", out)
+        self.make_commit(**{"scripts/eval2_score.py": "\n# changed\n"})   # a pinned change: the command runs again (and fails)
+        rc, out = self.gate(extra=("--tests", "run", "--test-cmd", "false", "--tests-ok-file", str(ok)))
+        self.assertIn("gate FAIL: tests", out)
+
+    def test_tree_dirty_counts_pinned_paths_only(self):
+        import m4_e2_manifest as mm
+        self.assertEqual(mm.tree_dirty(self.repo), [])
+        (self.repo / "MILESTONE.md").write_text("x\n")
+        (self.repo / "eval/hidden").mkdir(parents=True, exist_ok=True)
+        (self.repo / "eval/hidden/x.enc").write_bytes(b"x")
+        (self.repo / "runs_note.txt").write_text("x")
+        self.assertEqual(mm.tree_dirty(self.repo), [])
+        (self.repo / "scripts/new_script.sh").write_text("x")
+        self.assertEqual(len(mm.tree_dirty(self.repo)), 1)
+
     def test_the_synthetic_rows_carry_a_marker_in_every_text_field(self):
         it = self.decrypted("judged_1_items.jsonl.enc")
         self.assertTrue(all(MARK in r["question"] for r in it))
@@ -509,7 +714,7 @@ class HiddenGate(unittest.TestCase):
                 os.environ.pop("EVAL_HIDDEN_KEY", None)
             else:
                 os.environ["EVAL_HIDDEN_KEY"] = old
-        self.assertEqual(nrows, 245 + 60 + 24 + 36 + 24 + 36)
+        self.assertEqual(nrows, 245 + 60 + 25 + 36 + 25 + 36)
         # one leaked line of each kind of field: the question, a must text, a must_not text, the reference, the evidence, a mechanical reference
         rb = self.decrypted("judged_1_rubrics.jsonl.enc")[0]
         it = next(r for r in self.decrypted("judged_1_items.jsonl.enc") if r.get("evidence"))
@@ -545,12 +750,12 @@ class HiddenGate(unittest.TestCase):
         r = helper("shape", "--hidden", *self.hidden, env={**self.env, "TMPDIR": str(priv)}, timeout=900)
         out = r.stdout + r.stderr
         self.assertEqual(r.returncode, 0, out[-2500:])
-        for need in ("shape: OK", "stub judge rows: 120 valid of 120 (expected 120)", "stub answers on the judged items: 60 of 60 usable",
+        for need in ("shape: OK", "stub judge rows: 122 valid of 122 (expected 122)", "stub answers on the judged items: 61 of 61 usable",
                      "scorer: 305 scored, 0 missing", "throwaway reading bundle (two answer sets, 6 first and 2 second sessions): exit 0",
                      "the temporary folder is removed (yes)", "read by answer, judge, bundle: evidence (optional)", "kinds (merged so that no group is under 5)"):
             self.assertIn(need, out)
         self.assertNotIn(MARK, out)
-        for rid in ("hj-001", "hj-060", "tier_a-001", "tier_a3-060"):
+        for rid in ("hj-001", "hj-061", "tier_a-001", "tier_a3-060"):
             self.assertNotIn(rid, out)
         self.assertEqual(list(priv.iterdir()), [])
 
@@ -630,7 +835,7 @@ class DryRun(unittest.TestCase):
     def setUpClass(cls):
         cls.tmp = Path(tempfile.mkdtemp(prefix="e2_dry_"))
         cls.w = cls.tmp / "run"
-        cls.r1 = sh("--dry-run", "--work", str(cls.w), "--allow-dirty", "--synth-marker", MARK)
+        cls.r1 = sh("--dry-run", "--work", str(cls.w), "--allow-dirty", "--synth-marker", MARK, "--margin-reading", "none")
         cls.out1 = cls.r1.stdout + cls.r1.stderr
 
     @classmethod
@@ -667,7 +872,7 @@ class DryRun(unittest.TestCase):
                 ids |= {r["id"] for r in eval2.read_jsonl(self.w / "synthetic_hidden" / f)}
         finally:
             os.environ.pop("EVAL_HIDDEN_KEY", None)
-        self.assertEqual(len(ids), 365)
+        self.assertEqual(len(ids), 366)
         n_files = 0
         for p in self.w.rglob("*"):
             if not p.is_file():
@@ -679,12 +884,12 @@ class DryRun(unittest.TestCase):
         self.assertNotIn(MARK, self.out1)
         # no hidden id in the heartbeat or in any plain-text file outside the logs (the logs carry ids by design)
         hb = (self.w / "HEARTBEAT.md").read_text()
-        for i in list(ids)[:365]:
+        for i in list(ids)[:366]:
             self.assertNotIn(i, hb)
         for p in self.w.rglob("*"):
             if p.is_file() and not p.name.endswith(".enc") and "logs" not in p.relative_to(self.w).parts and p.name != "dry.key" and not p.name.endswith(".tmp"):
                 t = p.read_text(errors="ignore")
-                for i in ("hj-001", "hj-060", "tier_a-001", "tier_a3-060"):
+                for i in ("hj-001", "hj-061", "tier_a-001", "tier_a3-060"):
                     self.assertNotIn(i, t, f"{i} in {p.name}")
         # the logs hold ids and timings: progress lines of the hidden stages
         logs = "".join(p.read_text(errors="ignore") for p in (self.w / "logs").glob("*.log"))
@@ -693,7 +898,7 @@ class DryRun(unittest.TestCase):
     def test_the_shape_check_runs_before_the_gate_and_the_text_scan_passes_on_the_run(self):
         shape = (self.w / "shape.out").read_text()
         self.assertIn("shape: OK", shape)
-        self.assertIn("stub judge rows: 120 valid of 120", shape)
+        self.assertIn("stub judge rows: 122 valid of 122", shape)
         self.assertNotIn(MARK, shape)
         self.assertLess(self.out1.index("shape: OK"), self.out1.index("hidden gate: OPEN"))
         hb = (self.w / "HEARTBEAT.md").read_text()
@@ -778,7 +983,7 @@ class DryRunRefusals(unittest.TestCase):
     def test_wrong_row_count_refuses_the_hidden_stages(self):
         d, r = self.run_in("--synth-drop-a", "1", "--stages", "H1")
         self.assertEqual(r.returncode, 1)
-        self.assertIn("gate FAIL: hidden row counts 245, 60, 24, 36", r.stdout)
+        self.assertIn("gate FAIL: hidden row counts 245, 60, 25, 36", r.stdout)
         self.assertIn("tier_a: 244 rows, expected 245", r.stdout)
         self.assertFalse((d / "run/hidden/ans_Q4D_judged.jsonl.enc").exists())
 
@@ -908,7 +1113,7 @@ class RehearsalDryRun(unittest.TestCase):
     def setUpClass(cls):
         cls.tmp = Path(tempfile.mkdtemp(prefix="e2_rehdry_"))
         cls.w = cls.tmp / "run"
-        cls.r1 = sh("--dry-run", "--rehearsal", "--work", str(cls.w), "--allow-dirty")
+        cls.r1 = sh("--dry-run", "--rehearsal", "--work", str(cls.w), "--allow-dirty", "--margin-reading", "none")
         cls.out1 = cls.r1.stdout + cls.r1.stderr
 
     @classmethod

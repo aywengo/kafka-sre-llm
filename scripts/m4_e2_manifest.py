@@ -8,6 +8,8 @@ condition, not values. Outputs that hold hidden rows end in .enc.
 
   prepare          write the manifest (refuses to overwrite)            verify-manifest   compare the manifest with the current state
   gate             the hidden gate (every condition printed, exit 1 if any fails)
+  pin-check        the pinned files only (tracked files under scripts/, kafka_sre_rag/, tests/golden/, eval/m4/, requirements.txt, the hidden .enc
+                   files): the hash against the manifest, and no uncommitted change in a pinned path; the head commit is information only
   ledger           ledger rows 1 and 2 present, each with a date and a decision rule (the file is read, never written)
   counts           row counts of the hidden files (and rubric ids = item ids)
   shape            key names and counts of the hidden items and rubrics against what the answer step, the judge, the bundles and the scorer
@@ -44,7 +46,11 @@ sys.path.insert(0, str(ROOT))
 import eval2  # noqa: E402
 
 MANIFEST_VERSION = "e2_manifest/1"
-EXPECTED = {"tier_a": 245, "tier_a3": 60, "judged_1": 24, "judged_2": 36}
+EXPECTED = {"tier_a": 245, "tier_a3": 60, "judged_1": 25, "judged_2": 36}
+# What the run depends on: tracked files under these paths (the hash is over their working-tree content, taken at prepare). A commit that
+# touches only other files (MILESTONE.md, agents/, runs/, README.md, tests/ outside tests/golden) does not change it; the head commit is
+# recorded for information only.
+PIN_PATHS = ("scripts", "kafka_sre_rag", "tests/golden", "eval/m4", "requirements.txt")
 JUDGE = {"model": "DeepSeek-V4.1-Flash-1017-oQ4e-mtp", "settings_name": "deepseek-nothink-12k", "instruction": "v2", "coverage": True,
          "extra_body": {"chat_template_kwargs": {"thinking_mode": "chat"}, "max_tokens": 4096}, "source_chars": 12000, "passes": [1, 2],
          "concurrency": 3}
@@ -83,11 +89,39 @@ def git(*args, cwd=ROOT):
 
 
 def tree_dirty(repo):
-    """Tracked or untracked changes, except untracked files under eval/hidden/ (the encrypted hidden files wait there)."""
-    rc, out = git("status", "--porcelain", "--untracked-files=all", cwd=repo)
+    """Uncommitted changes (tracked or untracked) in a pinned path (PIN_PATHS); a change elsewhere does not count. -> list of status lines
+    (paths only), None when git fails."""
+    rc, out = git("status", "--porcelain", "--untracked-files=all", "--", *PIN_PATHS, cwd=repo)
     if rc != 0:
         return None
     return [l for l in out.splitlines() if l.strip() and not l.startswith("?? eval/hidden/")]
+
+
+def status_path(line):
+    """The path of a `git status --porcelain` line (the output is stripped, so the leading blank of the first line may be gone)."""
+    return line.split(None, 1)[-1]
+
+
+def pinned_files(repo):
+    """Tracked files under PIN_PATHS, sorted. -> list of paths relative to the repository."""
+    r = subprocess.run(["git", "ls-files", "-z", "--", *PIN_PATHS], cwd=repo, capture_output=True)
+    if r.returncode != 0:
+        raise eval2.EvalError("git ls-files failed in the repository")
+    return sorted(p for p in r.stdout.decode().split("\0") if p)
+
+
+def compute_pins(repo):
+    """The pinned state: sha256 of every tracked pinned file as it is in the working tree (a deleted file counts as 'missing'), and one hash
+    over the lot (path, content hash). Names and hashes only."""
+    repo = Path(repo)
+    files = {}
+    for p in pinned_files(repo):
+        f = repo / p
+        files[p] = sha(f) if f.is_file() else "missing"
+    h = hashlib.sha256()
+    for p, d in files.items():
+        h.update(f"{p}\0{d}\0".encode())
+    return {"paths": list(PIN_PATHS), "count": len(files), "sha256": h.hexdigest(), "files": files}
 
 
 def golden_hash(repo):
@@ -136,7 +170,8 @@ def compute(a):
         hidden[name] = {"file": Path(path).name, "sha256": sha(path)}
     m = {
         "manifest_version": MANIFEST_VERSION,
-        "commit": head if rc == 0 else None,
+        "commit": head if rc == 0 else None,   # information only: the run is pinned by "pinned" (files), not by the commit
+        "pinned": compute_pins(repo),
         "index": {"path": frozen["index_path"], "sha256": sha(idx), "recorded_sha256": frozen["sha256"],
                   "reranker_revision": (frozen.get("reranker") or {}).get("revision")},
         "chunks": {"name": chunks.name, "sha256": sha(chunks), "recorded_sha256": frozen["sha256"]},
@@ -211,7 +246,8 @@ def cmd_prepare(a):
     tmp = out.with_name(out.name + ".tmp")
     tmp.write_text(json.dumps(m, indent=1, sort_keys=True) + "\n")
     os.replace(tmp, out)
-    print(f"prepare: manifest written ({len(flat(m))} fields), commit {str(m['commit'])[:10]}, sha256 {sha(out)[:12]}")
+    print(f"prepare: manifest written ({len(flat(m))} fields), {m['pinned']['count']} pinned files (sha256 {m['pinned']['sha256'][:12]}), "
+          f"commit {str(m['commit'])[:10]} (information only), sha256 {sha(out)[:12]}")
     return 0
 
 
@@ -222,7 +258,45 @@ def check_manifest(a):
     want.pop("options", None)
     for d in (want, have):   # the list of every model the server lists is recorded for information; what is compared are the models the run uses
         (d.get("server") or {}).pop("models_listed", None)
+        d.pop("commit", None)   # the head commit is for information only: the pinned files decide (a commit elsewhere does not stop the run)
     return diff_names(want, have)
+
+
+def pin_problems(repo, man, allow_dirty=False):
+    """-> list of conditions that fail: a pinned file that differs from the manifest (named by path), or an uncommitted change in a pinned path."""
+    out = []
+    want = (man or {}).get("pinned")
+    if not want:
+        return ["the manifest records no pinned files (made by an older chain)"]
+    have = compute_pins(repo)
+    if have["sha256"] != want["sha256"]:
+        wf, hf = want.get("files") or {}, have["files"]
+        names = sorted(k for k in set(wf) | set(hf) if wf.get(k) != hf.get(k))
+        out.append("a pinned file changed since prepare: " + ", ".join(names[:12]) + (f" (and {len(names) - 12} more)" if len(names) > 12 else ""))
+    if not allow_dirty:
+        dirty = tree_dirty(repo)
+        if dirty is None:
+            out.append("git status failed")
+        elif dirty:
+            out.append(f"{len(dirty)} uncommitted change(s) in a pinned path: " + ", ".join(status_path(l) for l in dirty[:8]))
+    return out
+
+
+def cmd_pin_check(a):
+    repo = Path(a.repo)
+    man = rjson(a.manifest)
+    bad = pin_problems(repo, man, a.allow_dirty)
+    for spec in a.hidden or []:   # the hidden files the run reads: the hash of the .enc file against the manifest
+        name, _, path = spec.partition("=")
+        want = (man.get("hidden_files") or {}).get(name) or {}
+        if not Path(path).is_file() or sha(path) != want.get("sha256"):
+            bad.append(f"hidden file {name} differs from the manifest (or is missing)")
+    for b in bad:
+        print(f"pin REFUSED: {b}")
+    if not bad:
+        print(f"pin: {man['pinned']['count']} pinned files and {len(a.hidden or [])} hidden files match the manifest; "
+              f"head {str(git('rev-parse', 'HEAD', cwd=repo)[1])[:10]} (manifest {str(man.get('commit'))[:10]}), information only")
+    return 1 if bad else 0
 
 
 def cmd_verify_manifest(a):
@@ -767,16 +841,16 @@ def cmd_gate(a):
     if a.tests == "skip":
         cond("tests", True, "skipped (dry run)")
     else:
-        rc, head = git("rev-parse", "HEAD", cwd=repo)
+        pin_now = compute_pins(repo)["sha256"]   # keyed on the pinned files, not the commit: a commit elsewhere does not rerun the suite
         okf = Path(a.tests_ok_file) if a.tests_ok_file else None
-        if okf and okf.exists() and okf.read_text().strip() == head:
-            cond("tests", True, f"passed earlier on this commit ({head[:10]})")
+        if okf and okf.exists() and okf.read_text().strip() == pin_now:
+            cond("tests", True, f"passed earlier on these pinned files ({pin_now[:10]})")
         else:
             r = subprocess.run(a.test_cmd, shell=True, cwd=repo, capture_output=True, text=True)
             tail = (r.stdout + r.stderr).strip().splitlines()[-1:] or [""]
             cond("tests", r.returncode == 0, tail[0][:120])
             if r.returncode == 0 and okf:
-                okf.write_text(head + "\n")
+                okf.write_text(pin_now + "\n")
     v = subprocess.run([sys.executable, "-m", "kafka_sre_rag", "verify"], cwd=repo, capture_output=True, text=True)
     cond("verify", v.returncode == 0, "kafka_sre_rag verify")
     # 2. clean tree and commit recorded
@@ -788,11 +862,15 @@ def cmd_gate(a):
     cond("manifest file present", man is not None)
     rc, head = git("rev-parse", "HEAD", cwd=repo)
     if a.allow_dirty:
-        cond("clean tree", True, "not enforced (dry run)")
+        cond("no uncommitted change in a pinned path", True, "not enforced (dry run)")
     else:
         dirty = tree_dirty(repo)
-        cond("clean tree", dirty == [], f"{len(dirty or [])} changed file(s)" if dirty else "")
-    cond("commit recorded", bool(man) and rc == 0 and man.get("commit") == head, "manifest commit equals HEAD" if man else "")
+        cond("no uncommitted change in a pinned path", dirty == [], f"{len(dirty or [])} changed file(s): " + ", ".join(status_path(l) for l in (dirty or [])[:8]) if dirty else "")
+    cond("commit (information only)", True, ("manifest commit equals HEAD" if man.get("commit") == head else
+         f"HEAD {str(head)[:10]} differs from the manifest's {str(man.get('commit'))[:10]}; the pinned files decide") if man else "")
+    if man is not None:
+        pp = pin_problems(repo, man, True)   # the dirty part is the condition above
+        cond("pinned files", not pp, "; ".join(pp) if pp else f"{man['pinned']['count']} files match the manifest")
     # 3. every hash of the manifest
     if man is not None:
         bad = check_manifest(a)
@@ -812,10 +890,10 @@ def cmd_gate(a):
         if mk.exists():
             try:
                 d = rjson(mk)
-                ok = d.get("passed") is True and (man is None or d.get("commit") == man.get("commit"))
+                ok = d.get("passed") is True and (man is None or d.get("pin") == (man.get("pinned") or {}).get("sha256"))
             except Exception:  # noqa: BLE001
                 ok = False
-        cond(f"stage {stage} passed", ok, "marker present and for this commit" if ok else "no passed marker for this commit")
+        cond(f"stage {stage} passed", ok, "marker present and for these pinned files" if ok else "no passed marker for these pinned files")
     # 7. no plain-text file with a hidden id
     try:
         ids = hidden_ids(h)   # the ids of the files that read; a file that does not read is reported by the count condition
@@ -1029,6 +1107,20 @@ def cmd_verdict(a):
 
 # ---------------------------------------------------------------- synthetic hidden files (dry runs and tests)
 
+def cmd_tags_synth(a):
+    """A stand-in tag file for a dry run or a rehearsal: the first judged id of each of the two judged files under the tag conductor_exposed.
+    Written in plain, to a folder outside the work folder, and removed by the chain at its end."""
+    ids = []
+    for spec in a.hidden:
+        _, _, path = spec.partition("=")
+        rows = rows_of(path)
+        if rows:
+            ids.append(rows[0]["id"])
+    Path(a.out).write_text(json.dumps({"schema": 1, "tags": {"conductor_exposed": {"ids": sorted(ids)}}}) + "\n")
+    print(f"tags-synth: {len(ids)} ids")
+    return 0 if ids else 1
+
+
 def cmd_synth(a):
     """Synthetic hidden files of the right row counts, built from open items (so the scorer and the judge run on them), with new ids
     and a marker string in the question of every row. Encrypted with the key of the environment (a temporary key in dry runs)."""
@@ -1072,10 +1164,11 @@ def cmd_synth(a):
     for name, rows in pools.items():
         new = [mark(r, name, i + 1)[0] for i, r in enumerate(rows)]
         wrows(out / f"{name}.jsonl.enc", new)
-    j_items = b1 + b2   # the synthetic judged rows: 24 (first file) + 36 (the rest of B1 and all of B2)
-    j_rub = r1 + r2
+    p2, p2r = rd("eval/m4/pilot2/items.jsonl"), rd("eval/m4/pilot2/rubrics.jsonl")
+    j_items = b1 + b2 + p2[:1]   # the synthetic judged rows: 25 (first file) + 36 (the rest), as the real judged files
+    j_rub = r1 + r2 + [r for r in p2r if r["id"] == p2[0]["id"]]
     by_rub = {r["id"]: r for r in j_rub}
-    for name, lo, hi in (("judged_1", 0, 24), ("judged_2", 24, 60)):
+    for name, lo, hi in (("judged_1", 0, 25), ("judged_2", 25, 61)):
         its, rbs = [], []
         for i in range(lo, hi):
             it, old = mark(j_items[i], "hj", i + 1)
@@ -1090,7 +1183,7 @@ def cmd_synth(a):
             rbs.append(rb)
         wrows(out / f"{name}_items.jsonl.enc", its)
         wrows(out / f"{name}_rubrics.jsonl.enc", rbs)
-    print(f"synth: 4 items files ({245}, {60}, {24}, {36} rows) and 2 rubrics files in {out.name}")
+    print(f"synth: 4 items files ({245}, {60}, {25}, {36} rows) and 2 rubrics files in {out.name}")
     return 0
 
 
@@ -1242,6 +1335,11 @@ def build_parser():
             p.add_argument("--reading", default="both")
             p.add_argument("--f-judged", action="store_true")
             p.add_argument("--no-cross-judge", action="store_true")
+    pc = sub.add_parser("pin-check")
+    pc.add_argument("--repo", default=str(ROOT))
+    pc.add_argument("--manifest", required=True)
+    pc.add_argument("--hidden", nargs="*", default=[], metavar="NAME=PATH.enc")
+    pc.add_argument("--allow-dirty", action="store_true", help="dry runs: the uncommitted-change condition is not enforced")
     g = sub.choices["gate"]
     g.add_argument("--ledger", required=True)
     g.add_argument("--work-dir", required=True)
@@ -1330,6 +1428,9 @@ def build_parser():
     s = sub.add_parser("rehearsal-findings")
     s.add_argument("--dir", required=True, help="the bundles folder")
     s.add_argument("--seed", default=REH_SEED)
+    s = sub.add_parser("tags-synth")
+    s.add_argument("--out", required=True)
+    s.add_argument("--hidden", nargs="+", required=True, metavar="NAME=PATH.enc")
     s = sub.add_parser("synth")
     s.add_argument("--dir", required=True)
     s.add_argument("--marker", default="SYNTHMARK")
@@ -1337,10 +1438,10 @@ def build_parser():
     return ap
 
 
-CMDS = {"prepare": cmd_prepare, "verify-manifest": cmd_verify_manifest, "gate": cmd_gate, "ledger": cmd_ledger, "counts": cmd_counts, "rehearsal-prepare": cmd_rehearsal_prepare, "rehearsal-findings": cmd_rehearsal_findings, "shape": cmd_shape,
+CMDS = {"prepare": cmd_prepare, "verify-manifest": cmd_verify_manifest, "gate": cmd_gate, "pin-check": cmd_pin_check, "ledger": cmd_ledger, "counts": cmd_counts, "rehearsal-prepare": cmd_rehearsal_prepare, "rehearsal-findings": cmd_rehearsal_findings, "shape": cmd_shape,
         "scan": cmd_scan, "gate-g": cmd_gate_g, "check-answers": cmd_check_answers, "runline": cmd_runline, "judge-done": cmd_judge_done,
         "merge": cmd_merge, "subset": cmd_subset, "items-for": cmd_items_for, "empty-enc": cmd_empty_enc, "agreement": cmd_agreement,
-        "fake-status": cmd_fake_status, "packs-equal": cmd_packs_equal, "patched": cmd_patched, "verdict": cmd_verdict, "synth": cmd_synth}
+        "fake-status": cmd_fake_status, "packs-equal": cmd_packs_equal, "patched": cmd_patched, "verdict": cmd_verdict, "synth": cmd_synth, "tags-synth": cmd_tags_synth}
 
 
 def main(argv=None):
