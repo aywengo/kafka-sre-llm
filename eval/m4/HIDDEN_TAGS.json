@@ -1,0 +1,23 @@
+{
+ "schema": 1,
+ "note": "Ids only. Hidden items that get a second set of totals in every hidden report (all items, and without the tagged ones).",
+ "tags": {
+  "conductor_exposed": {
+   "ids": [
+    "oq-002",
+    "oq-010",
+    "oq-012",
+    "oq-018",
+    "oq-026",
+    "oq-032",
+    "oq-036",
+    "oq-041",
+    "oq-042",
+    "oq-047",
+    "oq-048"
+   ],
+   "since": "2026-11-20",
+   "reason": "the conductor saw the Owner's review notes on these hidden judged items; Owner's decision: keep them and report every hidden judged result with and without them"
+  }
+ }
+}

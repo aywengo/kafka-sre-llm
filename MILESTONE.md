@@ -113,6 +113,8 @@ thinking off.
 | 2026-11-18 | The 15 changes of the design review are accepted into the design; those that are the Owner's are marked as waiting | conductor |
 | 2026-11-18 | **Yes to all recommendations:** the 4-bit model on oMLX is the reference configuration; half of each tier hidden, encrypted, decisions on the hidden half, at most six looks; the downloads and installs for catalogues and checks; loading the 4-bit and full-precision 27B builds for the comparison; `questions_real` becomes a legacy set and the 4-bit bar a margin fixed before the run; public questions may be raw material after a licence check; the four bake-off candidates may be downloaded; other clients' models on the server may be unloaded when it is idle | Owner |
 | 2026-11-19 | **After the failed judging pilot:** build the judged tier with the analysis's changes and a second small pilot on fresh items; the first pilot stays a no-go and the second gets new criteria fixed beforehand; the judge's error flags count toward the bars of `GOAL.md` only after a reader has confirmed them; DeepSeek stays the judge, with the earlier judge re-judging a 24-item subset on every decision run; the Owner reviews which points are essential on his own questions | Owner |
+| 2026-11-20 | **Agreed with all recommendations L1 to L11 for the E2 and E3 runs:** the cost of 4-bit is tested one-sided (pass if a loss of more than 5 points is ruled out) (L1); the model patch step R2 stays off in the E3 measurement, inline marks only, and R2 is recorded as built but not tested on hidden data (L2); the sealed readers read default and strict answers (L3); the second judge's cross-check on 24 scenarios stays (L4); no full-precision run on the judged tier (L5); speed is reported per tier, a lower answer limit is its own item (L6); the 7 hidden valid-but-wrong items that share a published variant are redrawn (L7); the E3 reading may run while E2's mechanical runs go (L8); a restart after a crash, or a re-run of the scoring, is the same look (L9); the shape check of the hidden files is not a look (L10); E2 uses the Owner's questions and B3 as the hidden judged files (L11) | Owner |
+| 2026-11-20 | The Owner reviewed his own hidden questions: changes to nine, one kept as it is, oq-010 restored. The conductor saw his notes on these eleven items (see the log); the Owner's decision: the eleven stay in the hidden half, tagged (`eval/m4/HIDDEN_TAGS.json`), and every hidden judged result is reported with and without them | Owner |
 | 2026-11-20 | The new mechanical items stay at 88 open and 60 hidden (the mechanical tier is then 339 open and 305 hidden, 47 % hidden); the moved items are not dropped and no further hidden items are drawn | Owner |
 | 2026-11-20 | The plain-text leftovers of hidden items are deleted: three tool-result files now, the sealed sessions' transcripts after M4's hidden runs. The two final encrypted files of the Owner's 24 questions are committed (`3e62193`). The Owner has a 32 to 36 GB Apple Silicon laptop and runs the laptop tests himself from a committed plan and scripts, and sends back the outputs | Owner |
 | 2026-11-19 | **Agreed with the recommendations K1 to K6** (see "Waiting for the Owner", kept for the record): the coverage role is confirmed and every later batch needs the rubric chunk check at 95 % before any answer exists (K1); the judged tier is written at scale, the Owner's questions first, in batches of 30 (K2); WP5 stays open for one additive candidate, R3, tested once on B2 by the rule below, fixed before B2 exists (K3); E3: (a) to (g) as recommended, among them the amended wording, a separate grounded default prompt variant with its own pilot, the model patch step R2 kept on only by its rule, and no catalogue change (K4); the not-covered generator may read the frozen index (K5); the Owner's 34 questions are admitted under the working rule for public posts, all hidden, rubrics by sealed sessions, the plain copy out of the repository (K6) | Owner |
@@ -586,6 +588,37 @@ and J6 come from the mechanical tier and block nothing yet):
   tagged hidden valid-but-wrong items or tag only; L8 the E3 reading while E2's
   mechanical runs still go (yes). And the go for the run itself, after the chain's dry
   run and a review.
+- 2026-11-20, 04:00 to 09:15: the E2 chain was built (`f78eac7`), reviewed
+  (`runs/m4/reports/e2_chain_review.md`: go after six fixes; two progress lines would
+  have put per-item results of hidden items into plain logs) and fixed (`bb50bef`,
+  `92b2a74`, `fec92a6`, `e6ab705`), with a rehearsal mode (`b3db92b`). **The rehearsal
+  passed** (06:51 to 09:10, 2 h 18 min; `runs/m4/reports/e2_rehearsal_run.md`): every
+  hidden stage against the real server on 26 open items encrypted with a throwaway key,
+  no defect; the 10 gate answers byte-identical to S6's; median seconds per mechanical
+  answer 29.0 (4-bit default), 13.2 (strict, replayed packs), 10.4 (closed book), 50.3
+  (full precision), 18.7 (full precision, replayed), on 20 items; 76 s per judged answer
+  on 6; 25 to 27 s per judge call (48 calls), 684 and 974 s for the second judge (2
+  calls). Not exercised: resume after a failure, the real hidden files, real readings.
+  The revise step: the second development run and reading (B1, fitted items): net +0.3
+  counted errors per 10 in default, 0.0 in strict, one accepted patch harmful (it deleted
+  the flag that limited a reset to one partition); so R2 stays off (L2).
+- **Exposure, 2026-11-20.** The conductor created a notes file for the Owner's review of
+  his hidden questions; when the Owner saved it, the harness showed the conductor its
+  content. The conductor has therefore seen the Owner's notes (causes, points, parts of
+  reference answers) on eleven hidden judged items: oq-002, oq-010, oq-012, oq-018,
+  oq-026, oq-032, oq-036, oq-041, oq-042, oq-047, oq-048. No model saw anything and no
+  look was used. Nothing from those notes is used in any decision or brief. The Owner
+  decided to keep and tag them (see "Decisions"). From now on the conductor creates no
+  file meant for hidden content.
+- The Owner's questions after his review: sealed sessions applied his notes (all eleven
+  applied as written, none contradicted by a pinned source), reviewed them, and the
+  independent sealed count gives 120 of 125 points (96.0 %; partial oq-036 m1, oq-041 m1,
+  oq-049 m3 and m4, oq-050 m2). Final files `tier_b_owner_{items,rubrics}_final5` (25
+  items; oq-010 is a different family from oq-002). **The hidden judged half has 61
+  scenarios.**
+- Next, before the Owner's go for E2: redraw the 7 items (L7) with a short check; the
+  tag in the hidden reports; the chain pins file hashes, not the head commit; the two
+  ledger rows.
 - Waiting for the Owner, not blocking: redraw the 7 tagged valid-but-wrong hidden items
   or keep the tag only; the review lists above. The Owner sees the failed R3 check here;
   nothing further runs in WP5.
