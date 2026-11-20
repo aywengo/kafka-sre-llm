@@ -54,7 +54,7 @@ import eval2_score as sc  # noqa: E402
 from kafka_sre_rag import catalogue_a3  # noqa: E402
 from kafka_sre_rag.catalogue import KNOWN, Catalogues, catalogue_hash  # noqa: E402
 
-VERSION = "eval2_items_a3_vbw/3"
+VERSION = "eval2_items_a3_vbw/3"   # revision 3: see R3 below
 SEED = "m4-a3-vbw-1"
 TARGET_TOTAL = 32
 ORACLE_TYPES = ("semantic_rule", "forbidden_keys", "yaml_config_keys")
@@ -409,7 +409,7 @@ def b_v6(rng, cats, table, fresh=None):
     pool = fresh["pool"] if fresh else pick(rng, [("orders", 3), ("payments", 3), ("ledger", 2), ("shipments", 4), ("sessions", 5)], 4)
     out = []
     for i, (name, rep) in enumerate(pool):
-        ctl = i == (len(pool) - 1 if fresh else 3)
+        ctl = fresh["ctl"][i] if fresh and "ctl" in fresh else i == (len(pool) - 1 if fresh else 3)
         minisr = rep - 1 if ctl else rep
         if rep == 2 and ctl:
             rep, minisr = 3, 2
@@ -670,7 +670,131 @@ FRESH = {
 FRESH_PAIR = {"V1": "vbw:V1:c", "V2": "vbw:V2:c", "V3": "vbw:V3:c", "V5": "vbw:V5:b", "V6": "vbw:V6:b", "V7": "vbw:V7:c"}
 # A hidden fault of version 2 that is not used any more: V6 keeps the fault `orders:3` and gets the new control, so that the
 # hidden side has a pair (fault, control); the fault `sessions:5` is dropped (it was never in an open file). Its number is not reused.
-SKIP = {("V6", "sessions:5")}
+SKIP = {("V6", "sessions:5"), ("V6", "orders:3")}   # revision 3: orders:3 repeated the published fault `payments:3`
+# Revision 3: version-3 drafts (position k, 1-based) replaced because their variant was published.
+SKIP_FRESH = {("V1", 1), ("V1", 2), ("V2", 1), ("V2", 2), ("V7", 1), ("V7", 2)}
+
+# ------------------------------------------------------------------ revision 3 (Owner's decision L7, 2026-11-20)
+# The hidden valid-but-wrong items whose fault or control variant (eval2_items_a3.variant_key) was published in an open file
+# under other resource names are redrawn with variants that were never published; the new items are `-v3-1NN`. Every variant
+# is built from the same pinned sources and judged by the same oracles; the checks module is not touched.
+SOURCE_LINES = {
+    "restart_task": ("raw/strimzi/documentation/modules/configuring/proc-manual-restart-connector-task.adoc", 35,
+                     "Restart the connector task by adding the `strimzi.io/restart-task` annotation to the `KafkaConnector` resource:"),
+    "restart_task_id": ("raw/strimzi/documentation/modules/configuring/proc-manual-restart-connector-task.adoc", 33,
+                        "Task IDs are non-negative integers, starting from 0."),
+    "pdb_round_min": ("raw/kubernetes/content/en/docs/tasks/run-application/configure-pdb.md", 99,
+                      "rounds up to the nearest integer, so in this case, 4 Pods must be available. When you"),
+    "pdb_round_max": ("raw/kubernetes/content/en/docs/tasks/run-application/configure-pdb.md", 100,
+                      "specify the value `maxUnavailable` as a percentage, Kubernetes rounds up the number of"),
+}
+
+
+def line_source(key, entry):
+    f, ln, phrase = SOURCE_LINES[key]
+    assert phrase in (ROOT / f).read_text(errors="replace").split("\n")[ln - 1], "%s:%d does not hold the phrase" % (f, ln)
+    return {"catalogue": "raw", "entry": entry, "file": f, "line": ln, "phrase": phrase}
+
+
+def r3_v1(table):
+    """Intent: every pod of one namespace may reach the brokers. Wrong: both selectors in one entry (too narrow, only one app);
+    control: the namespaceSelector alone (documented to select all pods of the matching namespaces)."""
+    cluster, kns, cns, app, other = "ledger-kafka", "accounting", "treasury", "fx-rates", "audit"
+    nsl = lambda n: {"kubernetes.io/metadata.name": n}  # noqa: E731
+
+    def pol(frm):
+        return {"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy",
+                "metadata": {"name": "allow-%s-to-%s" % (cns, cluster), "namespace": kns},
+                "spec": {"podSelector": {"matchLabels": {"strimzi.io/cluster": cluster}}, "policyTypes": ["Ingress"],
+                         "ingress": [{"ports": [{"protocol": "TCP", "port": 9092}], "from": frm}]}}
+    tgt = {"namespace": kns, "pod_labels": {"strimzi.io/cluster": cluster}}
+    allns = {n: nsl(n) for n in (kns, cns, other)}
+    mk = lambda src, exp: {"type": "semantic_rule", "oracle": "netpol_allows", "rule": "V1", "port": 9092,  # noqa: E731
+                           "source": src, "target": tgt, "namespaces": allns, "expect": exp}
+    oc = [mk({"namespace": cns, "pod_labels": {"app": app}}, True), mk({"namespace": cns, "pod_labels": {"app": "other-" + app}}, True),
+          mk({"namespace": other, "pod_labels": {"app": app}}, False), mk({"namespace": kns, "pod_labels": {"app": app}}, False)]
+    nsel = {"namespaceSelector": {"matchLabels": nsl(cns)}}
+    both = {**nsel, "podSelector": {"matchLabels": {"app": app}}}
+    ctx = ("The brokers of the Kafka cluster `%s` run in namespace `%s`, where ingress is denied unless a NetworkPolicy allows it. "
+           "Every pod of namespace `%s`, whatever its labels, must reach the brokers on TCP 9092; nothing from other namespaces. "
+           "Does this NetworkPolicy do that?") % (cluster, kns, cns)
+    fl = lambda p: [(["metadata", "name"], p["metadata"]["name"]), (["metadata", "namespace"], kns),  # noqa: E731
+                    (["spec", "podSelector"], p["spec"]["podSelector"]), (["spec", "policyTypes"], ["Ingress"]),
+                    (["spec", "ingress", 0, "ports"], p["spec"]["ingress"][0]["ports"])]
+    srcs = anchors_of("V1", table)
+    out = []
+    for kind, shown, fixd, why in (
+            ("and_narrow", pol([both]), pol([nsel]),
+             "The entry has a namespaceSelector and a podSelector together, which selects only the pods labelled `app: %s` of `%s`; "
+             "the namespaceSelector alone selects all pods of the namespace." % (app, cns)),
+            ("ns_all", pol([nsel]), None,
+             "A namespaceSelector alone selects all pods of the matching namespace `%s`, and nothing from other namespaces." % cns)):
+        out.append(draft("V1", "control" if fixd is None else "wrong", "%s:%s" % (kind, cluster), ctx, "NetworkPolicy",
+                         dump(shown), why, fix=dump(fixd) if fixd else None,
+                         struct=yaml_struct("NetworkPolicy", "networking.k8s.io/v1", fl(shown)), oracle=oc, sources=srcs))
+    return out
+
+
+def r3_v2(table):
+    """Intent: restart one task. Wrong: `strimzi.io/restart: "true"` (restarts the connector instance); control: restart-task."""
+    name, cluster, ns = "billing-sink", "billing-connect", "finance"
+    cls = "org.apache.kafka.connect.file.FileStreamSinkConnector"
+    cfg = {"file": "/data/billing.txt", "topics": "billing"}
+    api = "kafka.strimzi.io/v1"
+
+    def conn(ann):
+        return {"apiVersion": api, "kind": "KafkaConnector",
+                "metadata": {"name": name, "namespace": ns, "labels": {"strimzi.io/cluster": cluster}, "annotations": ann},
+                "spec": {"class": cls, "tasksMax": 3, "config": cfg}}
+    fl = [(["metadata", "name"], name), (["spec", "class"], cls), (["spec", "config"], cfg)]
+    srcs = anchors_of("V2", table) + [line_source("restart_task", "V2 restart-task"), line_source("restart_task_id", "V2 restart-task")]
+    out = []
+    for tid, bad in ((2, True), (1, False)):
+        shown = conn({"strimzi.io/restart": "true"} if bad else {"strimzi.io/restart-task": str(tid)})
+        fixd = conn({"strimzi.io/restart-task": str(tid)}) if bad else None
+        intro = ("The `KafkaConnector` below runs on the Connect cluster `%s`. Task %d of it is stuck and I want Strimzi to restart "
+                 "that task only, not the connector instance, so I apply this manifest. Does it do that?") % (cluster, tid)
+        why = ("`strimzi.io/restart: \"true\"` restarts the connector instance; a single task is restarted with `strimzi.io/restart-task` "
+               "and its task id.") if bad else "`strimzi.io/restart-task: \"%d\"` restarts the task with id %d only." % (tid, tid)
+        oc = [{"type": "semantic_rule", "oracle": "restart_annotation", "rule": "V2", "kind": "KafkaConnector",
+               "expect": {"restart_connector": False, "task_id": tid}}]
+        out.append(draft("V2", "wrong" if bad else "control", "restart_task:%s-task%d" % (name, tid), intro, "KafkaConnector", dump(shown), why,
+                         fix=dump(fixd) if fixd else None, struct=yaml_struct("KafkaConnector", api, fl), oracle=oc, sources=srcs,
+                         rules=MECH_RULES["V2"] + ["restart.task_id"]))
+    return out
+
+
+def r3_v6():
+    """A wrong item with five replicas (the number was never published); the control `inventory:4` of version 3 stays."""
+    return {"pool": [("telemetry", 5)], "ctl": [False]}
+
+
+def r3_v7(table):
+    """Percentages round up (configure-pdb.md l.97-102): minAvailable "90%" of 5 pods is 5, so no eviction is allowed;
+    maxUnavailable "25%" of 4 pods is 1."""
+    out = []
+    for name, rep, spec, bad in (("search-kafka", 5, {"minAvailable": "90%"}, True), ("stream-kafka", 4, {"maxUnavailable": "25%"}, False)):
+        def pdb(s):
+            return {"apiVersion": "policy/v1", "kind": "PodDisruptionBudget",
+                    "metadata": {"name": "%s-pdb" % name, "namespace": "kafka"},
+                    "spec": {**s, "selector": {"matchLabels": {"app": name}}}}
+        shown = pdb(spec)
+        fixd = pdb({"maxUnavailable": 1}) if bad else None
+        intro = ("The StatefulSet `%s` runs %d broker pods. Node drains must be able to evict one broker pod at a time. "
+                 "Does this PodDisruptionBudget allow that?") % (name, rep)
+        why = ("A percentage of `minAvailable` is rounded up: 90 %% of %d pods is %d, so all pods must stay available and a node drain "
+               "cannot evict a broker pod." % (rep, rep)) if bad else \
+            "A percentage of `maxUnavailable` is rounded up: 25 %% of %d pods is 1, so one voluntary eviction at a time is allowed." % rep
+        oc = [{"type": "semantic_rule", "oracle": "pdb_evicts", "rule": "V7", "replicas": rep, "expect": True, "allowed": 1}]
+        fl = [(["metadata", "name"], "%s-pdb" % name), (["spec", "selector"], {"matchLabels": {"app": name}})]
+        out.append(draft("V7", "wrong" if bad else "control", "%s:%s" % ("minpct" if bad else "maxpct", name), intro,
+                         "PodDisruptionBudget", dump(shown), why, fix=dump(fixd) if fixd else None,
+                         struct=yaml_struct("PodDisruptionBudget", "policy/v1", fl), oracle=oc,
+                         sources=anchors_of("V7", table) + [line_source("pdb_round_min", "V7 percentage rounds up"),
+                                                            line_source("pdb_round_max", "V7 percentage rounds up")],
+                         rules=MECH_RULES["V7"] + ["pdb.percent_rounds_up"]))
+    return out
+
 
 BUILDERS = {"V1": b_v1, "V2": b_v2, "V3": b_v3, "V4": b_v4, "V5": b_v5, "V6": b_v6, "V7": b_v7, "V8": b_v8}
 
@@ -831,6 +955,23 @@ def generate(catalogues_dir=None, catalogues_a3_dir=None, dedup=True, seed=SEED)
             continue
         ds = BUILDERS[m](random.Random("%s|%s|%s|fresh" % (seed, chash, TEMPLATES[m])), cats, table, fresh=FRESH[m])
         for k, d in enumerate(ds, 1):
+            if (m, k) in SKIP_FRESH:
+                continue
+            d["extra"]["pair"] = FRESH_PAIR[m]
+            it = build_item(d, k, cats, chash, chash_a3, ver="v3")
+            if dedup:
+                hit, dd = a1.near_duplicate(it["question"], corpus)
+                it["dedup"] = dd
+                if hit:
+                    generate.dropped.append((it["id"], dd))
+                    continue
+            items.append(it)
+    r3 = {"V1": r3_v1(table), "V2": r3_v2(table), "V6": BUILDERS["V6"](random.Random("r3"), cats, table, fresh=r3_v6()),
+          "V7": r3_v7(table)}
+    for m in ["V1", "V2", "V6", "V7"]:
+        if not status[m][0]:
+            continue
+        for k, d in enumerate(r3[m], 101):
             d["extra"]["pair"] = FRESH_PAIR[m]
             it = build_item(d, k, cats, chash, chash_a3, ver="v3")
             if dedup:

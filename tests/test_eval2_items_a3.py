@@ -351,7 +351,10 @@ class SharedVariants(unittest.TestCase):
         self.assertEqual(m["total"], sum(m["per_template"].values()))
         self.assertEqual(m["total"], sum(1 for i in r["hidden"] if i.get("shares_variant_with_published")))
         # tagged, not moved: the split is the one by publication
-        self.assertEqual(asm.manifest_of(r)["revision"]["number"], 2)
+        self.assertEqual(asm.manifest_of(r)["revision"]["number"], 3)
+        # revision 3: no hidden valid-but-wrong item shares a published variant any more (the safe_order tags stay)
+        self.assertNotIn("valid_but_wrong", m["per_kind"])
+        self.assertEqual(m["per_kind"].get("safe_order"), 5)
 
     def test_the_record_carries_the_variant_of_every_published_vbw_and_order_item(self):
         rec = json.loads((ROOT / asm.PUBLISHED_PATH).read_text())
@@ -497,7 +500,7 @@ class PublishedOpenFiles(unittest.TestCase):
         self.assertIn("new draws (ids -v3- and 2xx) per template", text)
         self.assertIn("hidden against the published open items (60 hidden)", text)
         m = asm.manifest_of(r)
-        self.assertEqual(sum(m["fresh_items"].values()), 29)             # 6 client, 4 not-covered, 3 order, 6 sizing, 10 valid-but-wrong
+        self.assertEqual(sum(m["fresh_items"].values()), 30)             # 6 client, 4 not-covered, 3 order, 6 sizing, 11 valid-but-wrong (revision 3: one more V6 draw)
         self.assertEqual(sum(m["published_matches"].values()), len(r["open"]))
         for h in r["hidden"]:
             self.assertNotIn(h["question"][:60], text)

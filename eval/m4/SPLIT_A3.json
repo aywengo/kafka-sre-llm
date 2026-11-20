@@ -40,7 +40,7 @@
   "size_streams_cache": 1,
   "vbw_default_value": 2,
   "vbw_heartbeat_session": 1,
-  "vbw_min_isr_replicas": 1,
+  "vbw_min_isr_replicas": 2,
   "vbw_netpol_from": 2,
   "vbw_pdb_no_eviction": 2,
   "vbw_restart_annotation": 2
@@ -53,11 +53,11 @@
   "eval2_items_a3_gap.py": "f77c6e739de3d0503cee2698136965d8b47bd1b6fb58bf2a822b343dc909dbef",
   "eval2_items_a3_order.py": "166fc7877f65aae434181e3e7686902cf299ba2f1b58430133b4a98d6f40c809",
   "eval2_items_a3_sizing.py": "0c191218d123b04c1b06661563e537d363456a45f7fc4da8b0533ef071fdbe99",
-  "eval2_items_a3_vbw.py": "ebcd38d384e0c8cddfaa325ff268f066209037a8755ae8e4066ff2874e1ba45f",
+  "eval2_items_a3_vbw.py": "24731e75c34941b5c97a5355fae93d0c69e9492007e9a647ecd945357002e757",
   "javacheck/ListCalls.java": "4c4402ebf01d630263de0389fa6d7b0f251c3dcca78b7c1ae6d4da85b46cd967"
  },
  "grouping": "items with `pair` by it; all other items by their own family",
- "items_sha256": "d9e1789787cad044b23ddc58652baf6ecb0a36234db826280778d13aef2639a0",
+ "items_sha256": "e01bc96ac66d365a6cd77fdbf6e3316c61102a6c739e24d06bf74a25f9afc8e5",
  "items_total": 148,
  "kinds_missing": [],
  "near_duplicate_limit": "items of one template are parameter variants of one wording: the near-duplicate thresholds (Jaccard 0.5, containment 0.8) cannot hold between a hidden item and an open item of the same template; hidden items differ from every published item by the rule above",
@@ -66,8 +66,8 @@
    "items": 60,
    "note": "encrypted with a random salt: the ciphertext differs on every run; the plaintext (jsonl, sort_keys, in the order of the items) is reproduced exactly",
    "path": "eval/hidden/tier_a3.jsonl.enc",
-   "plaintext_sha256": "6ad7b65b4e6b01b119322faf28856951eff906ed1f406f14869f8c3e7a1d5a07",
-   "sha256": "2411879b235fd541b37cb2f0a325ab051ceb2fa594ecbbb132c34d06df7219de"
+   "plaintext_sha256": "e4df9171772c03629a576f11440da2409a307370e29a445645c366cb2e7b7286",
+   "sha256": "16383dc4581d44b9d9f806d55af8a0d7a850e490dbb65ced6eb8a6750c15202a"
   },
   "open": {
    "items": 88,
@@ -132,28 +132,23 @@
   }
  ],
  "revision": {
-  "number": 2,
-  "reason": "the three order_reassign references saved the whole --generate output (two JSON blocks) as the plan file; they now save the proposed block as the docs describe (new ids); hidden items that share a published item's fault or scenario with other resource names are tagged (shares_variant_with_published)"
+  "number": 3,
+  "reason": "Owner's decision L7 (2026-11-20): the hidden valid-but-wrong items whose fault or control variant was published in an open file under other resource names (netpol, pdb, restart, min_isr_replicas) are redrawn with variants never published, built from the pinned sources (new ids -v3-1NN); revision 2 (order_reassign references, shares_variant_with_published tag) stays; the safe_order tags stay"
  },
  "rule": "groups on one side (an item and its control, a task and its restatement, by `pair`); a group with an item that is in an open file of an earlier version (same normalised question, same drawn entry, or the same words: Jaccard of the token sets of at least leak_jaccard) goes open as a whole; every other group is hidden, so the hidden side holds only items that were never open (eval2_items_a3.split_by_publication)",
  "shares_variant_with_published": {
   "per_kind": {
-   "safe_order": 5,
-   "valid_but_wrong": 7
+   "safe_order": 5
   },
   "per_template": {
    "order_app_reset": 1,
    "order_argo_sync": 1,
    "order_reassign": 1,
    "order_sg_delete_offsets": 1,
-   "order_shg_reset": 1,
-   "vbw_min_isr_replicas": 1,
-   "vbw_netpol_from": 2,
-   "vbw_pdb_no_eviction": 2,
-   "vbw_restart_annotation": 2
+   "order_shg_reset": 1
   },
   "rule": "hidden items whose `variant` (the entry without resource names: family label minus its resource segment, for valid_but_wrong plus the failure class; eval2_items_a3.variant_key) equals that of an item of A3_PUBLISHED_OPEN.json; tagged `shares_variant_with_published: true`, not moved; hidden reports give the total with and without them",
-  "total": 12
+  "total": 5
  },
  "split": "by publication",
  "templates_one_side": []

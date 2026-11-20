@@ -46,9 +46,10 @@ import eval2  # noqa: E402
 import eval2_items_a1 as a1  # noqa: E402
 
 VERSION = "eval2_items_a3/3"
-REVISION = {"number": 2, "reason": "the three order_reassign references saved the whole --generate output (two JSON blocks) as the plan file; "
-                                   "they now save the proposed block as the docs describe (new ids); hidden items that share a published "
-                                   "item's fault or scenario with other resource names are tagged (shares_variant_with_published)"}
+REVISION = {"number": 3, "reason": "Owner's decision L7 (2026-11-20): the hidden valid-but-wrong items whose fault or control variant was published "
+                                   "in an open file under other resource names (netpol, pdb, restart, min_isr_replicas) are redrawn with variants "
+                                   "never published, built from the pinned sources (new ids -v3-1NN); revision 2 (order_reassign references, "
+                                   "shares_variant_with_published tag) stays; the safe_order tags stay"}
 SEED = "m4-a3-3"          # exposure draw of version 3 (version 1 used m4-a3-1, version 2 m4-a3-2)
 SPLIT_SEED = 20261119    # the split draw of version 2: not used for the a3 split any more (publication decides), kept for the record
 OLD_SPLIT_SEED = 20261118  # the seed of the 496: only for the proof that the 496 do not move

@@ -135,6 +135,10 @@ class FixRound2(unittest.TestCase):
     def of(self, tpl):
         return [i for i in self.items if i["template"] == tpl]
 
+    def legacy(self, tpl):
+        """The items of a template that are not revision-3 draws (`-v3-1NN`)."""
+        return [i for i in self.of(tpl) if not re.search(r"-v3-1\d\d$", i["id"])]
+
     def run_oracle(self, it, doc):
         oracle = it["vbw"]["oracle_checks_on_control"]
         res = sc.run_checks({"id": it["id"], "checks": oracle}, "```yaml\n%s\n```" % doc.rstrip("\n"), self.cats)
@@ -177,10 +181,10 @@ class FixRound2(unittest.TestCase):
                 self.assertTrue(any(w["pair"] == c["pair"] and w["vbw"]["role"] == "wrong" for w in self.of(tpl)), c["id"])
 
     def test_round_2_the_draws_are_new_entries_and_one_old_fault_is_dropped(self):
-        v3 = [i for i in self.items if "-v3-" in i["id"]]
+        v3 = [i for i in self.items if "-v3-" in i["id"] and not re.search(r"-v3-1\d\d$", i["id"])]
+        # revision 3 replaced the version-3 drafts of V1, V2 and V7 (published variants) by `-v3-1NN` draws
         self.assertEqual(sorted(i["template"] for i in v3), sorted(
-            ["vbw_netpol_from"] * 2 + ["vbw_restart_annotation"] * 2 + ["vbw_default_value"] * 2 + ["vbw_pdb_no_eviction"] * 2
-            + ["vbw_heartbeat_session", "vbw_min_isr_replicas"]))
+            ["vbw_default_value"] * 2 + ["vbw_heartbeat_session", "vbw_min_isr_replicas"]))
         self.assertEqual(len({i["family"] for i in self.items}), len(self.items))
         # the dropped fault keeps its number free: version-2 ids stay what they were
         self.assertNotIn("a3-vbw_min_isr_replicas-v2-003", {i["id"] for i in self.items})
@@ -197,7 +201,7 @@ class FixRound2(unittest.TestCase):
         self.assertEqual(sum(1 for i in self.items if "note" in i), 1)
 
     def test_v1_four_probes_and_the_reviewers_wrong_fixes(self):
-        for it in self.of("vbw_netpol_from"):
+        for it in self.legacy("vbw_netpol_from"):
             probes = [c for c in it["vbw"]["oracle_checks_on_control"] if c["oracle"] == "netpol_allows"]
             self.assertEqual([c["expect"] for c in probes], [True, False, False, False])
             self.assertEqual(len({(c["source"]["namespace"], str(c["source"]["pod_labels"])) for c in probes}), 4)
@@ -219,7 +223,7 @@ class FixRound2(unittest.TestCase):
             self.assertTrue(self.run_oracle(it, self.with_from(it, [alt])), it["id"])
 
     def test_v2_expect_states_all_three_flags(self):
-        for it in self.of("vbw_restart_annotation"):
+        for it in self.legacy("vbw_restart_annotation"):
             for c in it["vbw"]["oracle_checks_on_control"]:
                 self.assertTrue({"restart_connector", "include_tasks", "only_failed"} <= set(c["expect"]), it["id"])
 
@@ -251,6 +255,98 @@ class FixRound2(unittest.TestCase):
         self.assertTrue(self.run_oracle(mm2, self.fix_of(mm2)))
         d["metadata"]["annotations"]["strimzi.io/restart-connector"] = ann + ",onlyFailed"
         self.assertFalse(self.run_oracle(mm2, sc.yaml.safe_dump(d, sort_keys=False)))
+
+    # ---- revision 3 (Owner's decision L7): variants that were never published
+    R3 = {"vbw_netpol_from": 2, "vbw_restart_annotation": 2, "vbw_pdb_no_eviction": 2, "vbw_min_isr_replicas": 1}
+
+    def r3(self, tpl):
+        return [i for i in self.of(tpl) if re.search(r"-v3-1\d\d$", i["id"])]
+
+    def test_r3_draws_exist_and_replace_the_published_variant_drafts(self):
+        ids = {i["id"] for i in self.items}
+        for tpl, n in self.R3.items():
+            self.assertEqual(len(self.r3(tpl)), n, tpl)
+        for gone in ("a3-vbw_netpol_from-v3-001", "a3-vbw_netpol_from-v3-002", "a3-vbw_restart_annotation-v3-001",
+                     "a3-vbw_restart_annotation-v3-002", "a3-vbw_pdb_no_eviction-v3-001", "a3-vbw_pdb_no_eviction-v3-002",
+                     "a3-vbw_min_isr_replicas-v2-002"):
+            self.assertNotIn(gone, ids)
+        self.assertIn("a3-vbw_min_isr_replicas-v3-001", ids)   # the hidden control, unchanged
+        self.assertEqual(len(self.items), 41)
+
+    def test_r3_variants_differ_from_the_published_ones(self):
+        import eval2_items_a3 as asm
+        rec = json.loads((ROOT / asm.PUBLISHED_PATH).read_text())
+        pub = {i["variant"] for v in rec["versions"] for i in v["items"] if i.get("variant")}
+        for tpl in self.R3:
+            for it in self.r3(tpl):
+                self.assertNotIn(asm.variant_key(it), pub, it["id"])
+
+    def test_r3_references_pass_and_perturbations_fail(self):
+        for tpl in self.R3:
+            for it in self.r3(tpl):
+                ref = sc.run_checks(it, it["reference"], self.cats)
+                self.assertTrue(all(r["pass"] for r in ref), it["id"])
+                pert = sc.run_checks(it, it["perturbed_reference"], self.cats)
+                self.assertFalse(all(r["pass"] for r in pert), it["id"])
+                self.assertTrue(all(s["file"] and s["line"] for s in it["sources"]), it["id"])
+
+    def test_r3_netpol_narrow_and_its_wrong_fixes(self):
+        w = next(i for i in self.r3("vbw_netpol_from") if i["vbw"]["role"] == "wrong")
+        c = next(i for i in self.r3("vbw_netpol_from") if i["vbw"]["role"] == "control")
+        d = sc.yaml.safe_load(self.fix_of(w))
+        ns = d["spec"]["ingress"][0]["from"][0]
+        self.assertEqual(list(ns), ["namespaceSelector"])
+        self.assertTrue(self.run_oracle(w, self.fix_of(w)))
+        self.assertTrue(self.run_oracle(w, c["vbw"]["control_artifact"]))
+        both = {**ns, "podSelector": {"matchLabels": {"app": "fx-rates"}}}
+        self.assertFalse(self.run_oracle(w, self.with_from(w, [both])))              # the shown fault
+        self.assertFalse(self.run_oracle(w, self.with_from(w, [{"podSelector": {}}])))  # own namespace only
+        # correct rewording: matchExpressions instead of matchLabels
+        alt = {"namespaceSelector": {"matchExpressions": [{"key": "kubernetes.io/metadata.name", "operator": "In",
+                                                            "values": ["treasury"]}]}}
+        self.assertTrue(self.run_oracle(w, self.with_from(w, [alt])))
+
+    def test_r3_restart_task_and_its_wrong_fixes(self):
+        w = next(i for i in self.r3("vbw_restart_annotation") if i["vbw"]["role"] == "wrong")
+
+        def ann(value_key, value):
+            d = sc.yaml.safe_load(self.fix_of(w))
+            d["metadata"]["annotations"] = {value_key: value}
+            return sc.yaml.safe_dump(d, sort_keys=False)
+        self.assertTrue(self.run_oracle(w, self.fix_of(w)))
+        self.assertTrue(self.run_oracle(w, ann("strimzi.io/restart-task", "2")))
+        self.assertFalse(self.run_oracle(w, ann("strimzi.io/restart-task", "1")))      # another task
+        self.assertFalse(self.run_oracle(w, ann("strimzi.io/restart", "true")))        # the shown fault
+        self.assertFalse(self.run_oracle(w, ann("strimzi.io/restart", "includeTasks")))
+        self.assertFalse(self.run_oracle(w, ann("strimzi.io/restart-task", "two")))
+
+    def test_r3_pdb_percentages_round_up(self):
+        w = next(i for i in self.r3("vbw_pdb_no_eviction") if i["vbw"]["role"] == "wrong")
+        c = next(i for i in self.r3("vbw_pdb_no_eviction") if i["vbw"]["role"] == "control")
+
+        def pdb(it, spec):
+            d = sc.yaml.safe_load(self.fix_of(it))
+            d["spec"].pop("maxUnavailable", None)
+            d["spec"].update(spec)
+            return sc.yaml.safe_dump(d, sort_keys=False)
+        self.assertTrue(self.run_oracle(w, self.fix_of(w)))
+        self.assertFalse(self.run_oracle(w, pdb(w, {"minAvailable": "90%"})))         # 5 pods: rounds up to 5
+        self.assertFalse(self.run_oracle(w, pdb(w, {"maxUnavailable": 0})))
+        self.assertTrue(self.run_oracle(w, pdb(w, {"maxUnavailable": "20%"})))        # 1 of 5
+        self.assertFalse(self.run_oracle(w, pdb(w, {"maxUnavailable": "50%"})))       # 3 of 5: more than one
+        self.assertTrue(self.run_oracle(c, self.fix_of(c)))                            # 25 % of 4 = 1
+        self.assertFalse(self.run_oracle(c, pdb(c, {"maxUnavailable": "50%"})))
+
+    def test_r3_min_isr_five_replicas(self):
+        w = self.r3("vbw_min_isr_replicas")[0]
+        self.assertEqual(w["vbw"]["role"], "wrong")
+        self.assertTrue(self.run_oracle(w, self.fix_of(w)))
+        d = sc.yaml.safe_load(self.fix_of(w))
+        self.assertEqual(d["spec"]["replicas"], 5)
+        d["spec"]["config"]["min.insync.replicas"] = 5
+        self.assertFalse(self.run_oracle(w, sc.yaml.safe_dump(d, sort_keys=False)))
+        d["spec"]["config"]["min.insync.replicas"] = 3
+        self.assertTrue(self.run_oracle(w, sc.yaml.safe_dump(d, sort_keys=False)))   # another correct value
 
     def test_v7_exactly_one_allowed(self):
         for it in self.of("vbw_pdb_no_eviction"):
