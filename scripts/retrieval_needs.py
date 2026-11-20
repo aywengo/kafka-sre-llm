@@ -97,8 +97,10 @@ def fact_chunks(it, chunks):
     if "absent" in s or not s.get("entry"):
         return None, "no_positive_fact"
     f = s.get("file") or ""
-    cat = s["catalogue"]
+    cat = s.get("catalogue")
     if cat == "kafka_config" and f.startswith("raw/"):
+        if "/" not in s["entry"]:      # an entry not of the form scope/key (the a3 set): no single locatable fact
+            return None, "unresolved"
         key = s["entry"].split("/", 1)[1]
         hits = [c["id"] for c in chunks if c["path"] == f and (
             c["title"] == key or ("## " + key + "\n") in c["text"] or c["text"].rstrip().endswith("## " + key))]
@@ -112,7 +114,10 @@ def fact_chunks(it, chunks):
     return (hits, "located") if hits else (None, "unresolved")
 
 
-def build(index=INDEX, ids_file=None):
+def build(index=INDEX, ids_file=None, tier_a_files=None):
+    """tier_a_files: open tier A files (default: eval/m4/open/tier_a.jsonl). Items tagged `not_in_index` (the a3 set
+    marks items whose facts are not in the index) get a fact row with status not_in_index and no chunks, reported
+    apart by the funnel; every other item is handled as before."""
     check_index_hash(index)
     chunks = rd(index)
     byid = {c["id"]: c for c in chunks}
@@ -122,7 +127,15 @@ def build(index=INDEX, ids_file=None):
               "chunks": [c for c in r["covered_chunks"] if c in byid]} for r in rubrics]
     kinds = collections.Counter()
     facts = []
-    for it in rd(TIER_A):
+    tagged = []
+    for it in [it for f in (tier_a_files or [TIER_A]) for it in rd(f)]:
+        if it.get("not_in_index") is True:
+            kinds["not_in_index_tagged"] += 1
+            tagged.append(it["id"])
+            facts.append({"row_type": "fact", "set": "dev", "item": it["id"], "item_kind": it["kind"],
+                          "catalogue": None, "entry": None, "status": "not_in_index", "chunks": [],
+                          "tags": ["not_in_index"]})
+            continue
         ids, st = fact_chunks(it, chunks)
         kinds[st] += 1
         if ids is None:
@@ -134,12 +147,14 @@ def build(index=INDEX, ids_file=None):
     info = {"scenarios": sum(1 for r in rows if r["row_type"] == "scenario"),
             "covering_chunk_refs": sum(len(r["chunks"]) for r in rows if r["row_type"] == "scenario"),
             "points": collections.Counter(r["status"] for r in rows if r["row_type"] == "point"),
-            "facts": len(facts), "fact_scan": dict(kinds),
+            "facts": sum(1 for r in facts if r["status"] == "mapped"), "fact_scan": dict(kinds),
             "multi_chunk_facts": [r["item"] for r in facts if len(r["chunks"]) > 1],
             "c1_present": sorted(set(C1) & {r["item"] for r in facts})}
+    if tagged:
+        info["not_in_index_tagged"] = len(tagged)
     if ids_file and Path(ids_file).exists():
         want = set(Path(ids_file).read_text().split())
-        got = {r["item"] for r in facts}
+        got = {r["item"] for r in facts if r["status"] == "mapped"}
         info["vs_ids_file"] = {"in_file": len(want), "missing_from_build": sorted(want - got),
                                "extra_in_build": sorted(got - want)}
     return rows, info
@@ -202,6 +217,8 @@ def main(argv=None):
     ap.add_argument("--out", default=None, help=f"default {OUT}, or {B1_OUT} with --b1")
     ap.add_argument("--b1", action="store_true", help="build the B1 needs file instead of the development one")
     ap.add_argument("--ids-file", default="runs/m4/reports/wp5_dev_tierA_ids.txt")
+    ap.add_argument("--tier-a", nargs="+", default=[TIER_A], metavar="FILE",
+                    help=f"open tier A file(s), for example {TIER_A} eval/m4/open/tier_a3.jsonl (default: {TIER_A})")
     a = ap.parse_args(argv)
     if a.b1:
         rows = build_b1()
@@ -209,7 +226,7 @@ def main(argv=None):
         print(f"wrote {len(rows)} rows (+ header) to {a.out or B1_OUT}")
         return
     a.out = a.out or OUT
-    rows, info = build(INDEX, a.ids_file)
+    rows, info = build(INDEX, a.ids_file, a.tier_a)
     write(rows, a.out)
     print(json.dumps(info, indent=1, default=dict))
     print(f"wrote {len(rows)} rows (+ header) to {a.out}")

@@ -182,6 +182,44 @@ def read_items(path):
     return validate_items(read_jsonl(path))
 
 
+def items_paths(items):
+    """The items argument as a list of paths: one path (str or Path) or several."""
+    return [items] if isinstance(items, (str, Path)) else list(items)
+
+
+def items_hidden(items):
+    """True when the items file(s) are hidden (.enc). Open and hidden files are never mixed in one run."""
+    flags = {is_hidden(p) for p in items_paths(items)}
+    if len(flags) > 1:
+        raise EvalError("open and hidden items files are never mixed in one run")
+    return flags.pop()
+
+
+def read_items_files(items):
+    """Rows of one or several items files, in the order given; ids are unique across all of them."""
+    items_hidden(items)
+    rows = []
+    for p in items_paths(items):
+        rows += read_jsonl(p)
+    return validate_items(rows)
+
+
+def items_digest(items):
+    """sha256 of one items file; for several files the sha256 of their sha256 lines in the order given."""
+    paths = items_paths(items)
+    if len(paths) == 1:
+        return sha256_file(paths[0])
+    return sha256_bytes("".join(sha256_file(p) + "\n" for p in paths).encode())
+
+
+def items_files_record(items, rows=None):
+    """Manifest field for several items files (None for one file: its manifest is unchanged): name, sha256, count."""
+    paths = items_paths(items)
+    if len(paths) == 1:
+        return None
+    return [{"name": Path(p).name, "sha256": sha256_file(p), "count": len(read_jsonl(p))} for p in paths]
+
+
 def full_question(item):
     q = item["question"]
     if item.get("evidence"):
@@ -338,6 +376,7 @@ def listed_model(gen):
 
 
 def build_manifest(a, gen, cfg, items_file, n_items, subset, replay_info):
+    """items_file: one path or a list of paths (several files add the field items_files; one file adds nothing)."""
     from kafka_sre_rag import pipeline, profiles
     ident = getattr(gen, "identity", {}) or {}
     listing = listed_model(gen)
@@ -369,11 +408,14 @@ def build_manifest(a, gen, cfg, items_file, n_items, subset, replay_info):
         "catalogue_sha256": catalogue_hash(a.catalogue) if a.catalogue else None,
         "runtime_git_commit": commit, "runtime_tree_dirty": dirty,
         "concurrency": 1, "host_class": a.host_class,
-        "items_sha256": sha256_file(items_file), "items_count": n_items, "subset": subset,
+        "items_sha256": items_digest(items_file), "items_count": n_items, "subset": subset,
         "replay": replay_info, "hidden": is_hidden(a.out),
         "started": datetime.now(timezone.utc).isoformat(timespec="seconds"), "ended": None,
     }
     m.update(profiles.manifest_fields(profile))  # nothing is added for the frozen profile
+    rec = items_files_record(items_file)
+    if rec is not None:
+        m["items_files"] = rec
     return m
 
 
@@ -468,14 +510,14 @@ def cmd_revise(a, out=sys.stdout):
     from kafka_sre_rag import config, evalhooks, revise as rv, service
     src_path = Path(a.revise_from)
     a.out = a.out or revise_out_path(src_path)
-    hidden = is_hidden(a.items)
+    hidden = items_hidden(a.items)
     if not (hidden == is_hidden(a.out) == is_hidden(src_path)):
         raise EvalError("hidden items, the stored answers and the records file must all end in .enc, or none")
     if Path(a.out).resolve() == src_path.resolve():
         raise EvalError("--out is the stored answers file; the stored answers are never changed")
     if not a.catalogue:
         raise EvalError("--revise-from needs --catalogue DIR (the catalogues of the check)")
-    items = read_items(a.items)
+    items = read_items_files(a.items)
     if a.limit:
         items = items[: a.limit]
     stored = {r["id"]: r for r in read_jsonl(src_path)}
@@ -497,13 +539,15 @@ def cmd_revise(a, out=sys.stdout):
     ident = getattr(gen, "identity", None) or {}
     commit, dirty = git_info()
     manifest = {"harness": "eval2", "kind": "revise", "config": a.config, "answers_sha256": sha256_file(src_path),
-                "answers_run": (read_manifest(src_path) or {}).get("run"), "items_sha256": sha256_file(a.items),
+                "answers_run": (read_manifest(src_path) or {}).get("run"), "items_sha256": items_digest(a.items),
                 "items_count": len(items), "r2": bool(a.r2), "backend": ident.get("backend"),
                 "model_requested": ident.get("model"), "max_tokens": a.max_tokens or rv.REVISE_MAX_TOKENS,
                 "checker_catalogue_hash": checker.catalogue_hash, "revise_version": rv.VERSION,
                 "revise_layout": rv.LAYOUT, "revise_prompt_sha256": rv.prompt_sha256(),
                 "runtime_git_commit": commit, "runtime_tree_dirty": dirty, "hidden": hidden,
                 "started": datetime.now(timezone.utc).isoformat(timespec="seconds"), "ended": None}
+    if items_files_record(a.items) is not None:
+        manifest["items_files"] = items_files_record(a.items)
     manifest["run"] = run_id(manifest)
     store = AnswerStore(a.out)
     old = read_manifest(a.out)
@@ -552,10 +596,10 @@ def cmd_answer(a, out=sys.stdout):
         return cmd_revise(a, out)
     if not a.out:
         raise EvalError("--out is required")
-    hidden = is_hidden(a.items)
+    hidden = items_hidden(a.items)
     if hidden != is_hidden(a.out):
         raise EvalError("hidden items need an answers file ending in .enc, and the other way round")
-    items = read_items(a.items)
+    items = read_items_files(a.items)
     subset = None
     if a.subset == "smoke":
         if hidden:
@@ -684,7 +728,32 @@ def P_idcheck_block(rows, score_file, hidden, P):
         P(f"identifier check not run: {type(e).__name__}")
 
 
-def report_one(path, scores=None, out=sys.stdout):
+SHARES_VARIANT = "shares_variant_with_published"
+
+
+def items_breakdown(items, a_rows, hidden, P):
+    """Totals per items file and per kind from the tier A score rows; counts only, never ids or text. A file whose
+    items carry `shares_variant_with_published` also gets its total without those items."""
+    if items_hidden(items) != hidden:
+        raise EvalError("--items must be hidden exactly when the answers file is hidden")
+    by_id = {s["id"]: s for s in a_rows}
+    for p in items_paths(items):
+        rows = read_jsonl(p)
+        pairs = [(it, by_id[it["id"]]) for it in rows if it["id"] in by_id]
+        k = sum(1 for _, s in pairs if s["all_pass"])
+        P(f"items file {Path(p).name}: {len(rows)} items, scored {len(pairs)}, all-pass {k}/{len(pairs)}")
+        kinds = sorted({it["kind"] for it, _ in pairs})
+        for kind in kinds:
+            ks = [s for it, s in pairs if it["kind"] == kind]
+            P(f"  kind {kind}: scored {len(ks)}, all-pass {sum(1 for s in ks if s['all_pass'])}/{len(ks)}")
+        tagged = [s for it, s in pairs if it.get(SHARES_VARIANT)]
+        if tagged:
+            rest = [s for it, s in pairs if not it.get(SHARES_VARIANT)]
+            P(f"  total with the {len(tagged)} items tagged {SHARES_VARIANT}: all-pass {k}/{len(pairs)}; "
+              f"without them: all-pass {sum(1 for s in rest if s['all_pass'])}/{len(rest)}")
+
+
+def report_one(path, scores=None, out=sys.stdout, items=None):
     hidden = is_hidden(path)
     rows = read_jsonl(path)
     m = read_manifest(path)
@@ -708,6 +777,8 @@ def report_one(path, scores=None, out=sys.stdout):
             n = len(a_rows)
             P(f"tier A scored {n}  all-pass {sum(1 for s in a_rows if s['all_pass'])}/{n}  "
               f"checks passed {sum(s['checks_passed'] for s in a_rows)}/{sum(s['checks_total'] for s in a_rows)}")
+        if items:
+            items_breakdown(items, a_rows, hidden, P)
         if any("outcome" in s for s in a_rows):
             P(outcome_line(a_rows))
         if b_rows:
@@ -728,7 +799,7 @@ def cmd_report(a, out=sys.stdout):
         if n:
             print(file=out)
         sc = a.scores[n] if a.scores and n < len(a.scores) else None
-        report_one(p, sc, out)
+        report_one(p, sc, out, a.items)
     return 0
 
 
@@ -750,7 +821,8 @@ def build_parser():
     s.add_argument("--open-out", required=True)
     s.add_argument("--hidden-out", required=True)
     an = sub.add_parser("answer")
-    an.add_argument("--items", required=True)
+    an.add_argument("--items", required=True, nargs="+",
+                    help="items file(s), all open or all hidden (.enc); several files are joined in the order given")
     an.add_argument("--out", help="answers file (required, except with --revise-from)")
     an.add_argument("--config", required=True, help="configuration name")
     an.add_argument("--backend", choices=["mlx", "openai", "stub"], default="openai")
@@ -784,6 +856,8 @@ def build_parser():
     an.add_argument("--max-consecutive-errors", type=int, default=5, help="stop after N failures in a row (0: never)")
     r = sub.add_parser("report")
     r.add_argument("answers", nargs="+")
+    r.add_argument("--items", nargs="*", default=None,
+                   help="items file(s) of the run (all open or all hidden): adds totals per items file and per kind")
     r.add_argument("--scores", nargs="*", help="score files, in the order of the answers files "
                    "(default: <answers stem>.scores.jsonl next to each)")
     return ap

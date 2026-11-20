@@ -41,7 +41,7 @@ This scorer shares only the catalogue files, kafka_sre_rag/catalogue.py and, for
 index file with anything else. It
 does not import from a runtime answer checker, and nothing in kafka_sre_rag/ imports it.
 
-Usage: .venv/bin/python scripts/eval2_score.py --items ITEMS.jsonl --answers ANSWERS.jsonl
+Usage: .venv/bin/python scripts/eval2_score.py --items ITEMS.jsonl [ITEMS2.jsonl ...] --answers ANSWERS.jsonl
            [--scores OUT.jsonl] [--summary OUT.json] [--catalogues DIR]
 """
 import argparse
@@ -1231,7 +1231,8 @@ def format_outcomes(counts, name=""):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--items", required=True)
+    ap.add_argument("--items", required=True, nargs="+",
+                    help="items file(s), joined in the order given; ids must be unique across them; open files only")
     ap.add_argument("--answers", required=True)
     ap.add_argument("--scores", help="write the per-item score rows here (jsonl)")
     ap.add_argument("--summary", help="write the summary here (json)")
@@ -1241,7 +1242,13 @@ def main(argv=None):
     ap.add_argument("--no-outcomes", action="store_true", help="skip the decline outcome (covering chunks need the index)")
     args = ap.parse_args(argv)
     cats = Catalogues.load(args.catalogues)
-    items = load_jsonl(args.items)
+    if any(str(p).endswith(".enc") for p in args.items):
+        ap.error("hidden (.enc) items files are not scored by this scorer")
+    items = []
+    for p in args.items:
+        items += load_jsonl(p)
+    if len({i["id"] for i in items}) != len(items):
+        ap.error("duplicate item ids across the items files")
     answers = load_jsonl(args.answers)
     rows, missing, extra = score_files(items, answers, cats)
     from kafka_sre_rag.catalogue import catalogue_hash

@@ -537,11 +537,16 @@ def totals(needs, stages, base_label):
     pts = [r for r in needs if r["row_type"] == "point"]
     mapped = [r for r in pts if r["status"] == "mapped"]
     scen = [r for r in needs if r["row_type"] == "scenario"]
-    facts = [r for r in needs if r["row_type"] == "fact"]
+    all_facts = [r for r in needs if r["row_type"] == "fact"]
+    # facts of items tagged not_in_index (the a3 set) are reported apart; without such rows nothing changes
+    nii = [r for r in all_facts if "not_in_index" in r.get("tags", [])]
+    facts = [r for r in all_facts if "not_in_index" not in r.get("tags", [])]
     key = lambda r: (r["row_type"], r["item"], r.get("point"))  # noqa: E731
     groups = {"points": mapped, "weight2": [r for r in mapped if r["weight"] == 2], "scenarios": scen,
               "facts": facts, "facts_C1": [r for r in facts if "C1" in r.get("tags", [])],
               "facts_other": [r for r in facts if "C1" not in r.get("tags", [])]}
+    if nii:
+        groups["facts_not_in_index"] = nii
     out = {}
     for lab, st in stages.items():
         row = {}
@@ -553,6 +558,8 @@ def totals(needs, stages, base_label):
         row["point_stages"] = dict(collections.Counter(st[key(r)] for r in pts if key(r) in st))
         row["point_stages_weight2"] = dict(collections.Counter(st[key(r)] for r in pts if r["weight"] == 2 and key(r) in st))
         row["fact_stages"] = dict(collections.Counter(st[key(r)] for r in facts if key(r) in st))
+        if nii:
+            row["not_in_index_fact_stages"] = dict(collections.Counter(st[key(r)] for r in nii if key(r) in st))
         out[lab] = row
     return out
 
@@ -568,10 +575,13 @@ def chunkref_stages(needs, states, v, scorer):
 
 
 def table(tot):
-    lines = ["| variant | points | weight-2 | scenarios >=1 chunk | facts | C1 | other facts |", "|---|---|---|---|---|---|---|"]
+    extra = any("facts_not_in_index" in row for row in tot.values())
+    lines = ["| variant | points | weight-2 | scenarios >=1 chunk | facts | C1 | other facts |"
+             + (" facts not in the index (apart) |" if extra else ""), "|---|---|---|---|---|---|---|" + ("---|" if extra else "")]
     for lab, row in tot.items():
         cells = [f"{row[g]['served']}/{row[g]['of']} (+{row[g]['gained']}/-{row[g]['lost']})"
-                 for g in ("points", "weight2", "scenarios", "facts", "facts_C1", "facts_other")]
+                 for g in ("points", "weight2", "scenarios", "facts", "facts_C1", "facts_other")
+                 + (("facts_not_in_index",) if extra else ())]
         lines.append(f"| {lab} | " + " | ".join(cells) + " |")
     return "\n".join(lines)
 
