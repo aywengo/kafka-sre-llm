@@ -547,7 +547,7 @@ and J6 come from the mechanical tier and block nothing yet):
   candidates, 1 cut. So ranking loses more than search does, on both batches. A next
   retrieval work package would start there; it would be the Owner's decision, would
   need a fresh batch for its out-of-sample check, and is not planned before E2.
-- 2026-11-20, 02:00 to 04:00: **hidden judged batch B3 final**: 36 scenarios by three
+- 2026-11-20, 01:45 to 02:40: **hidden judged batch B3 final**: 36 scenarios by three
   sealed writers, three sealed second reviews with completion, one item replaced
   (b3-32 was the same family as the open b1-04). Independent sealed count: 147 of 165
   points (89.1 %) at first, although each reviewer had counted 100 %; after a completion
