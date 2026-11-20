@@ -447,6 +447,10 @@ SHAPE = {
 SHAPE_FILES = (("judged_1", "judged_items"), ("judged_2", "judged_items"), ("rubrics_1", "judged_rubrics"), ("rubrics_2", "judged_rubrics"),
                ("tier_a", "mech_items"), ("tier_a3", "mech_items"))
 KIND_FLOOR = 5
+# Keys of judged items that describe the item for people and that no tool reads. A sealed session labelled `side` and `adaptation`
+# as metadata on 2026-11-20 (an answerer needs nothing from them; no question refers to content outside `question` and `evidence`).
+# A new key must be checked the same way before it is added here.
+KNOWN_JUDGED_METADATA = ["side", "adaptation"]
 PRECEDENT = {"judged_items": ("eval/m4/b1/items.jsonl", "eval/m4/b2/items.jsonl", "eval/m4/pilot2/items.jsonl"),
              "judged_rubrics": ("eval/m4/b1/rubrics.jsonl", "eval/m4/b2/rubrics.jsonl", "eval/m4/pilot2/rubrics.jsonl"),
              "mech_items": ("eval/m4/open/tier_a.jsonl", "eval/m4/open/tier_a3.jsonl")}
@@ -520,10 +524,16 @@ def shape_file(name, kind, rows):
         if req and lack:
             problems.append(f"{name}: required key {k}: {absent} lacking, {lack - absent} empty")
     known = spec["ignored_ok"] | precedent_keys(kind)
+    meta = set(KNOWN_JUDGED_METADATA) if kind == "judged_items" else set()
+    known |= meta
     unread = {k: c for k, c in txt.items() if k not in spec["keys"] and k not in known}
     allowed = {k: c for k, c in txt.items() if k in known and k not in spec["keys"]}
+    allowed_meta = {k: c for k, c in allowed.items() if k in meta}
+    allowed = {k: c for k, c in allowed.items() if k not in meta}
     if allowed:
         lines.append(f"shape {name}: text keys that nothing reads, known metadata (the same keys are in the open files): " + ", ".join(f"{k} {c}" for k, c in sorted(allowed.items())))
+    if allowed_meta:
+        lines.append(f"shape {name}: text keys that nothing reads, known metadata (labelled metadata by a sealed session, 2026-11-20): " + ", ".join(f"{k} {c}" for k, c in sorted(allowed_meta.items())))
     lines.append(f"shape {name}: text keys that neither the answer step, the judge, the bundles nor the scorer read: " +
                  (", ".join(f"{k} in {c} row(s)" for k, c in sorted(unread.items())) if unread else "none"))
     for k, c in sorted(unread.items()):

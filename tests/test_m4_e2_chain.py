@@ -802,6 +802,31 @@ class HiddenGate(unittest.TestCase):
         self.assertEqual(r.returncode, 1)
         self.assertIn("shape PROBLEM: rubrics_2: a must point lacks id, text or weight in 1 row(s)", r.stdout)
 
+    def test_shape_passes_on_known_judged_metadata_keys_and_fails_on_another_unread_key(self):
+        def edit(rows):
+            for r in rows:
+                r["side"] = f"{MARK} side text"
+            for r in rows[:2]:
+                r["adaptation"] = f"{MARK} adaptation text"
+        sd2 = self.reencrypt("judged_1_items.jsonl.enc", edit)
+        r = helper("shape", "--hidden", *self.hargs(sd2), "--no-tools", env=self.env, timeout=300)
+        out = r.stdout + r.stderr
+        self.assertEqual(r.returncode, 0, out[-2000:])
+        self.assertIn("known metadata (labelled metadata by a sealed session, 2026-11-20): adaptation 2, side ", out)
+        self.assertNotIn("PROBLEM", out)
+        self.assertNotIn(MARK, out)
+
+        def edit2(rows):
+            edit(rows)
+            rows[0]["side_note"] = f"{MARK} other"
+        sd3 = self.reencrypt("judged_1_items.jsonl.enc", edit2)
+        r = helper("shape", "--hidden", *self.hargs(sd3), "--no-tools", env=self.env, timeout=300)
+        out = r.stdout + r.stderr
+        self.assertEqual(r.returncode, 1, out[-2000:])
+        self.assertIn("shape PROBLEM: judged_1: key side_note holds text in 1 row(s) and nothing reads it", out)
+        self.assertNotIn("key side holds", out)
+        self.assertNotIn(MARK, out)
+
     def test_manifest_is_not_overwritten(self):
         before = self.manifest.read_bytes()
         r = helper("prepare", "--out", str(self.manifest), "--server-json", str(self.tmp / "server.json"), "--models-json", str(self.tmp / "models.json"),
