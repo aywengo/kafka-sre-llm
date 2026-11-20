@@ -18,7 +18,7 @@ different base model does better.
 
 | # | Criterion | Bar | Status |
 |---|---|---|---|
-| E1 | A new evaluation exists: fresh items for the five task types of `GOAL.md`, a hidden part, mechanical checks, a measured noise level | 300 or more mechanical items, 120 or more judged items, the smallest visible difference stated per tier | mechanical tier built: 496 items, split 251 open and 245 hidden (encrypted); judged tier: after two failed pilots the judge's coverage role (J1) was checked on batch B1 (30 fresh scenarios): five criteria and the second half of the sixth pass, the rubric chunk check missed by about one point (94.0 % against 95 %); **the Owner accepted the coverage role on 2026-11-19 (K1)**; writing at scale started (K2): B2 (30 open), the Owner's 34 (hidden, sealed), then about 26 more |
+| E1 | A new evaluation exists: fresh items for the five task types of `GOAL.md`, a hidden part, mechanical checks, a measured noise level | 300 or more mechanical items, 120 or more judged items, the smallest visible difference stated per tier | mechanical tier built: 496 items, split 251 open and 245 hidden (encrypted); judged tier: after two failed pilots the judge's coverage role (J1) was checked on batch B1 (30 fresh scenarios): five criteria and the second half of the sixth pass, the rubric chunk check missed by about one point (94.0 % against 95 %); **the Owner accepted the coverage role on 2026-11-19 (K1)**; **the judged tier is written (2026-11-20): 120 scenarios, 60 open (B1, B2) and 60 hidden (the Owner's 24, B3's 36), every batch with an independent chunk count of 95 % or more before any answer**; the new mechanical kinds are built and accepted by an independent review (148 items, 88 open and 60 hidden), so the mechanical tier has 644 items (339 open, 305 hidden); integration into the harness (T10) is finishing |
 | E2 | The starting point is measured on it: plain base, base + retrieval at full precision, and the 4-bit model with retrieval, in default and strict mode, all on the same server path | numbers with their sizes; the cost of 4-bit shown inside a margin fixed before the run (5 points on the mechanical tier) | not started |
 | E3 | Every answer is checked before the user sees it (amended 2026-11-19, K4 b: prose streams as it is written, each code block is held until its check, which takes milliseconds, and corrections to prose follow the answer) | at most 2 invented or wrong items per 10 answers in default mode on fresh questions, **measured by a reading**, with the checker's own counts beside it; a statement marked "not confirmed" still counts; minor items are reported beside the bar, not counted (K4 a, c); measured on the hidden judged half after E2 (K4 g) | checker built and wired into `ask --check` and the service; on the 30 labelled errors it catches 9, reports 3 as unverified and misses 18 (15 are wrong statements it cannot see); not yet measured on fresh answers |
 | E4 | Answers are fast on the 4-bit server path | median under 60 s in default mode on the Mac Studio; first words within 10 s | service and streaming built; retrieval 9.5 s to 4.4 s when kept loaded; not yet measured with a model |
@@ -547,6 +547,24 @@ and J6 come from the mechanical tier and block nothing yet):
   candidates, 1 cut. So ranking loses more than search does, on both batches. A next
   retrieval work package would start there; it would be the Owner's decision, would
   need a fresh batch for its out-of-sample check, and is not planned before E2.
+- 2026-11-20, 02:00 to 04:00: **hidden judged batch B3 final**: 36 scenarios by three
+  sealed writers, three sealed second reviews with completion, one item replaced
+  (b3-32 was the same family as the open b1-04). Independent sealed count: 147 of 165
+  points (89.1 %) at first, although each reviewer had counted 100 %; after a completion
+  round 156 of 161 (96.9 %; partial b3-01 m2 and m5, b3-12 m3, b3-24 m1, b3-32 m2b; one
+  rewording judged weakened was restored). Files
+  `eval/hidden/tier_b_b3_{items,rubrics}_final.jsonl.enc`, counts in
+  `runs/m4/B3_CHUNK_CHECK.json`. **The judged tier now has 120 scenarios: 60 open (B1,
+  B2) and 60 hidden (the Owner's 24 and B3's 36)**; 15 are architecture items. The
+  hidden half is exactly the 60 the E3 rule needs.
+  Revise step: the development run on B1 and a reading of every patch (B1, B2;
+  `runs/m4/reports/wp2b_t4_patch_reading.md`): the model patch step removed no counted
+  error on 90 answers and introduced one or two (net 0.0 to −0.3 per 10 against the
+  +1.0 the rule needs); the inline marks hold. Changes to the patch step are briefed and
+  wait for the harness integration's dry run to finish. Laptop: the script ran against a
+  real model on this machine (all phases; scrubbed bundle clean; n=2: 79.5 s median, every
+  answer cut at 2,048 tokens, first words 14.4 s, 20.3 GB peak); fixes committed
+  (`ddf33b1`); the plan is ready for the Owner.
 - Waiting for the Owner, not blocking: redraw the 7 tagged valid-but-wrong hidden items
   or keep the tag only; the review lists above. The Owner sees the failed R3 check here;
   nothing further runs in WP5.
