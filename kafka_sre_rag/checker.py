@@ -153,10 +153,12 @@ class Item:
     context: Dict[str, Any] = field(default_factory=dict)
     status: str = ""          # in_excerpts, known, unknown, not_covered, skipped (set by the decision)
     count: int = 1
+    lines: List[int] = field(default_factory=list)   # every line the item occurs on (set by check()); `line` is the first
 
     def to_dict(self):
         return {"text": self.text, "type": self.type, "line": self.line, "sentence": self.sentence,
-                "source": self.source, "context": self.context, "status": self.status, "count": self.count}
+                "source": self.source, "context": self.context, "status": self.status, "count": self.count,
+                "lines": list(self.lines) or [self.line]}
 
 
 @dataclass
@@ -167,11 +169,16 @@ class Finding:
     evidence: str
     suggestion: str = ""
     catalogue: Optional[str] = None
+    near: Optional[List[str]] = None   # the "nearest real" names that are of the same kind and scope and close in spelling
 
     def to_dict(self):
-        return {"level": self.level, "text": self.item.text, "type": self.item.type, "line": self.item.line,
-                "sentence": self.item.sentence, "rule": self.rule, "evidence": self.evidence,
-                "suggestion": self.suggestion, "catalogue": self.catalogue}
+        d = {"level": self.level, "text": self.item.text, "type": self.item.type, "line": self.item.line,
+             "sentence": self.item.sentence, "rule": self.rule, "evidence": self.evidence,
+             "suggestion": self.suggestion, "catalogue": self.catalogue,
+             "lines": list(self.item.lines) or [self.item.line]}
+        if self.near is not None:
+            d["near"] = list(self.near)
+        return d
 
 
 @dataclass
@@ -457,9 +464,12 @@ class Checker:
             key = (it.type, it.text, tuple(sorted((k, str(v)) for k, v in it.context.items() if k in ("scope", "tool", "kind", "open"))))
             if key in seen:
                 seen[key].count += 1
+                if it.line not in seen[key].lines:
+                    seen[key].lines.append(it.line)
                 if it.context.get("sh"):
                     seen[key].context["sh"] = True   # written with the .sh suffix somewhere
                 continue
+            it.lines = [it.line]
             seen[key] = it
         for it in seen.values():
             result.items.append(it)
@@ -718,30 +728,54 @@ class Checker:
         return out
 
     # -------- shell
+    # WP2b T2b: a flag in a wrapped command gets its own line, not the first line of the command, and items carry
+    # `lines`. Prompted by the open development items b1-02, b1-09, b1-20, b1-23, b1-24, b1-25, b2-02, b2-19;
+    # judged on the hidden half, not on these items.
     def _extract_shell(self, lines, seg) -> List[Item]:
         out: List[Item] = []
-        joined: List[Tuple[int, str]] = []
-        buf, start = "", None
+        joined: List[Tuple[int, str, List[Tuple[int, str]]]] = []
+        buf, start, phys = "", None, []
         for no, l in lines:
             s = l.rstrip()
             if start is None:
                 start = no
+            phys.append((no, l))
             if s.endswith("\\"):
                 buf += s[:-1] + " "
                 continue
             buf += s
-            joined.append((start, buf))
-            buf, start = "", None
+            joined.append((start, buf, phys))
+            buf, start, phys = "", None, []
         if buf:
-            joined.append((start, buf))
-        for no, l in joined:
+            joined.append((start, buf, phys))
+        for no, l, phys in joined:
             s = l.strip()
             if not s or s.startswith("#"):
                 continue
             s = re.sub(r"^\$\s+", "", s)
+            new: List[Item] = []
             for cmd in re.split(r"\s*(?:\|\||&&|\||;)\s*", _drop_substitutions(s)):
-                out += self.parse_command(cmd, no, s, "fence")
+                new += self.parse_command(cmd, no, s, "fence")
+            self._own_lines(new, phys)
+            out += new
         return out
+
+    @staticmethod
+    def _own_lines(items: List[Item], phys: List[Tuple[int, str]]):
+        """An item of a wrapped command sits on the line that holds its text, not on the first line of the command.
+        Equal texts take the successive lines that hold them; an item whose text is not found keeps the first line."""
+        if len(phys) < 2:
+            return
+        used: Dict[str, int] = {}
+        for it in items:
+            tok = it.text
+            pat = re.compile(r"(?<![\w-])" + re.escape(tok) + r"(?![\w-])")
+            hits = [no for no, l in phys if pat.search(l)]
+            if not hits:
+                continue
+            i = used.get(tok, 0)
+            used[tok] = i + 1
+            it.line = hits[min(i, len(hits) - 1)]
 
     def parse_command(self, cmd: str, no: int, sentence: str, source: str) -> List[Item]:
         out: List[Item] = []
@@ -1154,6 +1188,28 @@ class Checker:
     def _add(self, result, level, it, rule, evidence, suggestion="", catalogue=None):
         result.findings.append(Finding(level, it, rule, evidence, suggestion, catalogue))
 
+    NEAR_MIN_RATIO = 0.75   # a "nearest real" name is kept only when it is this close in spelling (or starts with the other)
+
+    def _keep_near(self, it: Item, cands, scope_ok=None) -> List[str]:
+        """The candidates of a "nearest real" list that R1 and R2 may show: same kind (a field of the same resource
+        next to the flagged one; a key of the same scope; an option of the same tool) and close in spelling, so a
+        neighbour that only shares a word is not offered as a replacement."""
+        def leaf(x):
+            return x.rpartition(".")[2].replace("[]", "").lower() if it.type == "field_path" else x.lower()
+        me, out = leaf(it.text), []
+        for c in cands or []:
+            if scope_ok is not None and not scope_ok(c):
+                continue
+            other = leaf(c)
+            close = difflib.SequenceMatcher(None, me, other).ratio() >= self.NEAR_MIN_RATIO
+            if close or (min(len(me), len(other)) >= 4 and (other.startswith(me) or me.startswith(other))):
+                out.append(c)
+        return out
+
+    def _set_near(self, result, it: Item, cands, scope_ok=None):
+        """Records on the finding just added the candidates `_keep_near` keeps."""
+        result.findings[-1].near = self._keep_near(it, cands, scope_ok)
+
     def _sim(self, similar):
         return ("; nearest real: " + ", ".join("`%s`" % s for s in similar)) if similar else ""
 
@@ -1218,6 +1274,7 @@ class Checker:
             where = ("scope " + scope) if scope else "any scope"
             self._add(result, INVENTED, it, "config_unknown", "not a key of the Kafka 4.3 reference for %s%s" % (
                 where, self._sim(near)), "did you mean `%s`?" % near[0], "kafka_config")
+            self._set_near(result, it, near, (lambda c: self.cats.config_key(c, scope).known) if scope else None)
             return
         it.status = NOT_COVERED
         if key.startswith(FOREIGN_KEY_PREFIXES):
@@ -1345,6 +1402,8 @@ class Checker:
                 sim = near
             self._add(result, INVENTED, it, "field_unknown", "`%s` is not a field of %s in the Strimzi API reference%s" % (
                 path, kind, self._sim(sim)), ("did you mean `%s`?" % sim[0]) if sim else "", r.catalogue)
+            parent = path.rpartition(".")[0].replace("[]", "")
+            self._set_near(result, it, sim, lambda c: c.rpartition(".")[0].replace("[]", "") == parent)
             return
         it.status = NOT_COVERED
         if "free-form" in r.reason:
@@ -1404,6 +1463,7 @@ class Checker:
             self._add(result, INVENTED, it, "flag_unknown", "not a known option of %s in the %s reference%s" % (
                 tool, "Kafka 4.3" if tool.startswith("kafka") else "generated", self._sim(sim)),
                 ("did you mean `%s`?" % sim[0]) if sim else "", r.catalogue)
+            self._set_near(result, it, sim)
             return
         it.status = NOT_COVERED
         if "is in no catalogue" in r.reason:

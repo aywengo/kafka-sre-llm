@@ -27,7 +27,11 @@ no new false `invented` appears), runs/m4/reports/wp2a_labels_checked.jsonl, and
 (identifier-precision regression). The measurement (E3) uses the hidden half after E2. The R2 prompt contains no text
 of any of these sets.
 
-Stdlib only. Imports kafka_sre_rag.checker (split_markdown) and kafka_sre_rag.prompts.
+WP2b T2b changes (acceptance rule with wrapped commands as one unit, repeated names, the finding's own line, the
+"nearest real" filter, the REVISE_PROMPT wording) were prompted by these open development items: b1-02, b1-09, b1-20,
+b1-23, b1-24, b1-25, b2-02, b2-19. They are fitted to them and are judged on the hidden half, not on these items.
+
+Stdlib only (PyYAML is used for the YAML check only when installed). Imports kafka_sre_rag.checker (split_markdown) and kafka_sre_rag.prompts.
 """
 import difflib
 import hashlib
@@ -39,8 +43,8 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from . import prompts
 from .checker import INVENTED, WRONG_USE, split_markdown
 
-VERSION = "revise/1"
-LAYOUT = "revise-layout/1"   # how the answer and the findings are laid out in the prompt (the text is REVISE_PROMPT)
+VERSION = "revise/2"
+LAYOUT = "revise-layout/2"   # how the answer and the findings are laid out in the prompt (the text is REVISE_PROMPT)
 FLAGGED = (INVENTED, WRONG_USE)
 REVISE_MAX_TOKENS = 1500
 MARK_MAX = 300
@@ -60,12 +64,32 @@ def flagged(check: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 
 # ----------------------------------------------------------------------------- R1: marks
+NEAR_RE = re.compile(r";? nearest real: .*$")
+
+
+def finding_view(f: Dict[str, Any]) -> Tuple[str, str]:
+    """(evidence, suggestion) of a finding as R1 and R2 show them. A finding that carries `near` (the checker's names of
+    the same kind and scope, close in spelling) shows a "nearest real" list only from it; with none it says only that the
+    name does not exist. A finding without `near` is shown as the checker wrote it."""
+    ev, sug = f.get("evidence") or "", f.get("suggestion") or ""
+    near = f.get("near")
+    if near is None:
+        return ev, sug
+    ev = NEAR_RE.sub("", ev)
+    if near:
+        ev += "; nearest real: " + ", ".join("`%s`" % n for n in near)
+        sug = "did you mean `%s`?" % near[0]
+    else:
+        sug = "" if sug.startswith("did you mean") else sug
+    return ev, sug
+
+
 def _evidence(f: Dict[str, Any]) -> str:
-    ev, lead = f.get("evidence") or "", "`%s` " % f["text"]
+    ev, sug = finding_view(f)
+    lead = "`%s` " % f["text"]
     if ev.startswith(lead):
         ev = ev[len(lead):]
     s = "`%s` (%s)" % (f["text"], ev)
-    sug = f.get("suggestion") or ""
     if sug and sug not in ev and not (sug.startswith("did you mean") and "nearest real" in ev):
         s += "; " + sug
     s = " ".join(s.split())
@@ -88,6 +112,11 @@ def _continued(line: str) -> bool:
     return line.rstrip().endswith("\\")
 
 
+def occurrences(f: Dict[str, Any]) -> List[int]:
+    """Every line the flagged item occurs on (the checker's `lines`; `line` alone for an older record)."""
+    return list(f.get("lines") or [f["line"]])
+
+
 def plan_marks(text: str, findings: List[Dict[str, Any]]) -> Marks:
     """R1 for the invented and wrong_use findings in `findings` (dicts as the checker's to_dict() gives them)."""
     marks, lines = Marks(), text.split("\n")
@@ -103,31 +132,38 @@ def plan_marks(text: str, findings: List[Dict[str, Any]]) -> Marks:
     for f in findings:
         if f["level"] not in FLAGGED:
             continue
-        n = min(max(int(f["line"]), 1), len(lines))
         mark = _evidence(f)
-        if n in fences:
-            last, close, lang = fences[n]
-            if lang in NO_COMMENT_LANGS:
-                marks.after.setdefault(close, []).append("[not confirmed: %s]" % mark)
+        for ln in occurrences(f):   # every occurrence is marked, not only the first
+            n = min(max(int(ln), 1), len(lines))
+            if n in fences:
+                last, close, lang = fences[n]
+                if lang in NO_COMMENT_LANGS:
+                    text_ = "[not confirmed: %s]" % mark
+                    if text_ not in marks.after.setdefault(close, []):
+                        marks.after[close].append(text_)
+                    continue
+                end = n
+                while end < last and _continued(lines[end - 1]):  # a wrapped command: the comment goes after all of it
+                    end += 1
+                indent = lines[n - 1][:len(lines[n - 1]) - len(lines[n - 1].lstrip())]
+                text_ = "%s%s not confirmed: %s" % (indent, COMMENT_PREFIX.get(lang, "#"), mark.replace("`", "'"))
+                if text_ not in marks.after.setdefault(end, []):
+                    marks.after[end].append(text_)
                 continue
-            end = n
-            while end < last and _continued(lines[end - 1]):  # a wrapped command: the comment goes after all of it
-                end += 1
-            indent = lines[n - 1][:len(lines[n - 1]) - len(lines[n - 1].lstrip())]
-            marks.after.setdefault(end, []).append(
-                "%s%s not confirmed: %s" % (indent, COMMENT_PREFIX.get(lang, "#"), mark.replace("`", "'")))
-            continue
-        line = lines[n - 1]
-        if line.lstrip().startswith("|"):  # a table row: the note goes under the table
-            e = n
-            while e < len(lines) and lines[e].lstrip().startswith("|"):
-                e += 1
-            marks.after.setdefault(e, []).append("[not confirmed: %s]" % mark)
-            continue
-        sentence = f.get("sentence") or ""
-        idx = line.find(sentence) if sentence else -1
-        pos = idx + len(sentence) if idx >= 0 else len(line.rstrip())
-        prose.setdefault((n, pos), []).append(mark)
+            line = lines[n - 1]
+            if line.lstrip().startswith("|"):  # a table row: the note goes under the table
+                e = n
+                while e < len(lines) and lines[e].lstrip().startswith("|"):
+                    e += 1
+                text_ = "[not confirmed: %s]" % mark
+                if text_ not in marks.after.setdefault(e, []):
+                    marks.after[e].append(text_)
+                continue
+            sentence = f.get("sentence") or ""
+            idx = line.find(sentence) if sentence else -1
+            pos = idx + len(sentence) if idx >= 0 else len(line.rstrip())
+            if mark not in prose.setdefault((n, pos), []):
+                prose[(n, pos)].append(mark)
     for (n, pos), ms in prose.items():
         marks.inline.setdefault(n, []).append((pos, " [not confirmed: %s]" % "; ".join(ms)))
     return marks
@@ -160,8 +196,8 @@ def numbered(text: str) -> str:
 
 
 def build_messages(text: str, chunks, findings: List[Dict[str, Any]]):
-    fl = "\n".join(json.dumps({"line": f["line"], "item": f["text"], "problem": f["level"],
-                               "evidence": f.get("evidence") or "", "suggestion": f.get("suggestion") or ""},
+    fl = "\n".join(json.dumps({"line": f["line"], "lines": occurrences(f), "item": f["text"], "problem": f["level"],
+                               "evidence": finding_view(f)[0], "suggestion": finding_view(f)[1]},
                               ensure_ascii=False) for f in findings if f["level"] in FLAGGED)
     vals = {"EXCERPTS": prompts.pack_text(chunks), "ANSWER": numbered(text), "FINDINGS": fl}
     user = re.sub(r"<<(EXCERPTS|ANSWER|FINDINGS)>>", lambda m: vals[m.group(1)], prompts.REVISE_PROMPT)
@@ -199,21 +235,36 @@ def parse_reply(reply: str, n_lines: int) -> Tuple[Optional[List[Dict[str, Any]]
     return out, ""
 
 
+def fence_lines(text: str) -> set:
+    """Line numbers (1-based) that lie inside a fenced block."""
+    return {no for seg in split_markdown(text) if seg.kind == "fence" for no, _ in seg.lines}
+
+
+def command_unit(lines: List[str], n: int, infence: set) -> Tuple[int, int]:
+    """(first, last) line of the command that line n belongs to: lines joined by a trailing backslash form one unit.
+    Outside a fenced block a line is a unit of its own."""
+    if n not in infence:
+        return n, n
+    a, z = n, n
+    while a > 1 and (a - 1) in infence and _continued(lines[a - 2]):
+        a -= 1
+    while z < len(lines) and (z + 1) in infence and _continued(lines[z - 1]):
+        z += 1
+    return a, z
+
+
 def allowed_lines(text: str, findings: List[Dict[str, Any]]) -> set:
-    """The lines R2 may change: the lines the findings name, and for a wrapped command (trailing backslash) the one
-    line before or after that belongs to the same command."""
-    lines, allowed = text.split("\n"), set()
+    """The lines R2 may change: every line that holds a flagged item (the same (type, text) on several lines counts
+    each of them), and all lines of a wrapped command (trailing backslash) that holds one."""
+    lines, allowed, infence = text.split("\n"), set(), fence_lines(text)
     for f in findings:
         if f["level"] not in FLAGGED:
             continue
-        n = f["line"]
-        if not 1 <= n <= len(lines):
-            continue
-        allowed.add(n)
-        if n < len(lines) and _continued(lines[n - 1]):
-            allowed.add(n + 1)
-        if n > 1 and _continued(lines[n - 2]):
-            allowed.add(n - 1)
+        for n in occurrences(f):
+            if not 1 <= n <= len(lines):
+                continue
+            a, z = command_unit(lines, n, infence)
+            allowed.update(range(a, z + 1))
     return allowed
 
 
@@ -241,6 +292,93 @@ def validate_patches(text: str, patches, allowed: set) -> List[str]:
             if any(re.match(FENCE_OPEN_RE, l) for l in new):
                 why.append("line %d: replacement contains a code fence marker" % p["line"])
     return why
+
+
+def _indent(line: str) -> str:
+    return line[:len(line) - len(line.lstrip())]
+
+
+def structure_problems(text: str, patches: List[Dict[str, Any]]) -> List[str]:
+    """Reasons a patch damages the shape of a fenced block: a wrapped command left with an orphan continuation line or a
+    dangling backslash (its first line removed, its last line removed or given a backslash), the leading whitespace of a
+    line changed, or a YAML block that parsed before and does not now. [] when the shape is kept."""
+    lines, infence, why = text.split("\n"), fence_lines(text), []
+    by = {p["line"]: p["text"] for p in patches}
+    units = {}
+    for n in by:
+        if n in infence:
+            units[command_unit(lines, n, infence)] = None
+    for (a, z) in units:
+        new, first_gone = [], False
+        for i in range(a, z + 1):
+            if i not in by:
+                new.append(lines[i - 1])
+            elif by[i] is None:
+                first_gone = first_gone or i == a
+            else:
+                new.extend(by[i].split("\n"))
+        if not new:
+            continue   # the whole command was removed
+        if first_gone:
+            why.append("lines %d-%d: the first line of the command was removed and the rest stays" % (a, z))
+        elif any(not _continued(l) for l in new[:-1]) or (_continued(new[-1]) and not _continued(lines[z - 1])):
+            why.append("lines %d-%d: the command is left with an orphan continuation line or a dangling backslash" % (a, z))
+    for n, t in by.items():
+        if t is None or n not in infence:
+            continue
+        a, z = command_unit(lines, n, infence)
+        okws = {_indent(lines[i - 1]) for i in range(a, z + 1)}
+        new = t.split("\n")
+        if _indent(new[0]) != _indent(lines[n - 1]) or any(_indent(l) not in okws for l in new[1:]):
+            why.append("line %d: the leading whitespace changed" % n)
+    return why
+
+
+def yaml_regressions(old: str, new: str) -> List[str]:
+    """A fenced YAML block that parsed in `old` and does not in `new` (blocks paired in order). Needs PyYAML; without it
+    the rule cannot be applied and nothing is reported."""
+    try:
+        import yaml
+    except ImportError:
+        return []
+
+    def blocks(t):
+        return ["\n".join(l for _, l in seg.lines) for seg in split_markdown(t) if seg.kind == "fence" and seg.lang in ("yaml", "yml")]
+
+    def parses(b):
+        try:
+            list(yaml.safe_load_all(b))
+            return True
+        except Exception:
+            return False
+    o, n = blocks(old), blocks(new)
+    if len(o) != len(n):
+        return ["the number of YAML blocks changed"]
+    return ["YAML block %d parsed before the patch and does not now" % (i + 1)
+            for i, (a, b) in enumerate(zip(o, n)) if parses(a) and not parses(b)]
+
+
+NAME_TYPES = frozenset({"cli_flag", "cli_tool", "config_key", "field_path", "annotation", "label", "type_name", "error_name"})
+
+
+def surviving(new: str, flagged_findings: List[Dict[str, Any]]) -> List[str]:
+    """Flagged names (type, text) that still stand anywhere in `new`, on a line the checker saw or not. Only names are
+    searched (a value such as `true` is left to the re-check); a longer name that starts with it (`--topic` in
+    `--topic-list`) is not an occurrence. A flag is a flag of one tool, so inside a code fence it is left to the
+    re-check, which knows the tool of each command (`--topic` is real for kafka-topics.sh); in prose it is searched."""
+    out, lines, infence = [], new.split("\n"), None
+    for f in flagged_findings:
+        if f["type"] not in NAME_TYPES or not f["text"]:
+            continue
+        pat = re.compile(r"(?<![\w.\-/])" + re.escape(f["text"]) + r"(?![\w\-]|\.\w)")
+        if f["type"] == "cli_flag":
+            infence = fence_lines(new) if infence is None else infence
+            hay = "\n".join(l for n, l in enumerate(lines, 1) if n not in infence)
+        else:
+            hay = new
+        if pat.search(hay) and f["text"] not in out:
+            out.append(f["text"])
+    return out
 
 
 def only_allowed_changed(old: str, new: str, allowed: set) -> bool:
@@ -332,6 +470,11 @@ class Reviser:
         new = apply_patches(text, patches) if not reasons else None
         if new is not None and not only_allowed_changed(text, new, allowed):
             reasons.append("a line that no finding names changed")
+        if new is not None:
+            reasons += structure_problems(text, patches) + yaml_regressions(text, new)
+            left_txt = surviving(new, bad)
+            if left_txt:
+                reasons.append("flagged name still in the answer: " + ", ".join(left_txt))
         if not reasons:
             t1 = time.monotonic()
             after = self.check(new, chunks)
@@ -434,7 +577,11 @@ class FenceGate:
         lo, hi = self.fstart, self.fstart + len(lines) - 1
         try:
             res = self.check(text, self.chunks_fn())
-            mine = [f for f in res["findings"] if lo <= f["line"] <= hi]
+            mine = []
+            for f in res["findings"]:   # every occurrence inside this fence is marked
+                here = [n for n in occurrences(f) if lo <= n <= hi]
+                if here:
+                    mine.append(dict(f, line=here[0], lines=here))
             marks = plan_marks(text, mine)
             shown = "\n".join(render_range(text.split("\n"), marks, lo, hi)) + ("\n" if terminated else "")
         except Exception:

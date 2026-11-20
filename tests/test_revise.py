@@ -229,8 +229,8 @@ class TestWithCatalogues(Cat):
 class TestPatchRules(unittest.TestCase):
     CMD = "```sh\nkafka-acls.sh --bad \\\n  --topic t \\\n  --add\nls\n```"
 
-    def test_allowed_lines_include_one_neighbour_of_a_wrapped_command(self):
-        self.assertEqual(rv.allowed_lines(self.CMD, [finding(2)]), {2, 3})
+    def test_allowed_lines_are_the_whole_wrapped_command(self):
+        self.assertEqual(rv.allowed_lines(self.CMD, [finding(2)]), {2, 3, 4})
         self.assertEqual(rv.allowed_lines(self.CMD, [finding(3)]), {3, 4, 2})
         self.assertEqual(rv.allowed_lines(self.CMD, [finding(5)]), {5})
         self.assertEqual(rv.allowed_lines(self.CMD, [finding(2, level="unverified")]), set())

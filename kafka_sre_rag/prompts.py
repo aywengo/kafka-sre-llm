@@ -75,7 +75,7 @@ def expand_messages(question):
 # WP2b R2 (kafka_sre_rag/revise.py): the one extra call that replaces the lines of an answer the catalogue check
 # flagged. Added after the measured prompts above; nothing above it changed. Placeholders are filled with str.replace:
 # <<EXCERPTS>> (pack_text of the excerpts), <<ANSWER>> (the answer, one numbered line per line) and <<FINDINGS>> (one
-# JSON object per finding: line, item, problem, evidence, suggestion). It carries no text of any evaluation item.
+# JSON object per finding: line, lines, item, problem, evidence, suggestion). It carries no text of any evaluation item.
 REVISE_PROMPT = (
     "Below are documentation excerpts, an answer written from them with numbered lines, and findings from a check "
     "of that answer against catalogues of what exists in Apache Kafka, Strimzi, Kubernetes and Argo CD. Each finding "
@@ -87,9 +87,12 @@ REVISE_PROMPT = (
     "excerpts, delete the line (text null) instead of guessing. Do not add any command, flag, key, field or name "
     "that is in neither the evidence nor the excerpts. Keep the indentation, the comment marker and a trailing "
     "backslash of the line. Give more than one line in one replacement only when the command is wrapped over "
-    "lines with a trailing backslash. If a finding is wrong (the item is correct as written), leave its line out. "
-    "Do not change any line that no finding names.\n\n"
-    "Reply with JSON only, no other text, in exactly this form: "
+    "lines with a trailing backslash. An item may stand on several lines (the finding lists them in \"lines\"): "
+    "correct or remove every one of them. A name in a finding's \"nearest real\" list is a replacement only where "
+    "the excerpts support that name in that place; otherwise remove the line or reword it without any name that is "
+    "not in the excerpts. Do not change any line that no finding names.\n\n"
+    "Reply with JSON only: your whole reply is one JSON object and nothing else (no text before or after it, no "
+    "code fence), in exactly this form: "
     "{\"replacements\": [{\"line\": 12, \"text\": \"the new text of line 12\"}, {\"line\": 30, \"text\": null}]}. "
     "An empty list means nothing is to be changed.\n\n"
     "Documentation excerpts:\n\n<<EXCERPTS>>\n\n"
