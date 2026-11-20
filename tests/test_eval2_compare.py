@@ -382,7 +382,7 @@ class TestE2(Base):
         self.ids = [i["id"] for i in self.items]
         self.fam_of = {i["id"]: i["family"] for i in self.items}
 
-    def run_e2(self, scores, reading=None, hidden=False, judged=None, resamples=400, items=None):
+    def run_e2(self, scores, reading=None, hidden=False, judged=None, resamples=400, items=None, tags=None):
         sfx = ".jsonl.enc" if hidden else ".jsonl"
         items = items or self.items
         ip = self.tmp / ("items" + sfx)
@@ -400,7 +400,7 @@ class TestE2(Base):
             eval2.write_jsonl(jrub, [{"id": it["id"], "must": [{"id": "m1", "text": "t", "weight": 1}], "must_not": []} for it in judged["items"]])
             eval2.write_jsonl(jit, judged["items"])
             jd = {"results": [jr], "rubrics": jrub, "items": jit}
-        return cmp.compare_e2(cfg, [ip], jd, resamples, 1, reading)
+        return cmp.compare_e2(cfg, [ip], jd, resamples, 1, reading, tags)
 
     def spread_loss(self, k):
         """Passing set with k losses spread one per family (families have 5 items)."""
@@ -606,6 +606,137 @@ class TestE2(Base):
         for needle in ("(a) the cost of 4-bit", "one-sided reading", "two-sided reading", "(b) the mode", "(c) starting figures", "a3_without_tagged"):
             self.assertIn(needle, t)
         self.assertRegex(t, r"Q4D\s+mechanical\s+200\s+200")
+
+
+class TestE2Tags(Base):
+    """--tag-file: the judged part of rule 1(b), the judged starting figures (and a mechanical part a tag touches) with and without."""
+    def setUp(self):
+        super().setUp()
+        self.items = e2_items()
+        self.ids = [i["id"] for i in self.items]
+        self.fam_of = {i["id"]: i["family"] for i in self.items}
+
+    run_e2 = TestE2.run_e2
+    spread_loss = TestE2.spread_loss
+    judged_case = TestE2.judged_case
+
+    OK = {"default_rate": 3.0, "strict_rate": 1.5, "default_harmful": 1, "strict_harmful": 1, "reader_disagreement": 1.0,
+          "readers_usable": True}
+    JIDS = [f"j{n:02d}" for n in range(6)]                  # judged scenarios j00 .. j05
+
+    def render(self, r):
+        out = io.StringIO()
+        cmp.render_e2(r, out)
+        return out.getvalue()
+
+    def test_judged_tag_both_sets_of_figures_on_a_constructed_case(self):
+        same = {"Q4D": set(self.ids), "Q4S": set(self.ids)}
+        # Q4S loses P 1.0 on j00 .. j11; Q4D is 1.0 on all 24. All: mean -0.5. Without j00 .. j05: 6 of 18 lose: -1/3.
+        reading = dict(self.OK, without_tagged={"judgedtag": {"default_rate": 2.0, "strict_rate": 1.5, "default_harmful": 0,
+                                                                "strict_harmful": 0, "reader_disagreement": 1.0, "readers_usable": True}})
+        r = self.run_e2(same, reading, judged=self.judged_case(12), tags={"judgedtag": self.JIDS})
+        self.assertAlmostEqual(r["b_mode"]["judged_P"]["mean"], -0.5)
+        self.assertEqual(r["b_mode"]["judged_P"]["n"], 24)
+        self.assertEqual(r["b_mode"]["verdict"], "DEFAULT stays the reference mode (not met: judged_P)")
+        w = r["without_tagged"]["judgedtag"]
+        self.assertEqual((w["excluded"], w["remain"], w["judged_affected"], w["mechanical_affected"]), (6, 18, True, False))
+        j = w["res"]["b_mode"]["judged_P"]
+        self.assertEqual(j["n"], 18)
+        self.assertAlmostEqual(j["mean"], -1 / 3)
+        self.assertEqual(w["res"]["c_figures"]["judged_P"]["Q4D"]["all"]["n"], 18)
+        self.assertEqual(r["c_figures"]["judged_P"]["Q4D"]["all"]["n"], 24)       # the figures that count: all items
+        self.assertAlmostEqual(w["res"]["c_figures"]["judged_P"]["Q4S"]["all"]["mean"], 12 / 18)
+        self.assertAlmostEqual(r["c_figures"]["judged_P"]["Q4S"]["all"]["mean"], 12 / 24)
+        self.assertEqual(w["res"]["b_mode"]["reading"]["default_rate"], 2.0)       # the reading's own totals without the items
+        self.assertNotIn("without_tagged", w["res"])
+        text = self.render(r)
+        head = "without the items tagged judgedtag (6 items; 18 remain)"
+        self.assertIn(head, text)
+        first, second = text.split(head)
+        self.assertIn("scenarios 24: difference -0.5000", first)
+        self.assertIn("scenarios 18: difference -0.3333", second)
+        self.assertIn("for information", second)
+        self.assertNotIn("(a) the cost of 4-bit", second)          # the mechanical part is not affected: not repeated
+        self.assertIn("mechanical part not affected", second)
+        self.assertIn("verdict of rule 1(b) (for information", second)
+        self.assertNotIn("for information, not", first)
+        v = cmp.e2_verdicts(r)
+        self.assertEqual(v["rule_1b"]["judged_P"]["n"], 24)
+        self.assertEqual(v["without_tagged"]["judgedtag"]["rule_1b"]["judged_P"]["n"], 18)
+        self.assertTrue(v["without_tagged"]["judgedtag"]["for_information"])
+        json.dumps(v)
+
+    def test_mechanical_tag_repeats_the_mechanical_part(self):
+        sc = {"F": set(self.ids), "Q4D": self.spread_loss(7)}
+        tag = ["a1-f00-0", "a1-f00-1"]          # f00-0 is one of the 7 lost items
+        r = self.run_e2(sc, tags={"mechtag": tag})
+        self.assertEqual(r["a_cost_of_4bit"]["Q4D_minus_F"]["n"], 200)
+        w = r["without_tagged"]["mechtag"]
+        self.assertEqual((w["excluded"], w["remain"], w["mechanical_affected"], w["judged_affected"]), (2, 198, True, False))
+        sub = w["res"]["a_cost_of_4bit"]["Q4D_minus_F"]
+        self.assertEqual(sub["n"], 198)
+        self.assertAlmostEqual(sub["diff"], -6 / 198)
+        text = self.render(r)
+        second = text.split("without the items tagged mechtag (2 items; 198 remain)")[1]
+        self.assertIn("(a) the cost of 4-bit", second)
+        self.assertIn("items 198", second)
+        self.assertIn("judged part not affected", second)
+
+    def test_unknown_id_is_refused_naming_it(self):
+        with self.assertRaises(cmp.CompareError) as c:
+            self.run_e2({"Q4D": set(self.ids)}, tags={"t": ["a1-f00-0", "zz-404"]})
+        self.assertIn("zz-404", str(c.exception))
+        self.assertNotIn("a1-f00-0", str(c.exception))
+        with self.assertRaises(cmp.CompareError) as c:
+            self.run_e2({"Q4D": set(self.ids), "Q4S": set(self.ids)}, judged=self.judged_case(0), tags={"t": ["j99"]})
+        self.assertIn("j99", str(c.exception))
+
+    def test_output_is_unchanged_without_tags(self):
+        sc = {"F": set(self.ids), "Q4D": self.spread_loss(7), "Q4S": self.spread_loss(9), "P0": set(self.ids[:100])}
+        plain = self.run_e2(sc, self.OK, judged=self.judged_case(3))
+        tagged = self.run_e2(sc, self.OK, judged=self.judged_case(3), tags={"judgedtag": self.JIDS})
+        self.assertNotIn("without_tagged", plain)
+        self.assertNotIn("without_tagged", cmp.e2_verdicts(plain))
+        tp, tt = self.render(plain), self.render(tagged)
+        self.assertNotIn("without the items tagged", tp)
+        self.assertTrue(tt.startswith(tp))
+        stripped = {k: v for k, v in tagged.items() if k != "without_tagged"}
+        self.assertEqual(json.dumps(stripped, sort_keys=True), json.dumps(plain, sort_keys=True))
+
+    @NEEDS_OPENSSL
+    def test_hidden_cli_prints_counts_only_and_json_carries_both(self):
+        sc = {"F": set(self.ids), "Q4D": self.spread_loss(7), "Q4S": self.spread_loss(9)}
+        jc = self.judged_case(12)
+        self.run_e2(sc, hidden=True, judged=jc)
+        tf = self.tmp / "tags.json"
+        tf.write_text(json.dumps({"tags": {"judgedtag": {"ids": self.JIDS}}}))
+        args = ["e2", "--items", str(self.tmp / "items.jsonl.enc"), "--resamples", "100", "--tag-file", str(tf),
+                "--judged-results", str(self.tmp / "jres.jsonl.enc"), "--rubrics", str(self.tmp / "jrub.jsonl.enc"),
+                "--judged-items", str(self.tmp / "jit.jsonl.enc"), "--json-out", str(self.tmp / "v.json.enc")]
+        for n in sc:
+            args += ["--config", f"{n}={self.tmp / (n + '.scores.jsonl.enc')}"]
+        buf, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(err):
+            rc = cmp.main(args)
+        self.assertEqual((rc, err.getvalue()), (0, ""))
+        out = buf.getvalue()
+        self.assertIn("without the items tagged judgedtag (6 items; 18 remain)", out)
+        for i in self.JIDS:
+            self.assertNotIn(i, out)
+        v = json.loads(eval2.decrypt_bytes((self.tmp / "v.json.enc").read_bytes()))
+        self.assertEqual(v["rule_1b"]["judged_P"]["n"], 24)
+        self.assertEqual(v["without_tagged"]["judgedtag"]["rule_1b"]["judged_P"]["n"], 18)
+        for i in self.JIDS:
+            self.assertNotIn(i, json.dumps(v))
+        # an unknown id: exit 1, the id named, nothing printed
+        tf.write_text(json.dumps({"tags": {"judgedtag": {"ids": ["j77"]}}}))
+        buf, err = io.StringIO(), io.StringIO()
+        args = [x if x != str(self.tmp / "v.json.enc") else str(self.tmp / "v2.json.enc") for x in args]
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(err):
+            rc = cmp.main(args)
+        self.assertEqual(rc, 1)
+        self.assertIn("j77", err.getvalue())
+        self.assertEqual(buf.getvalue(), "")
 
 
 class TestE2PairClustersAndVerdictJson(TestE2):

@@ -38,7 +38,7 @@ import eval2  # noqa: E402
 import eval2_blind as eb  # noqa: E402
 import eval2_judge as ej  # noqa: E402
 from eval2 import EvalError  # noqa: E402
-from eval2_pilot_report import split_point_ids  # noqa: E402
+from eval2_pilot_report import split_point_ids, load_tag_file, TagError  # noqa: E402
 
 KEY_NAME = "blind_key.json.enc"
 WIH = ("wrong", "invented", "harmful")
@@ -209,6 +209,13 @@ def validate(row, bundle_names, key, text_of):
     return None
 
 
+def load_tags(path, known_ids):
+    try:
+        return load_tag_file(path, known_ids)
+    except TagError as e:
+        raise ReadingError(str(e)) from None
+
+
 def percentile(sorted_vals, q):
     if not sorted_vals:
         return float("nan")
@@ -288,117 +295,135 @@ def cmd_totals(a):
             else:
                 c[1 + kcol[r["kind"]] + (3 if r.get("minor") else 0)] += 1
     items = sorted({i for i, _ in cells})
-    outl = []
-    out = outl.append
+    all_items = items
+    tagged = load_tags(a.tag_file, set(all_items))
 
-    def col(sample, s, *cols):
-        return sum(cells[(i, s)][c] for i in sample for c in cols)
+    def analyse(excl, label):
+        items = [i for i in all_items if i not in excl]
+        if not items:
+            raise ReadingError('no items remain after the exclusion')
+        outl = []
+        out = outl.append
 
-    NM, MI = (1, 2, 3), (4, 5, 6)
-    rng = random.Random(a.seed)
-    samples = [[rng.choice(items) for _ in items] for _ in range(a.resamples)]
+        def col(sample, s, *cols):
+            return sum(cells[(i, s)][c] for i in sample for c in cols)
 
-    def rate_of(x, s):
-        return per10(col(x, s, *NM), col(x, s, 0))
+        NM, MI = (1, 2, 3), (4, 5, 6)
+        rng = random.Random(a.seed)
+        samples = [[rng.choice(items) for _ in items] for _ in range(a.resamples)]
 
-    out(f"first readers: {len(first_b)} bundles, second readers: {len(second_b)} bundles; bootstrap over {len(items)} items, "
-        f"{a.resamples} resamples, seed {a.seed}, 90 % interval")
-    out(f"rows not counted: {sum(why_count.values())} (duplicates {why_count['duplicate']}); "
-        f"quotes not found in their answer: {why_count['quote not found']}")
-    res = {}
-    for s in sets:
-        n = col(items, s, 0)
-        nm, mi, har = col(items, s, *NM), col(items, s, *MI), col(items, s, 3)
-        om, sup = col(items, s, 7), col(items, s, 8)
-        ci_nm = interval([rate_of(x, s) for x in samples])
-        ci_mi = interval([per10(col(x, s, *MI), col(x, s, 0)) for x in samples])
-        res[s] = {"answers_read": n, "rate_per_10": per10(nm, n), "rate_ci90": [ci_nm[0], ci_nm[1]],
-                  "harmful": har, "minor_rate_per_10": per10(mi, n), "minor_by_kind": {k: col(items, s, 4 + c) for k, c in kcol.items()},
-                  "nm": nm}
-        out(f"set {s}: answers read {n}")
-        out(f"  wrong+invented+harmful non-minor {nm} = {per10(nm, n):.2f} per 10 [{ci_nm[0]:.2f}, {ci_nm[1]:.2f}]")
-        out(f"  wrong+invented+harmful minor {mi} = {per10(mi, n):.2f} per 10 [{ci_mi[0]:.2f}, {ci_mi[1]:.2f}]")
-        out("  minor by kind: " + ", ".join(f"{k} {res[s]['minor_by_kind'][k]}" for k in kcol) + " (not in the rate, not in harmful)")
-        out(f"  harmful (non-minor) {har}")
-        out(f"  omissions {om} = {per10(om, n):.2f} per 10; supported {sup}")
+        def rate_of(x, s):
+            return per10(col(x, s, *NM), col(x, s, 0))
 
-    # the second reader against the first on the shared answers (protocol rule 7: wrong+invented+harmful, minor rows included)
-    usable, disagreement = None, None
-    if second_b:
-        shared_names = {n for b in second_b for n in bundles[b]}
-
-        def tally(bs, only_shared):
-            t = defaultdict(lambda: [0, 0])    # set -> [all rows, non-minor rows]
-            for b in bs:
-                for r in rows_by_bundle[b]:
-                    if r["kind"] in WIH and (not only_shared or r["answer"] in shared_names):
-                        t[set_of[r["answer"]]][0] += 1
-                        t[set_of[r["answer"]]][1] += not r.get("minor")
-            return t
-        f_t, s_t = tally(first_b, True), tally(second_b, False)
-        shared_n = Counter(set_of[n] for n in shared_names)
-        shared = len(shared_names)
-
-        def pct(x, y):
-            big = max(x, y)
-            return abs(x - y) / big if big else 0.0
-        t1, t2 = sum(v[0] for v in f_t.values()), sum(v[0] for v in s_t.values())
-        n1, n2 = sum(v[1] for v in f_t.values()), sum(v[1] for v in s_t.values())
-        diff = pct(t1, t2)
-        usable = diff <= READER_DIFF
-        out(f"readers on {shared} shared answers: first {t1}, second {t2} "
-            f"wrong+invented+harmful (both sets together, minor rows included); difference {100 * diff:.0f} % of the larger (at most {int(100 * READER_DIFF)} %): "
-            f"{'PASS' if usable else 'readings not used'}")
-        out(f"  non-minor rows only: first {n1}, second {n2}, difference {100 * pct(n1, n2):.0f} % (reported, not the criterion)")
-        per_set = {}
+        out(f"first readers: {len(first_b)} bundles, second readers: {len(second_b)} bundles; bootstrap over {len(items)} items, "
+            f"{a.resamples} resamples, seed {a.seed}, 90 % interval")
+        if not excl:
+            out(f"rows not counted: {sum(why_count.values())} (duplicates {why_count['duplicate']}); "
+                f"quotes not found in their answer: {why_count['quote not found']}")
+        res = {}
         for s in sets:
-            a1, a2 = f_t[s], s_t[s]
-            per_set[s] = {"shared_answers": shared_n[s], "total_first": a1[0], "total_second": a2[0],
-                          "difference_pct": 100 * pct(a1[0], a2[0]), "nonminor_first": a1[1], "nonminor_second": a2[1],
-                          "nonminor_difference_pct": 100 * pct(a1[1], a2[1]),
-                          "disagreement_per_10": per10(abs(a1[1] - a2[1]), shared_n[s])}
-            out(f"  set {s}: {shared_n[s]} shared answers, first {a1[0]}, second {a2[0]} ({100 * pct(a1[0], a2[0]):.0f} %); "
-                f"non-minor first {a1[1]}, second {a2[1]} ({100 * pct(a1[1], a2[1]):.0f} %) (reported, not gating)")
-        pooled = per10(abs(n1 - n2), shared)
-        disagreement = {"per_set_per_10": {s: per_set[s]["disagreement_per_10"] for s in sets}, "pooled_per_10": pooled,
-                        "shared_answers": shared, "totals_first": t1, "totals_second": t2, "difference_pct": 100 * diff,
-                        "nonminor_first": n1, "nonminor_second": n2, "nonminor_difference_pct": 100 * pct(n1, n2),
-                        "per_set": per_set}
-        out("readers' disagreement, |first - second| non-minor wrong+invented+harmful per 10 answers on the shared answers: "
-            + ", ".join(f"set {s} {per_set[s]['disagreement_per_10']:.2f}" for s in sets) + f"; pooled {pooled:.2f}")
-    else:
-        out("no second reader: the 30 % rule cannot be applied")
+            n = col(items, s, 0)
+            nm, mi, har = col(items, s, *NM), col(items, s, *MI), col(items, s, 3)
+            om, sup = col(items, s, 7), col(items, s, 8)
+            ci_nm = interval([rate_of(x, s) for x in samples])
+            ci_mi = interval([per10(col(x, s, *MI), col(x, s, 0)) for x in samples])
+            res[s] = {"answers_read": n, "rate_per_10": per10(nm, n), "rate_ci90": [ci_nm[0], ci_nm[1]],
+                      "harmful": har, "minor_rate_per_10": per10(mi, n), "minor_by_kind": {k: col(items, s, 4 + c) for k, c in kcol.items()},
+                      "nm": nm}
+            out(f"set {s}: answers read {n}")
+            out(f"  wrong+invented+harmful non-minor {nm} = {per10(nm, n):.2f} per 10 [{ci_nm[0]:.2f}, {ci_nm[1]:.2f}]")
+            out(f"  wrong+invented+harmful minor {mi} = {per10(mi, n):.2f} per 10 [{ci_mi[0]:.2f}, {ci_mi[1]:.2f}]")
+            out("  minor by kind: " + ", ".join(f"{k} {res[s]['minor_by_kind'][k]}" for k in kcol) + " (not in the rate, not in harmful)")
+            out(f"  harmful (non-minor) {har}")
+            out(f"  omissions {om} = {per10(om, n):.2f} per 10; supported {sup}")
 
-    for s in sets:
-        if s == a.default:
-            continue
-        diffs = [rate_of(x, s) - rate_of(x, a.default) for x in samples]
-        lo, hi = interval(diffs)
-        pt = res[s]["rate_per_10"] - res[a.default]["rate_per_10"]
-        out(f"paired {s} minus {a.default}, non-minor wrong+invented+harmful per 10: {pt:+.2f} [{lo:+.2f}, {hi:+.2f}]; "
-            f"harmful {res[s]['harmful']} vs {res[a.default]['harmful']}")
+        # the second reader against the first on the shared answers (protocol rule 7: wrong+invented+harmful, minor rows included)
+        usable, disagreement = None, None
+        if second_b:
+            shared_names = {n for b in second_b for n in bundles[b] if n.rsplit("-", 1)[0] not in excl}
 
-    # the E3 rule of MILESTONE.md on the default set: non-minor rows only, for the rate and for harmful
-    r = res[a.default]
-    reasons = []
-    if r["answers_read"] < E3_MIN_ANSWERS:
-        reasons.append(f"{E3_MIN_ANSWERS - r['answers_read']} answers short of {E3_MIN_ANSWERS}")
-    if r["rate_per_10"] > E3_RATE:
-        reasons.append(f"rate {r['rate_per_10'] - E3_RATE:+.2f} per 10 above {E3_RATE}")
-    if r["harmful"] > 0:
-        reasons.append(f"harmful {r['harmful']} (must be 0)")
-    if usable is not True:
-        why = ("readings not used: the readers' totals differ by more than 30 %" if usable is False
-               else "no second reader, the 30 % rule cannot be applied")
-        out(f"E3: NOT MEASURED ({why})")
-        e3 = "NOT MEASURED"
-    else:
-        e3 = "MET" if not reasons else "NOT MET"
-        ci = r["rate_ci90"]
-        out(f"E3 rule on set {a.default} (non-minor rows only): rate {r['rate_per_10']:.2f} per 10 [{ci[0]:.2f}, {ci[1]:.2f}] "
-            f"(at most {E3_RATE}), harmful {r['harmful']} (must be 0), answers {r['answers_read']} (at least {E3_MIN_ANSWERS}), "
-            f"readers PASS: {e3}" + ("" if not reasons else " (" + "; ".join(reasons) + ")"))
+            def tally(bs, only_shared):
+                t = defaultdict(lambda: [0, 0])    # set -> [all rows, non-minor rows]
+                for b in bs:
+                    for r in rows_by_bundle[b]:
+                        if r["kind"] in WIH and r["id"] not in excl and (not only_shared or r["answer"] in shared_names):
+                            t[set_of[r["answer"]]][0] += 1
+                            t[set_of[r["answer"]]][1] += not r.get("minor")
+                return t
+            f_t, s_t = tally(first_b, True), tally(second_b, False)
+            shared_n = Counter(set_of[n] for n in shared_names)
+            shared = len(shared_names)
+
+            def pct(x, y):
+                big = max(x, y)
+                return abs(x - y) / big if big else 0.0
+            t1, t2 = sum(v[0] for v in f_t.values()), sum(v[0] for v in s_t.values())
+            n1, n2 = sum(v[1] for v in f_t.values()), sum(v[1] for v in s_t.values())
+            diff = pct(t1, t2)
+            usable = diff <= READER_DIFF
+            out(f"readers on {shared} shared answers: first {t1}, second {t2} "
+                f"wrong+invented+harmful (both sets together, minor rows included); difference {100 * diff:.0f} % of the larger (at most {int(100 * READER_DIFF)} %): "
+                f"{'PASS' if usable else 'readings not used'}")
+            out(f"  non-minor rows only: first {n1}, second {n2}, difference {100 * pct(n1, n2):.0f} % (reported, not the criterion)")
+            per_set = {}
+            for s in sets:
+                a1, a2 = f_t[s], s_t[s]
+                per_set[s] = {"shared_answers": shared_n[s], "total_first": a1[0], "total_second": a2[0],
+                              "difference_pct": 100 * pct(a1[0], a2[0]), "nonminor_first": a1[1], "nonminor_second": a2[1],
+                              "nonminor_difference_pct": 100 * pct(a1[1], a2[1]),
+                              "disagreement_per_10": per10(abs(a1[1] - a2[1]), shared_n[s])}
+                out(f"  set {s}: {shared_n[s]} shared answers, first {a1[0]}, second {a2[0]} ({100 * pct(a1[0], a2[0]):.0f} %); "
+                    f"non-minor first {a1[1]}, second {a2[1]} ({100 * pct(a1[1], a2[1]):.0f} %) (reported, not gating)")
+            pooled = per10(abs(n1 - n2), shared)
+            disagreement = {"per_set_per_10": {s: per_set[s]["disagreement_per_10"] for s in sets}, "pooled_per_10": pooled,
+                            "shared_answers": shared, "totals_first": t1, "totals_second": t2, "difference_pct": 100 * diff,
+                            "nonminor_first": n1, "nonminor_second": n2, "nonminor_difference_pct": 100 * pct(n1, n2),
+                            "per_set": per_set}
+            out("readers' disagreement, |first - second| non-minor wrong+invented+harmful per 10 answers on the shared answers: "
+                + ", ".join(f"set {s} {per_set[s]['disagreement_per_10']:.2f}" for s in sets) + f"; pooled {pooled:.2f}")
+        else:
+            out("no second reader: the 30 % rule cannot be applied")
+
+        for s in sets:
+            if s == a.default:
+                continue
+            diffs = [rate_of(x, s) - rate_of(x, a.default) for x in samples]
+            lo, hi = interval(diffs)
+            pt = res[s]["rate_per_10"] - res[a.default]["rate_per_10"]
+            out(f"paired {s} minus {a.default}, non-minor wrong+invented+harmful per 10: {pt:+.2f} [{lo:+.2f}, {hi:+.2f}]; "
+                f"harmful {res[s]['harmful']} vs {res[a.default]['harmful']}")
+
+        # the E3 rule of MILESTONE.md on the default set: non-minor rows only, for the rate and for harmful
+        r = res[a.default]
+        reasons = []
+        if r["answers_read"] < E3_MIN_ANSWERS:
+            reasons.append(f"{E3_MIN_ANSWERS - r['answers_read']} answers short of {E3_MIN_ANSWERS}")
+        if r["rate_per_10"] > E3_RATE:
+            reasons.append(f"rate {r['rate_per_10'] - E3_RATE:+.2f} per 10 above {E3_RATE}")
+        if r["harmful"] > 0:
+            reasons.append(f"harmful {r['harmful']} (must be 0)")
+        if usable is not True:
+            why = ("readings not used: the readers' totals differ by more than 30 %" if usable is False
+                   else "no second reader, the 30 % rule cannot be applied")
+            out(f"E3 {label}: NOT MEASURED ({why})" if label else f"E3: NOT MEASURED ({why})")
+            e3 = "NOT MEASURED"
+        else:
+            e3 = "MET" if not reasons else "NOT MET"
+            ci = r["rate_ci90"]
+            out(f"E3 rule {label}on set {a.default} (non-minor rows only): rate {r['rate_per_10']:.2f} per 10 [{ci[0]:.2f}, {ci[1]:.2f}] "
+                f"(at most {E3_RATE}), harmful {r['harmful']} (must be 0), answers {r['answers_read']} (at least {E3_MIN_ANSWERS}), "
+                f"readers PASS: {e3}" + ("" if not reasons else " (" + "; ".join(reasons) + ")"))
+        return outl, res, disagreement, usable, e3, reasons, r
+
+    outl, res, disagreement, usable, e3, reasons, r = analyse(set(), "")
     print("\n".join(outl))
+    without = {}
+    for name, ids in tagged.items():
+        excl = set(ids)
+        o2, res2, dis2, usable2, e32, reasons2, r2 = analyse(excl, "for information ")
+        print(f"\nwithout the items tagged {name} ({len(excl)} items; {len(all_items) - len(excl)} remain)")
+        print("\n".join(o2))
+        without[name] = (res2, dis2, usable2, e32, reasons2, r2, len(excl))
 
     if a.json_out:
         others = [s for s in sets if s != a.default]
@@ -410,6 +435,21 @@ def cmd_totals(a):
               "readers_usable": usable, "reader_disagreement": None if disagreement is None else disagreement["pooled_per_10"],
               "disagreement": disagreement, "readers_difference_pct": None if disagreement is None else disagreement["difference_pct"],
               "e3": {"verdict": e3, "reasons": reasons, "rate_limit": E3_RATE, "min_answers": E3_MIN_ANSWERS}}
+        if without:
+            js["without_tagged"] = {}
+            for name, (res2, dis2, usable2, e32, reasons2, r2, n_ex) in without.items():
+                js["without_tagged"][name] = {
+                    "excluded_items": n_ex, "remaining_items": len(all_items) - n_ex,
+                    "sets": {s: {k: v for k, v in res2[s].items() if k != "nm"} for s in sets},
+                    "default_rate": r2["rate_per_10"], "default_harmful": r2["harmful"],
+                    "readers_usable": usable2,
+                    "reader_disagreement": None if dis2 is None else dis2["pooled_per_10"],
+                    "disagreement": dis2,
+                    "readers_difference_pct": None if dis2 is None else dis2["difference_pct"],
+                    "strict_rate": res2[strict]["rate_per_10"] if strict else None,
+                    "strict_harmful": res2[strict]["harmful"] if strict else None,
+                    "e3": {"verdict": e32, "reasons": reasons2, "rate_limit": E3_RATE, "min_answers": E3_MIN_ANSWERS,
+                           "for_information": True}}
         if strict:
             js["strict_rate"] = res[strict]["rate_per_10"]
             js["strict_harmful"] = res[strict]["harmful"]
@@ -441,6 +481,7 @@ def main(argv=None):
     t.add_argument("--default", default="default")
     t.add_argument("--resamples", type=int, default=10000)
     t.add_argument("--seed", type=int, default=1)
+    t.add_argument("--tag-file", help="eval/m4/HIDDEN_TAGS.json: print the totals again without each tag's items (for information)")
     t.add_argument("--json-out", help="write the totals (no ids, no text) as JSON in the shape of eval2_compare.py e2 --reading-json")
     t.set_defaults(fn=cmd_totals)
     a = p.parse_args(argv)

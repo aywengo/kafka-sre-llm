@@ -97,6 +97,28 @@ THRESHOLD_KAPPA, THRESHOLD_OMISSION, THRESHOLD_QUOTES = 0.7, 0.8, 0.05
 MDE_FACTOR = 2.80
 
 
+class TagError(Exception):
+    """A tag file problem; the message names ids and the file name only."""
+
+
+def load_tag_file(path, known_ids):
+    """eval/m4/HIDDEN_TAGS.json -> {tag name: sorted list of ids}. Every id must be in known_ids (None: not checked here), else TagError naming the id(s).
+    None -> {}. Ids are not secret; the message carries ids, never item text."""
+    if not path:
+        return {}
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+        tags = data["tags"]
+        out = OrderedDict((str(name), sorted({str(i) for i in v["ids"]})) for name, v in tags.items())
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        raise TagError(f"{Path(path).name}: not a tag file ({{\"tags\": {{name: {{\"ids\": [...]}}}}}})") from None
+    for name, ids in out.items():
+        bad = [] if known_ids is None else [i for i in ids if i not in known_ids]
+        if bad:
+            raise TagError(f"tag {name}: id(s) not in the data: {', '.join(bad)}")
+    return out
+
+
 def rd(path):
     if ej.is_hidden(path):   # .enc: decrypted in memory (scripts/eval2.py)
         return ej.rd(path)
@@ -1233,7 +1255,10 @@ def main(argv=None):
     ap.add_argument("--items", help="--coverage --by-kind: items file (id, kind), open or .enc as the results")
     ap.add_argument("--by-kind", action="store_true",
                     help="--coverage: add totals per item kind (needs --items); kinds with fewer than %d items are merged into 'other'" % BY_KIND_MIN)
+    ap.add_argument("--tag-file", help="--coverage: eval/m4/HIDDEN_TAGS.json; every total is printed again without each tag's items")
     a = ap.parse_args(argv)
+    if a.tag_file and not a.coverage:
+        ap.error("--tag-file needs --coverage")
     if a.coverage:
         if not a.findings:
             ap.error("--coverage needs --findings")
@@ -1244,10 +1269,29 @@ def main(argv=None):
             print("open and hidden (.enc) files are never mixed in one report (results, rubrics, findings, reads, items)", file=sys.stderr)
             return 2
         hidden = ej.is_hidden(a.results)
+        title = a.title if a.title != "Judge pilot 2" else "Coverage role: batch report"
         try:
-            text, _ = build_report_coverage(rd(a.results), rd(a.rubrics), rd(a.findings), rd(a.reads) if a.reads else None, a.all_read,
-                                            a.primary_reader, a.idcheck_false_invented, a.title if a.title != "Judge pilot 2" else "Coverage role: batch report",
-                                            hidden=hidden, items=rd(a.items) if a.by_kind else None)
+            results, rubrics, findings = rd(a.results), rd(a.rubrics), rd(a.findings)
+            reads = rd(a.reads) if a.reads else None
+            items = rd(a.items) if a.by_kind else None
+            args = (a.all_read, a.primary_reader, a.idcheck_false_invented)
+            data_ids = {r["id"] for r in results} | {r["id"] for r in rubrics}
+            try:
+                tags = load_tag_file(a.tag_file, data_ids)
+            except TagError as e:
+                print(f"error: {e}", file=sys.stderr)
+                return 2
+            text, _ = build_report_coverage(results, rubrics, findings, reads, args[0], args[1], args[2], title, hidden=hidden, items=items)
+            result_ids = {r["id"] for r in results}
+            for name, ids in tags.items():
+                ex = set(ids)
+
+                def keep(rows):
+                    return None if rows is None else [r for r in rows if r["id"] not in ex]
+                head = f"without the items tagged {name} ({len(ex)} items; {len(result_ids - ex)} remain)"
+                t2, _ = build_report_coverage(keep(results), keep(rubrics), keep(findings), keep(reads), args[0], args[1], args[2], head,
+                                              hidden=hidden, items=keep(items))
+                text += "\n" + t2
         except Exception as e:
             if not hidden:
                 raise

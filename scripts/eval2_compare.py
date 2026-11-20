@@ -643,8 +643,10 @@ def mode_reading_verdict(reading):
     return ("met" if ok_rate and ok_harm else "not met"), txt
 
 
-def compare_e2(configs, items_paths, judged=None, resamples=DEFAULT_RESAMPLES, seed=1, reading=None):
-    """configs: {name: [score files]}; judged: {"results": [...], "rubrics": path, "items": path or None}; reading: dict or None."""
+def compare_e2(configs, items_paths, judged=None, resamples=DEFAULT_RESAMPLES, seed=1, reading=None, tags=None, exclude=frozenset()):
+    """configs: {name: [score files]}; judged: {"results": [...], "rubrics": path, "items": path or None}; reading: dict or None.
+    tags: {name: [ids]} from the tag file (eval/m4/HIDDEN_TAGS.json): res["without_tagged"][name] holds the same comparison over the items
+    that remain (for information; the figures and verdicts of res itself are over all items). exclude: ids left out (used for that)."""
     allp = [p for ps in configs.values() for p in ps] + list(items_paths)
     if judged:
         allp += list(judged["results"]) + [judged["rubrics"]] + ([judged["items"]] if judged.get("items") else [])
@@ -654,6 +656,18 @@ def compare_e2(configs, items_paths, judged=None, resamples=DEFAULT_RESAMPLES, s
     hidden = flags == {True}
     items = load_items_many(items_paths)
     sc = {n: load_scores_many(ps) for n, ps in configs.items()}
+    jp = load_judged_p(judged["results"], judged["rubrics"]) if judged else {}
+    mech_ids = set(items) | {i for d in sc.values() for i in d}
+    judged_ids = {i for d in jp.values() for i in d} | ({r["id"] for r in eval2.read_jsonl(judged["rubrics"])} if judged else set())
+    if tags:
+        for name, ids in tags.items():
+            bad = [i for i in ids if i not in mech_ids and i not in judged_ids]
+            if bad:
+                raise CompareError(f"tag {name}: id(s) not in the data: {', '.join(bad)}")
+    if exclude:
+        items = {i: it for i, it in items.items() if i not in exclude}
+        sc = {n: {i: v for i, v in d.items() if i not in exclude} for n, d in sc.items()}
+        jp = {st: {i: v for i, v in d.items() if i not in exclude} for st, d in jp.items()}
     res = {"hidden": hidden, "resamples": resamples, "seed": seed, "configs": sorted(sc)}
     family = {i: it.get("family") or i for i, it in items.items()}
     kind = {i: it.get("kind") or "unknown" for i, it in items.items()}
@@ -687,7 +701,6 @@ def compare_e2(configs, items_paths, judged=None, resamples=DEFAULT_RESAMPLES, s
     res["a_cost_of_4bit"] = a
 
     # judged coverage
-    jp = load_judged_p(judged["results"], judged["rubrics"]) if judged else {}
     jitems = load_items(judged["items"]) if judged and judged.get("items") else {}
     res["judged_sets"] = {s: len(d) for s, d in sorted(jp.items())}
 
@@ -753,21 +766,37 @@ def compare_e2(configs, items_paths, judged=None, resamples=DEFAULT_RESAMPLES, s
         jfigs[s] = f
     res["c_figures"]["judged_P"] = jfigs
     res["c_closed_book_vs_retrieval"] = {"mechanical": pair("P0", "Q4D"), "judged_P": jpair("P0", "Q4D"), "descriptive": True}
+    if tags and not exclude:
+        res["without_tagged"] = {}
+        for name, ids in tags.items():
+            ex = frozenset(ids)
+            # items that remain in the parts of the data the tag touches
+            remain = sum(len(part - ex) for part in (mech_ids, judged_ids) if part & ex)
+            sub_reading = ((reading or {}).get("without_tagged") or {}).get(name) or {}
+            sub = compare_e2(configs, items_paths, judged, resamples, seed, sub_reading, None, ex)
+            res["without_tagged"][name] = {"excluded": len(ex), "remain": remain, "mechanical_affected": bool(ex & mech_ids),
+                                           "judged_affected": bool(ex & judged_ids), "res": sub}
     return res
 
 
-def render_e2(res, out):
+def render_e2(res, out, mech=True, judged=True, info=False):
+    """mech / judged: print the mechanical / the judged parts (both for the real output; the without-tag blocks print only the
+    parts a tag touches). info: the block is for information (its verdicts do not count)."""
     P = lambda s="": print(s, file=out)
     pc = lambda x: "n/a" if x is None else f"{100 * x:+.2f}"
     ci = lambda t: "[%s, %s]" % (pc(t[0]), pc(t[1]))
-    P("== E2 decision rules" + (" [hidden: totals only]" if res["hidden"] else "") +
-      f"  (bootstrap clustered by family, {res['resamples']} resamples, seed {res['seed']}, 90 % interval; differences in points)")
-    P("configurations: " + ", ".join(res["configs"]))
-    P()
-    P("(a) the cost of 4-bit: all-pass of Q4D minus F, same items")
+    if not info:
+        P("== E2 decision rules" + (" [hidden: totals only]" if res["hidden"] else "") +
+          f"  (bootstrap clustered by family, {res['resamples']} resamples, seed {res['seed']}, 90 % interval; differences in points)")
+        P("configurations: " + ", ".join(res["configs"]))
+        P()
+    if mech:
+        P("(a) the cost of 4-bit: all-pass of Q4D minus F, same items")
     a = res["a_cost_of_4bit"]
     r = a.get("Q4D_minus_F")
-    if not r:
+    if not mech:
+        pass
+    elif not r:
         P("  not computed: scores of Q4D and F are both needed")
     else:
         P(f"  items {r['n']}  families {r['families']}  all-pass Q4D {r['b_pass']}/{r['n']} = {pc(r['b_rate'])[1:]} %  F {r['a_pass']}/{r['n']} = {pc(r['a_rate'])[1:]} %")
@@ -779,32 +808,41 @@ def render_e2(res, out):
           + ("; the upper end is above +%g (noted, not a fail)" % E2_MARGIN_PTS if r["upper_above_margin"] else ""))
         P(f"  smallest difference visible at 80 % power from this discordance: {pct(r['mde'], 2)} points at n {r['n']}")
     r = a.get("Q4D_minus_FR")
-    if r:
+    if not mech:
+        pass
+    elif r:
         P(f"  beside it, Q4D minus FR (decides nothing alone): items {r['n']}  difference {pc(r['diff'])}  90 % interval {ci(r['ci90'])}  p_d {r['p_d']:.4f}")
     else:
         P("  Q4D minus FR: not computed (FR scores not given)")
-    P()
+    if mech:
+        P()
     P("(b) the mode: strict (Q4S) minus default (Q4D)")
     b = res["b_mode"]
     r = b["mechanical"]
-    if r:
+    if not mech:
+        pass
+    elif r:
         P(f"  mechanical items {r['n']}: difference {pc(r['diff'])}  90 % interval {ci(r['ci90'])}  need lower end above -{E2_MARGIN_PTS:g}: "
           f"{'met' if r['noninferior'] else 'not met'}  (MDE {pct(r['mde'], 2)} points)")
     else:
         P("  mechanical: not computed (scores of Q4D and Q4S are both needed)")
     j = b["judged_P"]
-    if j:
+    if not judged:
+        pass
+    elif j:
         P(f"  judged coverage P, scenarios {j['n']}: difference {j['mean']:+.4f}  90 % interval [{j['ci90'][0]:+.4f}, {j['ci90'][1]:+.4f}]  "
           f"need lower end above -{E2_P_MARGIN:.2f}: {'met' if j['noninferior'] else 'not met'}")
     else:
         P("  judged coverage P: not computed (judged results of Q4D and Q4S are both needed)")
-    P(f"  sealed reading: {b['reading_text']}")
+    if judged:
+        P(f"  sealed reading: {b['reading_text']}")
     P(f"  criteria: mechanical {b['criteria']['mechanical']}, judged P {b['criteria']['judged_P']}, reading {b['criteria']['reading']}")
-    P(f"  verdict of rule 1(b): {b['verdict']}")
+    P(f"  verdict of rule 1(b){' (for information, not the verdict that counts)' if info else ''}: {b['verdict']}")
     P()
     P("(c) starting figures (decide nothing; all-pass rate, Wilson 95 % for kinds, bootstrap clustered by family 90 % for tiers)")
-    P(f"{'config':<8}{'tier':<22}{'n':>5}{'pass':>6}{'rate %':>9}{'interval %':>22}")
-    for n, f in res["c_figures"]["mechanical"].items():
+    if mech:
+        P(f"{'config':<8}{'tier':<22}{'n':>5}{'pass':>6}{'rate %':>9}{'interval %':>22}")
+    for n, f in (res["c_figures"]["mechanical"].items() if mech else ()):
         for k in ("mechanical", "tier_A_without_a3", "a3", "a3_without_tagged"):
             x = f[k]
             iv = "n/a" if x["rate"] is None else "[%.1f, %.1f]" % (100 * x["ci90"][0], 100 * x["ci90"][1])
@@ -812,7 +850,7 @@ def render_e2(res, out):
         P(f"{'':<8}a3 items tagged (shared variant): {f['a3_tagged']}")
         for k, x in f["kinds"].items():
             P(f"{n:<8}{'kind ' + k:<22}{x['n']:>5}{x['pass']:>6}{pct(x['rate']):>9}{'[%.1f, %.1f] (Wilson 95)' % (100 * x['wilson95'][0], 100 * x['wilson95'][1]):>34}")
-    if res["c_figures"]["judged_P"]:
+    if judged and res["c_figures"]["judged_P"]:
         P(f"judged coverage P per configuration (mean over scenarios, bootstrap over scenarios 90 %; kinds with at least {E2_MIN_KIND} scenarios):")
         for s, f in res["c_figures"]["judged_P"].items():
             x = f["all"]
@@ -822,10 +860,19 @@ def render_e2(res, out):
     cb = res["c_closed_book_vs_retrieval"]
     P("closed book against retrieval, Q4D minus P0 (paired, descriptive):")
     r = cb["mechanical"]
-    P("  mechanical: " + (f"items {r['n']}  difference {pc(r['diff'])}  90 % interval {ci(r['ci90'])}" if r else "not computed (P0 scores not given)"))
+    if mech:
+        P("  mechanical: " + (f"items {r['n']}  difference {pc(r['diff'])}  90 % interval {ci(r['ci90'])}" if r else "not computed (P0 scores not given)"))
     j = cb["judged_P"]
-    P("  judged P: " + (f"scenarios {j['n']}  difference {j['mean']:+.4f}  90 % interval [{j['ci90'][0]:+.4f}, {j['ci90'][1]:+.4f}]"
-                        if j else "not computed (P0 judged results not given)"))
+    if judged:
+        P("  judged P: " + (f"scenarios {j['n']}  difference {j['mean']:+.4f}  90 % interval [{j['ci90'][0]:+.4f}, {j['ci90'][1]:+.4f}]"
+                            if j else "not computed (P0 judged results not given)"))
+    for name, w in res.get("without_tagged", {}).items():
+        P()
+        P(f"without the items tagged {name} ({w['excluded']} items; {w['remain']} remain)")
+        P("(for information: the verdicts above, over all items, are the ones that count; mechanical part "
+          + ("recomputed" if w["mechanical_affected"] else "not affected, not repeated") + "; judged part "
+          + ("recomputed" if w["judged_affected"] else "not affected, not repeated") + ")")
+        render_e2(w["res"], out, mech=w["mechanical_affected"], judged=w["judged_affected"], info=True)
 
 
 
@@ -849,6 +896,10 @@ def e2_verdicts(res):
         "verdict": b["verdict"], "criteria": b["criteria"], "reading_text": b["reading_text"],
         "mechanical": {"n": m["n"], "diff": m["diff"], "ci90": list(m["ci90"]), "mde": m["mde"], "noninferior": m["noninferior"]} if m else None,
         "judged_P": {"n": j["n"], "diff": j["mean"], "ci90": list(j["ci90"]), "noninferior": j["noninferior"]} if j else None}
+    if res.get("without_tagged"):
+        out["without_tagged"] = {name: {"for_information": True, "excluded": w["excluded"], "remain": w["remain"],
+                                        "mechanical_affected": w["mechanical_affected"], "judged_affected": w["judged_affected"],
+                                        **e2_verdicts(w["res"])} for name, w in res["without_tagged"].items()}
     out["starting_figures"] = {"mechanical": res["c_figures"]["mechanical"], "judged_P": res["c_figures"]["judged_P"],
                                "closed_book_vs_retrieval": {k: (None if v is None else
                                                                 {x: v[x] for x in ("n", "diff", "mean", "ci90") if x in v})
@@ -908,6 +959,7 @@ def main(argv=None):
     for k in ("default_harmful", "strict_harmful"):
         e.add_argument("--reading-" + k.replace("_", "-"), dest="reading_" + k, type=int, default=None)
     e.add_argument("--readers-usable", choices=["yes", "no"], default=None)
+    e.add_argument("--tag-file", help="eval/m4/HIDDEN_TAGS.json: the judged part (and a mechanical part a tag touches) is printed again without each tag's items, for information")
     e.add_argument("--resamples", type=int, default=DEFAULT_RESAMPLES)
     e.add_argument("--seed", type=int, default=1)
     e.add_argument("--json", help="write the result here (an .enc name encrypts; required for hidden input)")
@@ -931,7 +983,14 @@ def main(argv=None):
                 if not a.rubrics:
                     raise CompareError("--judged-results needs --rubrics")
                 judged = {"results": a.judged_results, "rubrics": a.rubrics, "items": a.judged_items}
-            r = compare_e2(dict(cfg), a.items, judged, a.resamples, a.seed, reading_from_args(a))
+            tags = None
+            if a.tag_file:
+                from eval2_pilot_report import load_tag_file, TagError
+                try:
+                    tags = load_tag_file(a.tag_file, None)
+                except TagError as e:
+                    raise CompareError(str(e)) from None
+            r = compare_e2(dict(cfg), a.items, judged, a.resamples, a.seed, reading_from_args(a), tags)
             for jp_ in (a.json, a.json_out):
                 if jp_ and eval2.is_hidden(jp_) != r["hidden"]:
                     raise CompareError("a hidden comparison writes a .enc json, a clear one does not")

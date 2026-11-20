@@ -6,11 +6,12 @@ import math
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
+import eval2  # noqa: E402
 import eval2_judge as ej  # noqa: E402
 import eval2_pilot_report as pr  # noqa: E402
 
@@ -617,3 +618,89 @@ class CoverageReport(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CoverageTagFile(unittest.TestCase):
+    """--tag-file: every total again without the tagged items; synthetic encrypted data for the hidden path."""
+    N, ANSWER, QUOTE = CoverageReport.N, CoverageReport.ANSWER, CoverageReport.QUOTE
+    rubric = staticmethod(CoverageReport.rubric)
+    truth = staticmethod(CoverageReport.truth)
+    judge_rows = CoverageReport.judge_rows
+    # default: 2, 1, 3 wrong findings on t-00 .. t-02; strict: 0, 1, 1
+
+    def small(self):
+        rows = [dict(r, set=name) for r in self.judge_rows() if int(r["id"][2:]) < 3 for name in ("default", "strict")]
+        rubs = [self.rubric(i) for i in range(3)]
+        f = []
+        for name, counts in (("default", (2, 1, 3)), ("strict", (0, 1, 1))):
+            for i, n in enumerate(counts):
+                f.append({"set": name, "id": f"t-{i:02d}", "reader": "A", "kind": "read"})
+                f += [{"set": name, "id": f"t-{i:02d}", "reader": "A", "kind": "wrong", "quote": "w"}] * n
+        return rows, rubs, f
+
+    def run_main(self, tmp, tags, hidden=False, extra=()):
+        import io
+        sfx = ".jsonl.enc" if hidden else ".jsonl"
+        rows, rubs, f = self.small()
+        for name, data in (("res", rows), ("rub", rubs), ("f", f)):
+            if hidden:
+                eval2.write_jsonl(tmp / (name + sfx), data)
+            else:
+                (tmp / (name + sfx)).write_text("".join(json.dumps(x) + "\n" for x in data))
+        tf = tmp / "tags.json"
+        tf.write_text(json.dumps({"tags": {"exposed": {"ids": tags}}}))
+        argv = ["--coverage", "--results", str(tmp / ("res" + sfx)), "--rubrics", str(tmp / ("rub" + sfx)),
+                "--findings", str(tmp / ("f" + sfx)), "--idcheck-false-invented", "0", *extra]
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            rc = pr.main(argv)
+        return rc, out.getvalue(), err.getvalue(), str(tf)
+
+    def test_both_sets_of_totals_on_a_constructed_case(self):
+        tmp = Path(tempfile.mkdtemp())
+        _, plain, _, tf = self.run_main(tmp, ["t-00"])
+        self.assertNotIn("without the items tagged", plain)
+        rc, out, err, _ = self.run_main(tmp, ["t-00"], extra=["--tag-file", tf])
+        self.assertEqual((rc, err), (0, ""))
+        self.assertTrue(out.startswith(plain))      # the totals over all items come first and are the unchanged output
+        head = "# without the items tagged exposed (1 items; 2 remain)"
+        self.assertIn(head, out)
+        first, second = out.split(head)
+        # all items: d = (2, 0, 2): mean 1.333; default 20.0 (5.8) per 10
+        self.assertIn("| reader_wih | default - strict | 3 | 1.333 (0.667) |", first)
+        self.assertIn("| default | 3 | 20.0 (5.8) |", first)
+        # without t-00: d = (0, 2): mean 1.000, SE 1.000; default (1, 3) -> 20.0 (10.0); strict (1, 1) -> 10.0 (0.0)
+        self.assertIn("| reader_wih | default - strict | 2 | 1.000 (1.000) |", second)
+        self.assertIn("| default | 2 | 20.0 (10.0) |", second)
+        self.assertIn("| strict | 2 | 10.0 (0.0) |", second)
+        for c in ("C1", "C2", "C3", "C4", "C5", "C6", "Descriptive, not criteria"):
+            self.assertIn(c, second)
+        self.assertNotIn("t-00", out)
+
+    def test_hidden_path_with_a_temporary_key(self):
+        import os
+        from unittest import mock
+        tmp = Path(tempfile.mkdtemp())
+        key = tmp / "k"
+        eval2.keygen(key)
+        with mock.patch.dict(os.environ, {"EVAL_HIDDEN_KEY": str(key)}):
+            rc, plain, err, tf = self.run_main(tmp, ["t-00"], hidden=True)
+            self.assertEqual((rc, err), (0, ""))
+            rc2, out, err2, _ = self.run_main(tmp, ["t-00"], hidden=True, extra=["--tag-file", tf])
+            self.assertEqual((rc2, err2), (0, ""))
+            self.assertTrue(out.startswith(plain))
+            self.assertIn("# without the items tagged exposed (1 items; 2 remain)", out)
+            self.assertIn("| reader_wih | default - strict | 2 | 1.000 (1.000) |", out)
+            self.assertNotIn("t-0", out)
+            self.assertFalse([p for p in tmp.iterdir() if p.suffix in (".jsonl",)])
+            # an unknown id is refused, naming the id
+            rc3, out3, err3, _ = self.run_main(tmp, ["t-00", "t-77"], hidden=True, extra=["--tag-file", str(tmp / "tags.json")])
+            self.assertEqual(rc3, 2)
+            self.assertIn("t-77", err3)
+            self.assertNotIn("t-00", err3)
+            self.assertEqual(out3, "")
+
+    def test_tag_file_without_coverage_is_refused(self):
+        with self.assertRaises(SystemExit):
+            with redirect_stderr(io.StringIO()):
+                pr.main(["--results", "x", "--tag-file", "y"])

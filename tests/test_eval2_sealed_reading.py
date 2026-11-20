@@ -532,6 +532,101 @@ class SealedReading(unittest.TestCase):
         _, o2, _ = self.totals()
         self.assertEqual(o1, o2)
 
+    # ------------------------------------------------------------ tag file
+    def tag_file(self, ids, name="exposed"):
+        p = self.d / f"tags_{name}.json"
+        p.write_text(json.dumps({"tags": {name: {"ids": ids}}}))
+        return p
+
+    def tagged_case(self):
+        """default: one non-minor wrong on each of the items zq-000 .. zq-003; strict: one harmful on zq-004. Every reader writes
+        the same rows, so the second reader agrees with the first."""
+        self.build()
+
+        def make(r, s):
+            i = int(r["item"].split("-")[1])
+            if s == "default" and i < 4:
+                return [{"kind": "wrong"}]
+            if s == "strict" and i == 4:
+                return [{"kind": "harmful", "quote": "q2"}]
+            return []
+        for b in self.first_names() + self.second_names():
+            self.write_findings(b, make)
+
+    def test_tag_file_prints_both_sets_of_totals_and_the_json_carries_both(self):
+        self.tagged_case()
+        tags = self.tag_file(["zq-000", "zq-001", "zq-002", "zq-003"])
+        target = self.d / "totals.json"
+        rc, out, err = self.totals("--tag-file", str(tags), "--json-out", str(target))
+        self.assertEqual(rc, 0, err)
+        head, tail = out.split("\nwithout the items tagged exposed (4 items; 16 remain)\n")
+        self.assertIn("set default: answers read 20", head)
+        self.assertIn("non-minor 4 = 2.00 per 10", head)
+        self.assertIn("answers short of 60", head)
+        self.assertNotIn("for information", head)
+        self.assertIn("set default: answers read 16", tail)
+        self.assertIn("non-minor 0 = 0.00 per 10", tail)
+        self.assertIn("harmful (non-minor) 1", tail)          # strict keeps its one
+        self.assertIn("for information", tail)
+        self.assertIn("bootstrap over 16 items", tail)
+        self.assertNotIn("zq-", out)                          # ids of items are not printed, the count is enough
+        js = json.loads(target.read_text())
+        self.assertEqual(js["default_rate"], 2.0)
+        self.assertEqual(js["sets"]["default"]["answers_read"], 20)
+        self.assertEqual(js["e3"]["verdict"], "NOT MET")
+        self.assertNotIn("for_information", js["e3"])
+        w = js["without_tagged"]["exposed"]
+        self.assertEqual((w["excluded_items"], w["remaining_items"]), (4, 16))
+        self.assertEqual(w["default_rate"], 0.0)
+        self.assertEqual(w["sets"]["default"]["answers_read"], 16)
+        self.assertEqual(w["strict_rate"], w["sets"]["strict"]["rate_per_10"])
+        self.assertEqual(w["sets"]["strict"]["harmful"], 1)
+        self.assertEqual(w["sets"]["strict"]["rate_per_10"], 10.0 / 16)
+        self.assertTrue(w["e3"]["for_information"])
+        self.assertEqual(w["e3"]["verdict"], "NOT MET")     # 16 answers are short of 60 as well
+        # the shared answers of the second reader only count items that remain
+        self.assertEqual(js["disagreement"]["shared_answers"], 10)
+        self.assertLessEqual(w["disagreement"]["shared_answers"], 10)
+
+    def test_tag_file_second_reader_totals_without_the_items(self):
+        self.tagged_case()
+        key = self.key()
+        shared = {n.rsplit("-", 1)[0] for n in key["bundles"]["second_1"]}
+        ids = [i for i in sorted(shared)][:2]
+        tags = self.tag_file(ids)
+        rc, out, err = self.totals("--tag-file", str(tags))
+        self.assertEqual(rc, 0, err)
+        tail = out.split("\nwithout the items tagged exposed (2 items; 18 remain)\n")[1]
+        self.assertIn("readers on %d shared answers" % (len(key["bundles"]["second_1"]) - 4), tail)
+
+    def test_output_is_unchanged_without_the_option(self):
+        self.tagged_case()
+        _, plain, _ = self.totals()
+        rc, with_tags, _ = self.totals("--tag-file", str(self.tag_file(["zq-000"])))
+        self.assertEqual(rc, 0)
+        self.assertTrue(with_tags.startswith(plain))
+        self.assertNotIn("without the items tagged", plain)
+        self.assertNotIn("for information", plain)
+        target = self.d / "plain.json"
+        self.totals("--json-out", str(target))
+        self.assertNotIn("without_tagged", json.loads(target.read_text()))
+
+    def test_unknown_tag_id_is_refused_naming_it(self):
+        self.tagged_case()
+        rc, out, err = self.totals("--tag-file", str(self.tag_file(["zq-000", "zq-999"])))
+        self.assertEqual(rc, 1)
+        self.assertIn("zq-999", err)
+        self.assertNotIn("zq-000", err)
+        self.assertEqual(out, "")
+
+    def test_bad_tag_file_is_an_error(self):
+        self.tagged_case()
+        p = self.d / "bad.json"
+        p.write_text("{}")
+        rc, out, err = self.totals("--tag-file", str(p))
+        self.assertEqual(rc, 1)
+        self.assertIn("not a tag file", err)
+
 
 @NEEDS_OPENSSL
 class SealedIOFinding(unittest.TestCase):
