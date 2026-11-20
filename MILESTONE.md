@@ -565,7 +565,7 @@ and J6 come from the mechanical tier and block nothing yet):
   real model on this machine (all phases; scrubbed bundle clean; n=2: 79.5 s median, every
   answer cut at 2,048 tokens, first words 14.4 s, 20.3 GB peak); fixes committed
   (`ddf33b1`); the plan is ready for the Owner.
-- 2026-11-20, 02:40 to about 05:00: the plan for E2 with the E3 and E4 runs
+- 2026-11-20, 02:40 to 03:55: the plan for E2 with the E3 and E4 runs
   (`runs/m4/reports/e2_plan.md`): two hidden looks (E2, E3), about 20 to 29 h of server
   time, five gaps in the harness. Built and committed since: WP1c T10, several items
   files (`a3f2fc7`); the hidden path of the judge and the chunk helper fix (`4f9e8a6`);
