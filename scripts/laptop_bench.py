@@ -52,7 +52,7 @@ DEFAULTS = {"backend": "openai", "model": None, "extra_body": '{"chat_template_k
             "k": "k6", "max_tokens": None, "catalogues": "work/m4/catalogues", "weights_dir": None,
             "model_repo": "mlx-community/Qwen3.8-27B-4bit", "port": 8765, "interval": 2.0}
 BARS = {"install_s": 1800, "median_answer_s": 60, "memory_gb": 20, "weights_gb": (15, 17), "drift_ratio": 1.2,
-        "score_margin_points": 5}
+        "score_margin_points": 5, "sustained_n": 30}
 CONDS = ["service-default", "service-strict", "service-default-check",
          "oneshot-default", "oneshot-strict", "oneshot-default-check"]
 
@@ -892,10 +892,13 @@ def cmd_score(a):
     out, cfg = resolve(a)
     ids = load_ids()
     items = load_items(ids["score"]["file"])
+    full_ids = ids["score"]["ids"]
+    n = len(full_ids) if getattr(a, "n", None) is None else max(0, min(int(a.n), len(full_ids)))
+    sel = full_ids[:n]  # a prefix of the fixed list: a partial run is the start of the full one
     sub = out / "score"
     sub.mkdir(parents=True, exist_ok=True)
     items_f = sub / "items_subset.jsonl"
-    items_f.write_text("".join(json.dumps(items[i], ensure_ascii=False) + "\n" for i in ids["score"]["ids"]), encoding="utf-8")
+    items_f.write_text("".join(json.dumps(items[i], ensure_ascii=False) + "\n" for i in sel), encoding="utf-8")
     ans, scores, summ = sub / "answers.jsonl", sub / "scores.jsonl", sub / "summary.json"
     pids = {}
     if cfg["backend"] == "openai" and not cfg["stub"]:
@@ -906,7 +909,7 @@ def cmd_score(a):
     try:
         if cfg["stub"]:
             have = {r["id"] for r in read_jsonl(ans)}
-            for i in ids["score"]["ids"]:
+            for i in sel:
                 if i in have:
                     log("score", f"{i} already done, skipped")
                     continue
@@ -936,7 +939,7 @@ def cmd_score(a):
     finally:
         stats = sampler.stop()
     write_json(sub / "memory_summary.json", stats)
-    cmp = compare_scores(ids, read_jsonl(scores), read_jsonl(ans))
+    cmp = compare_scores(ids, read_jsonl(scores), read_jsonl(ans), sel)
     cmp["stub"] = cfg["stub"]
     write_json(sub / "compare.json", cmp)
     log("score", f"laptop {cmp['laptop_pass']}/{cmp['n']} pass, reference {cmp['reference_pass']}/{cmp['n']}; "
@@ -944,11 +947,11 @@ def cmd_score(a):
     return 0
 
 
-def compare_scores(ids, score_rows, answer_rows):
+def compare_scores(ids, score_rows, answer_rows, only=None):
     ref = ids["score"]["reference"]
     got = {r["id"]: bool(r.get("all_pass")) for r in score_rows}
     txt = {r["id"]: hashlib.sha256((r.get("text") or "").encode()).hexdigest() for r in answer_rows if not r.get("error")}
-    common = [i for i in ids["score"]["ids"] if i in got]
+    common = [i for i in (only if only is not None else ids["score"]["ids"]) if i in got]
     lp = sum(got[i] for i in common)
     rp = sum(bool(ref["pass"][i]) for i in common)
     disc = [i for i in common if got[i] != bool(ref["pass"][i])]
@@ -978,6 +981,7 @@ def collect(out):
     return {"rows": rows, "sustained": sust, "cold": read_jsonl(out / "memory/loaded/rows.jsonl"), "mems": mems, "install": read_json(out / "install_check.json"),
             "preflight": read_json(out / "preflight.json"), "probe": read_json(out / "speed/retrieval_probe.json"),
             "memory_phase": read_json(out / "memory/memory_phase.json"), "compare": read_json(out / "score/compare.json"),
+            "score_answers": read_jsonl(out / "score/answers.jsonl"), "score_scores": read_jsonl(out / "score/scores.jsonl"),
             "config": read_json(out / "config.json", {})}
 
 
@@ -1022,7 +1026,10 @@ def bars(d):
         pres = max((m.get("max_pressure_level") or 1) for m in mems)
         mp = d["memory_phase"] or {}
         bu = (mp.get("baseline") or {}).get("peak_used_gb")
-        delta = f"; system used {used:.1f} GB (baseline {fmt(bu)} GB)" if used else ""
+        base_txt = f"baseline {bu:.1f} GB" if bu else "baseline not sampled"
+        delta = f"; system used {used:.1f} GB ({base_txt})" if used else ""
+        procs = sorted({k for m in mems for k in (m.get("peak_rss_mb") or {})})
+        delta += f"; processes summed: {', '.join(procs) or 'none seen'}"
         B.append(("Memory held (sum of resident memory of the assistant's processes)", f"peak {peak:.1f} GB{delta}; swap up to {swap:.0f} MB; "
                   f"pressure level up to {pres} (1 normal, 2 warning, 4 critical)", f"{sum(m['samples'] for m in mems)} samples",
                   "about 20 GB", ("pass" if peak <= BARS["memory_gb"] and pres < 4 else "FAIL")))
@@ -1040,11 +1047,17 @@ def bars(d):
     if sd or od:
         main = sd or od
         m = med([r["wall_s"] for r in main])
-        B.append(("Time to a complete answer, default mode, " + ("service" if sd else "one-shot"), f"median {m:.1f} s (min {min(r['wall_s'] for r in main):.1f}, max {max(r['wall_s'] for r in main):.1f})",
+        per1k = [r["wall_s"] * 1000 / r["tokens"] for r in main if r.get("tokens")]
+        per1k_txt = f"; {fmt(med(per1k))} s per 1,000 completion tokens" if per1k else ""
+        B.append(("Time to a complete answer, default mode, " + ("service" if sd else "one-shot"), f"median {m:.1f} s (min {min(r['wall_s'] for r in main):.1f}, max {max(r['wall_s'] for r in main):.1f}){per1k_txt}",
                   f"{len(main)} questions", "median under 60 s", "pass" if m < BARS["median_answer_s"] else "FAIL"))
         if sd:
             B.append(("Time to the first words (service, streamed)", f"median {fmt(med([r['ttft_s'] for r in sd]))} s; first question after launch {fmt(sd[0]['ttft_s'])} s",
                       f"{len(sd)} questions", "reported on the laptop (10 s on the reference machine)", "reported"))
+        toks = [r["tokens"] for r in main if r.get("tokens") is not None]
+        cut = sum(1 for r in main if r.get("truncated"))
+        B.append(("Answer length (reported, not gated)", f"{cut} of {len(main)} answers ended at the token limit ({100 * cut / len(main):.0f} %); median completion tokens {fmt(med(toks), 0)}",
+                  f"{len(main)} questions", "reported; at the limit the time per answer is the limit divided by tokens per second", "reported"))
         tok = med([r["tok_per_s"] for r in main])
         sp = {k: med([r[k] for r in main]) for k in ("search_s", "retrieve_s", "answer_s")}
         B.append(("Split of an answer", f"search terms {fmt(sp['search_s'])} s, retrieval and rerank {fmt(sp['retrieve_s'])} s, answering {fmt(sp['answer_s'])} s; {fmt(tok)} tokens/s",
@@ -1077,7 +1090,7 @@ def bars(d):
     for lab, rs in sorted(d["sustained"].items()):
         rs = [r for r in rs if not r.get("error")]
         t = [r["wall_s"] for r in rs]
-        if len(t) >= 10:
+        if len(t) >= BARS["sustained_n"]:
             f10, l10 = med(t[:10]), med(t[-10:])
             sl = slope(t)
             pw = read_jsonl(Path(d["_out"]) / "sustained" / lab / "power.jsonl") if d.get("_out") else []
@@ -1088,7 +1101,7 @@ def bars(d):
                       f"{len(t)} questions", f"ratio under {BARS['drift_ratio']} (threshold set in the plan, not in GOAL.md)",
                       "pass" if l10 / f10 < BARS["drift_ratio"] else "FAIL"))
         elif t:
-            B.append((f"Sustained use, {lab}", f"only {len(t)} questions", f"{len(t)}", "30 questions", "not run in full"))
+            B.append((f"Sustained use, {lab}", f"only {len(t)} of {BARS['sustained_n']} questions; drift not computed", f"{len(t)}", "30 questions", "not run in full"))
     if not d["sustained"]:
         B.append(("Sustained use", "-", "-", "30 in a row, on power and on battery", "not run"))
     wl = [r for r in ok_rows if r.get("label") == "working-laptop" and r["cond"] == "service-default"]
@@ -1098,7 +1111,15 @@ def bars(d):
     else:
         B.append(("A working laptop (apps open)", "-", "-", "median under 60 s", "not run (speed --label working-laptop)"))
     c = d["compare"]
-    if c:
+    n_all = len(load_ids()["score"]["ids"])
+    sa = {r["id"] for r in d.get("score_answers", []) if not r.get("error")}
+    ss = {r["id"] for r in d.get("score_scores", [])}
+    if (not c or c["n"] < n_all) and sa:
+        cmp_txt = (f"; of those scored, laptop {c['laptop_pass']} of {c['n']} all-pass, reference {c['reference_pass']} of {c['n']}, {c['discordant']} items differ"
+                   if c and c["n"] else "")
+        B.append(("Same answers as the reference machine (mechanical scorer, open subset)", f"partial: {len(sa)} of {n_all} answers present, {len(ss)} scored{cmp_txt}",
+                  f"{len(sa)} of {n_all} items", f"difference under {BARS['score_margin_points']} points (needs all {n_all})", "partial (not a result)"))
+    elif c:
         pts = 100 * abs(c["laptop_pass"] - c["reference_pass"]) / max(c["n"], 1)
         B.append(("Same answers as the reference machine (mechanical scorer, open subset)", f"laptop {c['laptop_pass']} of {c['n']} all-pass, reference {c['reference_pass']} of {c['n']}; "
                   f"{c['discordant']} items differ ({c['laptop_only']} only the laptop passes, {c['reference_only']} only the reference machine); identical answer text {c['identical_text']} of {c['n']}",
@@ -1355,7 +1376,8 @@ def build_parser():
     p = add("memory")
     p.add_argument("--baseline-s", type=int, default=20)
     p.add_argument("--force", action="store_true")
-    add("score")
+    p = add("score")
+    p.add_argument("--n", type=int, help="only the first N of the 60 ids (a prefix of the full run; resumable)")
     p = add("bundle")
     p.add_argument("--scrub-terms", help="JSON {label: [terms]} instead of looking them up (tests)")
     p = add("make-ids")

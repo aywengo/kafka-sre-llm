@@ -77,13 +77,22 @@ Both options use the same model repository for the download, `mlx-community/Qwen
 Times are ranges, with the basis in the last section. Each step prints one line per item and can be run again: a
 finished item is skipped.
 
+0. **Smoke, before anything long.** Once the install (step 3) and your serving option are in place, send one
+   question through the service: `.venv/bin/python scripts/laptop_bench.py --out OUT [serving parameters] speed
+   --conds service-default --n-service 1`, then `... bundle`. It must produce a filled `OUT/SUMMARY.md` (a time, the
+   first words, the memory row). If it does not, stop and send the output; nothing below is worth starting. Use a
+   separate `--out` (for example `out/laptop/smoke`) so the real folder starts clean. 3 to 6 min.
+
 1. **Clone, with the network on.** `time git clone <your remote> kafka-sre-llm && cd kafka-sre-llm` (note the time;
    add it to the install figure by hand). Put `catalogues.tgz` in place:
    `mkdir -p work/m4 && tar xzf /path/to/catalogues.tgz -C work/m4`. 1 to 2 min.
 
 2. **Preflight** (no model, no network): what is present and what is missing.
    `python3 scripts/laptop_bench.py --out OUT preflight` (with your serving parameters from above on this first
-   command). Missing items that are listed as required must be fixed after step 3, then run it again. 1 min.
+   command). Before the venv exists (before step 3) the Python packages (httpx, sentence_transformers, torch) are
+   listed as missing: that is expected, because the system Python is not the venv. Missing items that are listed as
+   required must be fixed after step 3, then run it again. From step 3 on, use `.venv/bin/python` for every phase.
+   1 min.
 
 3. **Install, timed.** `python3 scripts/laptop_bench.py --out OUT [serving parameters] install-check --run`.
    The sequence, each step timed (`OUT/install/steps.jsonl`):
@@ -116,7 +125,8 @@ finished item is skipped.
 
 8. **Sustained, on power.** Charger connected, laptop cool.
    `.venv/bin/python scripts/laptop_bench.py --out OUT sustained --label ac`. 30 questions in default mode through one
-   service; `pmset` is read before, after questions 5, 10, ..., 30, and after. 30 to 60 min.
+   service (`--n N` shortens it, for a trial; a run shorter than 30 is reported as "not run in full", without the
+   drift figure); `pmset` is read before, after questions 5, 10, ..., 30, and after. 30 to 60 min.
 
 9. **Sustained, on battery.** Disconnect the charger with the battery at 90 % or more, let the laptop cool for 10
    minutes, then `... sustained --label battery`. The script refuses when the power state does not match the label.
@@ -131,6 +141,8 @@ finished item is skipped.
 11. **Same answers as the reference machine.** `.venv/bin/python scripts/laptop_bench.py --out OUT score` answers the 60
     open items in default mode through `scripts/eval2.py answer` and scores them with `scripts/eval2_score.py` (needs
     the catalogues), then compares with the stored `s6-A1` result. It is resumable: run it again after an interruption.
+    `--n N` answers and scores only the first N of the 60 ids (a prefix, so `--n 10` first and the full run later
+    continue from the same answers); a partial run is shown in `SUMMARY.md` as partial, with the answers present of 60.
     45 to 90 min. Turn Wi-Fi on again after this step.
 
 12. **Bundle.** `.venv/bin/python scripts/laptop_bench.py --out OUT bundle` writes `OUT/SUMMARY.md` (every bar, the measured
@@ -172,4 +184,12 @@ after scrubbing is left out and named in the output. No server address and no ke
   conditions add the process start (index, reranker, and in option B the 16 GB model) to every question.
 - Scorer items: the 251-item run took 1 h 57 min on the Mac Studio, 28 s per item; the laptop range uses 1 to 2.5 times
   that for 60 items.
+- Measured on the reference machine (Mac Studio, M3 Ultra, `Qwen3.8-27B-4bit` through oMLX, `laptop_bench.py` real-path
+  check, **n=2 questions**, so a pointer and not a figure): median 79.5 s per answer, 29.0 tokens per second, first
+  words 14.4 s, peak 20.3 GB summed resident memory (oMLX and the service). Every answer ended at the limit of 2,048
+  tokens, so the time per answer was set by the tokens per second (2,048 / 29 is about 70 s of answering). Consequence
+  for planning: at 2,048 tokens per answer the time is the tokens divided by the tokens per second, so a laptop at
+  half the speed needs about twice as long (about 160 s per answer), whatever the retrieval costs. `SUMMARY.md` shows
+  the share of answers at the limit, the median tokens, and the time per 1,000 completion tokens, to compare runs with
+  different answer lengths.
 - These are estimates before any laptop run; replace them with the measured times in the report.

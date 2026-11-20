@@ -199,6 +199,52 @@ class Phases(unittest.TestCase):
         with zipfile.ZipFile(o / "send_back.zip") as z:
             self.assertIn("SUMMARY.md", z.namelist())
 
+    def summary_after(self, *phases):
+        for args in phases:
+            rc, out = self.run_phase(*args)
+            self.assertEqual(rc, 0, (args, out))
+        rc, out = self.run_phase("bundle", "--scrub-terms", json.dumps(TERMS))
+        self.assertEqual(rc, 0, out)
+        return (Path(self.out) / "SUMMARY.md").read_text()
+
+    def test_score_n_is_a_prefix_and_resumes(self):
+        ids = lb.load_ids()["score"]["ids"]
+        self.run_phase("score", "--n", "7")
+        got = [r["id"] for r in lb.read_jsonl(Path(self.out) / "score/answers.jsonl")]
+        self.assertEqual(got, ids[:7])
+        self.assertEqual(json.loads((Path(self.out) / "score/compare.json").read_text())["n"], 7)
+        rc, out = self.run_phase("score", "--n", "10")
+        self.assertEqual(out.count("already done"), 7)
+        got = [r["id"] for r in lb.read_jsonl(Path(self.out) / "score/answers.jsonl")]
+        self.assertEqual(got, ids[:10])
+
+    def test_summary_partial_score_and_short_sustained(self):
+        md = self.summary_after(["score", "--n", "7"], ["sustained", "--label", "ac", "--n", "12"])
+        row = [l for l in md.splitlines() if l.startswith("| Same answers")][0]
+        self.assertIn("partial: 7 of 60 answers present, 7 scored", row)
+        self.assertNotIn("not run", row)
+        row = [l for l in md.splitlines() if l.startswith("| Sustained use, ac")][0]
+        self.assertIn("not run in full", row)
+        self.assertNotIn("ratio", row)
+        # answers present without scores (an interrupted run)
+        (Path(self.out) / "score/scores.jsonl").unlink()
+        (Path(self.out) / "score/compare.json").unlink()
+        md = self.summary_after()
+        row = [l for l in md.splitlines() if l.startswith("| Same answers")][0]
+        self.assertIn("7 of 60 answers present, 0 scored", row)
+
+    def test_summary_memory_row_and_length_lines(self):
+        md = self.summary_after(["speed", "--conds", "service-default", "--n-service", "3"])
+        mem = [l for l in md.splitlines() if l.startswith("| Memory held")][0]
+        self.assertIn("baseline not sampled", mem)
+        self.assertIn("processes summed: stub", mem)
+        self.assertIn("0 of 3 answers ended at the token limit", md)
+        self.assertIn("median completion tokens", md)
+        self.assertIn("per 1,000 completion tokens", md)
+        md = self.summary_after(["memory"])
+        mem = [l for l in md.splitlines() if l.startswith("| Memory held")][0]
+        self.assertNotIn("baseline not sampled", mem)
+
     def test_resume_skips_finished_items(self):
         args = ["speed", "--conds", "service-default", "--n-service", "3"]
         self.run_phase(*args)
