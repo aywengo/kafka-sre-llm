@@ -51,6 +51,11 @@
 #   --reading-json FILE      totals of the sealed reading for rule 1(b) (default: none, the rule waits for the reading)
 #   --ledger FILE (runs/m4/HIDDEN_LEDGER.md)  --manifest FILE (runs/m4/E2_MANIFEST.json)  --report FILE (runs/m4/E2_STARTING_POINT.md)
 #   --bundle-seed S (20261119)   --dry-run [--work DIR] [--synth-marker STR] [--synth-drop-a N] [--ledger FILE] [--allow-dirty]
+# --rehearsal: every stage above on OPEN items encrypted as if hidden, with the real backend and the real server, without a look. Own work folder
+#   (work/m4/e2_rehearsal, git-ignored), own temporary key (never the real one), own ledger and manifest in it, markers and report prefixed REHEARSAL
+#   (runs/m4/E2_REHEARSAL.md; logs runs/m4/logs/REHEARSAL_m4_e2_starting_point.*). Sample: 10 tier A (none a smoke item), 10 a3 (pairs together), 6 B2
+#   scenarios (judged files of 2 and 4); G on 10 smoke items; O on 10 a3 and P0 on 6 + 6; H5 two calls; fake findings for the readings, totals and the
+#   JSON hand-over. Never combined with --hidden-*, --ledger or --manifest; a work folder belongs to one kind of run (REHEARSAL.mode / REAL.mode).
 # --dry-run: stub generator, stub judge, a fake server status, a temporary key and synthetic hidden files of the right row counts in the
 # work folder (a temporary directory unless --work); nothing real is started, the real heartbeat, status and ledger are not touched.
 # Markers: runs/m4/logs/m4_e2_starting_point.done or .failed, .readings_ready (H1).
@@ -58,25 +63,31 @@ set -e
 DRY=no; STAGES="G,O,H1,H2,H3,H4,H5,SCORE"; R2=no; READING=both; FJ=no; CROSS=yes; MARGIN=""; RJSON=""; BSEED=20261119
 HID_A=eval/hidden/tier_a.jsonl.enc; HID_A3=eval/hidden/tier_a3.jsonl.enc; HID_J1=""; HID_J2=""; HID_R1=""; HID_R2=""
 LEDGER=runs/m4/HIDDEN_LEDGER.md; MANIFEST=runs/m4/E2_MANIFEST.json; REPORT=runs/m4/E2_STARTING_POINT.md
-W=work/m4/e2; WSET=no; MARK=SYNTHMARK; DROPA=0; DIRTY_OK=no; LSET=no; MSET=no; RSET=no; FAKE_LOADED='[]'
-usage() { echo "usage: scripts/m4_e2_starting_point.sh [--dry-run] [--stages LIST] [--hidden-judged-items F F --hidden-judged-rubrics R R] [--reading default|both] [--r2] [--f-judged] [--no-cross-judge] [--margin-reading one-sided|two-sided] [--reading-json FILE] [--ledger F] [--manifest F] [--report F] (see the header)" >&2; exit 2; }
+REH=no; HSET=no; W=work/m4/e2; WSET=no; MARK=SYNTHMARK; DROPA=0; DIRTY_OK=no; LSET=no; MSET=no; RSET=no; FAKE_LOADED='[]'
+usage() { echo "usage: scripts/m4_e2_starting_point.sh [--dry-run] [--stages LIST] [--hidden-judged-items F F --hidden-judged-rubrics R R] [--reading default|both] [--r2] [--f-judged] [--no-cross-judge] [--rehearsal] [--margin-reading one-sided|two-sided] [--reading-json FILE] [--ledger F] [--manifest F] [--report F] (see the header)" >&2; exit 2; }
 while [ $# -gt 0 ]; do case $1 in
-  --dry-run) DRY=yes;; --stages) STAGES=${2:?}; shift;; --r2) R2=yes;; --f-judged) FJ=yes;; --no-cross-judge) CROSS=no;;
+  --dry-run) DRY=yes;; --rehearsal) REH=yes;; --stages) STAGES=${2:?}; shift;; --r2) R2=yes;; --f-judged) FJ=yes;; --no-cross-judge) CROSS=no;;
   --reading) READING=${2:?}; shift;; --margin-reading) MARGIN=${2:?}; shift;; --reading-json) RJSON=${2:?}; shift;;
-  --hidden-judged-items) HID_J1=${2:?}; HID_J2=${3:?}; shift 2;; --hidden-judged-rubrics) HID_R1=${2:?}; HID_R2=${3:?}; shift 2;;
-  --hidden-a) HID_A=${2:?}; shift;; --hidden-a3) HID_A3=${2:?}; shift;;
+  --hidden-judged-items) HID_J1=${2:?}; HID_J2=${3:?}; HSET=yes; shift 2;; --hidden-judged-rubrics) HID_R1=${2:?}; HID_R2=${3:?}; HSET=yes; shift 2;;
+  --hidden-a) HID_A=${2:?}; HSET=yes; shift;; --hidden-a3) HID_A3=${2:?}; HSET=yes; shift;;
   --ledger) LEDGER=${2:?}; LSET=yes; shift;; --manifest) MANIFEST=${2:?}; MSET=yes; shift;; --report) REPORT=${2:?}; RSET=yes; shift;;
   --bundle-seed) BSEED=${2:?}; shift;; --work) W=${2:?}; WSET=yes; shift;; --synth-marker) MARK=${2:?}; shift;; --synth-drop-a) DROPA=${2:?}; shift;;
   --allow-dirty) DIRTY_OK=yes;; --fake-loaded) FAKE_LOADED=${2:?}; shift;;
   *) usage;; esac; shift; done
 case $READING in both) ;; default) echo "REFUSED: --reading default is not possible with the present tools: scripts/eval2_sealed_reading.py bundle refuses fewer than two answer sets (cmd_bundle: len(sets) < 2). Relax that check, or read both sets; nothing started" >&2; exit 2;; *) usage;; esac
 case $MARGIN in ""|one-sided|two-sided) ;; *) usage;; esac
+if [ $REH = yes ]; then   # a rehearsal runs on open items encrypted with its own temporary key: never with the real hidden files, ledger or manifest
+  [ $HSET = no ] || { echo "REFUSED: --rehearsal is never combined with the real hidden files (--hidden-*); nothing started" >&2; exit 2; }
+  [ $LSET = no ] && [ $MSET = no ] || { echo "REFUSED: --rehearsal has its own ledger and manifest in its work folder (--ledger and --manifest are for the real run); nothing started" >&2; exit 2; }
+  [ $WSET = yes ] || [ $DRY = yes ] || W=work/m4/e2_rehearsal
+  case "$W/" in work/m4/e2/|*/work/m4/e2/) echo "REFUSED: --rehearsal never runs in the work folder of the real run; nothing started" >&2; exit 2;; esac
+fi
 [ $DIRTY_OK = no ] || [ $DRY = yes ] || { echo "--allow-dirty is for dry runs only" >&2; exit 2; }
 for s in $(echo $STAGES | tr ',' ' '); do case $s in G|O|H1|H2|H3|H4|H5|SCORE|E4) ;; *) usage;; esac; done
 want() { case ",$STAGES," in *",$1,"*) return 0;; esac; return 1; }
 anyh() { want H1 || want H2 || want H3 || want H4 || want H5 || want SCORE; }
 
-L=runs/m4/logs; N=m4_e2_starting_point; HB=runs/v3/HEARTBEAT.md
+L=runs/m4/logs; N=m4_e2_starting_point; HB=runs/v3/HEARTBEAT.md; PHASE="M4 E2: starting point on the hidden half (4-bit, plain base, full precision)"
 OPEN_A=eval/m4/open/tier_a.jsonl; OPEN_A3=eval/m4/open/tier_a3.jsonl; STORED_A1=work/m4/s6/ans_A1.jsonl
 PIL_ITEMS=eval/m4/pilot2/items.jsonl; PIL_RUBS=eval/m4/pilot2/rubrics.jsonl
 CATS=work/m4/catalogues; CHUNKS=work/v3/chunks_s1.jsonl
@@ -87,6 +98,15 @@ CEB='{"max_tokens": 32768}'; CSET=glm-think-12k; SRC=12000
 PYH=".venv/bin/python scripts/m4_e2_manifest.py"
 SLEEP=30; WAITN=120
 
+SCANX=""; HNEED=yes; BSR=0.25; RTAG=""
+# the numbers of the run (real: 245 + 60 mechanical, 24 + 36 judged); a rehearsal has its own (10 + 10, 2 + 4) and its own plain open inputs
+NA=245; NA3=60; NJ1=24; NJ2=36; NJ=60; NM=305; NG=60; NOA3=88; NP0S=60; NP0J=24; FS=6; SS=2; XN=24
+G_ITEMS=$OPEN_A; G_SUB="--subset smoke"; O_A3=$OPEN_A3; P0S_ITEMS=$OPEN_A; P0S_SUB="--subset smoke"
+if [ $REH = yes ]; then
+  N=REHEARSAL_m4_e2_starting_point; PHASE="REHEARSAL (open items encrypted as hidden) of M4 E2"; HNEED=no; RTAG="REHEARSAL "
+  NA=10; NA3=10; NJ1=2; NJ2=4; NJ=6; NM=20; NG=10; NOA3=10; NP0S=6; NP0J=6; FS=2; SS=1; XN=2; BSR=0.5
+  [ $RSET = yes ] || REPORT=runs/m4/E2_REHEARSAL.md
+fi
 if [ $DRY = yes ]; then
   [ $WSET = yes ] || W=$(mktemp -d "${TMPDIR:-/tmp}/m4_e2_dry.XXXXXX")
   mkdir -p $W; L=$W/logs; HB=$W/HEARTBEAT.md; SLEEP=0; WAITN=1
@@ -95,18 +115,33 @@ if [ $DRY = yes ]; then
   FAKE=$W/fake_status.json
   G="scripts/run_guarded.py --heartbeat $HB --other-retries 0"
   export EVAL_HIDDEN_KEY=$W/dry.key
+  [ $REH = no ] || export EVAL_HIDDEN_KEY=$W/rehearsal.key
 else
   G="scripts/run_guarded.py --heartbeat $HB --other-retries 2"
+  [ $REH = no ] || export EVAL_HIDDEN_KEY=$W/rehearsal.key   # the rehearsal's own key, never the real one
 fi
 H=$W/hidden; mkdir -p $W $H $L runs/m4/reports
+if [ $REH = yes ]; then   # the plain open input files of the rehearsal (made by rehearsal-prepare below)
+  RP=$W/rehearsal_plain
+  G_ITEMS=$RP/smoke10_items.jsonl; G_SUB=""; O_A3=$RP/a3_10_items.jsonl; P0S_ITEMS=$RP/smoke6_items.jsonl; P0S_SUB=""
+  PIL_ITEMS=$RP/pilot6_items.jsonl; PIL_RUBS=$RP/pilot6_rubrics.jsonl
+fi
+# a work folder belongs to one kind of run: a real run does not start where a rehearsal left its markers, and the other way round
+if [ $REH = yes ]; then
+  [ ! -e $W/REAL.mode ] || { echo "REFUSED: $W holds the markers of a real run; a rehearsal does not run there; nothing started" >&2; exit 2; }
+  echo rehearsal > $W/REHEARSAL.mode
+else
+  [ ! -e $W/REHEARSAL.mode ] || { echo "REFUSED: $W holds the markers of a rehearsal; a real run does not start there; nothing started" >&2; exit 2; }
+  echo real > $W/REAL.mode
+fi
 
 hb() { printf '\n### %s — %s\nneeds_human: %s\n' "$(date +%Y-%m-%dT%H:%M:%S%z)" "$1" "${2:-no}" >> $HB; }
 status() { # STATE NEEDS_HUMAN NOTE
   [ $DRY = yes ] && return 0
-  .venv/bin/python - "$1" "$2" "$3" <<'PY'
+  .venv/bin/python - "$1" "$2" "$3" "$PHASE" <<'PY'
 import json, sys, datetime
 json.dump({"ts": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
-           "phase": "M4 E2: starting point on the hidden half (4-bit, plain base, full precision)",
+           "phase": sys.argv[4],
            "kind": "job", "state": sys.argv[1], "needs_human": sys.argv[2] == "yes", "note": sys.argv[3]},
           open("runs/v3/status.json", "w"), indent=2)
 PY
@@ -162,6 +197,15 @@ for f in $OPEN_A $OPEN_A3 $STORED_A1 eval/m4/SPLIT.json eval/m4/SPLIT_A3.json ev
          scripts/eval2_sealed_reading.py scripts/eval2_first_words.py scripts/run_guarded.py scripts/m4_e2_manifest.py; do
   [ -s $f ] || { [ $DRY = yes ] && { echo "input $f is missing or empty"; exit 1; }; echo "REFUSED: input $f is missing or empty; nothing started" >&2; exit 2; }
 done
+if [ $REH = yes ]; then   # the rehearsal's temporary key and its encrypted copies of open items (made once; the key never leaves the work folder)
+  [ -f $EVAL_HIDDEN_KEY ] || .venv/bin/python scripts/eval2.py keygen --path $EVAL_HIDDEN_KEY > /dev/null || { echo "REFUSED: no rehearsal key could be made; nothing started" >&2; exit 2; }
+  SD=$W/rehearsal_hidden
+  $PYH rehearsal-prepare --dir $W > $W/rehearsal_prepare.out || { echo "REFUSED: the rehearsal files could not be made (see $W/rehearsal_prepare.out); nothing started" >&2; exit 2; }
+  HID_A=$SD/tier_a.jsonl.enc; HID_A3=$SD/tier_a3.jsonl.enc; HID_J1=$SD/judged_1_items.jsonl.enc; HID_J2=$SD/judged_2_items.jsonl.enc
+  HID_R1=$SD/judged_1_rubrics.jsonl.enc; HID_R2=$SD/judged_2_rubrics.jsonl.enc
+  LEDGER=$W/REHEARSAL_LEDGER.md; MANIFEST=$W/E2_REHEARSAL_MANIFEST.json
+  SCANX="--corpus-files $RP/*.jsonl"
+fi
 if [ $DRY = no ]; then
   rm -f $L/$N.failed $L/$N.done
   if want G || want O || want H1 || want H2 || want H3 || want H4 || want H5 || want E4; then
@@ -179,20 +223,22 @@ if [ $DRY = no ]; then
 else
   # the temporary key, the synthetic hidden files, the fake server, a stub ledger
   [ -f $EVAL_HIDDEN_KEY ] || .venv/bin/python scripts/eval2.py keygen --path $EVAL_HIDDEN_KEY > /dev/null
-  SD=$W/synthetic_hidden
-  [ -f $SD/tier_a.jsonl.enc ] || $PYH synth --dir $SD --marker $MARK --drop-a $DROPA > /dev/null
-  HID_A=$SD/tier_a.jsonl.enc; HID_A3=$SD/tier_a3.jsonl.enc; HID_J1=$SD/judged_1_items.jsonl.enc; HID_J2=$SD/judged_2_items.jsonl.enc
-  HID_R1=$SD/judged_1_rubrics.jsonl.enc; HID_R2=$SD/judged_2_rubrics.jsonl.enc
+  if [ $REH = no ]; then
+    SD=$W/synthetic_hidden
+    [ -f $SD/tier_a.jsonl.enc ] || $PYH synth --dir $SD --marker $MARK --drop-a $DROPA > /dev/null
+    HID_A=$SD/tier_a.jsonl.enc; HID_A3=$SD/tier_a3.jsonl.enc; HID_J1=$SD/judged_1_items.jsonl.enc; HID_J2=$SD/judged_2_items.jsonl.enc
+    HID_R1=$SD/judged_1_rubrics.jsonl.enc; HID_R2=$SD/judged_2_rubrics.jsonl.enc
+  fi
   Q4=Qwen3.8-27B-4bit; BF16=mlx-community--Qwen3.8-27B-bf16
   echo "{\"data\": [{\"id\": \"$Q4\"}, {\"id\": \"$BF16\"}, {\"id\": \"$DS\"}, {\"id\": \"$GLM8\"}]}" > $W/models.json
   [ -f $FAKE ] || $PYH fake-status --file $FAKE init "$FAKE_LOADED"
-  if [ $LSET = no ]; then
+  if [ $LSET = no ] && [ $REH = no ]; then
     LEDGER=$W/HIDDEN_LEDGER.md
     printf '| # | Date | Run | Configuration | Decision rule written beforehand | Result totals | Who |\n|---|---|---|---|---|---|---|\n' > $LEDGER
     printf '| 1 | 2026-01-01 | E2 starting point (dry run) | stub | (a) stub rule written before the run: the lower end of the interval above -5 points; (b) stub | | conductor |\n' >> $LEDGER
     printf '| 2 | 2026-01-01 | E3 checked answers (dry run) | stub | stub rule written before the run: at most 2.0 per 10 and harmful 0 on at least 60 answers | | conductor |\n' >> $LEDGER
   fi
-  echo "dry run in $W (stub generator, stub judge, fake server status, temporary key, synthetic hidden files)"
+  echo "dry run in $W (stub generator, stub judge, fake server status, temporary key, $([ $REH = yes ] && echo "REHEARSAL copies of open items" || echo "synthetic hidden files"))"
 fi
 OURS="$DS $GLM8 $GLM4"
 HIDDEN_ARGS="tier_a=$HID_A tier_a3=$HID_A3 judged_1=$HID_J1 judged_2=$HID_J2 rubrics_1=$HID_R1 rubrics_2=$HID_R2"
@@ -281,13 +327,13 @@ PY
 # ---------------------------------------------------------------- G: byte-identity gate
 if want G; then
   if [ -f $W/G.passed ]; then echo "skip G: passed earlier"; else
-    hb "$N: G started: 60 open smoke items in Q4D against the stored A1 answers"
+    hb "$N: G started: $NG open smoke items in Q4D against the stored A1 answers"
     status RUNNING no "$N running: gate G; markers $L/$N.done / .failed"
     REF=$STORED_A1
     if [ $DRY = yes ]; then   # the stored run is stood in for by a first stub run; M4_E2_DRY_DRIFT=yes changes one of its texts (the gate must then fail)
       REF=$W/ref_A1.jsonl
-      [ -s $REF ] || { .venv/bin/python scripts/eval2.py answer --items $OPEN_A --out $REF --config e2-ref --backend stub --no-rerank --extra-body "$EB" \
-          --mode default --catalogue $CATS --subset smoke > /dev/null || fail "G: the stub reference run failed"
+      [ -s $REF ] || { .venv/bin/python scripts/eval2.py answer --items $G_ITEMS --out $REF --config e2-ref --backend stub --no-rerank --extra-body "$EB" \
+          --mode default --catalogue $CATS $G_SUB > /dev/null || fail "G: the stub reference run failed"
         [ "${M4_E2_DRY_DRIFT:-no}" = yes ] && .venv/bin/python - $REF <<'PY'
 import json, sys
 rows = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]
@@ -296,8 +342,8 @@ open(sys.argv[1], "w").write("".join(json.dumps(r) + "\n" for r in rows))
 PY
         true; }
     fi
-    answer_run G $Q4 default $W/ans_G.jsonl 60 $OPEN_A --subset smoke
-    $PYH gate-g --answers $W/ans_G.jsonl --stored $REF --expect 60 > $W/gate_g.txt || { cat $W/gate_g.txt; fail "gate G failed: the answers are not byte-identical to the stored run ($W/gate_g.txt); the chain stops"; }
+    answer_run G $Q4 default $W/ans_G.jsonl $NG $G_ITEMS $G_SUB
+    $PYH gate-g --answers $W/ans_G.jsonl --stored $REF --expect $NG > $W/gate_g.txt || { cat $W/gate_g.txt; fail "gate G failed: the answers are not byte-identical to the stored run ($W/gate_g.txt); the chain stops"; }
     cat $W/gate_g.txt
     mark_passed G
     hb "$N: gate G passed ($(cat $W/gate_g.txt))"
@@ -307,24 +353,24 @@ fi
 # ---------------------------------------------------------------- O: open rehearsal
 if want O; then
   if [ -f $W/O.passed ]; then echo "skip O: passed earlier"; else
-    hb "$N: O started: a3 open 88 in Q4D, P0 on the smoke set (60 mechanical, 24 judged), score, identifier check, judge"
+    hb "$N: O started: a3 open $NOA3 in Q4D, P0 on the smoke set ($NP0S mechanical, $NP0J judged), score, identifier check, judge"
     status RUNNING no "$N running: rehearsal O; markers $L/$N.done / .failed"
     .venv/bin/python scripts/m4_e2_manifest.py merge --out $W/pilot2_items_h.jsonl --in $PIL_ITEMS --normalize-items pilot2 --allow-plain-out > /dev/null || fail "O: pilot2 items could not be prepared"
-    answer_run O_Q4D_a3 $Q4 default $W/ans_O_Q4D_a3.jsonl 88 $OPEN_A3
-    answer_run O_P0_smoke $Q4 closed $W/ans_O_P0_smoke.jsonl 60 $OPEN_A --subset smoke
-    answer_run O_P0_judged $Q4 closed $W/ans_O_P0_judged.jsonl 24 $W/pilot2_items_h.jsonl
-    score_open O_Q4D_a3 $W/ans_O_Q4D_a3.jsonl $OPEN_A3
-    $PYH items-for --items $OPEN_A --answers $W/ans_O_P0_smoke.jsonl --out $W/smoke_items.jsonl > /dev/null || fail "O: smoke items file"
+    answer_run O_Q4D_a3 $Q4 default $W/ans_O_Q4D_a3.jsonl $NOA3 $O_A3
+    answer_run O_P0_smoke $Q4 closed $W/ans_O_P0_smoke.jsonl $NP0S $P0S_ITEMS $P0S_SUB
+    answer_run O_P0_judged $Q4 closed $W/ans_O_P0_judged.jsonl $NP0J $W/pilot2_items_h.jsonl
+    score_open O_Q4D_a3 $W/ans_O_Q4D_a3.jsonl $O_A3
+    $PYH items-for --items $P0S_ITEMS --answers $W/ans_O_P0_smoke.jsonl --out $W/smoke_items.jsonl > /dev/null || fail "O: smoke items file"
     score_open O_P0_smoke $W/ans_O_P0_smoke.jsonl $W/smoke_items.jsonl
     for r in O_Q4D_a3 O_P0_smoke; do
       .venv/bin/python scripts/eval2_idcheck.py --answers $W/ans_$r.jsonl --catalogues $CATS --totals-only > $W/idcheck_$r.txt || fail "identifier check on $r failed"
       echo "idcheck $r: $(sed -n 4p $W/idcheck_$r.txt)"
     done
     [ $DRY = yes ] || unload $Q4
-    judge_run O_P0_judged $DS $JSET "$JEB" $SRC "1 2" 3 $PIL_RUBS $PIL_ITEMS "P0=$W/ans_O_P0_judged.jsonl" $W/O_judge_cache.jsonl $W/O_judge_results.jsonl 48
+    judge_run O_P0_judged $DS $JSET "$JEB" $SRC "1 2" 3 $PIL_RUBS $PIL_ITEMS "P0=$W/ans_O_P0_judged.jsonl" $W/O_judge_cache.jsonl $W/O_judge_results.jsonl $((NP0J * 2))
     [ $DRY = yes ] || unload $DS
     mark_passed O
-    hb "$N: rehearsal O passed (all runs complete, scored, identifier check run, 48 judge rows valid)"
+    hb "$N: rehearsal O passed (all runs complete, scored, identifier check run, $((NP0J * 2)) judge rows valid)"
   fi
 fi
 
@@ -338,9 +384,10 @@ if want H1 || want H2 || want H3 || want H4 || want H5; then
   hb "$N: the shape check of the hidden files passed"
   snapshot $W/server_now.json; api /v1/models > $W/models_now.json 2>/dev/null || true
   GA_G="--tests run --tests-ok-file $W/tests.ok"; [ $DRY = yes ] && GA_G="--tests skip --allow-dirty"
+  GX=""; [ $REH = no ] || GX="--expected tier_a=$NA tier_a3=$NA3 judged_1=$NJ1 judged_2=$NJ2 $SCANX"
   hb "$N: the hidden gate runs"
   $PYH gate --manifest $MANIFEST --ledger $LEDGER --work-dir $W --markers $W --exclude $L --also $HB $L/$N.* --server-json $W/server_now.json \
-    --models-json $W/models_now.json --hidden $HIDDEN_ARGS $GA_G > $W/hidden_gate.out 2>&1 || { cat $W/hidden_gate.out; fail "the hidden gate REFUSED (see $W/hidden_gate.out); no hidden item was run"; }
+    --models-json $W/models_now.json --hidden $HIDDEN_ARGS $GA_G $GX > $W/hidden_gate.out 2>&1 || { cat $W/hidden_gate.out; fail "the hidden gate REFUSED (see $W/hidden_gate.out); no hidden item was run"; }
   cat $W/hidden_gate.out
   .venv/bin/python - $MANIFEST $W <<'PY'
 import json, sys
@@ -358,23 +405,23 @@ fi
 
 # ---------------------------------------------------------------- H1: Q4D and Q4S on the judged 60, R1, the blind bundles
 if want H1; then
-  hb "$N: H1 started: Q4D and Q4S on the hidden judged 60, R1, bundles for the sealed reading"
+  hb "$N: H1 started: Q4D and Q4S on the hidden judged $NJ, R1, bundles for the sealed reading"
   status RUNNING no "$N running: H1; markers $L/$N.done / .failed"
-  answer_run H1_Q4D $Q4 default $H/ans_Q4D_judged.jsonl.enc 60 $JI
-  answer_run H1_Q4S $Q4 strict $H/ans_Q4S_judged.jsonl.enc 60 $JI --replay-packs $H/ans_Q4D_judged.jsonl.enc
+  answer_run H1_Q4D $Q4 default $H/ans_Q4D_judged.jsonl.enc $NJ $JI
+  answer_run H1_Q4S $Q4 strict $H/ans_Q4S_judged.jsonl.enc $NJ $JI --replay-packs $H/ans_Q4D_judged.jsonl.enc
   $PYH packs-equal --a $H/ans_Q4D_judged.jsonl.enc --b $H/ans_Q4S_judged.jsonl.enc || fail "H1: the packs of Q4S differ from Q4D (replay did not hold)"
   REV=$H/revise_Q4D_judged.jsonl.enc
-  if $PYH check-answers --file $REV --expect 60 --no-text > /dev/null 2>&1; then echo "skip revise: finished"; else
+  if $PYH check-answers --file $REV --expect $NJ --no-text > /dev/null 2>&1; then echo "skip revise: finished"; else
     RA=""; if [ $R2 = yes ]; then if [ $DRY = yes ]; then RA="--r2 --backend stub"; else RA="--r2 --backend openai --model $Q4"; fi; prepare_server revise $Q4; fi
     $G --stall-min 40 --log $L/$N.revise.log -- .venv/bin/python scripts/eval2.py answer --items $JI --revise-from $H/ans_Q4D_judged.jsonl.enc \
       --out $REV --config e2-revise $RA --extra-body "$EB" --catalogue $CATS || fail "revise failed (see $L/$N.revise.log)"
-    $PYH check-answers --file $REV --expect 60 --no-text || fail "revise: records incomplete or with errors"
+    $PYH check-answers --file $REV --expect $NJ --no-text || fail "revise: records incomplete or with errors"
   fi
-  hb "$N: revise R1$([ $R2 = yes ] && echo ' and R2') done (60 records)"
+  hb "$N: revise R1$([ $R2 = yes ] && echo ' and R2') done ($NJ records)"
   if [ -s $H/bundles/blind_key.json.enc ]; then echo "skip bundles: built"; else
-    BA="default=$H/ans_Q4D_judged.jsonl.enc strict=$H/ans_Q4S_judged.jsonl.enc"; FS=6; SS=2
+    BA="default=$H/ans_Q4D_judged.jsonl.enc strict=$H/ans_Q4S_judged.jsonl.enc"
     .venv/bin/python scripts/eval2_sealed_reading.py bundle --items $JI --rubrics $JR --answers $BA --chunks $CHUNKS --out-dir $H/bundles \
-      --seed $BSEED --first-sessions $FS --second-sessions $SS > $W/bundles.out || fail "the blind bundles could not be built"
+      --seed $BSEED --first-sessions $FS --second-sessions $SS --second-reader $BSR > $W/bundles.out || fail "the blind bundles could not be built"
     cat $W/bundles.out
   fi
   if [ $R2 = yes ] && [ ! -s $H/bundles_r2/blind_key.json.enc ]; then
@@ -384,29 +431,29 @@ if want H1; then
     fi
   fi
   printf 'readings can start: bundles in %s (reading %s, R2 %s)\n' "$H/bundles" "$READING" "$R2" > $L/$N.readings_ready
-  hb "$N: H1 done; the blind bundles are in $H/bundles: the readings can start (brief agents/m4-sealed-reading.md)" yes
+  hb "$N: H1 done; the blind bundles are in $H/bundles: the readings can start (brief agents/m4-sealed-reading.md)" $HNEED
 fi
 
 # ---------------------------------------------------------------- H2: Q4D, Q4S, P0 on the mechanical 305; P0 on the judged 60
 if want H2; then
-  hb "$N: H2 started: Q4D, Q4S, P0 on the hidden mechanical 305, P0 on the hidden judged 60"
+  hb "$N: H2 started: Q4D, Q4S, P0 on the hidden mechanical $NM, P0 on the hidden judged $NJ"
   status RUNNING no "$N running: H2; markers $L/$N.done / .failed"
-  answer_run H2_Q4D $Q4 default $H/ans_Q4D_mech.jsonl.enc 305 "$MI"
-  answer_run H2_Q4S $Q4 strict $H/ans_Q4S_mech.jsonl.enc 305 "$MI" --replay-packs $H/ans_Q4D_mech.jsonl.enc
+  answer_run H2_Q4D $Q4 default $H/ans_Q4D_mech.jsonl.enc $NM "$MI"
+  answer_run H2_Q4S $Q4 strict $H/ans_Q4S_mech.jsonl.enc $NM "$MI" --replay-packs $H/ans_Q4D_mech.jsonl.enc
   $PYH packs-equal --a $H/ans_Q4D_mech.jsonl.enc --b $H/ans_Q4S_mech.jsonl.enc || fail "H2: the packs of Q4S differ from Q4D (replay did not hold)"
-  answer_run H2_P0 $Q4 closed $H/ans_P0_mech.jsonl.enc 305 "$MI"
-  answer_run H2_P0J $Q4 closed $H/ans_P0_judged.jsonl.enc 60 $JI
+  answer_run H2_P0 $Q4 closed $H/ans_P0_mech.jsonl.enc $NM "$MI"
+  answer_run H2_P0J $Q4 closed $H/ans_P0_judged.jsonl.enc $NJ $JI
 fi
 
 # ---------------------------------------------------------------- H3: the full-precision build
 if want H3; then
-  hb "$N: H3 started: F and FR on the hidden mechanical 305$([ $FJ = yes ] && echo ', F on the judged 60')"
+  hb "$N: H3 started: F and FR on the hidden mechanical $NM$([ $FJ = yes ] && echo ", F on the judged $NJ")"
   status RUNNING no "$N running: H3; markers $L/$N.done / .failed"
   [ $DRY = yes ] || { unload $Q4; hb "$N: $Q4 unloaded; the full-precision model loads on the first request"; }
-  answer_run H3_F $BF16 default $H/ans_F_mech.jsonl.enc 305 "$MI"
-  answer_run H3_FR $BF16 default $H/ans_FR_mech.jsonl.enc 305 "$MI" --replay-packs $H/ans_Q4D_mech.jsonl.enc
+  answer_run H3_F $BF16 default $H/ans_F_mech.jsonl.enc $NM "$MI"
+  answer_run H3_FR $BF16 default $H/ans_FR_mech.jsonl.enc $NM "$MI" --replay-packs $H/ans_Q4D_mech.jsonl.enc
   $PYH packs-equal --a $H/ans_Q4D_mech.jsonl.enc --b $H/ans_FR_mech.jsonl.enc || fail "H3: the packs of FR differ from Q4D (replay did not hold)"
-  [ $FJ = no ] || answer_run H3_FJ $BF16 default $H/ans_F_judged.jsonl.enc 60 $JI --replay-packs $H/ans_Q4D_judged.jsonl.enc
+  [ $FJ = no ] || answer_run H3_FJ $BF16 default $H/ans_F_judged.jsonl.enc $NJ $JI --replay-packs $H/ans_Q4D_judged.jsonl.enc
   [ $DRY = yes ] || { unload $BF16; hb "$N: answering finished, $BF16 unloaded"; }
 fi
 
@@ -414,17 +461,17 @@ fi
 JSETS="Q4D=$H/ans_Q4D_judged.jsonl.enc Q4S=$H/ans_Q4S_judged.jsonl.enc P0=$H/ans_P0_judged.jsonl.enc"; NJS=3
 [ $FJ = no ] || { JSETS="$JSETS F=$H/ans_F_judged.jsonl.enc"; NJS=4; }
 if want H4; then
-  hb "$N: H4 started: the judge $DS on $NJS answer sets of the hidden judged 60 (2 passes, $((NJS * 120)) calls)"
+  hb "$N: H4 started: the judge $DS on $NJS answer sets of the hidden judged $NJ (2 passes, $((NJS * NJ * 2)) calls)"
   status RUNNING no "$N running: H4 (judge); markers $L/$N.done / .failed"
   [ $DRY = yes ] || unload $Q4
-  judge_run H4 $DS $JSET "$JEB" $SRC "1 2" 3 $JR $JI "$JSETS" $H/judge_cache.jsonl.enc $H/judge_results.jsonl.enc $((NJS * 120))
+  judge_run H4 $DS $JSET "$JEB" $SRC "1 2" 3 $JR $JI "$JSETS" $H/judge_cache.jsonl.enc $H/judge_results.jsonl.enc $((NJS * NJ * 2))
   [ $DRY = yes ] || { unload $DS; hb "$N: judging finished, $DS unloaded"; }
 fi
 if want H5 && [ $CROSS = yes ]; then
-  hb "$N: H5 started: the second judge $GLM8 on a seeded 24-answer subset of Q4D (pass 1)"
+  hb "$N: H5 started: the second judge $GLM8 on a seeded $XN-answer subset of Q4D (pass 1)"
   status RUNNING no "$N running: H5 (cross-check); markers $L/$N.done / .failed"
-  $PYH subset --in $H/ans_Q4D_judged.jsonl.enc --out $H/ans_Q4D_cross.jsonl.enc --n 24 --seed 1 > /dev/null || fail "H5: the subset could not be drawn"
-  judge_run H5 $GLM8 $CSET "$CEB" $SRC "1" 3 $JR $JI "Q4D=$H/ans_Q4D_cross.jsonl.enc" $H/cross_cache.jsonl.enc $H/cross_results.jsonl.enc 24
+  $PYH subset --in $H/ans_Q4D_judged.jsonl.enc --out $H/ans_Q4D_cross.jsonl.enc --n $XN --seed 1 > /dev/null || fail "H5: the subset could not be drawn"
+  judge_run H5 $GLM8 $CSET "$CEB" $SRC "1" 3 $JR $JI "Q4D=$H/ans_Q4D_cross.jsonl.enc" $H/cross_cache.jsonl.enc $H/cross_results.jsonl.enc $XN
   [ $DRY = yes ] || { unload $GLM8; hb "$N: cross-check finished, $GLM8 unloaded"; }
   $PYH agreement --a $H/judge_results.jsonl.enc --b $H/cross_results.jsonl.enc --rubrics $JR --set Q4D --passno 1 > $W/cross_agreement.txt || fail "H5: the agreement could not be computed"
   cat $W/cross_agreement.txt; hb "$N: $(cat $W/cross_agreement.txt)"
@@ -463,16 +510,22 @@ if want SCORE; then
   [ -s $H/findings_none.jsonl.enc ] || $PYH empty-enc --out $H/findings_none.jsonl.enc > /dev/null
   .venv/bin/python scripts/eval2_pilot_report.py --coverage --results $H/judge_results.jsonl.enc --rubrics $JR --findings $H/findings_none.jsonl.enc \
     --items $JI --by-kind --title "E2: coverage role, hidden judged sets" > $W/coverage_report.md 2> $W/coverage_report.err || fail "the coverage report failed (see $W/coverage_report.err)"
+  if [ $REH = yes ]; then   # the rehearsal writes fake findings (sealed with its key) and runs the totals and the JSON hand-over to compare e2
+    $PYH rehearsal-findings --dir $H/bundles || fail "the fake findings could not be written"
+    [ -s $H/reading_totals.json.enc ] || .venv/bin/python scripts/eval2_sealed_reading.py totals --dir $H/bundles --json-out $H/reading_totals.json.enc > $W/reading_totals.txt || fail "the totals of the fake findings failed (see $W/reading_totals.txt)"
+    RJSON=$H/reading_totals.json.enc
+  fi
   CA=""; for c in $CFGS; do CA="$CA --config $c=$H/${c}_mech.scores.jsonl.enc"; done
   RD=""; [ -z "$RJSON" ] || RD="--reading-json $RJSON"
   .venv/bin/python scripts/eval2_compare.py e2 --items $HID_A --items $HID_A3 $CA --judged-results $H/judge_results.jsonl.enc --rubrics $JR \
     --judged-items $JI $RD --resamples 10000 --seed 1 --json $H/e2_compare.json.enc > $W/compare_e2.txt 2> $W/compare_e2.err || fail "eval2_compare.py e2 failed (see $W/compare_e2.err)"
   $PYH verdict --compare-out $W/compare_e2.txt ${MARGIN:+--reading $MARGIN} > $W/verdict.txt || fail "the verdict line could not be built"
   {
-    echo "# E2: the starting point on the hidden half (4-bit, plain base, full precision)$([ $DRY = yes ] && echo ' [DRY RUN: stub generator, stub judge, synthetic hidden files; every number below is stub data]')"
+    echo "# ${RTAG}E2: the starting point on the hidden half (4-bit, plain base, full precision)$([ $REH = yes ] && echo ' [REHEARSAL: open items encrypted as if hidden, 20 mechanical and 6 judged items; every figure is a test of the chain, a verdict on 20 items means nothing, no look was used]')$([ $DRY = yes ] && echo ' [DRY RUN: stub generator, stub judge, synthetic hidden files; every number below is stub data]')"
     echo
-    echo "Totals only: no item, answer, quote or per-item result is in this file. Written by \`scripts/$N.sh\`. Manifest: \`$MANIFEST\` (sha256 $(shasum -a 256 $MANIFEST | cut -c1-16)...); ledger rows 1 and 2 of \`$LEDGER\` hold the decision rules written before the run. Options: R2 $R2, reading $READING, F on the judged tier $FJ, cross-check $CROSS, margin reading: ${MARGIN:-not chosen}."
+    echo "Totals only: no item, answer, quote or per-item result is in this file. Written by \`scripts/m4_e2_starting_point.sh\`$([ $REH = yes ] && echo ' --rehearsal'). Manifest: \`$MANIFEST\` (sha256 $(shasum -a 256 $MANIFEST | cut -c1-16)...); ledger rows 1 and 2 of \`$LEDGER\` hold the decision rules written before the run. Options: R2 $R2, reading $READING, F on the judged tier $FJ, cross-check $CROSS, margin reading: ${MARGIN:-not chosen}."
     echo
+    [ $REH != yes ] || { echo "**REHEARSAL.** The items are open items (10 tier A, 10 a3, 6 B2 scenarios) encrypted with a temporary key; no hidden item was run and no look was used. Both readings of rule 1(a) are shown below and a verdict on 20 items means nothing: the intervals are far too wide. The sealed reading is made of fake findings written by the rehearsal itself. What this run shows is that every stage, tool and hand-over runs on the real server."; echo; }
     echo "## Rule 1(a): the cost of 4-bit, and the starting figures (eval2_compare.py e2)"
     echo
     echo '```'; cat $W/compare_e2.txt; echo '```'
@@ -488,18 +541,18 @@ if want SCORE; then
     for c in $JCFGS; do $PYH runline --name ${c}_judged --file $H/ans_${c}_judged.jsonl.enc; done
     echo '```'
     echo
-    echo "## Hidden scorer, totals per configuration (mechanical 305)"
+    echo "## Hidden scorer, totals per configuration (mechanical $NM)"
     for c in $CFGS; do echo; echo "### $c"; echo '```'; cat $W/${c}_mech.score.out; echo '```'; done
     echo
     echo "## Identifier check, totals"
-    for c in $CFGS; do echo; echo "### $c, mechanical 305"; echo '```'; cat $W/idcheck_${c}_mech.txt; echo '```'; done
-    for c in $JCFGS; do echo; echo "### $c, judged 60"; echo '```'; cat $W/idcheck_${c}_judged.txt; echo '```'; done
+    for c in $CFGS; do echo; echo "### $c, mechanical $NM"; echo '```'; cat $W/idcheck_${c}_mech.txt; echo '```'; done
+    for c in $JCFGS; do echo; echo "### $c, judged $NJ"; echo '```'; cat $W/idcheck_${c}_judged.txt; echo '```'; done
     echo
     echo "## Coverage report of the judged sets (totals)"
     echo
     sed 's/^# /### /' $W/coverage_report.md
     echo
-    echo "## Second judge, cross-check on 24 answers"
+    echo "## Second judge, cross-check on $XN answers"
     echo
     if [ $CROSS = yes ] && [ -s $W/cross_agreement.txt ]; then echo '```'; cat $W/cross_agreement.txt; echo '```'; else echo "not run (--no-cross-judge, or stage H5 has not run)."; fi
     echo
@@ -509,12 +562,12 @@ if want SCORE; then
     echo
     echo "## Revise step (R1$([ $R2 = yes ] && echo ' and R2'))"
     echo
-    echo "Records: \`$H/revise_Q4D_judged.jsonl.enc\` (60 records, encrypted). Counts are read by the reading script, not here."
+    echo "Records: \`$H/revise_Q4D_judged.jsonl.enc\` ($NJ records, encrypted). Counts are read by the reading script, not here."
   } > $REPORT.tmp && mv $REPORT.tmp $REPORT
   # nothing under the work folder may hold a hidden id in plain text (the logs, which carry ids by design, are outside or excluded)
   # ids: nothing under the work folder (the logs, which carry ids by design, excluded); text: no distinctive line of a hidden row in any plain file
   # of the work folder, in this run's logs or in the heartbeat
-  $PYH scan --dir $W --exclude $L --text --also $HB $L/$N.* --hidden $HIDDEN_ARGS > $W/scan_after.txt || fail "after the run: a plain-text file holds a hidden id or hidden text ($W/scan_after.txt)"
+  $PYH scan --dir $W --exclude $L --text --also $HB $L/$N.* $SCANX --hidden $HIDDEN_ARGS > $W/scan_after.txt || fail "after the run: a plain-text file holds a hidden id or hidden text ($W/scan_after.txt)"
   cat $W/scan_after.txt
   if [ $DRY = yes ]; then
     echo M4_E2_DRY_RUN_DONE >> $L/$N.done

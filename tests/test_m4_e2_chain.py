@@ -808,5 +808,213 @@ class DryRunRefusals(unittest.TestCase):
         self.assertTrue((d / "run/G.passed").exists())
 
 
+@unittest.skipUnless(READY, "needs the open files, the index, the catalogues and the venv")
+class RehearsalPrepare(unittest.TestCase):
+    """rehearsal-prepare: encrypted copies of open items, plain input files, the ledger; and its refusals."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = Path(tempfile.mkdtemp(prefix="e2_reh_"))
+        cls.env = {"EVAL_HIDDEN_KEY": str(cls.tmp / "rehearsal.key")}
+        subprocess.run([str(PY), str(ROOT / "scripts/eval2.py"), "keygen", "--path", cls.env["EVAL_HIDDEN_KEY"]], cwd=ROOT, check=True, capture_output=True)
+        cls.r = helper("rehearsal-prepare", "--dir", str(cls.tmp), env=cls.env)
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def enc(self, name):
+        import eval2
+        old = os.environ.get("EVAL_HIDDEN_KEY")
+        os.environ["EVAL_HIDDEN_KEY"] = self.env["EVAL_HIDDEN_KEY"]
+        try:
+            return eval2.read_jsonl(self.tmp / "rehearsal_hidden" / name)
+        finally:
+            if old is None:
+                os.environ.pop("EVAL_HIDDEN_KEY", None)
+            else:
+                os.environ["EVAL_HIDDEN_KEY"] = old
+
+    def plain(self, name):
+        return [json.loads(l) for l in (self.tmp / "rehearsal_plain" / name).read_text().splitlines() if l.strip()]
+
+    def test_counts_and_files(self):
+        self.assertEqual(self.r.returncode, 0, self.r.stderr)
+        self.assertEqual([len(self.enc(n)) for n in ("tier_a.jsonl.enc", "tier_a3.jsonl.enc", "judged_1_items.jsonl.enc", "judged_2_items.jsonl.enc")], [10, 10, 2, 4])
+        self.assertEqual([len(self.enc(n)) for n in ("judged_1_rubrics.jsonl.enc", "judged_2_rubrics.jsonl.enc")], [2, 4])
+        self.assertEqual(self.enc("judged_1_items.jsonl.enc")[0]["id"], self.enc("judged_1_rubrics.jsonl.enc")[0]["id"])
+        for n in (("smoke10_items", 10), ("smoke6_items", 6), ("a3_10_items", 10), ("pilot6_items", 6), ("pilot6_rubrics", 6)):
+            self.assertEqual(len(self.plain(n[0] + ".jsonl")), n[1], n[0])
+        for p in (self.tmp / "rehearsal_hidden").iterdir():
+            self.assertTrue(p.name.endswith(".enc"))
+        for r in self.enc("tier_a.jsonl.enc") + self.enc("judged_2_items.jsonl.enc"):
+            self.assertNotIn(r["id"], self.r.stdout)   # counts only
+
+    def test_samples_are_disjoint_spread_and_keep_pairs_together(self):
+        a_ids = {r["id"] for r in self.enc("tier_a.jsonl.enc")}
+        smoke = set(json.loads((ROOT / "eval/m4/smoke_ids.json").read_text())["ids"])
+        self.assertFalse(a_ids & smoke)
+        self.assertGreaterEqual(len({r["kind"] for r in self.enc("tier_a.jsonl.enc")}), 5)       # spread over the kinds
+        hid3, o3 = self.enc("tier_a3.jsonl.enc"), self.plain("a3_10_items.jsonl")
+        self.assertFalse({r["id"] for r in hid3} & {r["id"] for r in o3})
+        allr = [json.loads(l) for l in (ROOT / "eval/m4/open/tier_a3.jsonl").read_text().splitlines() if l.strip()]
+        for sample in (hid3, o3):
+            ids = {r["id"] for r in sample}
+            for pr in {r["pair"] for r in sample if r.get("pair")}:
+                self.assertEqual({r["id"] for r in allr if r.get("pair") == pr}, {r["id"] for r in sample if r.get("pair") == pr})
+            self.assertEqual(len(ids), 10)
+        j = {r["id"] for n in ("judged_1_items.jsonl.enc", "judged_2_items.jsonl.enc") for r in self.enc(n)}
+        self.assertFalse(j & {r["id"] for r in self.plain("pilot6_items.jsonl")})
+        self.assertTrue(j <= {json.loads(l)["id"] for l in (ROOT / "eval/m4/b2/items.jsonl").read_text().splitlines() if l.strip()})
+
+    def test_ledger_is_in_the_folder_and_complete_and_the_real_one_is_not_touched(self):
+        self.assertEqual(self.r.returncode, 0)
+        led = self.tmp / "REHEARSAL_LEDGER.md"
+        self.assertTrue(led.exists())
+        import m4_e2_manifest as mm
+        self.assertEqual(mm.ledger_problems(led), [])
+        self.assertIn("REHEARSAL", led.read_text())
+
+    def test_the_key_must_be_in_the_rehearsal_folder_and_files_are_not_overwritten(self):
+        other = Path(tempfile.mkdtemp(prefix="e2_reh_k_"))
+        self.addCleanup(shutil.rmtree, other, True)
+        r = helper("rehearsal-prepare", "--dir", str(other), env={"EVAL_HIDDEN_KEY": self.env["EVAL_HIDDEN_KEY"]})
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("never the real key", r.stderr)
+        self.assertEqual(list(other.iterdir()), [])
+        before = (self.tmp / "rehearsal_hidden/tier_a.jsonl.enc").read_bytes()
+        self.assertIn("not overwritten", helper("rehearsal-prepare", "--dir", str(self.tmp), env=self.env).stdout)
+        self.assertEqual(before, (self.tmp / "rehearsal_hidden/tier_a.jsonl.enc").read_bytes())
+
+    def test_spread_fills_exactly_and_skips_groups_that_do_not_fit(self):
+        import m4_e2_manifest as mm
+        groups = [("k1", f"g{i}", [1, 2]) for i in range(4)] + [("k2", f"s{i}", [1]) for i in range(3)]
+        got = mm.spread(groups, 5, "1", size=lambda g: len(g[2]))
+        self.assertEqual(sum(len(g[2]) for g in got), 5)
+        self.assertEqual({g[0] for g in got}, {"k1", "k2"})
+        with self.assertRaises(Exception):
+            mm.spread([("k", "a", [1, 2])], 3, "1", size=lambda g: len(g[2]))
+
+    def test_git_ignores_the_rehearsal_folder(self):
+        r = subprocess.run(["git", "check-ignore", "-q", "work/m4/e2_rehearsal/x.jsonl"], cwd=ROOT)
+        self.assertEqual(r.returncode, 0)
+
+
+@unittest.skipUnless(READY, "needs the open files, the index, the catalogues and the venv")
+class RehearsalDryRun(unittest.TestCase):
+    """The chain in rehearsal mode with the stub backend: every stage, the fake findings, the totals, the JSON hand-over; refusals; resume."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = Path(tempfile.mkdtemp(prefix="e2_rehdry_"))
+        cls.w = cls.tmp / "run"
+        cls.r1 = sh("--dry-run", "--rehearsal", "--work", str(cls.w), "--allow-dirty")
+        cls.out1 = cls.r1.stdout + cls.r1.stderr
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def test_every_stage_passes_with_the_rehearsal_counts_and_the_prefixes(self):
+        self.assertEqual(self.r1.returncode, 0, self.out1[-3000:])
+        for need in ("REHEARSAL copies of open items", "gate G: 10 answers", "hidden row counts 10, 10, 2, 4", "hidden gate: OPEN", "shape: OK",
+                     "scorer: 20 scored, 0 missing", "first readers 2, second readers 1", "judging H4, round 1: all rows valid", "judging H5, round 1: all rows valid",
+                     "rehearsal-findings: 3 findings file(s) written", "no plain file under", "dry run done"):
+            self.assertIn(need, self.out1)
+        self.assertTrue((self.w / "logs/REHEARSAL_m4_e2_starting_point.done").exists())
+        self.assertTrue((self.w / "logs/REHEARSAL_m4_e2_starting_point.readings_ready").exists())
+        self.assertFalse(list((self.w / "logs").glob("m4_e2_starting_point.*")))      # nothing under the name of the real run
+        hb = (self.w / "HEARTBEAT.md").read_text()
+        self.assertIn("REHEARSAL_m4_e2_starting_point: G started", hb)
+        for line in hb.splitlines():
+            if "m4_e2_starting_point:" in line:
+                self.assertIn("REHEARSAL_m4_e2_starting_point:", line)
+        rep = (self.w / "report_from_stub_data.md").read_text()
+        self.assertTrue(rep.startswith("# REHEARSAL E2"))
+        self.assertIn("a verdict on 20 items means nothing", rep)
+        self.assertIn("MARGIN READING NOT CHOSEN", rep)
+        self.assertTrue((self.w / "REHEARSAL.mode").exists())
+        self.assertFalse((self.w / "HIDDEN_LEDGER.md").exists())
+        self.assertTrue((self.w / "REHEARSAL_LEDGER.md").exists())
+        self.assertTrue((self.w / "E2_REHEARSAL_MANIFEST.json").exists())
+        self.assertFalse((self.w / "dry.key").exists())          # the rehearsal's own key
+        self.assertTrue((self.w / "rehearsal.key").exists())
+
+    def test_the_reading_totals_and_the_json_hand_over_ran_on_the_fake_findings(self):
+        self.assertTrue((self.w / "hidden/reading_totals.json.enc").exists())
+        self.assertTrue((self.w / "hidden/bundles/findings_first_1.jsonl.enc").exists())
+        txt = (self.w / "reading_totals.txt").read_text()
+        self.assertIn("set default: answers read", txt)
+        self.assertIn("E3", txt)
+        cmp_ = (self.w / "compare_e2.txt").read_text()
+        self.assertIn("(b)", cmp_)
+
+    def test_scan_finds_no_rehearsal_id_or_text_outside_the_enc_files(self):
+        after = (self.w / "scan_after.txt").read_text()
+        self.assertIn("holds an id of a hidden item (26 ids checked)", after)
+        self.assertIn("holds distinctive text of a hidden row", after)
+        import m4_e2_manifest as mm
+        sd = self.w / "rehearsal_hidden"
+        h = {"tier_a": f"{sd}/tier_a.jsonl.enc", "tier_a3": f"{sd}/tier_a3.jsonl.enc", "judged_1": f"{sd}/judged_1_items.jsonl.enc",
+             "judged_2": f"{sd}/judged_2_items.jsonl.enc", "rubrics_1": f"{sd}/judged_1_rubrics.jsonl.enc", "rubrics_2": f"{sd}/judged_2_rubrics.jsonl.enc"}
+        old = os.environ.get("EVAL_HIDDEN_KEY")
+        os.environ["EVAL_HIDDEN_KEY"] = str(self.w / "rehearsal.key")
+        try:
+            ids = mm.hidden_ids(h)
+            marks, _, _ = mm.text_markers(h, corpus_files=sorted(str(p) for p in (self.w / "rehearsal_plain").glob("*.jsonl")))
+        finally:
+            if old is None:
+                os.environ.pop("EVAL_HIDDEN_KEY", None)
+            else:
+                os.environ["EVAL_HIDDEN_KEY"] = old
+        self.assertEqual(len(ids), 26)
+        self.assertGreater(len(marks), 50)
+        # ids: only the logs may hold them (progress lines, one per item, are what the guard watches); text: no plain file at all, logs included
+        self.assertEqual(mm.scan_plain(self.w, ids, exclude=[self.w / "logs"]), [])
+        self.assertEqual(mm.scan_text(self.w, marks, also=[self.w / "HEARTBEAT.md"]), [])
+        logs = "".join(p.read_text(errors="ignore") for p in (self.w / "logs").glob("*.log"))
+        self.assertTrue(any(i in logs for i in ids))
+
+    def test_refusals(self):
+        r = sh("--dry-run", "--rehearsal", "--hidden-a", "eval/hidden/tier_a.jsonl.enc", "--allow-dirty")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("never combined with the real hidden files", r.stderr)
+        for opt in ("--ledger", "--manifest"):
+            r = sh("--dry-run", "--rehearsal", opt, str(self.tmp / "x"), "--allow-dirty")
+            self.assertEqual(r.returncode, 2, opt)
+            self.assertIn("has its own ledger and manifest", r.stderr)
+        r = sh("--dry-run", "--rehearsal", "--work", "work/m4/e2", "--allow-dirty")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("never runs in the work folder of the real run", r.stderr)
+        # a real run does not start in a folder with rehearsal markers
+        r = sh("--dry-run", "--work", str(self.w), "--allow-dirty")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("holds the markers of a rehearsal", r.stderr)
+        # and a rehearsal does not start in a folder with the markers of a real run
+        d = self.tmp / "real_marked"
+        d.mkdir()
+        (d / "REAL.mode").write_text("real\n")
+        r = sh("--dry-run", "--rehearsal", "--work", str(d), "--allow-dirty")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("holds the markers of a real run", r.stderr)
+        self.assertFalse((d / "rehearsal.key").exists())
+
+    def test_the_real_run_marks_its_folder_and_the_default_rehearsal_folder_is_not_the_real_one(self):
+        t = SH.read_text()
+        self.assertIn("W=work/m4/e2_rehearsal", t)
+        self.assertIn("runs/m4/E2_REHEARSAL.md", t)
+        self.assertNotIn("HIDDEN_LEDGER.md", t[t.index("if [ $REH = yes ]; then   # the rehearsal's temporary key"):t.index("if [ $DRY = no ]; then\n  rm -f")])
+
+    def test_resume_skips_finished_stages(self):
+        r = sh("--dry-run", "--rehearsal", "--work", str(self.w), "--allow-dirty")
+        out = r.stdout + r.stderr
+        self.assertEqual(r.returncode, 0, out[-3000:])
+        self.assertGreaterEqual(out.count("skip "), 12)
+        for need in ("skip G: passed earlier", "skip O: passed earlier", "skip bundles: built", "skip judging H4", "skip scoring Q4D_mech"):
+            self.assertIn(need, out)
+        self.assertNotIn("[answer] run", out)
+        self.assertIn("rehearsal-findings: 0 findings file(s) written", out)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -19,6 +19,8 @@ condition, not values. Outputs that hold hidden rows end in .enc.
   merge            join items or rubrics files into one (.enc stays .enc), optional harness normalisation of items
   subset           seeded subset of rows (by id)         items-for   the items of an items file whose ids occur in an answers file
   agreement        two judges on the same answers (units, totals only)                         empty-enc   an empty encrypted file
+  rehearsal-prepare  encrypted copies of open items (10 tier A, 10 a3, 6 B2) with the rehearsal's temporary key, plain open input files, a ledger
+  rehearsal-findings fake findings for the bundles of a rehearsal (sealed with the temporary key)
   synth            synthetic hidden files (for dry runs and tests) with marker strings in the text fields
   verdict          the rule-1(a) verdict of the chosen margin reading from the output of eval2_compare.py e2
   fake-status      edit the fake server status of a dry run
@@ -281,11 +283,26 @@ def parse_hidden(specs):
     return out
 
 
-def count_problems(h):
+def parse_expected(specs):
+    """['tier_a=10', ...] -> {name: n}; none given: the real counts."""
+    if not specs:
+        return dict(EXPECTED)
+    out = {}
+    for s in specs:
+        n, _, v = s.partition("=")
+        if n not in EXPECTED or not v.isdigit():
+            raise eval2.EvalError(f"--expected {s!r}: expected NAME=COUNT with NAME one of {sorted(EXPECTED)}")
+        out[n] = int(v)
+    if set(out) != set(EXPECTED):
+        raise eval2.EvalError("--expected: all four items files need a count")
+    return out
+
+
+def count_problems(h, expected=None):
     """h: name -> path for tier_a, tier_a3, judged_1, judged_2, rubrics_1, rubrics_2. -> list of condition texts."""
     out = []
     ids = {}
-    for name, want in EXPECTED.items():
+    for name, want in (expected or EXPECTED).items():
         p = h.get(name)
         if not p:
             out.append(f"{name}: no file given")
@@ -321,11 +338,12 @@ def count_problems(h):
 
 def cmd_counts(a):
     h = parse_hidden(a.hidden)
-    bad = count_problems(h)
+    ex = parse_expected(a.expected)
+    bad = count_problems(h, ex)
     for b in bad:
         print(b)
     if not bad:
-        print("counts: " + ", ".join(f"{n} {EXPECTED[n]}" for n in EXPECTED) + "; rubric ids equal item ids")
+        print("counts: " + ", ".join(f"{n} {ex[n]}" for n in ex) + "; rubric ids equal item ids")
     return 1 if bad else 0
 
 
@@ -618,7 +636,7 @@ def cmd_scan(a):
         return 1
     print(f"scan: no plain-text file under {a.dir} holds an id of a hidden item ({len(ids)} ids checked)")
     if a.text:
-        marks, nrows, dropped = text_markers(h)
+        marks, nrows, dropped = text_markers(h, corpus_files=a.corpus_files)
         th = scan_text(a.dir, marks, a.also or [])
         if th or not marks:
             print(f"scan: {len(th)} plain file(s) hold hidden text: " + ", ".join(th[:10]) if th else "scan: no hidden text could be read to check against")
@@ -672,16 +690,18 @@ def row_markers(row):
     return marks
 
 
-def open_corpus():
-    """The normalised text lines of the open evaluation files (plain jsonl under eval/m4): a line that also occurs there is not
-    distinctive for the hidden half (the hidden items are written from the same templates)."""
+def open_corpus(files=None):
+    """The normalised text lines of the open evaluation files (plain jsonl under eval/m4, or the given files): a line that also occurs
+    there is not distinctive for the hidden half (the hidden items are written from the same templates). `files` is for a rehearsal,
+    whose hidden rows are open items: only the plain input files of the rehearsal count as a legitimate plain copy."""
     lines = []
-    for p in sorted((ROOT / "eval/m4").rglob("*.jsonl")):
+    for p in sorted(Path(f) for f in files) if files is not None else sorted((ROOT / "eval/m4").rglob("*.jsonl")):
         try:
             for l in p.read_text().splitlines():
                 if l.strip():
                     for leaf in string_leaves(json.loads(l)):
                         lines += prose_lines(leaf)
+                        lines.append(norm_line(leaf))   # the whole field with its lines joined, as the scan reads a file
         except (OSError, ValueError):
             continue
     return "\n".join(lines)
@@ -696,13 +716,13 @@ def hidden_rows(h):
     return rows
 
 
-def text_markers(h, corpus=None):
+def text_markers(h, corpus=None, corpus_files=None):
     """-> (markers, rows read, markers left out because the open files hold the same line)."""
     rows = hidden_rows(h)
     marks = set()
     for r in rows:
         marks |= row_markers(r)
-    corpus = open_corpus() if corpus is None else corpus
+    corpus = open_corpus(corpus_files) if corpus is None else corpus
     keep = sorted(m for m in marks if m not in corpus)
     return keep, len(rows), len(marks) - len(keep)
 
@@ -782,8 +802,9 @@ def cmd_gate(a):
     cond("ledger rows 1 and 2", not lp, "; ".join(lp))
     # 5. counts
     h = parse_hidden(a.hidden)
-    cp = count_problems(h)
-    cond("hidden row counts 245, 60, 24, 36", not cp, "; ".join(cp))
+    ex = parse_expected(a.expected)
+    cp = count_problems(h, ex)
+    cond("hidden row counts " + ", ".join(str(ex[n]) for n in ex), not cp, "; ".join(cp))
     # 6. G and O
     for stage in ("G", "O"):
         mk = Path(a.markers) / f"{stage}.passed"
@@ -804,7 +825,7 @@ def cmd_gate(a):
     cond("no plain-text file with a hidden id", not hits and bool(ids), f"{len(hits)} file(s): " + ", ".join(hits[:5]) if hits else
          ("" if ids else "no hidden id could be read to check against"))
     try:
-        marks, nrows, _ = text_markers(h)
+        marks, nrows, _ = text_markers(h, corpus_files=a.corpus_files)
     except Exception:  # noqa: BLE001
         marks, nrows = [], 0
     th = scan_text(a.work_dir, marks, a.also or [])
@@ -1073,6 +1094,132 @@ def cmd_synth(a):
     return 0
 
 
+# ---------------------------------------------------------------- rehearsal: open items encrypted as if they were hidden
+
+REH_COUNTS = {"tier_a": 10, "tier_a3": 10, "judged_1": 2, "judged_2": 4}
+REH_SEED = "20261120"
+
+
+def spread(groups, n, seed, size=lambda g: 1):
+    """Pick groups round-robin over their kind (kinds sorted, within a kind in the seeded order) until exactly n rows are chosen; a group
+    that does not fit the rows still needed is skipped. groups: list of (kind, key, rows). -> list of the chosen (kind, key, rows)."""
+    by_kind = {}
+    for g in sorted(groups, key=lambda g: order_key(seed, g[1])):
+        by_kind.setdefault(g[0], []).append(g)
+    chosen, left = [], n
+    while left > 0 and any(by_kind.values()):
+        progressed = False
+        for k in sorted(by_kind):
+            while by_kind[k] and left > 0:
+                g = by_kind[k].pop(0)
+                if size(g) <= left:
+                    chosen.append(g)
+                    left -= size(g)
+                    progressed = True
+                    break
+        if not progressed:
+            break
+    if left:
+        raise eval2.EvalError(f"rehearsal sample: {left} of {n} rows cannot be filled")
+    return chosen
+
+
+def cmd_rehearsal_prepare(a):
+    """Encrypted copies of open items (temporary key of the environment), the plain open input files of the rehearsal, a rehearsal ledger."""
+    out = Path(a.dir)
+    hid, plain = out / "rehearsal_hidden", out / "rehearsal_plain"
+    if (hid / "tier_a.jsonl.enc").exists():
+        print("rehearsal-prepare: the files exist; not overwritten")
+        return 0
+    key = os.environ.get("EVAL_HIDDEN_KEY")
+    if not key or Path(key).resolve().parent != out.resolve():
+        print("rehearsal-prepare: EVAL_HIDDEN_KEY must name a key file inside the rehearsal folder (never the real key)", file=sys.stderr)
+        return 2
+    rd = lambda p: [json.loads(l) for l in (ROOT / p).read_text().splitlines() if l.strip()]
+    seed = a.seed
+    smoke = rd_json(ROOT / "eval/m4/smoke_ids.json")["ids"]
+    a1 = {r["id"] for r in rd("work/m4/s6/ans_A1.jsonl")}
+    tier_a, a3 = rd("eval/m4/open/tier_a.jsonl"), rd("eval/m4/open/tier_a3.jsonl")
+    smoke_ok = [i for i in sorted(smoke, key=lambda i: order_key(seed, i)) if i in a1]
+    if len(smoke_ok) < REH_COUNTS["tier_a"]:
+        raise eval2.EvalError("rehearsal sample: fewer than 10 smoke items have a stored S6 answer")
+    smoke10, smoke6 = smoke_ok[:10], smoke_ok[:6]
+    by_id = {r["id"]: r for r in tier_a}
+    # hidden tier A: 10 items spread over the kinds, none of them a smoke item (the smoke items are in plain files of the run)
+    pool = [(r["kind"], r["id"], [r]) for r in tier_a if r["id"] not in set(smoke)]
+    a_rows = [g[2][0] for g in spread(pool, REH_COUNTS["tier_a"], seed)]
+    # a3: whole pairs together (an item without a pair is its own group); 10 hidden, 10 for stage O, none in both
+    groups = {}
+    for r in a3:
+        groups.setdefault(r.get("pair") or r["id"], []).append(r)
+    ga = [(rows[0]["kind"], k, rows) for k, rows in groups.items()]
+    hid_g = spread(ga, REH_COUNTS["tier_a3"], seed, size=lambda g: len(g[2]))
+    taken = {g[1] for g in hid_g}
+    o_g = spread([g for g in ga if g[1] not in taken], 10, seed, size=lambda g: len(g[2]))
+    a3_rows = [r for g in hid_g for r in g[2]]
+    a3_o = [r for g in o_g for r in g[2]]
+    # judged: 6 B2 scenarios spread over the kinds (items with their rubrics), split 2 and 4; stage O: 6 pilot2 scenarios
+    b2, b2r = rd("eval/m4/b2/items.jsonl"), {r["id"]: r for r in rd("eval/m4/b2/rubrics.jsonl")}
+    p2, p2r = rd("eval/m4/pilot2/items.jsonl"), {r["id"]: r for r in rd("eval/m4/pilot2/rubrics.jsonl")}
+    j = [g[2][0] for g in spread([(r["kind"], r["id"], [r]) for r in b2 if r["id"] in b2r], 6, seed)]
+    p6 = [g[2][0] for g in spread([(r.get("kind") or "", r["id"], [r]) for r in p2 if r["id"] in p2r], 6, seed)]
+    if {r["id"] for r in j} & {r["id"] for r in p6}:
+        raise eval2.EvalError("rehearsal sample: a B2 scenario is also a pilot2 scenario")
+    for d in (hid, plain):
+        d.mkdir(parents=True, exist_ok=True)
+    wrows(hid / "tier_a.jsonl.enc", a_rows)
+    wrows(hid / "tier_a3.jsonl.enc", a3_rows)
+    for name, part in (("judged_1", j[:2]), ("judged_2", j[2:])):
+        wrows(hid / f"{name}_items.jsonl.enc", part)
+        wrows(hid / f"{name}_rubrics.jsonl.enc", [b2r[r["id"]] for r in part])
+    pw = lambda name, rows: (plain / name).write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows))
+    pw("smoke10_items.jsonl", [by_id[i] for i in smoke10])
+    pw("smoke6_items.jsonl", [by_id[i] for i in smoke6])
+    pw("a3_10_items.jsonl", a3_o)
+    pw("pilot6_items.jsonl", p6)
+    pw("pilot6_rubrics.jsonl", [p2r[r["id"]] for r in p6])
+    rule = "REHEARSAL: no decision; the figures of 20 items decide nothing and are not a look at the hidden half"
+    (out / "REHEARSAL_LEDGER.md").write_text(
+        "| # | Date | Run | Configuration | Decision rule written beforehand | Result totals | Who |\n|---|---|---|---|---|---|---|\n"
+        f"| 1 | {a.date} | REHEARSAL of E2 (open items, encrypted) | 10 tier A, 10 a3, 6 B2 | {rule} | | job-operator |\n"
+        f"| 2 | {a.date} | REHEARSAL of E3 (open items, encrypted) | 6 B2 | {rule} | | job-operator |\n")
+    print(f"rehearsal-prepare: hidden copies {len(a_rows)} tier A, {len(a3_rows)} a3, {len(j[:2])} + {len(j[2:])} judged with rubrics; plain input files: "
+          f"{len(smoke10)} + {len(smoke6)} smoke, {len(a3_o)} a3, {len(p6)} pilot2 scenarios; ledger written in {out.name}")
+    return 0
+
+
+def rd_json(p):
+    return json.loads(Path(p).read_text())
+
+
+def cmd_rehearsal_findings(a):
+    """Fake findings for every bundle of a rehearsal (a clean row for most answers, a 'wrong' finding with a quote taken from the answer for
+    about a third of them), sealed with the temporary key, so that `eval2_sealed_reading.py totals` runs on them."""
+    d = Path(a.dir)
+    key = json.loads(eval2.decrypt_bytes((d / "blind_key.json.enc").read_bytes()).decode("utf-8"))
+    n_files = n_rows = n_find = 0
+    for b in key["bundles"]:
+        target = d / f"findings_{b}.jsonl.enc"
+        if target.exists():
+            continue
+        rows = []
+        for r in rows_of(d / f"{b}.jsonl.enc"):
+            name, text = r["id"], r["answer"]
+            if int(hashlib.sha256(f"{a.seed}:{name}".encode()).hexdigest(), 16) % 3 == 0 and len(text.strip()) >= 20:
+                q = " ".join(text.split())[:40]
+                rows.append({"answer": name, "id": r["item"], "kind": "wrong", "quote": q, "point": "", "supported": False, "minor": False,
+                             "source": "", "note": "REHEARSAL fake finding"})
+                n_find += 1
+            else:
+                rows.append({"answer": name, "id": r["item"], "kind": "clean", "quote": "", "point": "", "supported": False, "minor": False,
+                             "source": "", "note": "REHEARSAL fake clean row"})
+        wrows(target, rows)
+        n_files += 1
+        n_rows += len(rows)
+    print(f"rehearsal-findings: {n_files} findings file(s) written, {n_rows} rows, {n_find} fake findings (sealed with the temporary key)")
+    return 0
+
+
 def build_parser():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -1101,6 +1248,8 @@ def build_parser():
     g.add_argument("--markers", required=True)
     g.add_argument("--exclude", nargs="*", default=[])
     g.add_argument("--also", nargs="*", default=[], help="more files or folders to scan for hidden text (this run's logs, the heartbeat)")
+    g.add_argument("--corpus-files", nargs="*", default=None, help="rehearsal: see scan")
+    g.add_argument("--expected", nargs="*", default=[], metavar="NAME=COUNT", help="rehearsal: the row counts of the four items files")
     g.add_argument("--allow-dirty", action="store_true")
     g.add_argument("--tests", choices=["run", "skip"], default="run")
     g.add_argument("--test-cmd", default=os.environ.get("M4_E2_TEST_CMD", ".venv/bin/python -m unittest discover -s tests"))
@@ -1109,6 +1258,7 @@ def build_parser():
     s.add_argument("--file", required=True)
     s = sub.add_parser("counts")
     s.add_argument("--hidden", nargs="+", required=True)
+    s.add_argument("--expected", nargs="*", default=[], metavar="NAME=COUNT")
     s = sub.add_parser("shape")
     s.add_argument("--hidden", nargs="+", required=True, metavar="NAME=PATH.enc")
     s.add_argument("--chunks", help="the chunks file (default work/v3/chunks_s1.jsonl)")
@@ -1120,6 +1270,7 @@ def build_parser():
     s.add_argument("--exclude", nargs="*", default=[])
     s.add_argument("--text", action="store_true", help="also look for distinctive text of the hidden rows (logs and --also files included)")
     s.add_argument("--also", nargs="*", default=[], help="more files or folders to scan for text (this run's logs, the heartbeat)")
+    s.add_argument("--corpus-files", nargs="*", default=None, help="rehearsal: the plain open input files; a line in them is not a marker (default: all open files under eval/m4)")
     s = sub.add_parser("gate-g")
     s.add_argument("--answers", required=True)
     s.add_argument("--stored", required=True)
@@ -1172,6 +1323,13 @@ def build_parser():
     s = sub.add_parser("verdict")
     s.add_argument("--compare-out", required=True)
     s.add_argument("--reading", choices=["one-sided", "two-sided"])
+    s = sub.add_parser("rehearsal-prepare")
+    s.add_argument("--dir", required=True, help="the rehearsal work folder (the key file of EVAL_HIDDEN_KEY must lie in it)")
+    s.add_argument("--seed", default=REH_SEED)
+    s.add_argument("--date", default=__import__("datetime").date.today().isoformat())
+    s = sub.add_parser("rehearsal-findings")
+    s.add_argument("--dir", required=True, help="the bundles folder")
+    s.add_argument("--seed", default=REH_SEED)
     s = sub.add_parser("synth")
     s.add_argument("--dir", required=True)
     s.add_argument("--marker", default="SYNTHMARK")
@@ -1179,7 +1337,7 @@ def build_parser():
     return ap
 
 
-CMDS = {"prepare": cmd_prepare, "verify-manifest": cmd_verify_manifest, "gate": cmd_gate, "ledger": cmd_ledger, "counts": cmd_counts, "shape": cmd_shape,
+CMDS = {"prepare": cmd_prepare, "verify-manifest": cmd_verify_manifest, "gate": cmd_gate, "ledger": cmd_ledger, "counts": cmd_counts, "rehearsal-prepare": cmd_rehearsal_prepare, "rehearsal-findings": cmd_rehearsal_findings, "shape": cmd_shape,
         "scan": cmd_scan, "gate-g": cmd_gate_g, "check-answers": cmd_check_answers, "runline": cmd_runline, "judge-done": cmd_judge_done,
         "merge": cmd_merge, "subset": cmd_subset, "items-for": cmd_items_for, "empty-enc": cmd_empty_enc, "agreement": cmd_agreement,
         "fake-status": cmd_fake_status, "packs-equal": cmd_packs_equal, "patched": cmd_patched, "verdict": cmd_verdict, "synth": cmd_synth}
