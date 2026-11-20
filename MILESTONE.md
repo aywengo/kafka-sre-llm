@@ -19,7 +19,7 @@ different base model does better.
 | # | Criterion | Bar | Status |
 |---|---|---|---|
 | E1 | A new evaluation exists: fresh items for the five task types of `GOAL.md`, a hidden part, mechanical checks, a measured noise level | 300 or more mechanical items, 120 or more judged items, the smallest visible difference stated per tier | mechanical tier built: 496 items, split 251 open and 245 hidden (encrypted); judged tier: after two failed pilots the judge's coverage role (J1) was checked on batch B1 (30 fresh scenarios): five criteria and the second half of the sixth pass, the rubric chunk check missed by about one point (94.0 % against 95 %); **the Owner accepted the coverage role on 2026-11-19 (K1)**; **the judged tier is written (2026-11-20): 120 scenarios, 60 open (B1, B2) and 60 hidden (the Owner's 24, B3's 36), every batch with an independent chunk count of 95 % or more before any answer**; the new mechanical kinds are built and accepted by an independent review (148 items, 88 open and 60 hidden), so the mechanical tier has 644 items (339 open, 305 hidden); integration into the harness (T10) is finishing |
-| E2 | The starting point is measured on it: plain base, base + retrieval at full precision, and the 4-bit model with retrieval, in default and strict mode, all on the same server path | numbers with their sizes; the cost of 4-bit shown inside a margin fixed before the run (5 points on the mechanical tier) | not started |
+| E2 | The starting point is measured on it: plain base, base + retrieval at full precision, and the 4-bit model with retrieval, in default and strict mode, all on the same server path | numbers with their sizes; the cost of 4-bit shown inside a margin fixed before the run (5 points on the mechanical tier) | chain built, reviewed, rehearsed against the real server without a defect, ledger rows written, shape check on the hidden files passed; **waits for the Owner's go** |
 | E3 | Every answer is checked before the user sees it (amended 2026-11-19, K4 b: prose streams as it is written, each code block is held until its check, which takes milliseconds, and corrections to prose follow the answer) | at most 2 invented or wrong items per 10 answers in default mode on fresh questions, **measured by a reading**, with the checker's own counts beside it; a statement marked "not confirmed" still counts; minor items are reported beside the bar, not counted (K4 a, c); measured on the hidden judged half after E2 (K4 g) | checker built and wired into `ask --check` and the service; on the 30 labelled errors it catches 9, reports 3 as unverified and misses 18 (15 are wrong statements it cannot see); not yet measured on fresh answers |
 | E4 | Answers are fast on the 4-bit server path | median under 60 s in default mode on the Mac Studio; first words within 10 s | service and streaming built; retrieval 9.5 s to 4.4 s when kept loaded; not yet measured with a model |
 | E5 | Base model decision | bake-off of the shortlist on the new evaluation; keep or switch recorded | shortlist done |
@@ -616,9 +616,20 @@ and J6 come from the mechanical tier and block nothing yet):
   oq-049 m3 and m4, oq-050 m2). Final files `tier_b_owner_{items,rubrics}_final5` (25
   items; oq-010 is a different family from oq-002). **The hidden judged half has 61
   scenarios.**
-- Next, before the Owner's go for E2: redraw the 7 items (L7) with a short check; the
-  tag in the hidden reports; the chain pins file hashes, not the head commit; the two
-  ledger rows.
+- 2026-11-20, 09:15 to 13:40: done before the go for E2: the hidden reports print totals
+  with and without tagged items (`f12324b`); the 7 hidden valid-but-wrong items redrawn
+  and checked a fourth time, with three fixes (`00aefe4`, `6e51062`: hidden tags now 7,
+  5 safe order and 2 works controls, no hidden fault tagged; open file unchanged); the
+  chain pins the content of the files a run depends on, not the head commit, takes the
+  Owner's decisions as defaults and resumes across a documentation commit (`e8bb40a`);
+  the two ledger rows are written. Full suite on the clean tree: 1,626 tests, OK. **The
+  shape check on the real hidden files passes** (key names and counts only; 245 + 60
+  mechanical items, 25 + 36 judged scenarios; all through the stub answer step, judge,
+  bundles and scorer): it first stopped on two unread text keys of the judged items,
+  `side` and `adaptation`, which a sealed session labelled metadata (`49e0713`).
+- **Waiting for the Owner: the go for the E2 run** (two hidden looks, E2 and E3; about
+  19 to 22 h of the model server by the rehearsal's rates, plus about 2 h for the
+  first-words timing on open items; about eight sealed reader sessions).
 - Waiting for the Owner, not blocking: redraw the 7 tagged valid-but-wrong hidden items
   or keep the tag only; the review lists above. The Owner sees the failed R3 check here;
   nothing further runs in WP5.
