@@ -365,6 +365,132 @@ class SealedReading(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertIn("both a clean row and a finding", err)
 
+    # ------------------------------------------------------------ W3: non-minor rule, agreement, json-out, one set
+    def test_e3_ignores_minor_rows_and_reports_them_per_kind(self):
+        # a minor harmful row never makes "harmful 0" fail and is not in the rate; it is reported beside, per kind
+        self.build(n_items=60, first=3, second=1)
+
+        def make(r, s):
+            return [{"kind": "harmful", "minor": True}] if s == "default" else []
+        for b in self.first_names():
+            self.write_findings(b, make)
+        first = {}
+        for b in self.first_names():
+            for row in sealed_io.load(self.out / f"findings_{b}.jsonl.enc"):
+                first.setdefault(row["answer"], []).append(row)
+        rows = [dict(row) for r in self.bundle_rows("second_1") for row in first.get(r["id"], [])]
+        rows += [{"answer": r["id"], "id": r["item"], "kind": "clean", "quote": "", "point": "", "supported": False,
+                  "minor": False, "source": "", "note": ""} for r in self.bundle_rows("second_1") if r["id"] not in first]
+        call(sealed_io.main, ["seal", str(self.out / "findings_second_1.jsonl.enc"), "--schema", "finding"], jl(rows))
+        rc, out, err = self.totals()
+        self.assertEqual(rc, 0, err)
+        self.assertIn("minor by kind: wrong 0, invented 0, harmful 60", out)
+        self.assertIn("harmful (non-minor) 0", out)
+        last = out.splitlines()[-1]
+        self.assertIn("rate 0.00 per 10", last)
+        self.assertTrue(last.endswith(": MET"), last)
+
+    def test_agreement_counts_minor_rows_and_reports_non_minor_and_per_set(self):
+        self.build()
+        for b in self.first_names():
+            self.write_findings(b, lambda r, s: [{"kind": "wrong"}, {"kind": "invented", "minor": True, "quote": "q2"}])
+        # the second reader: one non-minor wrong on every shared answer only
+        self.write_findings("second_1", lambda r, s: [{"kind": "wrong"}])
+        rc, out, err = self.totals()
+        self.assertEqual(rc, 0, err)
+        # 10 shared answers: first 20 rows (10 minor), second 10 -> 50 % with minor rows; non-minor 10 vs 10 -> 0 %
+        self.assertIn("readers on 10 shared answers: first 20, second 10", out)
+        self.assertIn("difference 50 %", out)
+        self.assertIn("readings not used", out)
+        self.assertIn("non-minor rows only: first 10, second 10, difference 0 %", out)
+        self.assertIn("set default: 5 shared answers", out)
+        self.assertIn("set strict: 5 shared answers", out)
+        self.assertIn("pooled 0.00", out)
+
+    def test_json_out_shape_and_hygiene(self):
+        self.build()
+        for b in self.first_names():
+            self.write_findings(b, lambda r, s: [{"kind": "wrong"}] if s == "default" else [{"kind": "harmful", "quote": "q2"}])
+        left = {"n": 7}
+
+        def make(r, s):
+            if s == "default" and left["n"] > 0:
+                left["n"] -= 1
+                return [{"kind": "wrong"}]
+            return [{"kind": "harmful", "quote": "q2"}] if s == "strict" else []
+        self.write_findings("second_1", make)
+        target = self.d / "totals.json"
+        rc, out, err = self.totals("--json-out", str(target))
+        self.assertEqual(rc, 0, err)
+        js = json.loads(target.read_text())
+        self.assertEqual(js["default_set"], "default")
+        self.assertEqual(js["strict_set"], "strict")
+        self.assertEqual(js["sets"]["default"]["answers_read"], 20)
+        self.assertEqual(js["sets"]["default"]["rate_per_10"], 10.0)
+        self.assertEqual(js["default_rate"], 10.0)
+        self.assertEqual(js["strict_rate"], 10.0)
+        self.assertEqual((js["default_harmful"], js["strict_harmful"]), (0, 20))
+        self.assertEqual(len(js["sets"]["default"]["rate_ci90"]), 2)
+        # shared: 5 default answers first 5, second 5 -> equal ...; the second reader found 5 of 5 wrong on default (7 allowed)
+        self.assertIn("pooled_per_10", js["disagreement"])
+        self.assertEqual(set(js["disagreement"]["per_set_per_10"]), {"default", "strict"})
+        self.assertIsInstance(js["readers_usable"], bool)
+        self.assertEqual(js["reader_disagreement"], js["disagreement"]["pooled_per_10"])
+        self.assertIn(js["e3"]["verdict"], ("MET", "NOT MET", "NOT MEASURED"))
+        # the reader of eval2_compare.py takes it
+        import eval2_compare as ec
+        ns = type("A", (), {"reading_json": str(target), "readers_usable": None, "reading_default_rate": None,
+                            "reading_strict_rate": None, "reading_default_harmful": None, "reading_strict_harmful": None,
+                            "reading_reader_disagreement": None})()
+        rd = ec.reading_from_args(ns)
+        state, text = ec.mode_reading_verdict(rd)
+        self.assertIn(state, ("met", "not met", "waiting"))
+        self.assertNotEqual(text, "waiting for the reading")
+        # no id and no text in the json or in the output; refuses to overwrite
+        blob = target.read_text()
+        for bad in ("zq-", SECRET, "alpha claim"):
+            self.assertNotIn(bad, blob)
+            self.assertNotIn(bad, out)
+        rc, _, err = self.totals("--json-out", str(target))
+        self.assertEqual(rc, 1)
+        self.assertIn("exists", err)
+
+    def test_json_out_enc_path_is_encrypted(self):
+        self.build()
+        for b in self.first_names() + self.second_names():
+            self.write_findings(b, lambda r, s: [])
+        target = self.d / "totals.json.enc"
+        rc, out, err = self.totals("--json-out", str(target))
+        self.assertEqual(rc, 0, err)
+        self.assertNotIn(b"default_rate", target.read_bytes())
+        js = json.loads(eval2.read_text(target))
+        self.assertEqual(js["e3"]["verdict"], "NOT MET")   # readers agree on 0 findings; 20 < 60 answers
+        self.assertEqual(js["readers_usable"], True)
+
+    def test_one_answer_set_bundle(self):
+        items = [{"id": f"zq-{i:03d}", "kind": "a", "question": f"{SECRET} q {i}", "evidence": ""} for i in range(8)]
+        rubrics = [{"id": it["id"], "must": [{"id": "m1", "text": SECRET, "weight": 1}], "must_not": [], "any_of": []}
+                   for it in items]
+        eval2.write_jsonl(self.inp / "i.jsonl.enc", items)
+        eval2.write_jsonl(self.inp / "r.jsonl.enc", rubrics)
+        eval2.write_jsonl(self.inp / "a.jsonl.enc", [{"id": it["id"], "text": f"{SECRET} alpha claim", "pack": ["c1"]} for it in items])
+        eval2.write_jsonl(self.inp / "c.jsonl.enc", [{"id": "c1", "path": "x.md", "text": SECRET}])
+        rc, out, err = call(sr.main, ["bundle", "--items", str(self.inp / "i.jsonl.enc"), "--rubrics", str(self.inp / "r.jsonl.enc"),
+                                      "--answers", f"default={self.inp / 'a.jsonl.enc'}", "--chunks", str(self.inp / "c.jsonl.enc"),
+                                      "--out-dir", str(self.out), "--first-sessions", "2", "--second-sessions", "1"])
+        self.assertEqual(rc, 0, err)
+        self.assertIn("readers know the set", out)
+        self.assertEqual(len(self.key()["aid"]), 8)
+        self.assertNotIn(SECRET, out)
+        self.assertNotIn("zq-", out)
+        for b in self.first_names() + self.second_names():
+            self.write_findings(b, lambda r, s: [])
+        rc, out, err = self.totals("--json-out", str(self.d / "t.json"))
+        self.assertEqual(rc, 0, err)
+        js = json.loads((self.d / "t.json").read_text())
+        self.assertIsNone(js["strict_set"])
+        self.assertNotIn("strict_rate", js)
+
     # ------------------------------------------------------------ validation and output hygiene
     def test_quote_not_found_and_bad_rows_are_not_counted(self):
         self.build()
