@@ -41,16 +41,31 @@ This scorer shares only the catalogue files, kafka_sre_rag/catalogue.py and, for
 index file with anything else. It
 does not import from a runtime answer checker, and nothing in kafka_sre_rag/ imports it.
 
+Hidden path (agents/m4-evaluation.md, "The hidden part"): items files and the answers file all ending in .enc (several
+items files as on the open path; open and hidden are never mixed). They are decrypted in memory through scripts/eval2.py
+(key: EVAL_HIDDEN_KEY or ~/.config/kafka-sre-llm/eval_hidden.key); --scores must end in .enc and is written encrypted and
+atomically; --summary is plain JSON with totals only: all-pass rate, per kind where a kind has at least 5 items, the
+decline outcomes, identifier precision totals, per items file the totals with and without the items tagged
+`shares_variant_with_published`, and the items marked not_in_index apart. No item id, no per-item outcome and no answer text
+reaches stdout, stderr or the summary. The Java checks of the a3 kinds compile the model's answer, which needs its code on
+disk for javac: on the hidden path they run inside a private folder (mode 0700, made for this run, set as the temporary
+directory of this process and of javac) that is removed afterwards; nothing in it is printed. (ListCalls.class, compiled from
+the repository's own source, stays in work/m4/javacheck_cache as before; it holds no answer.)
+
 Usage: .venv/bin/python scripts/eval2_score.py --items ITEMS.jsonl [ITEMS2.jsonl ...] --answers ANSWERS.jsonl
            [--scores OUT.jsonl] [--summary OUT.json] [--catalogues DIR]
+       (hidden: the same with .enc files, EVAL_HIDDEN_KEY set, --scores OUT.jsonl.enc)
 """
 import argparse
 import difflib
 import json
 import math
 import re
+import os
 import shlex
+import shutil
 import sys
+import tempfile
 from collections import defaultdict
 from pathlib import Path
 
@@ -1229,21 +1244,228 @@ def format_outcomes(counts, name=""):
     return L
 
 
+# ------------------------------------------------------------------ the hidden path
+SHARES_VARIANT = "shares_variant_with_published"
+MIN_KIND_N = 5          # a kind is reported only when it has at least this many items
+
+
+def _eval2():
+    """scripts/eval2.py (encryption helpers), imported only when a hidden (.enc) file is read or written."""
+    here = str(Path(__file__).resolve().parent)
+    if here not in sys.path:
+        sys.path.insert(0, here)
+    import eval2
+    return eval2
+
+
+def is_hidden_path(p):
+    return str(p).endswith(".enc")
+
+
+def _rate(k, n):
+    return round(k / n, 4) if n else None
+
+
+def _pass_block(rows):
+    k, n = sum(r["all_pass"] for r in rows), len(rows)
+    return {"n": n, "all_pass": k, "all_pass_rate": _rate(k, n), "wilson95": list(wilson(k, n))}
+
+
+def _outcome_block(rows):
+    d = {"n": len(rows), **{o: sum(1 for r in rows if r.get("outcome") == o) for o in OUTCOMES}}
+    d["not_in_index"] = sum(1 for r in rows if (r.get("coverage") or {}).get("not_in_index"))
+    d["shares"] = {o: _rate(d[o], d["n"]) for o in OUTCOMES}
+    return d
+
+
+def hidden_summary(rows, items_by_file, missing, extra, catalogue_hash=None):
+    """Totals only. rows: score rows (with outcome when computed); items_by_file: [(file name, [items])].
+    Never an id, a per-item outcome, a token or a piece of answer text."""
+    items = [i for _, its in items_by_file for i in its]
+    by_id = {i["id"]: i for i in items}
+    have_outcomes = any("outcome" in r for r in rows)
+    cp, ct = sum(r["checks_passed"] for r in rows), sum(r["checks_total"] for r in rows)
+    tally = {"known": 0, "unknown": 0, "not_covered": 0}
+    by_type = defaultdict(lambda: {"known": 0, "unknown": 0, "not_covered": 0})
+    with_unknown = 0
+    for r in rows:
+        ident = r.get("identifiers") or {}
+        for st in tally:
+            for x in ident.get(st, []):
+                tally[st] += 1
+                by_type[x["type"]][st] += 1
+        with_unknown += bool(ident.get("unknown"))
+    classified = tally["known"] + tally["unknown"]
+    kinds = defaultdict(list)
+    for r in rows:
+        kinds[str(by_id[r["id"]].get("kind"))].append(r)
+    by_kind = {}
+    for kd, rs in sorted(kinds.items()):
+        if len(rs) >= MIN_KIND_N:
+            by_kind[kd] = _pass_block(rs)
+            if have_outcomes:
+                by_kind[kd]["outcomes"] = _outcome_block(rs)
+    out = {
+        "scorer": VERSION, "hidden": True, "totals_only": True, "catalogue_hash": catalogue_hash,
+        "items_scored": len(rows), "missing_answers": missing, "answers_for_unknown_ids": extra,
+        "all_pass": sum(r["all_pass"] for r in rows), "all_pass_rate": _rate(sum(r["all_pass"] for r in rows), len(rows)),
+        "wilson95": list(wilson(sum(r["all_pass"] for r in rows), len(rows))),
+        "checks_share": _rate(cp, ct), "format_failures": sum(not r["format_ok"] for r in rows),
+        "by_kind": by_kind,
+        "kinds_withheld_under_%d_items" % MIN_KIND_N: sum(1 for rs in kinds.values() if len(rs) < MIN_KIND_N),
+        "identifier_precision": {
+            **tally, "precision_known_of_classified": _rate(tally["known"], classified),
+            "answers_with_an_unknown_identifier": with_unknown, "by_type": dict(sorted(by_type.items())),
+            "note": "unknown = absent from a catalogue marked complete; not_covered is never counted as invented; no token is listed"},
+    }
+    if have_outcomes:
+        out["outcomes"] = _outcome_block(rows)
+        nii = [r for r in rows if (r.get("coverage") or {}).get("not_in_index")]
+        rest = [r for r in rows if not (r.get("coverage") or {}).get("not_in_index")]
+        out["not_in_index"] = {"apart": {**_pass_block(nii), "outcomes": _outcome_block(nii)},
+                               "all_others": {**_pass_block(rest), "outcomes": _outcome_block(rest)}}
+    files = []
+    by_score = {r["id"]: r for r in rows}
+    for name, its in items_by_file:
+        pairs = [(it, by_score[it["id"]]) for it in its if it["id"] in by_score]
+        f = {"file": name, "items": len(its), "scored": len(pairs), **_pass_block([r for _, r in pairs])}
+        tagged = [r for it, r in pairs if it.get(SHARES_VARIANT)]
+        if tagged:
+            rest = [r for it, r in pairs if not it.get(SHARES_VARIANT)]
+            f["with_tagged"] = _pass_block([r for _, r in pairs])
+            f["tagged_" + SHARES_VARIANT] = len(tagged)
+            f["without_tagged"] = _pass_block(rest)
+            if have_outcomes:
+                f["with_tagged"]["outcomes"] = _outcome_block([r for _, r in pairs])
+                f["without_tagged"]["outcomes"] = _outcome_block(rest)
+        files.append(f)
+    out["by_items_file"] = files
+    return out
+
+
+def hidden_text_lines(summ):
+    """The lines for the terminal: totals only."""
+    L = ["hidden scorer %s (totals only): scored %d  missing %d  all-pass %d/%d = %s  format failures %d"
+         % (summ["scorer"], summ["items_scored"], summ["missing_answers"], summ["all_pass"], summ["items_scored"],
+            summ["all_pass_rate"], summ["format_failures"])]
+    for kd, d in summ["by_kind"].items():
+        L.append("  kind %s: n %d  all-pass %d/%d" % (kd, d["n"], d["all_pass"], d["n"]))
+    if "outcomes" in summ:
+        d = summ["outcomes"]
+        L.append("  outcomes " + "  ".join("%s %d/%d" % (o, d[o], d["n"]) for o in OUTCOMES)
+                 + "  (items not in the index %d)" % d["not_in_index"])
+    ip = summ["identifier_precision"]
+    L.append("  identifiers known %d  unknown %d  not covered %d  precision %s"
+             % (ip["known"], ip["unknown"], ip["not_covered"], ip["precision_known_of_classified"]))
+    for f in summ["by_items_file"]:
+        L.append("  items file %s: scored %d/%d  all-pass %d/%d" % (f["file"], f["scored"], f["items"], f["all_pass"], f["n"]))
+        if "with_tagged" in f:
+            L.append("    with the %d tagged items: %d/%d; without them: %d/%d"
+                     % (f["tagged_" + SHARES_VARIANT], f["with_tagged"]["all_pass"], f["with_tagged"]["n"],
+                        f["without_tagged"]["all_pass"], f["without_tagged"]["n"]))
+    return L
+
+
+def run_hidden(args, cats):
+    """Scores hidden files. Returns the exit code. Errors name ids and fields, never values."""
+    e2 = _eval2()
+    for opt in ("scores",):
+        v = getattr(args, opt)
+        if v and not is_hidden_path(v):
+            print("--scores: a hidden run writes only .enc files", file=sys.stderr)
+            return 2
+    try:
+        items_by_file = [(Path(p).name, e2.read_jsonl(p)) for p in args.items]
+        items = [i for _, its in items_by_file for i in its]
+        if len({i["id"] for i in items}) != len(items):
+            print("duplicate item ids across the items files", file=sys.stderr)
+            return 2
+        for n, it in enumerate(items, 1):
+            if not isinstance(it.get("id"), str) or not isinstance(it.get("checks"), list):
+                print("item %d: missing or malformed keys id/checks" % n, file=sys.stderr)
+                return 2
+        answers = e2.read_jsonl(args.answers)
+    except e2.EvalError as e:
+        print("hidden input: %s" % e, file=sys.stderr)
+        return 2
+    except (OSError, ValueError) as e:
+        print("hidden input: %s" % type(e).__name__, file=sys.stderr)
+        return 2
+    private = tempfile.mkdtemp(prefix="eval2_score_hidden_")       # mode 0700; the model's answer code for javac goes here only
+    saved = (tempfile.tempdir, os.environ.get("TMPDIR"))
+    tempfile.tempdir = private
+    os.environ["TMPDIR"] = private
+    try:
+        ans = {a["id"]: a["text"] for a in answers if "id" in a and "text" in a}
+        ids = {i["id"] for i in items}
+        rows, missing = [], 0
+        for it in items:
+            if it["id"] not in ans:
+                missing += 1
+                rows.append({"id": it["id"], "checks_passed": 0, "checks_total": len(it["checks"]), "all_pass": False,
+                             "format_ok": False, "results": [], "identifiers": {}, "missing": True})
+                continue
+            try:
+                rows.append(score_item(it, ans[it["id"]], cats))
+            except Exception as e:      # the message of an exception could carry answer text
+                print("item %s: scoring failed (%s)" % (it["id"], type(e).__name__), file=sys.stderr)
+                return 1
+        extra = len([i for i in ans if i not in ids])
+        from kafka_sre_rag.catalogue import catalogue_hash
+        chash = catalogue_hash(args.catalogues)
+        outcomes_note = None
+        if not args.no_outcomes:
+            try:
+                add_outcomes(rows, items, answers, ChunkIndex.load(args.index, args.frozen))
+            except (IndexMismatch, OSError) as e:
+                outcomes_note = "refused (%s)" % type(e).__name__
+                print("outcomes skipped: %s" % type(e).__name__, file=sys.stderr)
+        summ = hidden_summary(rows, items_by_file, missing, extra, chash)
+        if outcomes_note:
+            summ["outcomes_skipped"] = outcomes_note
+        if args.scores:
+            e2.write_jsonl(args.scores, rows)
+        text = json.dumps(summ, indent=1, sort_keys=True, ensure_ascii=False)
+        if args.summary:
+            e2.write_atomic(args.summary, (text + "\n").encode("utf-8"))
+        print(text)
+        print("\n".join(hidden_text_lines(summ)), file=sys.stderr)
+        return 0
+    except e2.EvalError as e:
+        print("hidden output: %s" % e, file=sys.stderr)
+        return 2
+    except Exception as e:
+        print("hidden run failed (%s)" % type(e).__name__, file=sys.stderr)
+        return 1
+    finally:
+        tempfile.tempdir = saved[0]
+        if saved[1] is None:
+            os.environ.pop("TMPDIR", None)
+        else:
+            os.environ["TMPDIR"] = saved[1]
+        shutil.rmtree(private, ignore_errors=True)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--items", required=True, nargs="+",
-                    help="items file(s), joined in the order given; ids must be unique across them; open files only")
-    ap.add_argument("--answers", required=True)
-    ap.add_argument("--scores", help="write the per-item score rows here (jsonl)")
-    ap.add_argument("--summary", help="write the summary here (json)")
+                    help="items file(s), joined in the order given; ids must be unique across them; all open or all hidden (.enc)")
+    ap.add_argument("--answers", required=True, help="answers file; .enc exactly when the items files are")
+    ap.add_argument("--scores", help="write the per-item score rows here (jsonl; .enc for a hidden run)")
+    ap.add_argument("--summary", help="write the summary here (json; totals only for a hidden run)")
     ap.add_argument("--catalogues", help="catalogue directory (default work/m4/catalogues)")
     ap.add_argument("--index", default=DEFAULT_INDEX, help="frozen index file for the decline outcome")
     ap.add_argument("--frozen", default=DEFAULT_FROZEN, help="record of the frozen index (sha256)")
     ap.add_argument("--no-outcomes", action="store_true", help="skip the decline outcome (covering chunks need the index)")
     args = ap.parse_args(argv)
+    hid = [is_hidden_path(p) for p in list(args.items) + [args.answers]]
+    if any(hid) and not all(hid):
+        ap.error("open and hidden (.enc) inputs are never mixed: the items files and the answers file must all end in .enc, or none")
+    if not any(hid) and args.scores and is_hidden_path(args.scores):
+        ap.error("--scores: an open run writes no .enc file")
     cats = Catalogues.load(args.catalogues)
-    if any(str(p).endswith(".enc") for p in args.items):
-        ap.error("hidden (.enc) items files are not scored by this scorer")
+    if all(hid):
+        return run_hidden(args, cats)
     items = []
     for p in args.items:
         items += load_jsonl(p)
