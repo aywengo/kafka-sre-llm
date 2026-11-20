@@ -7,6 +7,7 @@ messages name ids, line numbers and field names only, never row text.
 
   show FILE.enc [--ids a,b]        print the rows (sealed sessions only)
   seal OUT.enc [--schema S] [--append]   read JSONL from stdin, validate, encrypt
+                                   (schema finding: one row per finding; several rows may share an id)
   ids FILE.enc                     print ids and count
   stats FILE.enc --schema rubric   counts only
 
@@ -29,7 +30,12 @@ REQUIRED = {
     "item": ("id", "tier", "kind", "family", "domain", "question", "evidence",
              "failure_classes", "versions"),
     "review": ("id", "verdict", "changes"),
+    # Findings of a blind reading (scripts/eval2_blind.py row format): "id" is the item, "answer" the blind
+    # answer name "<item>-<letter>"; several rows may share an id.
+    "finding": ("answer", "id", "kind", "quote", "point", "supported", "minor", "source", "note"),
 }
+# "clean": the reader read the answer and has no finding on it (quote and point empty)
+FINDING_KINDS = ("wrong", "invented", "harmful", "omission", "clean")
 
 
 class SealedError(Exception):
@@ -53,7 +59,45 @@ def parse_rows(text):
     return rows
 
 
+def finding_sig(row):
+    return (row.get("answer"), row.get("kind"), " ".join(str(row.get("quote") or "").split()),
+            str(row.get("point") or ""))
+
+
+def check_findings(rows):
+    seen = set()
+    for n, row in enumerate(rows, 1):
+        rid = row["id"]
+        for field in REQUIRED["finding"]:
+            if field not in row:
+                raise SealedError(f"id {rid}: missing field '{field}'")
+        if row["kind"] not in FINDING_KINDS:
+            raise SealedError(f"id {rid}: field 'kind' not in {{wrong, invented, harmful, omission, clean}}")
+        for field in ("minor", "supported"):
+            if not isinstance(row[field], bool):
+                raise SealedError(f"id {rid}: field '{field}' is not true or false")
+        for field in ("answer", "quote", "point", "source", "note"):
+            if not isinstance(row[field], str):
+                raise SealedError(f"id {rid}: field '{field}' is not a string")
+        if row["answer"].rsplit("-", 1)[0] != rid:
+            raise SealedError(f"id {rid}: field 'answer' does not belong to the item")
+        if row["kind"] == "omission":
+            if not row["point"].strip():
+                raise SealedError(f"id {rid}: omission row without 'point'")
+        elif row["kind"] == "clean":
+            if row["quote"].strip() or row["point"].strip():
+                raise SealedError(f"id {rid}: clean row with 'quote' or 'point'")
+        elif not row["quote"].strip():
+            raise SealedError(f"id {rid}: row without 'quote'")
+        sig = finding_sig(row)
+        if sig in seen:
+            raise SealedError(f"id {rid}: duplicate finding on answer {row['answer']}")
+        seen.add(sig)
+
+
 def check_schema(rows, schema):
+    if schema == "finding":
+        return check_findings(rows)
     seen = set()
     for row in rows:
         rid = row["id"]
@@ -125,9 +169,15 @@ def cmd_seal(a):
         if not out.exists():
             raise SealedError("--append: file does not exist")
         old = load(out)
-        dup = sorted({r["id"] for r in rows} & {r["id"] for r in old})
-        if dup:
-            raise SealedError("duplicate ids already in file: " + ",".join(dup))
+        if a.schema == "finding":
+            have = {finding_sig(r) for r in old}
+            dup = sorted({r["answer"] for r in rows if finding_sig(r) in have})
+            if dup:
+                raise SealedError("duplicate findings already in file for answers: " + ",".join(dup))
+        else:
+            dup = sorted({r["id"] for r in rows} & {r["id"] for r in old})
+            if dup:
+                raise SealedError("duplicate ids already in file: " + ",".join(dup))
         allrows = old + rows
     else:
         if out.exists():
@@ -136,7 +186,7 @@ def cmd_seal(a):
     blob = encrypt_bytes(dump(allrows))
     write_blob(out, blob, replace=a.append)
     print(f"written {len(rows)} rows ({len(allrows)} in file)")
-    print("ids " + ",".join(r["id"] for r in rows))
+    print("ids " + ",".join(dict.fromkeys(r["id"] for r in rows)))
     print("sha256 " + hashlib.sha256(blob).hexdigest())
 
 
