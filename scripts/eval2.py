@@ -3,7 +3,9 @@
 
   eval2.py convert-legacy --in eval/questions_real.jsonl --out items.jsonl --prefix real
   eval2.py answer --items items.jsonl --out answers.jsonl --config NAME --backend openai --model M [...]
-  eval2.py answer ... --replay-packs other_answers.jsonl        (same excerpts as another run)
+  eval2.py answer ... --replay-packs other_answers.jsonl        (same excerpts as another run; also hidden .enc files)
+  eval2.py answer ... --mode closed                             (closed book, configuration P0: no search terms, no
+                                                                retrieval, empty pack; refused with --replay-packs)
   eval2.py answer ... --subset smoke                            (fixed stratified subset of the open file)
   eval2.py answer --items items.jsonl --revise-from answers.jsonl [--r2 --backend openai --model M] [--catalogue DIR]
                                                                 (revise replay, below)
@@ -45,6 +47,10 @@ MAGIC = b"EVAL2ENC1\n"
 TIERS = ("A", "B", "legacy")
 REQUIRED = ("id", "tier", "kind", "family", "domain", "question")
 MANIFEST_VOLATILE = ("started", "ended")  # not compared on resume
+# The M4 reference configuration (MILESTONE.md "Decisions", 2026-11-18): the 4-bit build on the server path. A run is
+# labelled as on the reference when the server lists exactly this model (the manifest records both, see build_manifest).
+M4_REFERENCE_BACKEND = "openai"
+M4_REFERENCE_MODEL = "Qwen3.8-27B-4bit"
 
 
 class EvalError(RuntimeError):
@@ -412,6 +418,18 @@ def build_manifest(a, gen, cfg, items_file, n_items, subset, replay_info):
         "replay": replay_info, "hidden": is_hidden(a.out),
         "started": datetime.now(timezone.utc).isoformat(timespec="seconds"), "ended": None,
     }
+    # The M4 label: pipeline.is_reference knows only the v3 in-process build and stays as it is (reasons above).
+    listed = listing.get("id") if listing else None
+    m["m4_config"] = a.config
+    m["model_listed"] = listed
+    m["m4_reference_model"] = M4_REFERENCE_MODEL
+    m["is_m4_reference"] = bool(ident.get("backend") == M4_REFERENCE_BACKEND and not m["adapter"]
+                                and listed == M4_REFERENCE_MODEL)
+    if a.mode == "closed":
+        from kafka_sre_rag import prompts
+        m["closed_book"] = {"prompt": "prompts.SYSTEM_PROMPT and the bare question (as the v3 plain base)",
+                            "system_prompt_sha256": sha256_bytes(prompts.SYSTEM_PROMPT.encode("utf-8")),
+                            "search_terms_call": False, "retrieval": False, "pack": "empty"}
     m.update(profiles.manifest_fields(profile))  # nothing is added for the frozen profile
     rec = items_files_record(items_file)
     if rec is not None:
@@ -490,9 +508,12 @@ class AnswerStore:
 
 
 def load_replay(path, items):
+    src_m = read_manifest(path)
+    if (src_m or {}).get("mode") == "closed":
+        raise EvalError("--replay-packs: the other run is a closed-book run and has no packs")
     src = {r["id"]: r for r in read_jsonl(path)}
-    missing = [it["id"] for it in items if not isinstance(src.get(it["id"], {}).get("pack"), list)
-               or src[it["id"]].get("error")]
+    missing = [it["id"] for it in items if not src.get(it["id"], {}).get("pack")
+               or not isinstance(src[it["id"]]["pack"], list) or src[it["id"]].get("error")]
     if missing:
         raise EvalError(f"--replay-packs: {len(missing)} items have no stored pack in the other run "
                         f"(first: {missing[0]})")
@@ -617,6 +638,11 @@ def cmd_answer(a, out=sys.stdout):
     if a.backend != "stub":
         config.verify(cfg=cfg)  # a real run must be on the frozen index and prompts
         profiles.verify_index(profile)
+    closed = a.mode == "closed"
+    if closed and a.replay_packs:
+        raise EvalError("--replay-packs is refused for a closed-book run (no packs are used)")
+    if closed and (profile != "frozen" or a.k != "k6" or a.no_rerank):
+        raise EvalError("--mode closed uses no retrieval: --profile, --k and --no-rerank do not apply")
     replay, replay_info = None, None
     if a.replay_packs:
         if is_hidden(a.replay_packs) != hidden:
@@ -650,6 +676,8 @@ def cmd_answer(a, out=sys.stdout):
                "search_terms": None, "pack": None, "error": None, "run": manifest["run"]}
         if replay is not None:
             row["replayed_from"] = replay_info["run"] or replay_info["answers_sha256"][:12]
+        if closed:
+            row["closed_book"] = True  # pack stays [] below: no retrieval was made
         t0 = time.monotonic()
         try:
             r = evalhooks.run_item(full_question(it), gen, cfg, k=a.k, mode=a.mode, rerank=not a.no_rerank,
@@ -831,7 +859,8 @@ def build_parser():
     an.add_argument("--base-url", help="openai: server URL (default: OMLX_URL)")
     an.add_argument("--extra-body", type=json.loads, default=None, metavar="JSON")
     an.add_argument("--max-tokens", type=int, default=None)
-    an.add_argument("--mode", choices=["default", "strict"], default="default")
+    an.add_argument("--mode", choices=["default", "strict", "closed"], default="default",
+                    help="closed: closed book (no retrieval, empty pack; the plain-base prompt)")
     an.add_argument("--k", choices=["k6", "k3"], default="k6")
     an.add_argument("--profile", choices=["frozen", "r1", "r2", "r3"], default="frozen",
                     help="retrieval profile (default frozen); r1, r2 and r3 are unmeasured candidates "

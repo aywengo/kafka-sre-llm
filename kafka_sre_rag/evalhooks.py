@@ -22,9 +22,20 @@ def run_item(question, gen, cfg=None, *, k="k6", mode="default", rerank=True, ma
     cfg = cfg or config.load()
     if pack_ids is not None and profile != "frozen":
         raise ValueError("a stored pack (pack_ids) is replayed as it is; it is not made by a retrieval profile")
-    if mode not in ("default", "strict"):
-        raise ValueError(f"mode must be 'default' or 'strict', got {mode!r}")
+    if mode not in ("default", "strict", "closed"):
+        raise ValueError(f"mode must be 'default', 'strict' or 'closed', got {mode!r}")
     t0 = time.monotonic()
+    if mode == "closed":
+        # Closed book (configuration P0): no search-terms call, no retrieval, no pack. The model gets SYSTEM_PROMPT and
+        # the bare question, as the v3 plain-base measurements did (eval/compare.py answer()).
+        if pack_ids is not None or profile != "frozen":
+            raise ValueError("closed book uses no pack and no retrieval profile")
+        msgs = prompts.answer_messages(question, None)
+        text, toks, trunc = gen.chat(msgs, max_tokens or cfg["answer"]["max_tokens"], None)
+        t3 = time.monotonic()
+        return {"text": text, "tokens": toks, "truncated": bool(trunc), "search_terms": None, "pack": [],
+                "seconds": {"search_terms": 0.0, "retrieval": 0.0, "answer": t3 - t0, "total": t3 - t0},
+                "messages": msgs}
     if pack_ids is None:
         from . import retrieval
         exp, _, _ = gen.chat(prompts.expand_messages(question), max_tokens or cfg["expansion"]["max_tokens"])
