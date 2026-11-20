@@ -608,5 +608,128 @@ class TestE2(Base):
         self.assertRegex(t, r"Q4D\s+mechanical\s+200\s+200")
 
 
+class TestE2PairClustersAndVerdictJson(TestE2):
+    """W4: bootstrap clusters by pair where an item has one; --json-out; the per-kind rule on hidden input."""
+
+    def paired_items(self):
+        return [dict(i, pair=f"p{int(i['family'][3:]) // 2:02d}") for i in self.items]      # 20 pairs of two families
+
+    def test_pair_clustering_widens_the_interval_and_counts_clusters(self):
+        full, lost = set(self.ids), self.spread_loss(16)      # families 0 to 15 lose one item: whole pairs 0 to 7
+        by_fam = self.run_e2({"F": full, "Q4D": lost}, resamples=1500)["a_cost_of_4bit"]["Q4D_minus_F"]
+        by_pair = self.run_e2({"F": full, "Q4D": lost}, resamples=1500, items=self.paired_items())["a_cost_of_4bit"]["Q4D_minus_F"]
+        self.assertEqual((by_fam["clusters"], by_fam["families"]), (40, 40))
+        self.assertEqual((by_pair["clusters"], by_pair["families"]), (20, 40))
+        self.assertEqual(by_fam["diff"], by_pair["diff"])
+        w = lambda r: r["ci90"][1] - r["ci90"][0]
+        self.assertGreater(w(by_pair), w(by_fam) * 1.2)
+
+    def test_pair_only_on_some_items_and_clusters_line_in_text(self):
+        items = [dict(i, pair="px") if n < 20 else i for n, i in enumerate(self.items)]      # 4 families share one pair
+        r = self.run_e2({"F": set(self.ids), "Q4D": set(self.ids)}, items=items)["a_cost_of_4bit"]["Q4D_minus_F"]
+        self.assertEqual((r["clusters"], r["families"]), (37, 40))
+        res = self.run_e2({"F": set(self.ids), "Q4D": set(self.ids)}, items=items)
+        out = io.StringIO()
+        cmp.render_e2(res, out)
+        self.assertIn("bootstrap clusters used: 37", out.getvalue())
+
+    def test_text_without_pair_is_the_old_text_plus_one_line(self):
+        res = self.run_e2({"F": set(self.ids), "Q4D": self.spread_loss(7)})
+        out = io.StringIO()
+        cmp.render_e2(res, out)
+        lines = [ln for ln in out.getvalue().splitlines() if "bootstrap clusters used" not in ln]
+        self.assertEqual(len(lines), len(out.getvalue().splitlines()) - 1)
+        self.assertIn("bootstrap clusters used: 40", out.getvalue())
+        self.assertIn("items 200  families 40  all-pass", out.getvalue())
+
+    def test_json_out_carries_the_verdicts_of_the_text(self):
+        sc = {"F": set(self.ids), "Q4D": self.spread_loss(12), "Q4S": self.spread_loss(14), "P0": set(self.ids[:100])}
+        res = self.run_e2(sc, resamples=300)
+        text = io.StringIO()
+        cmp.render_e2(res, text)
+        v = cmp.e2_verdicts(res)
+        t = text.getvalue()
+        self.assertIn(f"one-sided reading (PASS if the lower end is above -5): {v['rule_1a']['one_sided']}", t)
+        self.assertIn(f"two-sided reading (PASS if the whole interval is inside +-5): {v['rule_1a']['two_sided']}", t)
+        self.assertIn(f"verdict of rule 1(b): {v['rule_1b']['verdict']}", t)
+        self.assertEqual(v["rule_1b"]["verdict"], "waiting for the reading")
+        self.assertEqual(v["rule_1b"]["criteria"]["reading"], "waiting")
+        self.assertIn("waiting for the reading", v["rule_1b"]["reading_text"])
+        self.assertEqual(v["rule_1a"]["clusters"], 40)
+        json.dumps(v)
+        # with a reading the criteria and the verdict follow the text as well
+        ok = {"default_rate": 3.0, "strict_rate": 1.0, "default_harmful": 1, "strict_harmful": 1, "reader_disagreement": 1.0}
+        res = self.run_e2({"F": set(self.ids), "Q4D": set(self.ids), "Q4S": set(self.ids)}, ok, judged=self.judged_case(0))
+        t2 = io.StringIO()
+        cmp.render_e2(res, t2)
+        v = cmp.e2_verdicts(res)
+        self.assertEqual(v["rule_1b"]["verdict"], "STRICT meets all three criteria")
+        self.assertIn("criteria: mechanical met, judged P met, reading met", t2.getvalue())
+        self.assertEqual(v["rule_1b"]["criteria"], {"mechanical": "met", "judged_P": "met", "reading": "met"})
+
+    def test_json_out_cli_open(self):
+        ip = self.tmp / "items.jsonl"
+        eval2.write_jsonl(ip, self.items)
+        args = ["e2", "--items", str(ip), "--resamples", "100", "--json-out", str(self.tmp / "v.json")]
+        for n in ("F", "Q4D"):
+            q = self.tmp / f"{n}.scores.jsonl"
+            eval2.write_jsonl(q, score_rows(self.items, set(self.ids)))
+            args += ["--config", f"{n}={q}"]
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            self.assertEqual(cmp.main(args), 0)
+        v = json.loads((self.tmp / "v.json").read_text())
+        self.assertEqual(v["rule_1a"]["one_sided"], "PASS")
+        self.assertEqual(v["rule_1b"]["verdict"], "waiting for the reading")
+
+    @NEEDS_OPENSSL
+    def test_json_out_hidden_is_enc_only_and_has_no_ids(self):
+        sc = {"F": set(self.ids), "Q4D": self.spread_loss(7), "Q4S": self.spread_loss(9)}
+        self.run_e2(sc, hidden=True)
+        args = ["e2", "--items", str(self.tmp / "items.jsonl.enc"), "--resamples", "100"]
+        for n in sc:
+            args += ["--config", f"{n}={self.tmp / (n + '.scores.jsonl.enc')}"]
+        buf, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(err):
+            self.assertEqual(cmp.main(args + ["--json-out", str(self.tmp / "v.json")]), 1)
+        self.assertFalse((self.tmp / "v.json").exists())
+        with contextlib.redirect_stdout(buf):
+            self.assertEqual(cmp.main(args + ["--json-out", str(self.tmp / "v.json.enc")]), 0)
+        raw = (self.tmp / "v.json.enc").read_bytes()
+        plain = eval2.decrypt_bytes(raw).decode()
+        self.assertIn('"rule_1a"', plain)
+        for it in self.items:
+            self.assertNotIn(it["id"], plain + buf.getvalue())
+        self.assertNotIn("family", plain.replace("families", "").replace("tier_A", ""))
+
+    def test_kind_shown_rule(self):
+        C = lambda **k: k
+        f = lambda counts, hidden: {k for k in counts if cmp.kind_shown(k, counts, hidden)}
+        # open input: only the 5-item minimum
+        self.assertEqual(f(C(a=9, b=5, c=3), False), {"a", "b"})
+        # hidden: remainder 3 would be inferable by subtraction, so the smallest printed kind joins it (remainder 8)
+        self.assertEqual(f(C(a=9, b=5, c=3), True), {"a"})
+        # remainder empty or at least 5: unchanged
+        self.assertEqual(f(C(a=9, b=5), True), {"a", "b"})
+        self.assertEqual(f(C(a=9, b=5, c=4, d=1), True), {"a", "b"})
+        self.assertEqual(f(C(a=9, b=5, c=3, d=2), True), {"a", "b"})
+        # nothing printable
+        self.assertEqual(f(C(a=4, b=4), True), set())
+        self.assertEqual(f(C(a=5, b=2), True), set())
+
+    @NEEDS_OPENSSL
+    def test_hidden_per_kind_figures_follow_the_rule(self):
+        # kinds: rare has 5 items; add a kind of 3 items so the remainder is 3 -> the smallest printed kind ("rare") is withheld too
+        items = [dict(i, kind="odd") if n < 3 else i for n, i in enumerate(self.items)]
+        sc = {"Q4D": set(self.ids)}
+        hid = self.run_e2(sc, items=items, hidden=True)["c_figures"]["mechanical"]["Q4D"]["kinds"]
+        opn = self.run_e2(sc, items=items)["c_figures"]["mechanical"]["Q4D"]["kinds"]
+        self.assertNotIn("odd", opn)
+        self.assertIn("rare", opn)
+        self.assertNotIn("rare", hid)
+        self.assertNotIn("odd", hid)
+        self.assertTrue(set(hid) <= set(opn))
+
+
 if __name__ == "__main__":
     unittest.main()

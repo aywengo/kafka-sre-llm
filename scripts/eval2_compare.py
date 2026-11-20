@@ -525,6 +525,18 @@ def a3_item(it):
     return str(it.get("id", "")).startswith("a3-") or "items_a3" in str(it.get("generator", ""))
 
 
+def kind_shown(k, counts, hidden):
+    """Whether kind k of the item counts is printed. A kind needs at least E2_MIN_KIND items. On hidden input the items of the
+    kinds not printed (the remainder) must also be none or at least E2_MIN_KIND, else total minus the printed kinds would give
+    a group of 1 to 4 items; then the smallest printed kind joins the remainder (it has at least E2_MIN_KIND, so one step is enough)."""
+    shown = {x for x, c in counts.items() if c >= E2_MIN_KIND}
+    if hidden:
+        rem = sum(c for x, c in counts.items() if x not in shown)
+        if shown and 0 < rem < E2_MIN_KIND:
+            shown.discard(min(shown, key=lambda x: (counts[x], x)))
+    return k in shown
+
+
 def load_items_many(paths):
     items = {}
     for p in paths:
@@ -645,6 +657,8 @@ def compare_e2(configs, items_paths, judged=None, resamples=DEFAULT_RESAMPLES, s
     res = {"hidden": hidden, "resamples": resamples, "seed": seed, "configs": sorted(sc)}
     family = {i: it.get("family") or i for i, it in items.items()}
     kind = {i: it.get("kind") or "unknown" for i, it in items.items()}
+    # bootstrap cluster: the item's pair where it has one (the a3 split groups by pair), else its family
+    cluster = {i: (("pair", str(it["pair"])) if it.get("pair") else ("family", family[i])) for i, it in items.items()}
 
     def pair(a, b, margin=None):
         if a not in sc or b not in sc:
@@ -652,8 +666,10 @@ def compare_e2(configs, items_paths, judged=None, resamples=DEFAULT_RESAMPLES, s
         ids = sorted(set(sc[a]) & set(sc[b]))
         if not ids:
             return None
-        fam = {i: family.get(i, i) for i in ids}
+        fam = {i: cluster.get(i, ("family", i)) for i in ids}
         r = paired_stats(ids, sc[a], sc[b], fam, resamples, seed, margin)
+        r["clusters"] = r["families"]
+        r["families"] = len({family.get(i, i) for i in ids})
         r["only_in_a"], r["only_in_b"] = len(set(sc[a]) - set(sc[b])), len(set(sc[b]) - set(sc[a]))
         return r
 
@@ -711,12 +727,13 @@ def compare_e2(configs, items_paths, judged=None, resamples=DEFAULT_RESAMPLES, s
         a3 = [i for i in ids if a3_item(items[i])]
         seg = {"mechanical": ids, "tier_A_without_a3": [i for i in ids if i not in set(a3)], "a3": a3,
                "a3_without_tagged": [i for i in a3 if not items[i].get(A3_TAG)]}
-        f = {k: rate_figure(v, sc[n], family, resamples, seed) for k, v in seg.items()}
+        f = {k: rate_figure(v, sc[n], cluster, resamples, seed) for k, v in seg.items()}
         f["a3_tagged"] = sum(1 for i in a3 if items[i].get(A3_TAG))
         kinds = {}
-        for k in sorted({kind[i] for i in ids}):
+        counts = Counter(kind[i] for i in ids)
+        for k in sorted(counts):
             kids = [i for i in ids if kind[i] == k]
-            if len(kids) >= E2_MIN_KIND:
+            if kind_shown(k, counts, hidden):
                 kk = len(kids)
                 kp = sum(sc[n][i] for i in kids)
                 kinds[k] = {"n": kk, "pass": kp, "rate": kp / kk, "wilson95": wilson(kp, kk)}
@@ -727,9 +744,11 @@ def compare_e2(configs, items_paths, judged=None, resamples=DEFAULT_RESAMPLES, s
     for s, d in sorted(jp.items()):
         ids = sorted(d)
         f = {"all": mean_boot(ids, d, resamples, seed), "kinds": {}}
-        for k in sorted({(jitems.get(i) or {}).get("kind") or "unknown" for i in ids}):
-            kids = [i for i in ids if ((jitems.get(i) or {}).get("kind") or "unknown") == k]
-            if len(kids) >= E2_MIN_KIND:
+        jkind = {i: (jitems.get(i) or {}).get("kind") or "unknown" for i in ids}
+        jcounts = Counter(jkind.values())
+        for k in sorted(jcounts):
+            kids = [i for i in ids if jkind[i] == k]
+            if kind_shown(k, jcounts, hidden):
                 f["kinds"][k] = mean_boot(kids, d, resamples, seed)
         jfigs[s] = f
     res["c_figures"]["judged_P"] = jfigs
@@ -752,6 +771,7 @@ def render_e2(res, out):
         P("  not computed: scores of Q4D and F are both needed")
     else:
         P(f"  items {r['n']}  families {r['families']}  all-pass Q4D {r['b_pass']}/{r['n']} = {pc(r['b_rate'])[1:]} %  F {r['a_pass']}/{r['n']} = {pc(r['a_rate'])[1:]} %")
+        P(f"  bootstrap clusters used: {r['clusters']} (an item's pair where it has one, else its family)")
         P(f"  difference {pc(r['diff'])}  90 % interval {ci(r['ci90'])}  discordant {r['discordant']} (p_d {r['p_d']:.4f})")
         P(f"  one-sided reading (PASS if the lower end is above -{E2_MARGIN_PTS:g}): {r['one_sided']}  (lower end {pc(r['ci90'][0])})")
         P(f"  two-sided reading (PASS if the whole interval is inside +-{E2_MARGIN_PTS:g}): {r['two_sided']}  (interval {ci(r['ci90'])})")
@@ -809,6 +829,33 @@ def render_e2(res, out):
 
 
 
+def e2_verdicts(res):
+    """The verdicts and figures of render_e2 as one dict: totals only, no item id (res holds none)."""
+    out = {"hidden": res["hidden"], "resamples": res["resamples"], "seed": res["seed"], "configs": res["configs"],
+           "margin_pts": E2_MARGIN_PTS, "p_margin": E2_P_MARGIN}
+    r = res["a_cost_of_4bit"].get("Q4D_minus_F")
+    if r:
+        out["rule_1a"] = {"state": "computed", "n": r["n"], "families": r["families"], "clusters": r["clusters"],
+                          "q4d_pass": r["b_pass"], "f_pass": r["a_pass"], "diff": r["diff"], "ci90": list(r["ci90"]),
+                          "discordant": r["discordant"], "p_d": r["p_d"], "mde": r["mde"],
+                          "one_sided": r["one_sided"], "two_sided": r["two_sided"], "upper_above_margin": r["upper_above_margin"]}
+    else:
+        out["rule_1a"] = {"state": "not computed: scores of Q4D and F are both needed"}
+    fr = res["a_cost_of_4bit"].get("Q4D_minus_FR")
+    out["q4d_minus_fr"] = {"n": fr["n"], "diff": fr["diff"], "ci90": list(fr["ci90"]), "p_d": fr["p_d"]} if fr else None
+    b = res["b_mode"]
+    m, j = b["mechanical"], b["judged_P"]
+    out["rule_1b"] = {
+        "verdict": b["verdict"], "criteria": b["criteria"], "reading_text": b["reading_text"],
+        "mechanical": {"n": m["n"], "diff": m["diff"], "ci90": list(m["ci90"]), "mde": m["mde"], "noninferior": m["noninferior"]} if m else None,
+        "judged_P": {"n": j["n"], "diff": j["mean"], "ci90": list(j["ci90"]), "noninferior": j["noninferior"]} if j else None}
+    out["starting_figures"] = {"mechanical": res["c_figures"]["mechanical"], "judged_P": res["c_figures"]["judged_P"],
+                               "closed_book_vs_retrieval": {k: (None if v is None else
+                                                                {x: v[x] for x in ("n", "diff", "mean", "ci90") if x in v})
+                                                            for k, v in res["c_closed_book_vs_retrieval"].items() if k != "descriptive"}}
+    return out
+
+
 # ---------------------------------------------------------------- cli
 
 def kv(s):
@@ -864,6 +911,7 @@ def main(argv=None):
     e.add_argument("--resamples", type=int, default=DEFAULT_RESAMPLES)
     e.add_argument("--seed", type=int, default=1)
     e.add_argument("--json", help="write the result here (an .enc name encrypts; required for hidden input)")
+    e.add_argument("--json-out", help="write the verdicts and figures (totals only, no ids) here; an .enc name encrypts and is required for hidden input")
     a = ap.parse_args(argv)
     try:
         if a.cmd == "pair":
@@ -884,9 +932,13 @@ def main(argv=None):
                     raise CompareError("--judged-results needs --rubrics")
                 judged = {"results": a.judged_results, "rubrics": a.rubrics, "items": a.judged_items}
             r = compare_e2(dict(cfg), a.items, judged, a.resamples, a.seed, reading_from_args(a))
-            if a.json and eval2.is_hidden(a.json) != r["hidden"]:
-                raise CompareError("a hidden comparison writes a .enc json, a clear one does not")
+            for jp_ in (a.json, a.json_out):
+                if jp_ and eval2.is_hidden(jp_) != r["hidden"]:
+                    raise CompareError("a hidden comparison writes a .enc json, a clear one does not")
             render_e2(r, sys.stdout)
+            if a.json_out:
+                data = (json.dumps(e2_verdicts(r), indent=1, ensure_ascii=False) + "\n").encode()
+                eval2.write_atomic(a.json_out, eval2.encrypt_bytes(data) if r["hidden"] else data)
             if a.json:
                 data = (json.dumps(r, indent=1, ensure_ascii=False) + "\n").encode()
                 eval2.write_atomic(a.json, eval2.encrypt_bytes(data) if r["hidden"] else data)
