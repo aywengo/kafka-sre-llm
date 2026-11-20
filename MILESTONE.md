@@ -57,7 +57,7 @@ After the first slice:
 |---|---|---|---|
 | WP1c | Remaining mechanical kinds (resources, commands, client code, version traps, valid but wrong, safe order, sizing, not covered) | downloads (see 3 below), S5, S6 | resources, manifest fixes, commands and version traps were built in slice A2; plan for the other five 2026-11-19 (`runs/m4/reports/wp1c_plan.md`): 120 items by templates and programmatic checks, no model, in a separate generator and separate files, so the 496 items and their split stay byte-identical; 11 to 15 worker-days. **Done 2026-11-19:** T0 to T6 and the T8 code (tables, Java catalogue from the 4.3.2 jars, scorer checks `eval2_score/3`, Java and Python client checks, generators: 24 client code, 32 valid but wrong, 16 safe order, 24 sizing; assembly and grouped split, dry run only). T7 and the real T8 run done (`584fe6e`). **T9 review (2026-11-19, `runs/m4/reports/wp1c_t9_review.md`): do not use until fixed.** Structure sound (rebuild identical, 120 references pass, 453 perturbed fail, kubeconform, javac and absence records agree), but the checks reject correct answers in client code (exact overloads; try-with-resources; 10 of 18 Java perturbations are correct code) and not covered (correct declines fail), accept too-broad fixes in three valid-but-wrong oracles, one safe-order template follows a doc page the pinned tool contradicts, one hidden gap is in the index. **Fix round started** (version 2 of the a3 set: changed items get new ids, split and exposure drawn again, a3 files replaced; no answer to an a3 item exists and no hidden look was used; every template on both sides, pairs kept together, so no brief change), then the rebuild, a T9 re-check, T10 |
 | WP1d | Judged tier: scenarios and rubrics, the Owner's questions first | first fresh batch B1 | **Writing at scale (K2) since 2026-11-19, evening**: B2 (30 open) written, reviewed and committed (`0b522b3`), chunk check 98.0 %; the Owner's 24 (hidden, sealed) final, chunk check 96.9 %; 54 of the about 90 further scenarios exist. **B1 done 2026-11-19** (`runs/m4/B1_COVERAGE_FINAL.md`, `B1_COVERAGE_BATCH.md`): 30 scenarios, 90 answers, 180 judgments, 60 answers read blind (16 by a second reader). Judge against reader on 158 essential units: kappa 0.86 and 0.78, precision 0.98 and 0.90, recall 0.86 and 0.86 (pass 1, pass 2); supported misses confirmed 14 of 14; unverified 0.6 %; pass-to-pass kappa 0.85; readers' totals 41 and 53 on the shared answers (23 % apart); identifier check 0 false findings. The rubric chunk check before the run was 94.0 % (bar 95 %). Waits for the Owner: the gate, and writing the tier at scale |
-| WP5 | Retrieval and index coverage: candidate index and settings next to the frozen ones, one hidden-half run decides (J6) | J5 | plan, funnel tool and runtime profiles done; R2 chosen by its rule; **B1 check (T7) failed 2026-11-19** (`runs/m4/reports/wp5_t7_b1_funnel.md`): indexed must points served 56 to 77 of 166 (+12.7 points, bar +15), 12 of the 56 frozen-served lost (21 %, bar 5 %); T8 and T9 do not run; waits for the Owner (K3) |
+| WP5 | Retrieval and index coverage: candidate index and settings next to the frozen ones, one hidden-half run decides (J6) | J5 | plan, funnel tool and runtime profiles done; R2 chosen by its rule; **closed 2026-11-20 with the frozen retrieval: the one additive candidate R3 failed its rule on B2 (+7.4 points against +15, none lost; frozen serves 37 of 149 indexed must points).** Earlier: **B1 check (T7) failed 2026-11-19** (`runs/m4/reports/wp5_t7_b1_funnel.md`): indexed must points served 56 to 77 of 166 (+12.7 points, bar +15), 12 of the 56 frozen-served lost (21 %, bar 5 %); T8 and T9 do not run; waits for the Owner (K3) |
 | WP1f | Starting-point measurement (E2) | WP1c, WP1d | not started |
 | WP2a | Labelled test set for the checker: 30 distinct items from the three readings | - | **done**: `runs/m4/reports/wp2a_labels_checked.jsonl` (two local-model runs, verified by counts and against sources) |
 | WP2b | Answer checker in the runtime: flag, then revise. Separate code from the scorer; shares only the catalogues | WP1a, WP2a | library **done** (`a61f818`): zero false "invented" findings on 244 stored answers; wired into `ask --check` and the service; extraction gaps from the pilot reading closed 2026-11-19 (`d0a165e`, `runs/m4/reports/wp2b_extraction_gaps.md`): it now reports 14 of the 16 names in the 48 pilot answers that the catalogues can decide (8 before), with no new "invented" finding on the 244 stored answers; the pilot answers are a development set, so this is not a measurement; "revise" not started |
@@ -518,6 +518,31 @@ and J6 come from the mechanical tier and block nothing yet):
   Conductor's decision: the next judged batch (about 36 scenarios) is hidden and written
   by sealed sessions, because E3 needs at least 60 hidden answers and the hidden judged
   half holds 24.
+- 2026-11-20, 01:40: **B2 done** (`runs/m4/B2_BATCH.md`; 23:58 to 01:38, 1 h 40 min; 60
+  answers and 120 judgments valid). **The R3 check failed by its rule:** of the 149
+  indexed must points the frozen retrieval serves 37 (24.8 %) and R3 serves 48 (+11, −0),
+  +7.4 points against the +15 needed; (b) holds (0 lost). By the rule fixed beforehand,
+  WP5 closes with the frozen retrieval; B2 is used up for retrieval. Descriptive, open
+  items written to be hard: judge coverage 0.57 default and 0.49 strict; essential-miss
+  units 9.2 and 11.8 per 10 answers; cut off at 2,048 tokens 21 of 30 default answers
+  and 11 of 30 strict; median 84.7 s per default answer with search and retrieval (the
+  60 s bar of E4 is not met on these long scenarios; B1 was similar); pass-to-pass kappa
+  0.88; unverified 1.3 %. Identifier check: 11 nonexistent identifiers in 5 of 30 default
+  answers (3.7 per 10) and 6 in 4 of 30 strict (2.0 per 10), not verified by reading.
+  First look at the revise step (decides nothing): 4 of 30 default answers flagged, 3
+  patches accepted and 1 rejected, median 16 s per patch call, +0 s median and +15.7 s
+  at the 90th percentile over all answers. No blind reading of B2 is planned for now:
+  B1's reading already puts default far above the bar, and the hidden reading decides.
+  a3 version 3, revision 2 (`46a1291`): the third check accepts all five kinds; 12
+  hidden items share a published fault or scenario under other names and are tagged.
+  Laptop plan and script committed (`7955616`), tested on a stub only. Started: the
+  laptop script against a real model on this machine, the revise step's development run
+  on B1, and the hidden judged batch B3 (36 scenarios, three sealed writers: coding 12,
+  configuration 9, debugging 9, diagnostics 6; no architecture items, because the 15
+  that count without the Owner's review exist).
+- Waiting for the Owner, not blocking: redraw the 7 tagged valid-but-wrong hidden items
+  or keep the tag only; the review lists above. The Owner sees the failed R3 check here;
+  nothing further runs in WP5.
 - Next: B2 answered on the server (default and strict, judge, identifier check, the R3
   rule, a first look at the revise step), then its blind readings; the a3 rebuild as
   version 2 with a second review, then T10; the revise step's development run on B1. For the Owner, not blocking: the essential points of
