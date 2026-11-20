@@ -14,6 +14,11 @@ visible at 80 % power, MDE = 2.80 * sqrt(p_d / n) (binary score, two-sided alpha
 in percentage points (pass when the lower end of the 90 % interval lies above minus the margin, else "not shown"); the same
 rows per kind, marked descriptive; the items that differ (open side only). A hidden file (name ends in .enc, or hidden items)
 gives totals only: no ids, no text. Given two answers files it also counts answer texts that are byte-identical.
+
+  eval2_compare.py e2 --config Q4D=a.scores.jsonl [--config Q4D=a3.scores.jsonl] --config F=... [--config FR|Q4S|P0=...] --items I [--items I2]
+        [--judged-results R --rubrics RB --judged-items JI] [--reading-json T.json | --reading-default-rate X ...] [--json out]
+        the E2 decision rules of runs/m4/reports/e2_plan.md (sections 2 to 4) applied by code: (a) the cost of 4-bit, (b) the mode,
+        (c) starting figures. Open files, or hidden .enc files (never mixed; hidden prints totals only).
 Pure Python; no model, no server.
 """
 import argparse
@@ -507,6 +512,303 @@ class _Buf:
         pass
 
 
+# ---------------------------------------------------------------- E2 decision rules (runs/m4/reports/e2_plan.md, sections 2 to 4)
+
+E2_MARGIN_PTS = 5.0           # rule 1(a) and 1(b), mechanical tier, in points
+E2_P_MARGIN = 0.10            # rule 1(b), judged coverage P
+E2_MIN_KIND = 5               # a kind is reported only with at least this many items
+A3_TAG = "shares_variant_with_published"
+
+
+def a3_item(it):
+    """Items of slice a3: id prefix "a3-" or a generator of eval2_items_a3 (fields that exist in eval/m4/open/tier_a3.jsonl)."""
+    return str(it.get("id", "")).startswith("a3-") or "items_a3" in str(it.get("generator", ""))
+
+
+def load_items_many(paths):
+    items = {}
+    for p in paths:
+        for i, it in load_items(p).items():
+            if i in items:
+                raise CompareError(f"{p}: an item id appears in two items files (count of such ids not shown)")
+            items[i] = it
+    return items
+
+
+def load_scores_many(paths):
+    """Merge several score files of one configuration (for example tier A and slice a3); an id twice is an error without the id."""
+    out = {}
+    for p in paths:
+        s = load_scores(p)
+        if set(s) & set(out):
+            raise CompareError(f"{p}: {len(set(s) & set(out))} item ids already given by another file of the same configuration")
+        out.update(s)
+    return out
+
+
+def load_judged_p(paths, rubrics_path):
+    """{set: {id: mean coverage P over the valid passes}} from judge result rows, through eval2_judge.coverage_row.
+    Relies on the row fields set, id, pass, valid_reply, must, must_not (and pack / essential_points, used by coverage_row)."""
+    from eval2_judge import coverage_row
+    rub = {r["id"]: r for r in eval2.read_jsonl(rubrics_path)}
+    acc = defaultdict(lambda: defaultdict(list))
+    for p in paths:
+        for r in eval2.read_jsonl(p):
+            if not r.get("valid_reply") or "must" not in r or "must_not" not in r or r.get("id") not in rub or "set" not in r:
+                continue
+            acc[r["set"]][r["id"]].append(coverage_row(r, rub[r["id"]])["P"])
+    return {st: {i: sum(v) / len(v) for i, v in d.items()} for st, d in acc.items()}
+
+
+def mean_boot(ids, vals, resamples, seed):
+    """Mean of vals over ids with a 90 % bootstrap interval over the items (each item is its own cluster)."""
+    n = len(ids)
+    if not n:
+        return {"n": 0, "mean": None, "ci90": (None, None)}
+    boot, _ = cluster_bootstrap(sorted((vals[i], 1) for i in ids), resamples, seed)
+    return {"n": n, "mean": sum(vals[i] for i in ids) / n, "ci90": (percentile(boot, 5), percentile(boot, 95))}
+
+
+def judged_pair(a, b, resamples, seed):
+    """b minus a of per-scenario P over the scenarios in both, bootstrap over scenarios."""
+    ids = sorted(set(a) & set(b))
+    if not ids:
+        return None
+    d = {i: b[i] - a[i] for i in ids}
+    r = mean_boot(ids, d, resamples, seed)
+    r["only_in_a"], r["only_in_b"] = len(set(a) - set(b)), len(set(b) - set(a))
+    r["a_mean"] = sum(a[i] for i in ids) / len(ids)
+    r["b_mean"] = sum(b[i] for i in ids) / len(ids)
+    return r
+
+
+def rate_figure(ids, sc, family, resamples, seed):
+    n = len(ids)
+    if not n:
+        return {"n": 0, "pass": 0, "rate": None, "wilson95": (None, None), "ci90": (None, None)}
+    fam = defaultdict(lambda: [0, 0])
+    for i in ids:
+        fam[family[i]][0] += int(sc[i])
+        fam[family[i]][1] += 1
+    boot, _ = cluster_bootstrap(sorted(tuple(v) for v in fam.values()), resamples, seed)
+    k = sum(sc[i] for i in ids)
+    return {"n": n, "pass": k, "rate": k / n, "wilson95": wilson(k, n), "ci90": (percentile(boot, 5), percentile(boot, 95)),
+            "families": len(fam)}
+
+
+def reading_from_args(a):
+    """The sealed reading's totals, from a small JSON file and/or numbers on the command line (the command line wins).
+    Fields: default_rate, strict_rate (wrong+invented+harmful non-minor per 10), default_harmful, strict_harmful,
+    reader_disagreement (the readers' disagreement in the same unit, per 10 answers), readers_usable (false when the readers'
+    totals differ by more than 30 %)."""
+    d = {}
+    if a.reading_json:
+        d.update(json.loads(eval2.read_text(a.reading_json)))
+    for k in ("default_rate", "strict_rate", "default_harmful", "strict_harmful", "reader_disagreement"):
+        v = getattr(a, "reading_" + k)
+        if v is not None:
+            d[k] = v
+    if a.readers_usable is not None:
+        d["readers_usable"] = a.readers_usable == "yes"
+    return d
+
+
+def mode_reading_verdict(reading):
+    """Third criterion of rule 1(b): strict's rate lower than default's by more than the readers' disagreement, harmful not higher.
+    -> (state, text) with state in met | not met | waiting."""
+    need = ("default_rate", "strict_rate", "default_harmful", "strict_harmful", "reader_disagreement")
+    missing = [k for k in need if reading.get(k) is None]
+    if missing:
+        return "waiting", "waiting for the reading" + ("" if len(missing) == len(need) else " (missing: " + ", ".join(missing) + ")")
+    if reading.get("readers_usable") is False:
+        return "waiting", "waiting for the reading: the readers' totals differ by more than 30 %, the reading is not used"
+    gain = reading["default_rate"] - reading["strict_rate"]
+    ok_rate = gain > reading["reader_disagreement"]
+    ok_harm = reading["strict_harmful"] <= reading["default_harmful"]
+    txt = (f"strict lower than default by {gain:+.2f} per 10 (must exceed the readers' disagreement {reading['reader_disagreement']:.2f}): "
+           f"{'yes' if ok_rate else 'no'}; harmful strict {reading['strict_harmful']} against default {reading['default_harmful']} "
+           f"(not higher): {'yes' if ok_harm else 'no'}")
+    return ("met" if ok_rate and ok_harm else "not met"), txt
+
+
+def compare_e2(configs, items_paths, judged=None, resamples=DEFAULT_RESAMPLES, seed=1, reading=None):
+    """configs: {name: [score files]}; judged: {"results": [...], "rubrics": path, "items": path or None}; reading: dict or None."""
+    allp = [p for ps in configs.values() for p in ps] + list(items_paths)
+    if judged:
+        allp += list(judged["results"]) + [judged["rubrics"]] + ([judged["items"]] if judged.get("items") else [])
+    flags = {eval2.is_hidden(p) for p in allp}
+    if len(flags) > 1:
+        raise CompareError("open and hidden files are never mixed in one comparison")
+    hidden = flags == {True}
+    items = load_items_many(items_paths)
+    sc = {n: load_scores_many(ps) for n, ps in configs.items()}
+    res = {"hidden": hidden, "resamples": resamples, "seed": seed, "configs": sorted(sc)}
+    family = {i: it.get("family") or i for i, it in items.items()}
+    kind = {i: it.get("kind") or "unknown" for i, it in items.items()}
+
+    def pair(a, b, margin=None):
+        if a not in sc or b not in sc:
+            return None
+        ids = sorted(set(sc[a]) & set(sc[b]))
+        if not ids:
+            return None
+        fam = {i: family.get(i, i) for i in ids}
+        r = paired_stats(ids, sc[a], sc[b], fam, resamples, seed, margin)
+        r["only_in_a"], r["only_in_b"] = len(set(sc[a]) - set(sc[b])), len(set(sc[b]) - set(sc[a]))
+        return r
+
+    # (a) the cost of 4-bit
+    a = {}
+    r = pair("F", "Q4D", E2_MARGIN_PTS)
+    if r:
+        lo, hi = r["ci90"]
+        m = E2_MARGIN_PTS / 100
+        r["one_sided"] = "PASS" if lo > -m else "FAIL"
+        r["two_sided"] = "PASS" if (lo > -m and hi < m) else "FAIL"
+        r["upper_above_margin"] = bool(hi > m)
+        a["Q4D_minus_F"] = r
+    a["Q4D_minus_FR"] = pair("FR", "Q4D")
+    res["a_cost_of_4bit"] = a
+
+    # judged coverage
+    jp = load_judged_p(judged["results"], judged["rubrics"]) if judged else {}
+    jitems = load_items(judged["items"]) if judged and judged.get("items") else {}
+    res["judged_sets"] = {s: len(d) for s, d in sorted(jp.items())}
+
+    def jpair(x, y):
+        return judged_pair(jp[x], jp[y], resamples, seed) if x in jp and y in jp else None
+
+    # (b) the mode
+    b = {}
+    r = pair("Q4D", "Q4S", E2_MARGIN_PTS)
+    b["mechanical"] = r
+    jr = jpair("Q4D", "Q4S")
+    if jr:
+        jr["noninferior"] = bool(jr["ci90"][0] > -E2_P_MARGIN)
+    b["judged_P"] = jr
+    b["mde_mechanical"] = r["mde"] if r else None
+    rd = reading or {}
+    b["reading"] = rd
+    state, text = mode_reading_verdict(rd)
+    b["reading_state"], b["reading_text"] = state, text
+    mech_state = "waiting" if not r else ("met" if r["noninferior"] else "not met")
+    p_state = "waiting" if not jr else ("met" if jr["noninferior"] else "not met")
+    b["criteria"] = {"mechanical": mech_state, "judged_P": p_state, "reading": state}
+    if state == "waiting":
+        b["verdict"] = "waiting for the reading"
+    elif "waiting" in (mech_state, p_state):
+        b["verdict"] = "waiting for the " + ("mechanical runs" if mech_state == "waiting" else "judged coverage")
+    elif mech_state == p_state == state == "met":
+        b["verdict"] = "STRICT meets all three criteria"
+    else:
+        b["verdict"] = "DEFAULT stays the reference mode (not met: " + ", ".join(k for k, v in b["criteria"].items() if v != "met") + ")"
+    res["b_mode"] = b
+
+    # (c) starting figures
+    figs = {}
+    for n in sorted(sc):
+        ids = sorted(i for i in sc[n] if i in items)
+        a3 = [i for i in ids if a3_item(items[i])]
+        seg = {"mechanical": ids, "tier_A_without_a3": [i for i in ids if i not in set(a3)], "a3": a3,
+               "a3_without_tagged": [i for i in a3 if not items[i].get(A3_TAG)]}
+        f = {k: rate_figure(v, sc[n], family, resamples, seed) for k, v in seg.items()}
+        f["a3_tagged"] = sum(1 for i in a3 if items[i].get(A3_TAG))
+        kinds = {}
+        for k in sorted({kind[i] for i in ids}):
+            kids = [i for i in ids if kind[i] == k]
+            if len(kids) >= E2_MIN_KIND:
+                kk = len(kids)
+                kp = sum(sc[n][i] for i in kids)
+                kinds[k] = {"n": kk, "pass": kp, "rate": kp / kk, "wilson95": wilson(kp, kk)}
+        f["kinds"] = kinds
+        figs[n] = f
+    res["c_figures"] = {"mechanical": figs}
+    jfigs = {}
+    for s, d in sorted(jp.items()):
+        ids = sorted(d)
+        f = {"all": mean_boot(ids, d, resamples, seed), "kinds": {}}
+        for k in sorted({(jitems.get(i) or {}).get("kind") or "unknown" for i in ids}):
+            kids = [i for i in ids if ((jitems.get(i) or {}).get("kind") or "unknown") == k]
+            if len(kids) >= E2_MIN_KIND:
+                f["kinds"][k] = mean_boot(kids, d, resamples, seed)
+        jfigs[s] = f
+    res["c_figures"]["judged_P"] = jfigs
+    res["c_closed_book_vs_retrieval"] = {"mechanical": pair("P0", "Q4D"), "judged_P": jpair("P0", "Q4D"), "descriptive": True}
+    return res
+
+
+def render_e2(res, out):
+    P = lambda s="": print(s, file=out)
+    pc = lambda x: "n/a" if x is None else f"{100 * x:+.2f}"
+    ci = lambda t: "[%s, %s]" % (pc(t[0]), pc(t[1]))
+    P("== E2 decision rules" + (" [hidden: totals only]" if res["hidden"] else "") +
+      f"  (bootstrap clustered by family, {res['resamples']} resamples, seed {res['seed']}, 90 % interval; differences in points)")
+    P("configurations: " + ", ".join(res["configs"]))
+    P()
+    P("(a) the cost of 4-bit: all-pass of Q4D minus F, same items")
+    a = res["a_cost_of_4bit"]
+    r = a.get("Q4D_minus_F")
+    if not r:
+        P("  not computed: scores of Q4D and F are both needed")
+    else:
+        P(f"  items {r['n']}  families {r['families']}  all-pass Q4D {r['b_pass']}/{r['n']} = {pc(r['b_rate'])[1:]} %  F {r['a_pass']}/{r['n']} = {pc(r['a_rate'])[1:]} %")
+        P(f"  difference {pc(r['diff'])}  90 % interval {ci(r['ci90'])}  discordant {r['discordant']} (p_d {r['p_d']:.4f})")
+        P(f"  one-sided reading (PASS if the lower end is above -{E2_MARGIN_PTS:g}): {r['one_sided']}  (lower end {pc(r['ci90'][0])})")
+        P(f"  two-sided reading (PASS if the whole interval is inside +-{E2_MARGIN_PTS:g}): {r['two_sided']}  (interval {ci(r['ci90'])})")
+        P("  the Owner has not chosen between the two readings; both are shown"
+          + ("; the upper end is above +%g (noted, not a fail)" % E2_MARGIN_PTS if r["upper_above_margin"] else ""))
+        P(f"  smallest difference visible at 80 % power from this discordance: {pct(r['mde'], 2)} points at n {r['n']}")
+    r = a.get("Q4D_minus_FR")
+    if r:
+        P(f"  beside it, Q4D minus FR (decides nothing alone): items {r['n']}  difference {pc(r['diff'])}  90 % interval {ci(r['ci90'])}  p_d {r['p_d']:.4f}")
+    else:
+        P("  Q4D minus FR: not computed (FR scores not given)")
+    P()
+    P("(b) the mode: strict (Q4S) minus default (Q4D)")
+    b = res["b_mode"]
+    r = b["mechanical"]
+    if r:
+        P(f"  mechanical items {r['n']}: difference {pc(r['diff'])}  90 % interval {ci(r['ci90'])}  need lower end above -{E2_MARGIN_PTS:g}: "
+          f"{'met' if r['noninferior'] else 'not met'}  (MDE {pct(r['mde'], 2)} points)")
+    else:
+        P("  mechanical: not computed (scores of Q4D and Q4S are both needed)")
+    j = b["judged_P"]
+    if j:
+        P(f"  judged coverage P, scenarios {j['n']}: difference {j['mean']:+.4f}  90 % interval [{j['ci90'][0]:+.4f}, {j['ci90'][1]:+.4f}]  "
+          f"need lower end above -{E2_P_MARGIN:.2f}: {'met' if j['noninferior'] else 'not met'}")
+    else:
+        P("  judged coverage P: not computed (judged results of Q4D and Q4S are both needed)")
+    P(f"  sealed reading: {b['reading_text']}")
+    P(f"  criteria: mechanical {b['criteria']['mechanical']}, judged P {b['criteria']['judged_P']}, reading {b['criteria']['reading']}")
+    P(f"  verdict of rule 1(b): {b['verdict']}")
+    P()
+    P("(c) starting figures (decide nothing; all-pass rate, Wilson 95 % for kinds, bootstrap clustered by family 90 % for tiers)")
+    P(f"{'config':<8}{'tier':<22}{'n':>5}{'pass':>6}{'rate %':>9}{'interval %':>22}")
+    for n, f in res["c_figures"]["mechanical"].items():
+        for k in ("mechanical", "tier_A_without_a3", "a3", "a3_without_tagged"):
+            x = f[k]
+            iv = "n/a" if x["rate"] is None else "[%.1f, %.1f]" % (100 * x["ci90"][0], 100 * x["ci90"][1])
+            P(f"{n:<8}{k:<22}{x['n']:>5}{x['pass']:>6}{pct(x['rate']):>9}{iv:>22}")
+        P(f"{'':<8}a3 items tagged (shared variant): {f['a3_tagged']}")
+        for k, x in f["kinds"].items():
+            P(f"{n:<8}{'kind ' + k:<22}{x['n']:>5}{x['pass']:>6}{pct(x['rate']):>9}{'[%.1f, %.1f] (Wilson 95)' % (100 * x['wilson95'][0], 100 * x['wilson95'][1]):>34}")
+    if res["c_figures"]["judged_P"]:
+        P(f"judged coverage P per configuration (mean over scenarios, bootstrap over scenarios 90 %; kinds with at least {E2_MIN_KIND} scenarios):")
+        for s, f in res["c_figures"]["judged_P"].items():
+            x = f["all"]
+            P(f"  {s}: scenarios {x['n']}  mean P {x['mean']:.4f}  [{x['ci90'][0]:.4f}, {x['ci90'][1]:.4f}]")
+            for k, y in f["kinds"].items():
+                P(f"    {k}: scenarios {y['n']}  mean P {y['mean']:.4f}  [{y['ci90'][0]:.4f}, {y['ci90'][1]:.4f}]")
+    cb = res["c_closed_book_vs_retrieval"]
+    P("closed book against retrieval, Q4D minus P0 (paired, descriptive):")
+    r = cb["mechanical"]
+    P("  mechanical: " + (f"items {r['n']}  difference {pc(r['diff'])}  90 % interval {ci(r['ci90'])}" if r else "not computed (P0 scores not given)"))
+    j = cb["judged_P"]
+    P("  judged P: " + (f"scenarios {j['n']}  difference {j['mean']:+.4f}  90 % interval [{j['ci90'][0]:+.4f}, {j['ci90'][1]:+.4f}]"
+                        if j else "not computed (P0 judged results not given)"))
+
+
+
 # ---------------------------------------------------------------- cli
 
 def kv(s):
@@ -545,6 +847,23 @@ def main(argv=None):
     s.add_argument("--server", action="append", type=kv, default=[], help="NAME=JSON file of the server state before that run")
     s.add_argument("--note", action="append", default=[])
     s.add_argument("--dry", action="store_true")
+    e = sub.add_parser("e2", help="the E2 decision rules applied by code")
+    e.add_argument("--config", action="append", type=kv, required=True,
+                   help="NAME=score file (names Q4D, Q4S, F, FR, P0); the same name may be given again to merge files (tier A and a3)")
+    e.add_argument("--items", action="append", required=True, help="items file (family, kind, a3 tag); repeat for several")
+    e.add_argument("--judged-results", action="append", default=[], help="judge results file(s) with coverage rows; the row's set names the configuration")
+    e.add_argument("--rubrics", help="rubrics file of the judged scenarios")
+    e.add_argument("--judged-items", help="items file of the judged scenarios (kind)")
+    e.add_argument("--reading-json", help="small JSON of the sealed reading's totals (default_rate, strict_rate, default_harmful, "
+                                            "strict_harmful, reader_disagreement, readers_usable)")
+    for k in ("default_rate", "strict_rate", "reader_disagreement"):
+        e.add_argument("--reading-" + k.replace("_", "-"), dest="reading_" + k, type=float, default=None)
+    for k in ("default_harmful", "strict_harmful"):
+        e.add_argument("--reading-" + k.replace("_", "-"), dest="reading_" + k, type=int, default=None)
+    e.add_argument("--readers-usable", choices=["yes", "no"], default=None)
+    e.add_argument("--resamples", type=int, default=DEFAULT_RESAMPLES)
+    e.add_argument("--seed", type=int, default=1)
+    e.add_argument("--json", help="write the result here (an .enc name encrypts; required for hidden input)")
     a = ap.parse_args(argv)
     try:
         if a.cmd == "pair":
@@ -555,6 +874,22 @@ def main(argv=None):
             if a.json:
                 data = (json.dumps(r, indent=1, ensure_ascii=False) + "\n").encode()
                 eval2.write_atomic(a.json, eval2.encrypt_bytes(data) if eval2.is_hidden(a.json) else data)
+        elif a.cmd == "e2":
+            cfg = defaultdict(list)
+            for n, pth in a.config:
+                cfg[n].append(pth)
+            judged = None
+            if a.judged_results:
+                if not a.rubrics:
+                    raise CompareError("--judged-results needs --rubrics")
+                judged = {"results": a.judged_results, "rubrics": a.rubrics, "items": a.judged_items}
+            r = compare_e2(dict(cfg), a.items, judged, a.resamples, a.seed, reading_from_args(a))
+            if a.json and eval2.is_hidden(a.json) != r["hidden"]:
+                raise CompareError("a hidden comparison writes a .enc json, a clear one does not")
+            render_e2(r, sys.stdout)
+            if a.json:
+                data = (json.dumps(r, indent=1, ensure_ascii=False) + "\n").encode()
+                eval2.write_atomic(a.json, eval2.encrypt_bytes(data) if r["hidden"] else data)
         elif a.cmd == "pick-model":
             d = json.load(sys.stdin)
             ids = [x["id"] for x in (d.get("data") or []) if isinstance(x, dict) and x.get("id")]

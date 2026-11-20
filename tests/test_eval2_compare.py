@@ -352,5 +352,261 @@ class TestOutcomeTable(Base):
         self.assertNotIn("outcomes", cmp.compare_pair(self.tmp / "c.jsonl", self.tmp / "c.jsonl", self.tmp / "items.jsonl", resamples=50))
 
 
+# ---------------------------------------------------------------- the e2 subcommand (rules of runs/m4/reports/e2_plan.md)
+
+def e2_items(n_fam=40, per=5):
+    """n_fam families of per items; the last quarter of the families are slice a3 (ids a3-...), with 2 tagged; kinds by family."""
+    out = []
+    for f in range(n_fam):
+        a3 = f >= n_fam * 3 // 4
+        for j in range(per):
+            it = {"id": f"{'a3-' if a3 else 'a1-'}f{f:02d}-{j}", "tier": "A", "kind": f"k{f % 3}" if not (a3 and f == n_fam - 1) else "rare",
+                  "family": f"fam{f:02d}", "question": f"hidden question text {f}-{j}"}
+            if a3 and f == n_fam - 1 and j < 2:
+                it["shares_variant_with_published"] = True
+            out.append(it)
+    return out
+
+
+def jrows(setname, items, ps):
+    """Judge result rows for one set: one must point m1 of weight 1, present for the items whose number is in ps."""
+    return [{"set": setname, "id": it["id"], "pass": 1, "valid_reply": True,
+             "must": {"m1": {"verdict": "present" if ps[it["id"]] else "absent"}}, "must_not": {}, "essential_points": []}
+            for it in items]
+
+
+class TestE2(Base):
+    def setUp(self):
+        super().setUp()
+        self.items = e2_items()
+        self.ids = [i["id"] for i in self.items]
+        self.fam_of = {i["id"]: i["family"] for i in self.items}
+
+    def run_e2(self, scores, reading=None, hidden=False, judged=None, resamples=400, items=None):
+        sfx = ".jsonl.enc" if hidden else ".jsonl"
+        items = items or self.items
+        ip = self.tmp / ("items" + sfx)
+        eval2.write_jsonl(ip, items)
+        cfg = {}
+        for n, passed in scores.items():
+            q = self.tmp / (n + ".scores" + sfx)
+            eval2.write_jsonl(q, score_rows(items, passed))
+            cfg[n] = [q]
+        jd = None
+        if judged:
+            jr, jrub, jit = self.tmp / ("jres" + sfx), self.tmp / ("jrub" + sfx), self.tmp / ("jit" + sfx)
+            rows = [r for st, ps in judged["sets"].items() for r in jrows(st, judged["items"], ps)]
+            eval2.write_jsonl(jr, rows)
+            eval2.write_jsonl(jrub, [{"id": it["id"], "must": [{"id": "m1", "text": "t", "weight": 1}], "must_not": []} for it in judged["items"]])
+            eval2.write_jsonl(jit, judged["items"])
+            jd = {"results": [jr], "rubrics": jrub, "items": jit}
+        return cmp.compare_e2(cfg, [ip], jd, resamples, 1, reading)
+
+    def spread_loss(self, k):
+        """Passing set with k losses spread one per family (families have 5 items)."""
+        lost = set()
+        for f in range(k):
+            lost.add(f"{'a3-' if f >= 30 else 'a1-'}f{f:02d}-0")
+        return set(self.ids) - lost
+
+    def clustered_loss(self, k):
+        """The same number of losses, packed into whole families."""
+        order = sorted(self.ids)
+        return set(self.ids) - set(order[:k])
+
+    def test_pass_in_both_readings_when_equal(self):
+        r = self.run_e2({"F": set(self.ids), "Q4D": set(self.ids)})
+        q = r["a_cost_of_4bit"]["Q4D_minus_F"]
+        self.assertEqual((q["diff"], q["one_sided"], q["two_sided"]), (0.0, "PASS", "PASS"))
+
+    def test_small_loss_passes_one_sided_and_fails_two_sided(self):
+        # true difference -2 points (4 of 200), losses spread; the interval is wide enough to cross +5 and stay above -5 or not:
+        # the known truth is a small loss, inside the margin; the two readings differ on the upper end
+        ids = self.ids
+        f = set(ids)
+        d = set(ids) - set(ids[::50])                       # 4 losses of 200 = -2 points
+        r = self.run_e2({"F": f, "Q4D": d}, resamples=2000)
+        q = r["a_cost_of_4bit"]["Q4D_minus_F"]
+        self.assertAlmostEqual(q["diff"], -0.02)
+        self.assertEqual(q["one_sided"], "PASS")
+        self.assertEqual(q["two_sided"], "PASS" if q["ci90"][1] < 0.05 else "FAIL")
+        self.assertLess(q["ci90"][1], 0.05)
+
+    def test_gain_passes_one_sided_fails_two_sided(self):
+        # Q4D better by 20 points: lower end far above -5 (one-sided PASS), upper end above +5 (two-sided FAIL; noted, not a fail of rule 1(a) one-sided)
+        base = set(self.ids[::5] + self.ids[1::5])           # F passes 40 %
+        better = base | set(self.ids[2::5])                  # Q4D passes 60 %
+        r = self.run_e2({"F": base, "Q4D": better})
+        q = r["a_cost_of_4bit"]["Q4D_minus_F"]
+        self.assertAlmostEqual(q["diff"], 0.2)
+        self.assertEqual((q["one_sided"], q["two_sided"], q["upper_above_margin"]), ("PASS", "FAIL", True))
+        t = io.StringIO()
+        cmp.render_e2(r, t)
+        self.assertIn("one-sided reading", t.getvalue())
+        self.assertIn("two-sided reading", t.getvalue())
+        self.assertIn("upper end is above +5", t.getvalue())
+
+    def test_large_loss_fails_both(self):
+        r = self.run_e2({"F": set(self.ids), "Q4D": self.spread_loss(30)})       # 30 of 200 = -15 points
+        q = r["a_cost_of_4bit"]["Q4D_minus_F"]
+        self.assertAlmostEqual(q["diff"], -0.15)
+        self.assertEqual((q["one_sided"], q["two_sided"]), ("FAIL", "FAIL"))
+
+    def test_clustering_by_family_widens_the_interval(self):
+        full = set(self.ids)
+        sp = self.run_e2({"F": full, "Q4D": self.spread_loss(20)}, resamples=1500)["a_cost_of_4bit"]["Q4D_minus_F"]
+        cl = self.run_e2({"F": full, "Q4D": self.clustered_loss(20)}, resamples=1500)["a_cost_of_4bit"]["Q4D_minus_F"]
+        self.assertEqual((sp["diff"], sp["discordant"]), (cl["diff"], cl["discordant"]))
+        self.assertGreater(cl["ci90"][1] - cl["ci90"][0], 2 * (sp["ci90"][1] - sp["ci90"][0]))   # whole families lost: far wider
+        self.assertLess(cl["n_eff"], sp["n_eff"])
+        # the same input with every item its own family is narrower than the clustered one
+        solo = [dict(i, family=i["id"]) for i in self.items]
+        so = self.run_e2({"F": full, "Q4D": self.clustered_loss(20)}, resamples=1500, items=solo)["a_cost_of_4bit"]["Q4D_minus_F"]
+        self.assertLess(so["ci90"][1] - so["ci90"][0], cl["ci90"][1] - cl["ci90"][0])
+
+    def test_mde_from_observed_discordance(self):
+        r = self.run_e2({"F": set(self.ids), "Q4D": self.spread_loss(20)})["a_cost_of_4bit"]["Q4D_minus_F"]
+        self.assertAlmostEqual(r["mde"], cmp.mde(20 / 200, 200))
+
+    def test_fr_beside_and_missing_configs(self):
+        r = self.run_e2({"F": set(self.ids), "Q4D": set(self.ids)})
+        self.assertIsNone(r["a_cost_of_4bit"]["Q4D_minus_FR"])
+        r = self.run_e2({"F": set(self.ids), "Q4D": set(self.ids), "FR": self.spread_loss(10)})
+        self.assertAlmostEqual(r["a_cost_of_4bit"]["Q4D_minus_FR"]["diff"], 10 / 200)
+
+    def test_mode_waits_for_the_reading(self):
+        scores = {"Q4D": set(self.ids), "Q4S": set(self.ids)}
+        r = self.run_e2(scores)
+        self.assertEqual(r["b_mode"]["verdict"], "waiting for the reading")
+        self.assertEqual(r["b_mode"]["criteria"]["mechanical"], "met")
+        out = io.StringIO()
+        cmp.render_e2(r, out)
+        self.assertIn("waiting for the reading", out.getvalue())
+        self.assertNotIn("STRICT meets", out.getvalue())
+        # an incomplete reading is still waiting and names what is missing
+        r = self.run_e2(scores, {"default_rate": 3.0, "strict_rate": 1.0})
+        self.assertIn("missing", r["b_mode"]["reading_text"])
+        self.assertEqual(r["b_mode"]["verdict"], "waiting for the reading")
+        # readers differing by more than 30 %: no verdict
+        full = {"default_rate": 3.0, "strict_rate": 1.0, "default_harmful": 0, "strict_harmful": 0, "reader_disagreement": 0.5, "readers_usable": False}
+        self.assertEqual(self.run_e2(scores, full)["b_mode"]["verdict"], "waiting for the reading")
+
+    def judged_case(self, strict_lower):
+        its = [{"id": f"j{n:02d}", "tier": "B", "kind": "diag" if n < 20 else "arch", "family": f"j{n:02d}"} for n in range(24)]
+        d = {it["id"]: True for it in its}
+        s = {it["id"]: (n >= strict_lower) for n, it in enumerate(its)}
+        p0 = {it["id"]: n < 8 for n, it in enumerate(its)}
+        return {"items": its, "sets": {"Q4D": d, "Q4S": s, "P0": p0}}
+
+    def test_mode_all_three_met_and_each_failure(self):
+        same = {"Q4D": set(self.ids), "Q4S": set(self.ids)}
+        ok = {"default_rate": 3.0, "strict_rate": 1.5, "default_harmful": 1, "strict_harmful": 1, "reader_disagreement": 1.0, "readers_usable": True}
+        r = self.run_e2(same, ok, judged=self.judged_case(0))
+        self.assertEqual(r["b_mode"]["criteria"], {"mechanical": "met", "judged_P": "met", "reading": "met"})
+        self.assertEqual(r["b_mode"]["verdict"], "STRICT meets all three criteria")
+        # reading: improvement not larger than the readers' disagreement
+        r = self.run_e2(same, dict(ok, reader_disagreement=2.0), judged=self.judged_case(0))
+        self.assertEqual(r["b_mode"]["verdict"], "DEFAULT stays the reference mode (not met: reading)")
+        # reading: harmful higher
+        r = self.run_e2(same, dict(ok, strict_harmful=2), judged=self.judged_case(0))
+        self.assertEqual(r["b_mode"]["criteria"]["reading"], "not met")
+        # judged coverage: 12 of 24 scenarios lose P 1.0: mean -0.5, lower end below -0.10
+        r = self.run_e2(same, ok, judged=self.judged_case(12))
+        self.assertAlmostEqual(r["b_mode"]["judged_P"]["mean"], -0.5)
+        self.assertEqual(r["b_mode"]["criteria"]["judged_P"], "not met")
+        self.assertIn("judged_P", r["b_mode"]["verdict"])
+        # mechanical: strict loses 15 points
+        r = self.run_e2({"Q4D": set(self.ids), "Q4S": self.spread_loss(30)}, ok, judged=self.judged_case(0))
+        self.assertEqual(r["b_mode"]["criteria"]["mechanical"], "not met")
+        self.assertIn("mechanical", r["b_mode"]["verdict"])
+
+    def test_figures_sizes_kinds_and_a3_with_and_without_tagged(self):
+        r = self.run_e2({"Q4D": set(self.ids)})
+        f = r["c_figures"]["mechanical"]["Q4D"]
+        self.assertEqual((f["mechanical"]["n"], f["a3"]["n"], f["tier_A_without_a3"]["n"]), (200, 50, 150))
+        self.assertEqual((f["a3_tagged"], f["a3_without_tagged"]["n"]), (2, 48))
+        self.assertEqual(f["mechanical"]["rate"], 1.0)
+        self.assertEqual(set(f["kinds"]), {"k0", "k1", "k2", "rare"})   # "rare" has exactly 5 items: reported
+        # a kind with fewer than 5 items is left out
+        small = [dict(i, kind="tiny") if n < 4 else i for n, i in enumerate(self.items)]
+        f = self.run_e2({"Q4D": set(self.ids)}, items=small)["c_figures"]["mechanical"]["Q4D"]
+        self.assertNotIn("tiny", f["kinds"])
+
+    def test_closed_book_against_retrieval(self):
+        r = self.run_e2({"P0": set(self.ids[:100]), "Q4D": set(self.ids[:150])})
+        cb = r["c_closed_book_vs_retrieval"]
+        self.assertAlmostEqual(cb["mechanical"]["diff"], 0.25)
+        self.assertTrue(cb["descriptive"])
+        r = self.run_e2({"Q4D": set(self.ids)}, judged=self.judged_case(0))
+        self.assertAlmostEqual(r["c_closed_book_vs_retrieval"]["judged_P"]["mean"], 16 / 24)
+
+    def test_deterministic_for_a_fixed_seed(self):
+        sc = {"F": set(self.ids), "Q4D": self.spread_loss(7), "Q4S": self.spread_loss(9)}
+        r1, r2 = self.run_e2(sc), self.run_e2(sc)
+        self.assertEqual(json.dumps(r1, sort_keys=True), json.dumps(r2, sort_keys=True))
+        a, b = io.StringIO(), io.StringIO()
+        cmp.render_e2(r1, a)
+        cmp.render_e2(r2, b)
+        self.assertEqual(a.getvalue(), b.getvalue())
+
+    @NEEDS_OPENSSL
+    def test_hidden_input_prints_no_id_and_writes_enc_only(self):
+        sc = {"F": set(self.ids), "Q4D": self.spread_loss(7), "Q4S": self.spread_loss(9), "P0": set(self.ids[:100])}
+        jc = self.judged_case(3)
+        ok = {"default_rate": 3.0, "strict_rate": 1.5, "default_harmful": 1, "strict_harmful": 1, "reader_disagreement": 1.0}
+        r = self.run_e2(sc, ok, hidden=True, judged=jc)
+        self.assertTrue(r["hidden"])
+        out = io.StringIO()
+        cmp.render_e2(r, out)
+        text = out.getvalue() + json.dumps(r)
+        self.assertIn("hidden: totals only", out.getvalue())
+        for it in self.items + jc["items"]:
+            self.assertNotIn(it["id"], text)
+            self.assertNotIn(it.get("question", "\0"), text)
+        # through the command line: the json must be .enc, and nothing but .enc files appears
+        buf, err = io.StringIO(), io.StringIO()
+        args = ["e2", "--items", str(self.tmp / "items.jsonl.enc"), "--resamples", "100"]
+        for n in sc:
+            args += ["--config", f"{n}={self.tmp / (n + '.scores.jsonl.enc')}"]
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(err):
+            self.assertEqual(cmp.main(args + ["--json", str(self.tmp / "o.json")]), 1)
+        self.assertIn("a hidden comparison writes a .enc json", err.getvalue())
+        self.assertFalse((self.tmp / "o.json").exists())
+        with contextlib.redirect_stdout(buf):
+            self.assertEqual(cmp.main(args + ["--json", str(self.tmp / "o.json.enc")]), 0)
+        for it in self.items:
+            self.assertNotIn(it["id"], buf.getvalue())
+        self.assertNotIn(b"a1-f00", (self.tmp / "o.json.enc").read_bytes())
+        self.assertNotIn("a1-f00", eval2.decrypt_bytes((self.tmp / "o.json.enc").read_bytes()).decode())   # not even inside
+
+    @NEEDS_OPENSSL
+    def test_open_and_hidden_are_never_mixed(self):
+        ip = self.tmp / "items.jsonl.enc"
+        eval2.write_jsonl(ip, self.items)
+        q = self.tmp / "Q4D.scores.jsonl"
+        eval2.write_jsonl(q, score_rows(self.items, set(self.ids)))
+        with self.assertRaises(cmp.CompareError):
+            cmp.compare_e2({"Q4D": [q]}, [ip], None, 50, 1)
+
+    def test_cli_open_output_and_merged_files(self):
+        ip = self.tmp / "items.jsonl"
+        eval2.write_jsonl(ip, self.items)
+        a1 = [i for i in self.items if i["id"].startswith("a1-")]
+        a3 = [i for i in self.items if i["id"].startswith("a3-")]
+        args = ["e2", "--items", str(ip), "--resamples", "100"]
+        for n in ("F", "Q4D"):
+            for part, nm in ((a1, "a1"), (a3, "a3")):
+                q = self.tmp / f"{n}_{nm}.scores.jsonl"
+                eval2.write_jsonl(q, score_rows(part, {i["id"] for i in part}))
+                args += ["--config", f"{n}={q}"]
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            self.assertEqual(cmp.main(args), 0)
+        t = buf.getvalue()
+        for needle in ("(a) the cost of 4-bit", "one-sided reading", "two-sided reading", "(b) the mode", "(c) starting figures", "a3_without_tagged"):
+            self.assertIn(needle, t)
+        self.assertRegex(t, r"Q4D\s+mechanical\s+200\s+200")
+
+
 if __name__ == "__main__":
     unittest.main()
