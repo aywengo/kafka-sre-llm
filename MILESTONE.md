@@ -20,7 +20,7 @@ different base model does better.
 |---|---|---|---|
 | E1 | A new evaluation exists: fresh items for the five task types of `GOAL.md`, a hidden part, mechanical checks, a measured noise level | 300 or more mechanical items, 120 or more judged items, the smallest visible difference stated per tier | mechanical tier built: 496 items, split 251 open and 245 hidden (encrypted); judged tier: after two failed pilots the judge's coverage role (J1) was checked on batch B1 (30 fresh scenarios): five criteria and the second half of the sixth pass, the rubric chunk check missed by about one point (94.0 % against 95 %); **the Owner accepted the coverage role on 2026-11-19 (K1)**; **the judged tier is written (2026-11-20): 120 scenarios, 60 open (B1, B2) and 60 hidden (the Owner's 24, B3's 36), every batch with an independent chunk count of 95 % or more before any answer**; the new mechanical kinds are built and accepted by an independent review (148 items, 88 open and 60 hidden), so the mechanical tier has 644 items (339 open, 305 hidden); integration into the harness (T10) is finishing |
 | E2 | The starting point is measured on it: plain base, base + retrieval at full precision, and the 4-bit model with retrieval, in default and strict mode, all on the same server path | numbers with their sizes; the cost of 4-bit shown inside a margin fixed before the run (5 points on the mechanical tier) | chain built, reviewed, rehearsed against the real server without a defect; **running since 2026-11-20 (hidden gate opened 16:55; about 19 to 22 h)** |
-| E3 | Every answer is checked before the user sees it (amended 2026-11-19, K4 b: prose streams as it is written, each code block is held until its check, which takes milliseconds, and corrections to prose follow the answer) | at most 2 invented or wrong items per 10 answers in default mode on fresh questions, **measured by a reading**, with the checker's own counts beside it; a statement marked "not confirmed" still counts; minor items are reported beside the bar, not counted (K4 a, c); measured on the hidden judged half after E2 (K4 g) | checker built and wired into `ask --check` and the service; on the 30 labelled errors it catches 9, reports 3 as unverified and misses 18 (15 are wrong statements it cannot see); not yet measured on fresh answers |
+| E3 | Every answer is checked before the user sees it (amended 2026-11-19, K4 b: prose streams as it is written, each code block is held until its check, which takes milliseconds, and corrections to prose follow the answer) | at most 2 invented or wrong items per 10 answers in default mode on fresh questions, **measured by a reading**, with the checker's own counts beside it; a statement marked "not confirmed" still counts; minor items are reported beside the bar, not counted (K4 a, c); measured on the hidden judged half after E2 (K4 g) | **measured 2026-11-20 on the hidden judged half: NOT MET**: 17.2 non-minor wrong, invented or harmful statements per 10 default answers (61 answers, 90 % interval 14.4 to 20.0; bar 2.0), 13 harmful (bar 0); two sealed readers 2 % apart; inline marks on, the model patch step off (built, not tested on hidden data). Strict: 14.6 per 10, 11 harmful |
 | E4 | Answers are fast on the 4-bit server path | median under 60 s in default mode on the Mac Studio; first words within 10 s | service and streaming built; retrieval 9.5 s to 4.4 s when kept loaded; not yet measured with a model |
 | E5 | Base model decision | bake-off of the shortlist on the new evaluation; keep or switch recorded | shortlist done |
 
@@ -639,6 +639,20 @@ and J6 come from the mechanical tier and block nothing yet):
   (14 conditions; 1,813 text markers kept, 439 dropped as public) and the first hidden
   stage runs. Looks used: 2 of 6 (E2 and E3).** Known flaw, not fixed during the run: the
   chain reuses a stored manifest and stage markers without checking them at the start.
+- 2026-11-20, evening: **E3 is measured on the hidden judged half: NOT MET.** The judged
+  answers (61 default, 61 strict) were finished at 19:19; eight sealed reader sessions
+  read the 122 answers blind to the mode, 32 of them twice, and returned row counts and
+  hashes only. Totals (`work/m4/e2/reading_totals.txt`, totals only): default mode, 105
+  non-minor wrong, invented or harmful statements in 61 answers = **17.2 per 10 (90 %
+  interval 14.4 to 20.0) against the bar of 2.0; 13 harmful (bar 0)**; 65 minor ones
+  beside it. The two readers found 84 and 86 on the shared answers (2 % apart; the
+  reading is used). Strict mode: 14.6 per 10 (12.1 to 17.1), 11 harmful; strict minus
+  default −2.6 per 10 (−5.6 to +0.3). Essential omissions: 26.2 and 26.7 per 10. Without
+  the 11 tagged items (50 answers, for information): default 15.2 per 10, 8 harmful. The
+  model patch step was off (L2). Three rows were not counted (quote not found). Plain-text
+  copies of bundle rows that the harness saved for over-long reader outputs were deleted
+  (the Owner's standing decision); later sessions printed rows field by field. The
+  mechanical stages of E2 continue.
 - Earlier: **the go for the E2 run was asked** (two hidden looks, E2 and E3; about
   19 to 22 h of the model server by the rehearsal's rates, plus about 2 h for the
   first-words timing on open items; about eight sealed reader sessions).
