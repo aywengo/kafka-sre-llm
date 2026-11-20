@@ -711,6 +711,11 @@ def scan_plain(folder, ids, exclude=()):
     return hits
 
 
+def marker_summary(nbuilt, nkept, nrows, unmarked):
+    return (f"{nbuilt} marker(s) built, {nbuilt - nkept} dropped as public (the open evaluation files or the plain outputs of the open stages G and O hold the same line), "
+            f"{nkept} kept; {len(unmarked)} of {nrows} hidden row(s) left with no marker (only the id scan covers them)")
+
+
 def cmd_scan(a):
     h = parse_hidden(a.hidden)
     ids = hidden_ids(h)
@@ -720,14 +725,66 @@ def cmd_scan(a):
         return 1
     print(f"scan: no plain-text file under {a.dir} holds an id of a hidden item ({len(ids)} ids checked)")
     if a.text:
-        marks, nrows, dropped = text_markers(h, corpus_files=a.corpus_files)
-        th = scan_text(a.dir, marks, a.also or [])
+        rec = Path(a.freeze) if a.freeze else Path(a.dir) / FREEZE_NAME
+        if a.require_freeze and not rec.is_file():
+            print(f"scan: no record of the open-stage files ({rec.name}): the gate has not frozen them")
+            return 1
+        if a.explain:
+            return explain_scan(a, h, rec)
+        detail = {}
+        marks, nrows, dropped = text_markers(h, corpus_files=a.corpus_files, work=a.dir, record=rec, detail=detail)
+        unchanged, changed = freeze_state(a.dir, rec)
+        th = scan_text(a.dir, marks, a.also or [], skip=unchanged)
+        print("scan: " + marker_summary(len(marks) + dropped, len(marks), nrows, detail["unmarked"]))
+        if a.list_unmarked_ids and detail["unmarked"]:
+            print("scan: rows with no marker: " + ", ".join(sorted(detail["unmarked"])))
+        if changed:
+            print(f"scan: {len(changed)} plain file(s) of stages G and O changed or appeared after the gate and were scanned in full: " + ", ".join(changed[:10]))
         if th or not marks:
             print(f"scan: {len(th)} plain file(s) hold hidden text: " + ", ".join(th[:10]) if th else "scan: no hidden text could be read to check against")
             return 1
         print(f"scan: no plain file under {a.dir} (logs and the heartbeat included) holds distinctive text of a hidden row "
-              f"({len(marks)} strings from {nrows} rows; {dropped} left out as the open files hold them too)")
+              f"({len(marks)} strings from {nrows} rows; {dropped} left out as public text)")
     return 0
+
+
+def explain_scan(a, h, rec):
+    """Counts only: per plain file that matches a marker, how many of the matching markers occur in the pinned open evaluation files,
+    in the open stages' input files, or nowhere public. A file produced by an open stage with a marker that is nowhere public: a failure."""
+    rows = hidden_rows(h)
+    allm = set()
+    for r in rows:
+        allm |= row_markers(r)
+    ev = open_corpus(a.corpus_files)
+    root = Path(a.dir)
+    ins = "\n".join(text_forms(root / n) for n in OPEN_STAGE_INPUTS if (root / n).is_file())
+    produced = {p.resolve() for p in open_stage_files(a.dir)}
+    seen, bad, matched = set(), 0, 0
+    print(f"explain: {len(allm)} marker(s) built from {len(rows)} hidden row(s); counts per matching plain file (each marker counted once: open evaluation files first, "
+          "then the open stages' input files, then nowhere public)")
+    for r0 in [root] + [Path(x) for x in a.also or []]:
+        files = [r0] if r0.is_file() else (sorted(r0.rglob("*")) if r0.is_dir() else [])
+        for p in files:
+            if not p.is_file() or p.name.endswith(".enc") or p.name.endswith(".enc.tmp") or p.resolve() in seen:
+                continue
+            seen.add(p.resolve())
+            text = text_forms(p)
+            hit = [m for m in allm if m in text]
+            if not hit:
+                continue
+            matched += 1
+            n_ev = sum(1 for m in hit if m in ev)
+            n_in = sum(1 for m in hit if m not in ev and m in ins)
+            n_no = len(hit) - n_ev - n_in
+            name = str(p.relative_to(root)) if root in p.parents else p.name
+            tag = "open-stage file" if p.resolve() in produced else "other file"
+            print(f"explain: {name} ({tag}): {len(hit)} matching marker(s); {n_ev} in the open evaluation files, {n_in} in the open stages' inputs, {n_no} nowhere public")
+            if n_no:
+                bad += 1
+                print(f"explain FAIL: {name}: {n_no} matching marker(s) occur nowhere public" +
+                      (" although an open stage produced this file: it is not a coincidence with public text" if p.resolve() in produced else ""))
+    print(f"explain: {matched} plain file(s) match; {bad} with a marker that is nowhere public")
+    return 1 if bad else 0
 
 
 # ---------------------------------------------------------------- plain-file scan for hidden text (distinctive lines of the decrypted rows)
@@ -800,24 +857,78 @@ def hidden_rows(h):
     return rows
 
 
-def text_markers(h, corpus=None, corpus_files=None):
-    """-> (markers, rows read, markers left out because the open files hold the same line)."""
+# plain files that stages G and O write into the work folder: open items only, so their text is public (frozen at the gate)
+OPEN_STAGE_PATTERNS = ("ans_G*", "ans_O_*", "check_G*", "check_O_*", "idcheck_O_*", "gate_g.txt", "O_judge_*", "pilot2_items_h.jsonl",
+                       "smoke_items.jsonl", "server_G*.json", "server_O_*.json", "server_judge_O_*.json")
+OPEN_STAGE_INPUTS = ("pilot2_items_h.jsonl", "smoke_items.jsonl")   # what the open stages read besides the files under eval/m4
+FREEZE_NAME = "OPEN_STAGES.frozen.json"
+
+
+def text_forms(p):
+    """A file's text the way the scan reads it: normalised, and again with JSON escapes undone."""
+    try:
+        data = Path(p).read_bytes().decode("utf-8", "ignore")
+    except OSError:
+        return ""
+    return norm_line(data) + "\n" + norm_line(data.replace('\\"', '"').replace("\\n", " "))
+
+
+def open_stage_files(work):
+    root, out = Path(work), set()
+    for pat in OPEN_STAGE_PATTERNS:
+        out |= {p for p in root.glob(pat) if p.is_file() and not p.name.endswith(".enc")}
+    return sorted(out)
+
+
+def freeze_record(work):
+    return {"files": {p.name: sha(p) for p in open_stage_files(work)}}
+
+
+def freeze_state(work, record):
+    """-> (unchanged files as resolved paths, names of changed or new or missing ones). Without a record every current file counts as unchanged."""
+    root = Path(work)
+    if not Path(record).is_file():
+        return {p.resolve() for p in open_stage_files(work)}, []
+    want = rjson(record).get("files", {})
+    unchanged, changed = set(), []
+    for n, hh in sorted(want.items()):
+        p = root / n
+        if p.is_file() and sha(p) == hh:
+            unchanged.add(p.resolve())
+        else:
+            changed.append(n)
+    changed += [p.name for p in open_stage_files(work) if p.name not in want]
+    return unchanged, sorted(set(changed))
+
+
+def text_markers(h, corpus=None, corpus_files=None, work=None, record=None, detail=None):
+    """-> (markers kept, rows read, markers left out because public text holds the same line). Public text: the open files under
+    eval/m4 and, when `work` is given, the plain files of stages G and O in it that are unchanged since the record (or all of them
+    when there is no record yet). `detail` (a dict) gets "unmarked": ids of the rows that are left with no marker."""
     rows = hidden_rows(h)
-    marks = set()
+    per, marks = [], set()
     for r in rows:
-        marks |= row_markers(r)
+        m = row_markers(r)
+        per.append((r.get("id"), m))
+        marks |= m
     corpus = open_corpus(corpus_files) if corpus is None else corpus
+    if work is not None:
+        unchanged, _ = freeze_state(work, record or Path(work) / FREEZE_NAME)
+        corpus += "\n" + "\n".join(text_forms(p) for p in sorted(unchanged))
     keep = sorted(m for m in marks if m not in corpus)
+    ks = set(keep)
+    if detail is not None:
+        detail["unmarked"] = [str(i) for i, m in per if not (m & ks)]
     return keep, len(rows), len(marks) - len(keep)
 
 
-def scan_text(folder, markers, also=()):
+def scan_text(folder, markers, also=(), skip=()):
     """Plain files under `folder` (every one, logs included, not .enc) and the extra files or folders in `also` that hold one of the
-    markers. -> sorted list of names (never the text)."""
+    markers; the files in `skip` (resolved paths: the open-stage files unchanged since the gate) are not read. -> sorted list of names (never the text)."""
     if not markers:
         return []
     roots = [Path(folder)] + [Path(x) for x in also]
-    seen, hits = set(), []
+    seen, hits = set(skip), []
     for root in roots:
         files = [root] if root.is_file() else (list(root.rglob("*")) if root.is_dir() else [])
         for p in files:
@@ -912,16 +1023,28 @@ def cmd_gate(a):
     hits = scan_plain(a.work_dir, ids, a.exclude or [])
     cond("no plain-text file with a hidden id", not hits and bool(ids), f"{len(hits)} file(s): " + ", ".join(hits[:5]) if hits else
          ("" if ids else "no hidden id could be read to check against"))
+    rec = Path(a.markers) / FREEZE_NAME
+    unchanged, changed = freeze_state(a.work_dir, rec) if rec.is_file() else (None, [])
+    cond("plain files of stages G and O unchanged since they were frozen", not changed,
+         f"{len(changed)} changed or new: " + ", ".join(changed[:5]) if changed else
+         (f"{len(unchanged)} file(s) match the record" if rec.is_file() else "no record yet; made when the gate opens"))
+    detail = {}
     try:
-        marks, nrows, _ = text_markers(h, corpus_files=a.corpus_files)
+        marks, nrows, dropped = text_markers(h, corpus_files=a.corpus_files, work=a.work_dir, record=rec, detail=detail)
     except Exception:  # noqa: BLE001
-        marks, nrows = [], 0
-    th = scan_text(a.work_dir, marks, a.also or [])
+        marks, nrows, dropped, detail = [], 0, 0, {"unmarked": []}
+    th = scan_text(a.work_dir, marks, a.also or [], skip=freeze_state(a.work_dir, rec)[0])
+    summ = marker_summary(len(marks) + dropped, len(marks), nrows, detail["unmarked"])
     cond("no plain file with hidden text", not th and bool(marks),
-         f"{len(th)} file(s): " + ", ".join(th[:5]) if th else ("" if marks else "no hidden text could be read to check against"))
+         (f"{len(th)} file(s): " + ", ".join(th[:5]) + "; " + summ) if th else (summ if marks else "no hidden text could be read to check against"))
     for name, ok, note in results:
         print(f"gate {'PASS' if ok else 'FAIL'}: {name}" + (f" ({note})" if note else ""))
     bad = [n for n, ok, _ in results if not ok]
+    if not bad and not rec.is_file():   # the open stages' plain files are frozen here: later scans check that they did not change
+        tmp = rec.with_name(rec.name + ".tmp")
+        tmp.write_text(json.dumps(freeze_record(a.work_dir), indent=1, sort_keys=True) + "\n")
+        os.replace(tmp, rec)
+        print(f"gate: froze {len(freeze_record(a.work_dir)['files'])} plain file(s) of stages G and O ({rec.name}, sha256 per file)")
     print(f"hidden gate: {'OPEN' if not bad else 'REFUSED (' + str(len(bad)) + ' condition(s) failed)'}")
     return 0 if not bad else 1
 
@@ -1379,6 +1502,10 @@ def build_parser():
     s.add_argument("--text", action="store_true", help="also look for distinctive text of the hidden rows (logs and --also files included)")
     s.add_argument("--also", nargs="*", default=[], help="more files or folders to scan for text (this run's logs, the heartbeat)")
     s.add_argument("--corpus-files", nargs="*", default=None, help="rehearsal: the plain open input files; a line in them is not a marker (default: all open files under eval/m4)")
+    s.add_argument("--freeze", help=f"the record of the open-stage files (default DIR/{FREEZE_NAME})")
+    s.add_argument("--require-freeze", action="store_true", help="fail when there is no record of the open-stage files (the scans after the hidden stages)")
+    s.add_argument("--explain", action="store_true", help="with --text: per matching plain file, counts of markers by where else they occur (counts only; no text, no line)")
+    s.add_argument("--list-unmarked-ids", action="store_true", help="print the ids of the hidden rows left with no marker (not for files in the work folder)")
     s = sub.add_parser("gate-g")
     s.add_argument("--answers", required=True)
     s.add_argument("--stored", required=True)

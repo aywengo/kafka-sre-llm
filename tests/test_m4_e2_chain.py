@@ -4,6 +4,7 @@ Stub generator, stub judge, a fake server status, a temporary key and SYNTHETIC 
 the real hidden files and the real key are never used. The dry runs plant a marker string in every synthetic hidden row and the tests
 look for it in every file the run leaves behind."""
 import json
+import re
 import os
 import shutil
 import subprocess
@@ -734,15 +735,155 @@ class HiddenGate(unittest.TestCase):
         (w / "logs/run.log").write_text("[answer] " + samples["must"] + "\n")
         rc, out = self.gate(work=w, markers=self.work)
         self.assertEqual(rc, 1)
-        self.assertEqual(self.failed(out), ["gate FAIL: no plain file with hidden text (1 file(s): logs/run.log)"], out)
+        self.assertEqual(len(self.failed(out)), 1, out)
+        self.assertTrue(self.failed(out)[0].startswith("gate FAIL: no plain file with hidden text (1 file(s): logs/run.log;"), out)   # then the counts
         self.assertNotIn(MARK, out)
         hb = self.tmp / "HB_leak.md"
         hb.write_text("### 2026 - run: " + samples["question"] + "\n")
         rc, out = self.gate(extra=("--also", str(hb)))
         self.assertEqual(rc, 1)
-        self.assertIn("gate FAIL: no plain file with hidden text (1 file(s): HB_leak.md)", out)
+        self.assertIn("gate FAIL: no plain file with hidden text (1 file(s): HB_leak.md;", out)
         rc, out = self.gate(extra=("--also", str(self.tmp / "no_such_heartbeat.md")))
         self.assertEqual(rc, 0, out)
+
+    # ---------------------------------------------------------------- markers that are public are not markers; the open stages' files are frozen
+
+    def two_lines(self):
+        """Two long lines of different hidden rows (synthetic): one an open-stage answer repeats, one that stays hidden-only."""
+        longest = lambda s: max(s.split("\n"), key=len)
+        a = self.decrypted("tier_a.jsonl.enc")
+        return longest(a[0]["question"]), longest(a[1]["question"])
+
+    def open_work(self, name, public_line):
+        """A work folder with stage markers and plain open-stage files, one of which repeats `public_line`."""
+        w = self.tmp / name
+        shutil.copytree(self.work, w, ignore=shutil.ignore_patterns("*.frozen.json"))
+        (w / "ans_O_P0_smoke.jsonl").write_text(json.dumps({"id": "open-smoke-1", "text": "Answer: " + public_line}) + "\n")
+        (w / "ans_O_P0_smoke.scores.jsonl").write_text(json.dumps({"id": "open-smoke-1", "note": public_line}) + "\n")
+        return w
+
+    def scan(self, w, *extra):
+        r = helper("scan", "--dir", str(w), "--exclude", str(w / "logs"), "--text", "--hidden", *self.hidden, *extra, env=self.env, timeout=600)
+        return r.returncode, r.stdout + r.stderr
+
+    def test_an_open_stage_answer_that_repeats_a_hidden_line_does_not_fail_the_gate_and_the_coincidence_is_counted(self):
+        shared, _ = self.two_lines()
+        w = self.open_work("work_shared", shared)
+        # the old behaviour: the line is a marker and the open-stage file holds it (shown by scanning with the markers of the hidden rows only)
+        import m4_e2_manifest as mm
+        old = os.environ.get("EVAL_HIDDEN_KEY")
+        os.environ["EVAL_HIDDEN_KEY"] = self.env["EVAL_HIDDEN_KEY"]
+        try:
+            marks, _, _ = mm.text_markers(mm.parse_hidden(self.hidden))
+        finally:
+            if old is None:
+                os.environ.pop("EVAL_HIDDEN_KEY", None)
+            else:
+                os.environ["EVAL_HIDDEN_KEY"] = old
+        self.assertEqual(mm.scan_text(w, marks), ["ans_O_P0_smoke.jsonl", "ans_O_P0_smoke.scores.jsonl"])
+        rc, out = self.gate(work=w, markers=w)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("hidden gate: OPEN", out)
+        m = re.search(r"(\d+) marker\(s\) built, (\d+) dropped as public .* (\d+) kept; (\d+) of (\d+) hidden row\(s\) left with no marker", out)
+        self.assertIsNotNone(m, out)
+        self.assertGreaterEqual(int(m.group(2)), 1)
+        self.assertEqual(int(m.group(1)), int(m.group(2)) + int(m.group(3)))
+        self.assertIn("froze 2 plain file(s) of stages G and O", out)
+        self.assertNotIn(MARK, out)
+        self.assertNotIn("tier_a-001", out)   # counts only, no ids
+
+    def test_a_hidden_only_line_still_fails_in_any_plain_file_a_log_and_a_heartbeat_when_open_stage_files_exist(self):
+        shared, hidden_only = self.two_lines()
+        w = self.open_work("work_hidden_only", shared)
+        (w / "logs").mkdir(exist_ok=True)
+        for where, content in (("other.txt", "notes: " + hidden_only), ("logs/run.log", "[answer] " + hidden_only)):
+            (w / where).write_text(content + "\n")
+            rc, out = self.gate(work=w, markers=w)
+            self.assertEqual(rc, 1, where)
+            self.assertIn("gate FAIL: no plain file with hidden text (1 file(s): " + where + ";", out)
+            (w / where).unlink()
+        hb = self.tmp / "HB_hidden_only.md"
+        hb.write_text("### x: " + hidden_only + "\n")
+        rc, out = self.gate(work=w, markers=w, extra=("--also", str(hb)))
+        self.assertEqual(rc, 1)
+        self.assertIn("HB_hidden_only.md", out)
+        self.assertNotIn(MARK, out)
+        self.assertFalse((w / "OPEN_STAGES.frozen.json").exists())   # a refused gate freezes nothing
+        rc, out = self.gate(work=w, markers=w)
+        self.assertEqual(rc, 0, out)
+
+    def test_a_changed_open_stage_file_after_the_gate_is_caught_by_the_later_scan_and_the_next_gate(self):
+        shared, hidden_only = self.two_lines()
+        w = self.open_work("work_changed", shared)
+        (w / "ans_O_P0_smoke.scores.jsonl").write_text("{}\n")   # only the answers file repeats the line
+        rc, out = self.gate(work=w, markers=w)
+        self.assertEqual(rc, 0, out)
+        rec = json.loads((w / "OPEN_STAGES.frozen.json").read_text())
+        self.assertEqual(sorted(rec["files"]), ["ans_O_P0_smoke.jsonl", "ans_O_P0_smoke.scores.jsonl"])
+        self.assertTrue(all(len(v) == 64 for v in rec["files"].values()))
+        rc, out = self.scan(w, "--require-freeze")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("dropped as public", out)
+        (w / "hidden_stage_output.txt").write_text("nothing special\n")
+        self.assertEqual(self.scan(w, "--require-freeze")[0], 0)
+        # a changed file is scanned in full: the line it repeated is no longer public, so it is a kept marker and the scan fails
+        with open(w / "ans_O_P0_smoke.jsonl", "a") as f:
+            f.write(json.dumps({"id": "open-smoke-2", "text": "edited after the gate"}) + "\n")
+        rc, out = self.scan(w, "--require-freeze")
+        self.assertEqual(rc, 1)
+        self.assertIn("changed or appeared after the gate", out)
+        self.assertIn("hold hidden text: ans_O_P0_smoke.jsonl", out)
+        self.assertNotIn(MARK, out)
+        rc, out = self.gate(work=w, markers=w)
+        self.assertEqual(rc, 1)
+        self.assertIn("gate FAIL: plain files of stages G and O unchanged since they were frozen (1 changed or new: ans_O_P0_smoke.jsonl)", out)
+        # a changed file without any hidden line passes the scan (and is named)
+        w2 = self.open_work("work_changed_clean", "an open line that no hidden row holds in any field of it")
+        self.assertEqual(self.gate(work=w2, markers=w2)[0], 0)
+        with open(w2 / "ans_O_P0_smoke.jsonl", "a") as f:
+            f.write("more open text\n")
+        rc, out = self.scan(w2, "--require-freeze")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("1 plain file(s) of stages G and O changed or appeared after the gate", out)
+        # a new open-stage file after the gate is a change too
+        (w2 / "ans_G_late.jsonl").write_text("late\n")
+        self.assertIn("ans_G_late.jsonl", self.scan(w2, "--require-freeze")[1])
+
+    def test_the_scan_after_the_run_requires_the_record_of_the_gate(self):
+        shared, _ = self.two_lines()
+        w = self.open_work("work_norecord", shared)
+        rc, out = self.scan(w, "--require-freeze")
+        self.assertEqual(rc, 1)
+        self.assertIn("the gate has not frozen them", out)
+
+    def test_explain_mode_prints_counts_only_and_fails_on_a_marker_that_is_nowhere_public(self):
+        shared, hidden_only = self.two_lines()
+        w = self.open_work("work_explain", shared)
+        longest = lambda s: max(s.split("\n"), key=len)
+        a = self.decrypted("tier_a.jsonl.enc")
+        corpus = self.tmp / "explain_corpus.jsonl"      # stands for the pinned open evaluation files
+        corpus.write_text(json.dumps({"question": shared}) + "\n")
+        (w / "smoke_items.jsonl").write_text(json.dumps({"question": longest(a[2]["question"])}) + "\n")   # an open stage's input
+        (w / "ans_O_P0_smoke.jsonl").write_text(json.dumps({"text": shared + " " + longest(a[2]["question"])}) + "\n")
+        rc, out = self.scan(w, "--explain", "--corpus-files", str(corpus))
+        self.assertEqual(rc, 0, out)
+        self.assertIn("explain: ans_O_P0_smoke.jsonl (open-stage file): 2 matching marker(s); 1 in the open evaluation files, 1 in the open stages' inputs, 0 nowhere public", out)
+        self.assertIn("explain: 3 plain file(s) match; 0 with a marker that is nowhere public", out)   # the scores file and the input file match too
+        for forbidden in (MARK, shared, hidden_only, "tier_a-001"):
+            self.assertNotIn(forbidden, out)
+        # nowhere public in a file an open stage produced: the scan fails and says so
+        (w / "ans_O_P0_smoke.jsonl").write_text(json.dumps({"text": hidden_only}) + "\n")
+        rc, out = self.scan(w, "--explain", "--corpus-files", str(corpus))
+        self.assertEqual(rc, 1)
+        self.assertIn("explain FAIL: ans_O_P0_smoke.jsonl: 1 matching marker(s) occur nowhere public although an open stage produced this file", out)
+        self.assertNotIn(hidden_only, out)
+        self.assertNotIn(MARK, out)
+        # another file with such a marker fails too, as the file of another kind
+        (w / "ans_O_P0_smoke.jsonl").write_text("{}\n")
+        (w / "other.txt").write_text(hidden_only + "\n")
+        rc, out = self.scan(w, "--explain", "--corpus-files", str(corpus))
+        self.assertEqual(rc, 1)
+        self.assertIn("explain: other.txt (other file): 1 matching marker(s); 0 in the open evaluation files, 0 in the open stages' inputs, 1 nowhere public", out)
 
     def test_shape_ok_on_the_synthetic_files_runs_the_tools_and_removes_its_temporary_folder(self):
         priv = self.tmp / "shape_tmp"      # the tools make their temporary folder here (TMPDIR), so that parallel runs of the suite cannot disturb the check

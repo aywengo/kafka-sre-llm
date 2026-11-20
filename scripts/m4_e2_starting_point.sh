@@ -605,7 +605,7 @@ if want SCORE; then
   # nothing under the work folder may hold a hidden id in plain text (the logs, which carry ids by design, are outside or excluded)
   # ids: nothing under the work folder (the logs, which carry ids by design, excluded); text: no distinctive line of a hidden row in any plain file
   # of the work folder, in this run's logs or in the heartbeat
-  $PYH scan --dir $W --exclude $L --text --also $HB $L/$N.* $SCANX --hidden $HIDDEN_ARGS > $W/scan_after.txt || fail "after the run: a plain-text file holds a hidden id or hidden text ($W/scan_after.txt)"
+  $PYH scan --dir $W --exclude $L --text --require-freeze --also $HB $L/$N.* $SCANX --hidden $HIDDEN_ARGS > $W/scan_after.txt || fail "after the run: a plain-text file holds a hidden id or hidden text ($W/scan_after.txt)"
   cat $W/scan_after.txt
   if [ $DRY = yes ]; then
     echo M4_E2_DRY_RUN_DONE >> $L/$N.done
