@@ -683,6 +683,8 @@ SOURCE_LINES = {
                      "Restart the connector task by adding the `strimzi.io/restart-task` annotation to the `KafkaConnector` resource:"),
     "restart_task_id": ("raw/strimzi/documentation/modules/configuring/proc-manual-restart-connector-task.adoc", 33,
                         "Task IDs are non-negative integers, starting from 0."),
+    "isr_write_succeeds": ("raw/apache-kafka-config/content/en/43/generated/topic_config.html", 246,
+                           "Specifies the <i>minimum</i> number of in-sync replicas (including the leader) required for a write to succeed"),
     "pdb_round_min": ("raw/kubernetes/content/en/docs/tasks/run-application/configure-pdb.md", 99,
                       "rounds up to the nearest integer, so in this case, 4 Pods must be available. When you"),
     "pdb_round_max": ("raw/kubernetes/content/en/docs/tasks/run-application/configure-pdb.md", 100,
@@ -758,15 +760,40 @@ def r3_v2(table):
                "and its task id.") if bad else "`strimzi.io/restart-task: \"%d\"` restarts the task with id %d only." % (tid, tid)
         oc = [{"type": "semantic_rule", "oracle": "restart_annotation", "rule": "V2", "kind": "KafkaConnector",
                "expect": {"restart_connector": False, "task_id": tid}}]
+        struct = yaml_struct("KafkaConnector", api, fl)
+        if bad:   # revision 4: an answer that keeps `strimzi.io/restart` next to the task annotation still restarts the instance
+            struct.append({"type": "yaml_fields_absent", "kind": "KafkaConnector",
+                           "paths": [["metadata", "annotations", "strimzi.io/restart"]]})
         out.append(draft("V2", "wrong" if bad else "control", "restart_task:%s-task%d" % (name, tid), intro, "KafkaConnector", dump(shown), why,
-                         fix=dump(fixd) if fixd else None, struct=yaml_struct("KafkaConnector", api, fl), oracle=oc, sources=srcs,
+                         fix=dump(fixd) if fixd else None, struct=struct, oracle=oc, sources=srcs,
                          rules=MECH_RULES["V2"] + ["restart.task_id"]))
     return out
 
 
-def r3_v6():
-    """A wrong item with five replicas (the number was never published); the control `inventory:4` of version 3 stays."""
-    return {"pool": [("telemetry", 5)], "ctl": [False]}
+def r3_v6(cats, table):
+    """Revision 4: a fault never published, `min.insync.replicas` below 2 (a write then succeeds with the leader alone, so
+    the "at least 2 replicas" requirement is not met). The published fault is `min.insync.replicas` equal to `replicas`."""
+    name, rep = "telemetry", 3
+    need = "at least 2 replicas must hold every acknowledged write"
+
+    def topic(m):
+        return {"apiVersion": "kafka.strimzi.io/v1", "kind": "KafkaTopic",
+                "metadata": {"name": name, "namespace": "kafka", "labels": {"strimzi.io/cluster": "events"}},
+                "spec": {"partitions": 6, "replicas": rep, "config": {"min.insync.replicas": m}}}
+    shown, fixd = topic(1), topic(2)
+    intro = ("Producers write to the topic `%s` of the cluster `events` with `acks=all`; %s, and writes must keep "
+             "succeeding while one broker is down. Does this `KafkaTopic` do that?") % (name, need)
+    why = ("`min.insync.replicas` is the minimum number of in-sync replicas (the leader included) required for an `acks=all` write to "
+           "succeed; with 1 a write succeeds with the leader alone, so a single replica can hold an acknowledged write. 2 of 3 replicas "
+           "meets the requirement and still tolerates one lost broker.")
+    oc = [{"type": "semantic_rule", "oracle": "config_rule", "rule": "V6",
+           "rules": [{"a": "min.insync.replicas", "op": "lt", "b": {"path": "spec.replicas"}},
+                     {"a": "min.insync.replicas", "op": "ge", "b": {"const": 2}}]}]
+    fl = [(["metadata", "name"], name), (["spec", "partitions"], 6)]
+    return [draft("V6", "wrong", "below_two:%s:%d" % (name, rep), intro, "KafkaTopic", dump(shown), why, fix=dump(fixd),
+                  struct=yaml_struct("KafkaTopic", "kafka.strimzi.io/v1", fl), oracle=oc,
+                  sources=anchors_of("V6", table) + [entry_source(cats, "min.insync.replicas", "topic"),
+                                                     line_source("isr_write_succeeds", "V6 min.insync.replicas is the write minimum")])]
 
 
 def r3_v7(table):
@@ -795,6 +822,10 @@ def r3_v7(table):
                          rules=MECH_RULES["V7"] + ["pdb.percent_rounds_up"]))
     return out
 
+
+# Ids of the revision-3 draws. Revision 4 changed the single-task fault (a new check) and redrew the min_isr fault, so these two
+# get new numbers (103, 104); the other draws keep theirs.
+R3_NUMBERS = {"V1": [101, 102], "V2": [103, 102], "V6": [104], "V7": [101, 102]}
 
 BUILDERS = {"V1": b_v1, "V2": b_v2, "V3": b_v3, "V4": b_v4, "V5": b_v5, "V6": b_v6, "V7": b_v7, "V8": b_v8}
 
@@ -966,12 +997,12 @@ def generate(catalogues_dir=None, catalogues_a3_dir=None, dedup=True, seed=SEED)
                     generate.dropped.append((it["id"], dd))
                     continue
             items.append(it)
-    r3 = {"V1": r3_v1(table), "V2": r3_v2(table), "V6": BUILDERS["V6"](random.Random("r3"), cats, table, fresh=r3_v6()),
+    r3 = {"V1": r3_v1(table), "V2": r3_v2(table), "V6": r3_v6(cats, table),
           "V7": r3_v7(table)}
     for m in ["V1", "V2", "V6", "V7"]:
         if not status[m][0]:
             continue
-        for k, d in enumerate(r3[m], 101):
+        for k, d in zip(R3_NUMBERS[m], r3[m]):
             d["extra"]["pair"] = FRESH_PAIR[m]
             it = build_item(d, k, cats, chash, chash_a3, ver="v3")
             if dedup:

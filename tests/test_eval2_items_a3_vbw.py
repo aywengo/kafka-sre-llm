@@ -268,7 +268,7 @@ class FixRound2(unittest.TestCase):
             self.assertEqual(len(self.r3(tpl)), n, tpl)
         for gone in ("a3-vbw_netpol_from-v3-001", "a3-vbw_netpol_from-v3-002", "a3-vbw_restart_annotation-v3-001",
                      "a3-vbw_restart_annotation-v3-002", "a3-vbw_pdb_no_eviction-v3-001", "a3-vbw_pdb_no_eviction-v3-002",
-                     "a3-vbw_min_isr_replicas-v2-002"):
+                     "a3-vbw_min_isr_replicas-v2-002", "a3-vbw_min_isr_replicas-v3-101", "a3-vbw_restart_annotation-v3-101"):
             self.assertNotIn(gone, ids)
         self.assertIn("a3-vbw_min_isr_replicas-v3-001", ids)   # the hidden control, unchanged
         self.assertEqual(len(self.items), 41)
@@ -337,16 +337,47 @@ class FixRound2(unittest.TestCase):
         self.assertTrue(self.run_oracle(c, self.fix_of(c)))                            # 25 % of 4 = 1
         self.assertFalse(self.run_oracle(c, pdb(c, {"maxUnavailable": "50%"})))
 
-    def test_r3_min_isr_five_replicas(self):
+    def test_r3_min_isr_below_two(self):
         w = self.r3("vbw_min_isr_replicas")[0]
         self.assertEqual(w["vbw"]["role"], "wrong")
+        self.assertTrue(w["id"].endswith("-v3-104"))
         self.assertTrue(self.run_oracle(w, self.fix_of(w)))
         d = sc.yaml.safe_load(self.fix_of(w))
-        self.assertEqual(d["spec"]["replicas"], 5)
-        d["spec"]["config"]["min.insync.replicas"] = 5
-        self.assertFalse(self.run_oracle(w, sc.yaml.safe_dump(d, sort_keys=False)))
+        self.assertEqual((d["spec"]["replicas"], d["spec"]["config"]["min.insync.replicas"]), (3, 2))
+        d["spec"]["config"]["min.insync.replicas"] = 1
+        self.assertFalse(self.run_oracle(w, sc.yaml.safe_dump(d, sort_keys=False)))     # the shown fault
         d["spec"]["config"]["min.insync.replicas"] = 3
-        self.assertTrue(self.run_oracle(w, sc.yaml.safe_dump(d, sort_keys=False)))   # another correct value
+        self.assertFalse(self.run_oracle(w, sc.yaml.safe_dump(d, sort_keys=False)))     # equal to replicas: one lost broker stops writes
+        d["spec"]["replicas"] = 4
+        d["spec"]["config"]["min.insync.replicas"] = 3
+        self.assertTrue(self.run_oracle(w, sc.yaml.safe_dump(d, sort_keys=False)))      # another correct pair
+        self.assertTrue(any(s["file"].endswith("topic_config.html") and s["line"] == 246 for s in w["sources"]))
+
+    def test_r3_restart_task_must_not_keep_the_restart_annotation(self):
+        w = next(i for i in self.r3("vbw_restart_annotation") if i["vbw"]["role"] == "wrong")
+        self.assertTrue(w["id"].endswith("-v3-103"))
+        self.assertIn("yaml_fields_absent", [c["type"] for c in w["checks"]])
+
+        def answer(anns):
+            d = sc.yaml.safe_load(self.fix_of(w))
+            d["metadata"]["annotations"] = anns
+            return "```yaml\n%s\n```\nANSWER: does not work" % sc.yaml.safe_dump(d, sort_keys=False)
+
+        def passes(text):
+            return all(r["pass"] for r in sc.run_checks(w, text, self.cats))
+        self.assertTrue(passes(answer({"strimzi.io/restart-task": "2"})))
+        self.assertFalse(passes(answer({"strimzi.io/restart": "true", "strimzi.io/restart-task": "2"})))
+        self.assertFalse(passes(answer({"strimzi.io/restart": "false", "strimzi.io/restart-task": "2"})))
+        self.assertFalse(passes(answer({"strimzi.io/restart": "true"})))
+
+    def test_min_isr_variant_ignores_the_replica_count(self):
+        import eval2_items_a3 as asm
+        mk = lambda fam, fc: {"kind": "valid_but_wrong", "template": "vbw_min_isr_replicas", "family": fam, "failure_class": fc}  # noqa: E731
+        k = asm.variant_key
+        self.assertEqual(k(mk("vbw_min_isr_replicas:orders:3", "valid_but_wrong")), k(mk("vbw_min_isr_replicas:ledger:5", "valid_but_wrong")))
+        self.assertNotEqual(k(mk("vbw_min_isr_replicas:orders:3", "valid_but_wrong")),
+                            k(mk("vbw_min_isr_replicas:below_two:telemetry:3", "valid_but_wrong")))
+        self.assertNotEqual(k(mk("vbw_min_isr_replicas:orders:3", "valid_but_wrong")), k(mk("vbw_min_isr_replicas:orders:3", "valid_control")))
 
     def test_v7_exactly_one_allowed(self):
         for it in self.of("vbw_pdb_no_eviction"):

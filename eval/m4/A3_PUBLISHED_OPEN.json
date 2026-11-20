@@ -369,12 +369,12 @@
     {
      "id": "a3-vbw_min_isr_replicas-v2-001",
      "question_sha256": "a43ce0ab47e97fda950ccfb934dd376455448d6b2fca1620b8cf0ab258e1ef21",
-     "variant": "vbw_min_isr_replicas:3|valid_but_wrong"
+     "variant": "vbw_min_isr_replicas|valid_but_wrong"
     },
     {
      "id": "a3-vbw_min_isr_replicas-v2-004",
      "question_sha256": "e6c7d4ebb4519a085297158c5c5ab01ed1cc14740d35c9e533bf39586a1b888c",
-     "variant": "vbw_min_isr_replicas:3|valid_control"
+     "variant": "vbw_min_isr_replicas|valid_control"
     },
     {
      "id": "a3-vbw_netpol_from-v2-002",
@@ -517,6 +517,401 @@
     {
      "id": "a3-nc_old_version-102",
      "question_sha256": "f5a571c796d5712829e0b34d0bf14e65d96583b0ddb292bacd7c6b4bc61f28af"
+    },
+    {
+     "id": "a3-nc_old_version-107",
+     "question_sha256": "66bea4dae7246ee83c6546dc69832d34879cca19e836daefda88cd34d965f934"
+    },
+    {
+     "id": "a3-nc_old_version-108",
+     "question_sha256": "13daf51595868a567c5f210bc9fdcc2fc43a8ff966b8bc83d64a07220c932523"
+    },
+    {
+     "id": "a3-nc_other_product-103",
+     "question_sha256": "1df54c480bab23a9cb6b51c09fc66a2dd0f6651842c154229a4b652f5d6f7677"
+    },
+    {
+     "id": "a3-nc_other_product-104",
+     "question_sha256": "5c2030342883bc02ebb0cbd0a46b886cac58f3c30a27f98ba7798bb3641b2564"
+    },
+    {
+     "id": "a3-nc_other_product-107",
+     "question_sha256": "4b1495a272fcb5b86d5a65c9124df23617bc3f0d8a911c333aec322af6be41d7"
+    },
+    {
+     "id": "a3-nc_other_product-108",
+     "question_sha256": "5f9b29c52bfd06a9708e5502d9614c37a14422039ea7e89e5066f7855f0c094c"
+    }
+   ],
+   "path": "eval/m4/open/tier_a3.jsonl"
+  },
+  {
+   "commit": "00aefe4",
+   "generator": "eval2_items_a3/3",
+   "items": [
+    {
+     "id": "a3-client_admin_create_topic-v2-001",
+     "question_sha256": "88da003ba032170b9291d410c7f365dfc62f28db7f79cf36c67683769da1373b"
+    },
+    {
+     "id": "a3-client_admin_create_topic-v2-002",
+     "question_sha256": "6facf920702883972d0a23467a71e0eec3353637f9ddabf35e6ec93d08a3cd71"
+    },
+    {
+     "id": "a3-client_consumer_assign_seek-v2-001",
+     "question_sha256": "0bc8ec6ea3e8a6341982930a1bd0398330e8c9500cb603d7f7380eb48b5d08cd"
+    },
+    {
+     "id": "a3-client_consumer_assign_seek-v2-002",
+     "question_sha256": "8ad19315341509ab9451be5e6eb875eb6af3e9714a2985413997aae7b5e9502e"
+    },
+    {
+     "id": "a3-client_consumer_commit_async-v2-001",
+     "question_sha256": "c07c1bf1bc161c2e9b46877e740f87df4ba6963014f7c5e949da935f469397fd"
+    },
+    {
+     "id": "a3-client_consumer_commit_async-v2-002",
+     "question_sha256": "a28ff50ce330e8a9e2da150b3dcbed1edc90daf85b33aff037727b4205e154ac"
+    },
+    {
+     "id": "a3-client_consumer_commit_sync-v2-001",
+     "question_sha256": "1247f7816f2ff43a18cec9cf134f6cc0ecd96eaf70ccd46813d47c8f8d0e4bfd"
+    },
+    {
+     "id": "a3-client_consumer_rebalance_listener-v2-001",
+     "question_sha256": "f39cf34d62a5db5428de39988dba76c79d0ea4aad8759393d7ae408c635eb237"
+    },
+    {
+     "id": "a3-client_consumer_rebalance_listener-v2-002",
+     "question_sha256": "135269476ec25eb807dad72b89bea3e6101bba524f3a4c008c255c0b1cfc46ab"
+    },
+    {
+     "id": "a3-client_producer_callback-v2-001",
+     "question_sha256": "839f69faaa699101305a7d227870a7aedd4fb34f0d938463f8f65b0a849742e8"
+    },
+    {
+     "id": "a3-client_producer_idempotent-v2-001",
+     "question_sha256": "f21466649bca0202f6830ce4c2a2a36567cb8c8c53f9967feb715b98a8ae1898"
+    },
+    {
+     "id": "a3-client_producer_idempotent-v2-002",
+     "question_sha256": "61b3fc2a8bed6441461e06a0e64fd1c47f30a22b30daee9377ede093c2488297"
+    },
+    {
+     "id": "a3-client_producer_transaction-v2-002",
+     "question_sha256": "0d19a6efa1da4c730b866112e7f66763ee70c0694d2e00e35ff76104c3656f14"
+    },
+    {
+     "id": "a3-client_py_consumer_commit-v3-001",
+     "question_sha256": "3bed572f9121e61066125f768cacd890d13ee83ea46d09f85cbb694939ec7b5e"
+    },
+    {
+     "id": "a3-client_py_producer_idempotent-v2-001",
+     "question_sha256": "65b90e4c5b782e0bb168e77d68c9df96a19634b54ca9fc461447e1c6cbf42979"
+    },
+    {
+     "id": "a3-client_py_producer_idempotent-v2-002",
+     "question_sha256": "6e21c946bf25cced4744c85ca12ebfd3a184fc2eedbe54d9c4cb56194cc25841"
+    },
+    {
+     "id": "a3-client_py_producer_transaction-v2-002",
+     "question_sha256": "0bb8b9282fb27e48e863befd0d9581e5a06ef4b616de46f9387cb6d007bd1815"
+    },
+    {
+     "id": "a3-client_streams_uppercase-v2-002",
+     "question_sha256": "3e64fd2b6b48cd6b519e6bc525c3bdaebdaf5202b704a8156a8a9e81ade6c132"
+    },
+    {
+     "id": "a3-vbw_default_value-v2-001",
+     "question_sha256": "8dddb4352933723908096a9f04c9e9ec7af0be7476a7ef76d9deb82401a96f4e",
+     "variant": "vbw_default_value:delete.retention.ms|valid_but_wrong"
+    },
+    {
+     "id": "a3-vbw_default_value-v2-002",
+     "question_sha256": "b95c000338fdd2188239001d4a9861dda1e6b1f0e810f6e194514ce008978fa3",
+     "variant": "vbw_default_value:retention.ms|valid_but_wrong"
+    },
+    {
+     "id": "a3-vbw_default_value-v2-003",
+     "question_sha256": "7290c8a108bcd40685c36251af7a8ff750acc1b0513563b33548b661e4f2a507",
+     "variant": "vbw_default_value:min.cleanable.dirty.ratio|valid_but_wrong"
+    },
+    {
+     "id": "a3-vbw_default_value-v2-004",
+     "question_sha256": "5fdc73f411e87ec40fb8015b38a3cac71f236262efb4c719c999fe616b0d426e",
+     "variant": "vbw_default_value:max.message.bytes|valid_control"
+    },
+    {
+     "id": "a3-vbw_forbidden_key-v2-001",
+     "question_sha256": "cdef3e6c3cf40199820e4328f3ba7cad951f3b169de7fc90e4b4a7fbc3dce0a9",
+     "variant": "vbw_forbidden_key:Kafka:log.dirs|valid_but_wrong"
+    },
+    {
+     "id": "a3-vbw_forbidden_key-v2-005",
+     "question_sha256": "caa406830189976e82c22b793d40e0acbbd9b46b0e6b68211d6faa99da8fc998",
+     "variant": "vbw_forbidden_key:KafkaConnector:connector.plugin.version|valid_but_wrong"
+    },
+    {
+     "id": "a3-vbw_forbidden_key-v2-006",
+     "question_sha256": "b799507ac8b22d9a96bd9ac2370dac693bbd411e9a451aaf489ec77c7798dc70",
+     "variant": "vbw_forbidden_key:KafkaMirrorMaker2:tasks.max|valid_but_wrong"
+    },
+    {
+     "id": "a3-vbw_forbidden_key-v2-007",
+     "question_sha256": "a3c0415d20de74a99a444921685e7f4449f2f3052b08f8f6a80c8ee0a6567fef",
+     "variant": "vbw_forbidden_key:Kafka:cruise.control.metrics.topic.min.insync.replicas|valid_control"
+    },
+    {
+     "id": "a3-vbw_heartbeat_session-v2-002",
+     "question_sha256": "bac963b0d64ad79bcdbc499c8dd08d9864df00259c6e09b4a0d260a024c82e57",
+     "variant": "vbw_heartbeat_session:above_third|valid_but_wrong"
+    },
+    {
+     "id": "a3-vbw_heartbeat_session-v2-003",
+     "question_sha256": "e670ba12941c2bb09b4aca0d739da5134cf38efbc965afb48b12c7a6966e4201",
+     "variant": "vbw_heartbeat_session:session_default|valid_but_wrong"
+    },
+    {
+     "id": "a3-vbw_heartbeat_session-v3-001",
+     "question_sha256": "715783bd5e5fd9dd18111b65306c804cfc3478a5c92db332f363fdd27d66e862",
+     "variant": "vbw_heartbeat_session:control|valid_control"
+    },
+    {
+     "id": "a3-vbw_min_isr_replicas-v2-001",
+     "question_sha256": "a43ce0ab47e97fda950ccfb934dd376455448d6b2fca1620b8cf0ab258e1ef21",
+     "variant": "vbw_min_isr_replicas|valid_but_wrong"
+    },
+    {
+     "id": "a3-vbw_min_isr_replicas-v2-004",
+     "question_sha256": "e6c7d4ebb4519a085297158c5c5ab01ed1cc14740d35c9e533bf39586a1b888c",
+     "variant": "vbw_min_isr_replicas|valid_control"
+    },
+    {
+     "id": "a3-vbw_netpol_from-v2-001",
+     "question_sha256": "3dc0cb4369718b985ce51e4f1fc9281a1fcdadae9eb878dc5947c5c3726e6a04",
+     "variant": "vbw_netpol_from:pod_only|valid_but_wrong"
+    },
+    {
+     "id": "a3-vbw_netpol_from-v2-002",
+     "question_sha256": "1b410dc3f511140a3264862d3bd75460c41446e2a1a700b20cf0ca6bf3e3db6d",
+     "variant": "vbw_netpol_from:or_entries|valid_but_wrong"
+    },
+    {
+     "id": "a3-vbw_netpol_from-v2-003",
+     "question_sha256": "7d9e321bfdc1cbbcc4f7f5f83708107bdb90b576c069ba6786977ab16c431791",
+     "variant": "vbw_netpol_from:ns_only|valid_but_wrong"
+    },
+    {
+     "id": "a3-vbw_netpol_from-v2-004",
+     "question_sha256": "d11498b9431d1387345b0b244f86b1186324f04a63621637043afcb0826e8b39",
+     "variant": "vbw_netpol_from:control|valid_control"
+    },
+    {
+     "id": "a3-vbw_pdb_no_eviction-v2-001",
+     "question_sha256": "7645ba6a7797de15804a191de4388204f75dec41f36ce00f4ce47deaf5a456b6",
+     "variant": "vbw_pdb_no_eviction:max0|valid_but_wrong"
+    },
+    {
+     "id": "a3-vbw_pdb_no_eviction-v2-002",
+     "question_sha256": "2ec711943349824f829743bcaeae50553eeacd998fd0ce5ee6187069203af1d2",
+     "variant": "vbw_pdb_no_eviction:min100|valid_but_wrong"
+    },
+    {
+     "id": "a3-vbw_pdb_no_eviction-v2-003",
+     "question_sha256": "88fdf602659778989fdde1cf9deea0f7310b9f9046d259bd9743d157f9448f21",
+     "variant": "vbw_pdb_no_eviction:minall|valid_but_wrong"
+    },
+    {
+     "id": "a3-vbw_pdb_no_eviction-v2-004",
+     "question_sha256": "33abb0fcf409d53a8aeef5adf35d98f5cceecbcf9cedcdaedb3dac03c146e0bd",
+     "variant": "vbw_pdb_no_eviction:control|valid_control"
+    },
+    {
+     "id": "a3-vbw_restart_annotation-v2-001",
+     "question_sha256": "9a03d8d502f0c5ee82ba574037d9e812d6499af460d8b6ef7e497462720f2dca",
+     "variant": "vbw_restart_annotation:KafkaConnector|valid_but_wrong"
+    },
+    {
+     "id": "a3-vbw_restart_annotation-v2-002",
+     "question_sha256": "d1c563ffd30606a0ca82b575d20db7921ffc5be6009a766cff8a816ae2dc1af3",
+     "variant": "vbw_restart_annotation:KafkaConnector|valid_but_wrong"
+    },
+    {
+     "id": "a3-vbw_restart_annotation-v2-003",
+     "question_sha256": "c7e26aa6fcddc258c4e5f42a65505f027925332169b7e7a2a9d741c431a25d4f",
+     "variant": "vbw_restart_annotation:KafkaMirrorMaker2|valid_but_wrong"
+    },
+    {
+     "id": "a3-vbw_restart_annotation-v2-004",
+     "question_sha256": "b8b8d15e63446b12b726d39149df9c06e509f4e197140261ff000f0695cb1175",
+     "variant": "vbw_restart_annotation:KafkaConnector|valid_control"
+    },
+    {
+     "id": "a3-order_app_reset-001",
+     "question_sha256": "643e1e981cb12344ad4aaa71930c0b366245960d98b9fb2b426c3da51b8dd2e3",
+     "variant": "order_app_reset:kafka-streams-application-reset"
+    },
+    {
+     "id": "a3-order_app_reset-002",
+     "question_sha256": "109a4dab308bd12f327f2f20d03fc2a1cee9696aca1a636f35f83148e4c58d6d",
+     "variant": "order_app_reset:kafka-streams-application-reset"
+    },
+    {
+     "id": "a3-order_argo_sync-101",
+     "question_sha256": "8bb86bb242610509a317770c74ea25b1d61b7ecad654f65b8db363a31f611fdc",
+     "variant": "order_argo_sync:argocd-app-sync"
+    },
+    {
+     "id": "a3-order_argo_sync-102",
+     "question_sha256": "10c2e0b492394db591613f60b3e0994c6a104fee9fc7c12b3507824aff5f51e9",
+     "variant": "order_argo_sync:argocd-app-sync"
+    },
+    {
+     "id": "a3-order_cg_reset-001",
+     "question_sha256": "9bfd4fd135b8759b5ce83144eb0cda55d790214616e63a85b4f8a0b52ce908fc",
+     "variant": "order_cg_reset:kafka-consumer-groups:earliest"
+    },
+    {
+     "id": "a3-order_reassign-401",
+     "question_sha256": "29a4547b110603561d602c530f8dc76f28a4c9663501ad90b9c7e41147ac30c4",
+     "variant": "order_reassign:kafka-reassign-partitions:plain"
+    },
+    {
+     "id": "a3-order_reassign-402",
+     "question_sha256": "c337a9d915433fee2be035791deb4e8f384f5e64f0b263becc61703ddbeafeae",
+     "variant": "order_reassign:kafka-reassign-partitions:throttle"
+    },
+    {
+     "id": "a3-order_sg_delete_offsets-301",
+     "question_sha256": "0105a25e3548706b4787b4b1b69cd21780b9a49541bd215949a17cc13ede4f60",
+     "variant": "order_sg_delete_offsets:kafka-streams-groups:delete-offsets"
+    },
+    {
+     "id": "a3-order_sg_reset-001",
+     "question_sha256": "73746a5e09047298789f2a53678fcbd8b9ecc32569853089d6966f2d37c28cd6",
+     "variant": "order_sg_reset:kafka-streams-groups:earliest"
+    },
+    {
+     "id": "a3-order_sg_reset-003",
+     "question_sha256": "1c20f7b8e57520c86b29d5ca0beef10b65ea800c1c903b37906fa3b53ad8cc69",
+     "variant": "order_sg_reset:kafka-streams-groups:shift"
+    },
+    {
+     "id": "a3-order_shg_reset-001",
+     "question_sha256": "a63cf08de844ce2c8e81b0f95b0b84685db57804158a925d441bab9ac19a7ad2",
+     "variant": "order_shg_reset:kafka-share-groups"
+    },
+    {
+     "id": "a3-size_disk_rf-001",
+     "question_sha256": "411a3e5066888a1168d1078b763c47ea677933e13a522f4d02c7577c9d3ea04a"
+    },
+    {
+     "id": "a3-size_disk_rf-003",
+     "question_sha256": "3b030cc19b91dcef17137c8dd376127c6e7b62cee1c559242937a4c952ee4652"
+    },
+    {
+     "id": "a3-size_follower_traffic-001",
+     "question_sha256": "7e948063d9cb077a042460995899f4b40de5abeec642d01863ce737356d0c9d2"
+    },
+    {
+     "id": "a3-size_follower_traffic-002",
+     "question_sha256": "537684bb636ab564cdc9dabc4f83d00a74a6011c2a77738629a8309a6c0c2829"
+    },
+    {
+     "id": "a3-size_heartbeat-001",
+     "question_sha256": "5d5737a431c7d9bfc4e041f78571305c9546f5272830b748cd58efeda9985c56"
+    },
+    {
+     "id": "a3-size_heartbeat-002",
+     "question_sha256": "0ec2f13433b10e34f5d160b4ce236ecda7e409dacdadb213021a603c6d783c37"
+    },
+    {
+     "id": "a3-size_heartbeat-003",
+     "question_sha256": "91b23dbf8cc72a42899b1542c6315c92d8745359573ec7410c954dbcd631a4de"
+    },
+    {
+     "id": "a3-size_k8s_quantity-001",
+     "question_sha256": "d0a458f51a190cf1f0f790df0a6b77d8e759b9be3fed7f892bd50438685d6dfb"
+    },
+    {
+     "id": "a3-size_k8s_quantity-002",
+     "question_sha256": "3090a801f783256b7eb75abe809cc8259b99aa9dc386a37f173c6f6f8ff8ab30"
+    },
+    {
+     "id": "a3-size_page_cache-102",
+     "question_sha256": "66c1e39019fe97dcb8b3ce674cd58195e69a4717073e97040213758b4294bff6"
+    },
+    {
+     "id": "a3-size_page_cache-103",
+     "question_sha256": "02d38bb5d4badfaa45d147fb408d675a2592e152a33c0e05643a99936119659a"
+    },
+    {
+     "id": "a3-size_retention_ms-001",
+     "question_sha256": "083c43ff6858dabb6b88b2d0ff53cc62a7fbcdf42da5b52c4eab681f9e0c290a"
+    },
+    {
+     "id": "a3-size_retention_ms-002",
+     "question_sha256": "49982693010e80f776489ed1cafc459be9c6679ff053b46140aa5b7425083bf9"
+    },
+    {
+     "id": "a3-size_retention_ms-003",
+     "question_sha256": "821a7bf5df9f8d53fd8dbcc596026a03bc7d275bcfd2289ad231addc87023bd1"
+    },
+    {
+     "id": "a3-size_streams_cache-001",
+     "question_sha256": "9da00cdc5a783f162771d0598c346d66bb9d24949a925e29f3961d2dcc7a0136"
+    },
+    {
+     "id": "a3-size_streams_cache-003",
+     "question_sha256": "f509ff845db4049da9094690802802b5d22a3b47548181df2707d7588e25b641"
+    },
+    {
+     "id": "a3-size_topic_retention-002",
+     "question_sha256": "bd97a707c9ef37697decf17b14c3c3abf570333613e81672e48d572e8b92520e"
+    },
+    {
+     "id": "a3-size_topic_retention-003",
+     "question_sha256": "61e2d045abc9492aa759544a77ecf7d8a5297eb60c9414e5b9606a7cf574f8b8"
+    },
+    {
+     "id": "a3-nc_deployment-103",
+     "question_sha256": "2c398d8bf6c21e230265a02df1e2f47567f06978e53be2f602440b6ba43a31d7"
+    },
+    {
+     "id": "a3-nc_deployment-104",
+     "question_sha256": "52d690f724d44eb32bc0f2cd6db3d9b68fa3d9f58b8babd26b6aa82620c020fb"
+    },
+    {
+     "id": "a3-nc_deployment-105",
+     "question_sha256": "d37344448d99772f7201d00e51e2251782ad79b0fa871e131b89d9c3cdb41543"
+    },
+    {
+     "id": "a3-nc_deployment-106",
+     "question_sha256": "4b8fa9c9438345729412fe1d56ed0e14259c36eb47bee0a9405aa0a9dda4eced"
+    },
+    {
+     "id": "a3-nc_deployment-107",
+     "question_sha256": "4c118ef2a7f42298efcce8af1eac352c3cc2f68aa8bd9d9ea2a97d42d69f8c04"
+    },
+    {
+     "id": "a3-nc_deployment-108",
+     "question_sha256": "71aa18487201f77aed55cc3521d82a0b97b56c0779a9de2a8e98916894fdba35"
+    },
+    {
+     "id": "a3-nc_old_version-101",
+     "question_sha256": "384c1178d54ddef0426e7f1263b0534004e4311d5c39f5161f4d8b2869d7eec0"
+    },
+    {
+     "id": "a3-nc_old_version-102",
+     "question_sha256": "f5a571c796d5712829e0b34d0bf14e65d96583b0ddb292bacd7c6b4bc61f28af"
+    },
+    {
+     "id": "a3-nc_old_version-105",
+     "question_sha256": "9912795c13d23ac9561ce04beabf8d18374fe9ea800782774b701b8a44aeab85"
+    },
+    {
+     "id": "a3-nc_old_version-106",
+     "question_sha256": "0ecb9e2c394dd69afb304093acc54332325ac525989f265d96eb565f207c4299"
     },
     {
      "id": "a3-nc_old_version-107",

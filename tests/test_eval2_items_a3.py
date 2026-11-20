@@ -262,7 +262,7 @@ class ExposureAndSplit(unittest.TestCase):
         self.assertEqual(m["split"], "by publication")
         self.assertEqual(m["published_open"]["path"], asm.PUBLISHED_PATH)
         self.assertEqual(m["published_open"]["sha256"], asm.sha(asm.record_text(built()["published"].record)))
-        self.assertEqual(m["published_open"]["versions"], ["eval2_items_a3/1", "eval2_items_a3/2"])
+        self.assertEqual(m["published_open"]["versions"], ["eval2_items_a3/1", "eval2_items_a3/2", "eval2_items_a3/3"])
 
     def test_each_kind_has_enough_items_and_families_on_each_side(self):
         r = built()
@@ -351,9 +351,12 @@ class SharedVariants(unittest.TestCase):
         self.assertEqual(m["total"], sum(m["per_template"].values()))
         self.assertEqual(m["total"], sum(1 for i in r["hidden"] if i.get("shares_variant_with_published")))
         # tagged, not moved: the split is the one by publication
-        self.assertEqual(asm.manifest_of(r)["revision"]["number"], 3)
-        # revision 3: no hidden valid-but-wrong item shares a published variant any more (the safe_order tags stay)
-        self.assertNotIn("valid_but_wrong", m["per_kind"])
+        self.assertEqual(asm.manifest_of(r)["revision"]["number"], 4)
+        # revision 4: a hidden valid-but-wrong item with a published variant is a "works" control only (a control is by nature the
+        # same variant); every hidden fault has a variant that was never published (the safe_order tags stay)
+        for i in r["hidden"]:
+            if i["kind"] == "valid_but_wrong" and i.get("shares_variant_with_published"):
+                self.assertEqual(i["failure_class"], "valid_control", i["id"])
         self.assertEqual(m["per_kind"].get("safe_order"), 5)
 
     def test_the_record_carries_the_variant_of_every_published_vbw_and_order_item(self):
@@ -379,9 +382,9 @@ class PublishedOpenFiles(unittest.TestCase):
     def test_the_record_is_the_hash_list_of_both_open_files(self):
         rows = self.git_rows()
         rec = json.loads((ROOT / asm.PUBLISHED_PATH).read_text())
-        self.assertEqual([v["generator"] for v in rec["versions"]], ["eval2_items_a3/1", "eval2_items_a3/2"])
-        for v, part in zip(rec["versions"], rows):
-            self.assertEqual(len(part), 60)
+        self.assertEqual([v["generator"] for v in rec["versions"]], ["eval2_items_a3/1", "eval2_items_a3/2", "eval2_items_a3/3"])
+        for v, part, n in zip(rec["versions"], rows, (60, 60, 88)):
+            self.assertEqual(len(part), n)
             self.assertEqual([(i["id"], i["question_sha256"]) for i in v["items"]], [(r["id"], asm.q_sha(r["question"])) for r in part])
         self.assertEqual((ROOT / asm.PUBLISHED_PATH).read_text(), asm.record_text(asm.published_record()))   # the file is what the code writes
         self.assertNotIn(str(Path.home()), (ROOT / asm.PUBLISHED_PATH).read_text())

@@ -46,10 +46,11 @@ import eval2  # noqa: E402
 import eval2_items_a1 as a1  # noqa: E402
 
 VERSION = "eval2_items_a3/3"
-REVISION = {"number": 3, "reason": "Owner's decision L7 (2026-11-20): the hidden valid-but-wrong items whose fault or control variant was published "
-                                   "in an open file under other resource names (netpol, pdb, restart, min_isr_replicas) are redrawn with variants "
-                                   "never published, built from the pinned sources (new ids -v3-1NN); revision 2 (order_reassign references, "
-                                   "shares_variant_with_published tag) stays; the safe_order tags stay"}
+REVISION = {"number": 4, "reason": "independent check of revision 3: the single-task restart item gets a yaml_fields_absent check on strimzi.io/restart "
+                                   "(new id -v3-103); the hidden min_isr fault is redrawn as min.insync.replicas below 2 (new id -v3-104) and the "
+                                   "variant key of that template ignores the replica count; the published record now also holds the open file of "
+                                   "this version (00aefe4) and every hidden item with a variant in it is tagged; revision 3 (hidden valid-but-wrong "
+                                   "items with published variants redrawn, L7) and revision 2 stay"}
 SEED = "m4-a3-3"          # exposure draw of version 3 (version 1 used m4-a3-1, version 2 m4-a3-2)
 SPLIT_SEED = 20261119    # the split draw of version 2: not used for the a3 split any more (publication decides), kept for the record
 OLD_SPLIT_SEED = 20261118  # the seed of the 496: only for the proof that the 496 do not move
@@ -58,7 +59,9 @@ REPLACES = [{"generator": "eval2_items_a3/1", "items_sha256": "d425cdada882b81d1
 PUBLISHED_PATH = "eval/m4/A3_PUBLISHED_OPEN.json"
 # the open files of the earlier versions: (generator version, commit, path in that commit)
 PUBLISHED_SOURCES = [("eval2_items_a3/1", "584fe6e", "eval/m4/open/tier_a3.jsonl"),
-                     ("eval2_items_a3/2", "36dad96", "eval/m4/open/tier_a3.jsonl")]
+                     ("eval2_items_a3/2", "36dad96", "eval/m4/open/tier_a3.jsonl"),
+                     # revision 4: the open file of this version as committed with revision 3 (the open file does not change)
+                     ("eval2_items_a3/3", "00aefe4", "eval/m4/open/tier_a3.jsonl")]
 # An item is the same as a published one when its question has the same token set up to LEAK_JACCARD (a prefix, a
 # re-ordering, one changed word in a long question), when the normalised texts are equal, or when it is the same drawn
 # entry (family). Parameter variants of one template (another topic name, another number) are other items: the thresholds
@@ -205,6 +208,11 @@ def variant_key(it):
     if it["kind"] not in ("valid_but_wrong", "safe_order"):
         return None
     seg = it["family"].split(":")
+    if it["template"] == "vbw_min_isr_replicas":
+        # revision 4: the replica count is not part of the variant; the fault is. Version-2 families are "tpl:name:replicas" (the
+        # fault `min.insync.replicas` equal to `replicas`), a later fault carries its label: "tpl:fault:name:replicas".
+        seg = seg[:2] if len(seg) == 4 else seg[:1]
+        return ":".join(seg) + "|" + it["failure_class"]
     i = RESOURCE_SEGMENT.get(it["template"])
     if i is not None and i < len(seg):
         del seg[i]
@@ -838,8 +846,9 @@ def publication_lines(r):
     fresh = [i for i in items if FRESH_ID.search(i["id"]) and i["template"] not in CHANGED_NOT_FRESH]
     fresh_open = [i for i in fresh if i in op]
     new_open = [i for i in op if q_sha(i["question"]) not in v2_hashes]
-    out.append("published earlier (open files of %s): %d + %d items; this build: open %d, hidden %d" % (
-        " and ".join(v["generator"] for v in pub.record["versions"]), *[len(v["items"]) for v in pub.record["versions"]], len(op), len(hd)))
+    out.append("published earlier (open files of %s): %s items; this build: open %d, hidden %d" % (
+        " and ".join(v["generator"] for v in pub.record["versions"]), " + ".join(str(len(v["items"])) for v in pub.record["versions"]),
+        len(op), len(hd)))
     out.append("open items that were not in the version-2 open file: %d (of them new draws %d, so %d were version-2 hidden items moved "
                "open because a published item has the same question, entry or words)" % (len(new_open), len(fresh_open), len(new_open) - len(fresh_open)))
     out.append("new draws (ids -v3- and 2xx) per template, all / hidden: %s" % (", ".join(

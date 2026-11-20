@@ -53,11 +53,11 @@
   "eval2_items_a3_gap.py": "f77c6e739de3d0503cee2698136965d8b47bd1b6fb58bf2a822b343dc909dbef",
   "eval2_items_a3_order.py": "166fc7877f65aae434181e3e7686902cf299ba2f1b58430133b4a98d6f40c809",
   "eval2_items_a3_sizing.py": "0c191218d123b04c1b06661563e537d363456a45f7fc4da8b0533ef071fdbe99",
-  "eval2_items_a3_vbw.py": "24731e75c34941b5c97a5355fae93d0c69e9492007e9a647ecd945357002e757",
+  "eval2_items_a3_vbw.py": "7d773d918cc610a0a86262dd977012754ccb7553cd69138f92c17e78323a1947",
   "javacheck/ListCalls.java": "4c4402ebf01d630263de0389fa6d7b0f251c3dcca78b7c1ae6d4da85b46cd967"
  },
  "grouping": "items with `pair` by it; all other items by their own family",
- "items_sha256": "e01bc96ac66d365a6cd77fdbf6e3316c61102a6c739e24d06bf74a25f9afc8e5",
+ "items_sha256": "54f9f448132696fcf67273e9669e5314f39b30884c3b36586245179093fae4ab",
  "items_total": 148,
  "kinds_missing": [],
  "near_duplicate_limit": "items of one template are parameter variants of one wording: the near-duplicate thresholds (Jaccard 0.5, containment 0.8) cannot hold between a hidden item and an open item of the same template; hidden items differ from every published item by the rule above",
@@ -66,8 +66,8 @@
    "items": 60,
    "note": "encrypted with a random salt: the ciphertext differs on every run; the plaintext (jsonl, sort_keys, in the order of the items) is reproduced exactly",
    "path": "eval/hidden/tier_a3.jsonl.enc",
-   "plaintext_sha256": "e4df9171772c03629a576f11440da2409a307370e29a445645c366cb2e7b7286",
-   "sha256": "16383dc4581d44b9d9f806d55af8a0d7a850e490dbb65ced6eb8a6750c15202a"
+   "plaintext_sha256": "6216472c4451c9beb14f9c1af55599c0834764af47d2b7f07b9f23a4ab012d65",
+   "sha256": "7eb286376f6fd7658e739cb109f5eb07ee697a24c91bf904049a0ba2a86c22f7"
   },
   "open": {
    "items": 88,
@@ -107,18 +107,16 @@
   "items_sha256": "5adc9cb4b555b3e3aea168fd213f86c2939d2fa321799b31514762b4e2cd2f64"
  },
  "published_matches": {
-  "none": 2,
-  "same entry": 9,
-  "same question": 76,
-  "same words": 1
+  "same question": 88
  },
  "published_open": {
   "leak_jaccard": 0.97,
   "path": "eval/m4/A3_PUBLISHED_OPEN.json",
-  "sha256": "8ea809ad1c944b6eb0b1e06075816c9e5ac46e532be3b3f9be19355bf77941b6",
+  "sha256": "97bd22a062f3e6d3c790c65c455a41c7927121e9ca159766172855d5a3764c3e",
   "versions": [
    "eval2_items_a3/1",
-   "eval2_items_a3/2"
+   "eval2_items_a3/2",
+   "eval2_items_a3/3"
   ]
  },
  "replaces": [
@@ -132,23 +130,26 @@
   }
  ],
  "revision": {
-  "number": 3,
-  "reason": "Owner's decision L7 (2026-11-20): the hidden valid-but-wrong items whose fault or control variant was published in an open file under other resource names (netpol, pdb, restart, min_isr_replicas) are redrawn with variants never published, built from the pinned sources (new ids -v3-1NN); revision 2 (order_reassign references, shares_variant_with_published tag) stays; the safe_order tags stay"
+  "number": 4,
+  "reason": "independent check of revision 3: the single-task restart item gets a yaml_fields_absent check on strimzi.io/restart (new id -v3-103); the hidden min_isr fault is redrawn as min.insync.replicas below 2 (new id -v3-104) and the variant key of that template ignores the replica count; the published record now also holds the open file of this version (00aefe4) and every hidden item with a variant in it is tagged; revision 3 (hidden valid-but-wrong items with published variants redrawn, L7) and revision 2 stay"
  },
  "rule": "groups on one side (an item and its control, a task and its restatement, by `pair`); a group with an item that is in an open file of an earlier version (same normalised question, same drawn entry, or the same words: Jaccard of the token sets of at least leak_jaccard) goes open as a whole; every other group is hidden, so the hidden side holds only items that were never open (eval2_items_a3.split_by_publication)",
  "shares_variant_with_published": {
   "per_kind": {
-   "safe_order": 5
+   "safe_order": 5,
+   "valid_but_wrong": 2
   },
   "per_template": {
    "order_app_reset": 1,
    "order_argo_sync": 1,
    "order_reassign": 1,
    "order_sg_delete_offsets": 1,
-   "order_shg_reset": 1
+   "order_shg_reset": 1,
+   "vbw_heartbeat_session": 1,
+   "vbw_min_isr_replicas": 1
   },
   "rule": "hidden items whose `variant` (the entry without resource names: family label minus its resource segment, for valid_but_wrong plus the failure class; eval2_items_a3.variant_key) equals that of an item of A3_PUBLISHED_OPEN.json; tagged `shares_variant_with_published: true`, not moved; hidden reports give the total with and without them",
-  "total": 5
+  "total": 7
  },
  "split": "by publication",
  "templates_one_side": []
