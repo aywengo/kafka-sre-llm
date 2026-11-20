@@ -8,13 +8,16 @@
 # Stages, each resumable by its output files, a line per item, a done marker at the end:
 #   PREPARE  the manifest runs/m4/E2_MANIFEST.json (index, reranker, catalogues, golden prompts, scorer, identifier check, judge settings,
 #            revise version and prompt hash, checker version, chunks file, the hidden files by sha256 of the .enc files, SPLIT*.json, server
-#            version, model names as the server lists them). Written once, never overwritten; the hidden gate compares with it.
+#            version, model names as the server lists them; the chunks file and the S6 A1 answers of gate G are hashed too). Written once, never overwritten; the hidden gate compares with it.
 #   G        byte-identity gate: the 60 open smoke items in Q4D against the stored A1 answers of S6 (work/m4/s6/ans_A1.jsonl).
 #   O        open rehearsal: the 88 open a3 items in Q4D; P0 (closed book) on the smoke set (60 mechanical, the 24 open judged scenarios of
 #            eval/m4/pilot2); scored, identifier check, judged (DeepSeek, 2 passes).
+#   (shape)  before the gate: `m4_e2_manifest.py shape` on the hidden judged and mechanical files: key names and counts only, what the answer step,
+#            the judge, the bundles and the scorer read, a stub run of each on the real files (temporary .enc files, removed).
 #   (gate)   the hidden gate, before the first hidden item of every launch: tests and verify pass, clean tree, commit equals the manifest's,
 #            every manifest hash matches, ledger rows 1 and 2 present with a decision rule (the chain reads the ledger, never writes it),
-#            the hidden files hold 245, 60, 24 and 36 rows, G and O passed, no plain-text file with a hidden id under the work folder.
+#            the hidden files hold 245, 60, 24 and 36 rows, G and O passed, no plain-text file with a hidden id or hidden text under the work folder,
+#            this run's logs and the heartbeat.
 #   H1       Q4D and Q4S (packs replayed from Q4D) on the hidden judged 60; R1 on the Q4D answers (R2 only with --r2); the blind bundles of
 #            the sealed reading (default and strict; default only is refused, see --reading); the marker "readings_ready".
 #   H2       Q4D, Q4S and P0 on the hidden mechanical 305 (245 + 60 a3); P0 on the hidden judged 60.
@@ -118,11 +121,18 @@ api() { if [ $DRY = yes ]; then case $1 in /v1/models) cat $W/models.json;; *) c
 busy() { api /api/status | python3 -c 'import sys,json; d=json.load(sys.stdin); print(int(d.get("active_requests",1))+int(d.get("waiting_requests",0)))' 2>/dev/null || echo 1; }
 loaded_list() { api /api/status | python3 -c 'import sys,json; print(" ".join(json.load(sys.stdin).get("loaded_models") or []))' 2>/dev/null || echo "status-unreadable"; }
 idle() { n=0; until [ "$(busy)" = "0" ]; do sleep $SLEEP; n=$((n+1)); [ $n -lt $WAITN ] || fail "server still busy after 60 min"; done; }
-unload_now() { # one of our models; only when no request is active or waiting
+unload_now() { # one of our models; only when no request is active or waiting; the server's answer is checked and logged
   idle
-  if [ $DRY = yes ]; then $PYH fake-status --file $FAKE unload "$1"
-  else curl -s -m 300 -X POST -H "Authorization: Bearer $OMLX_API_KEY" "$BASE/admin/api/models/$1/unload" > /dev/null; fi
-  hb "$N: unloaded $1 (no active or waiting requests)"; }
+  if [ $DRY = yes ]; then $PYH fake-status --file $FAKE unload "$1"; ucode=200; ubody="dry run: fake status edited"
+  else
+    uresp=$(curl -s -m 300 -w '\n%{http_code}' -X POST -H "Authorization: Bearer $OMLX_API_KEY" "$BASE/admin/api/models/$1/unload" 2>/dev/null) || uresp=""
+    ucode=$(printf '%s' "$uresp" | tail -n 1); ubody=$(printf '%s' "$uresp" | sed '$d' | tr '\n' ' ' | cut -c1-160 | sed 's/ *$//')
+    case $ucode in [0-9][0-9][0-9]) ;; *) ucode=000;; esac
+  fi
+  case $ucode in
+    2??) hb "$N: unloaded $1 (no active or waiting requests; the server answered $ucode: ${ubody:-no body})";;
+    *) hb "$N: unload of $1 FAILED (the server answered $ucode: ${ubody:-no body})" yes; fail "the unload of $1 was not accepted (the server answered $ucode)";;
+  esac; }
 unload() { case " $(loaded_list) " in *" $1 "*) unload_now $1;; esac; }
 simulate_load() { [ $DRY = no ] || $PYH fake-status --file $FAKE load "$1"; }   # a dry run: the model "loads" on its first request
 snapshot() { # FILE: loaded models and version fields of the server (no address, no key)
@@ -147,7 +157,7 @@ prepare_server() { # NAME_OF_RUN MODEL: before EVERY run: idle, nothing loaded b
   [ -f $W/server_$1.json ] || snapshot $W/server_$1.json; }
 
 # ---------------------------------------------------------------- inputs and the server address
-for f in $OPEN_A $OPEN_A3 eval/m4/SPLIT.json eval/m4/SPLIT_A3.json eval/m4/smoke_ids.json $CHUNKS $CATS/CATALOGUES.json runs/v3/INDEX_FROZEN.json \
+for f in $OPEN_A $OPEN_A3 $STORED_A1 eval/m4/SPLIT.json eval/m4/SPLIT_A3.json eval/m4/smoke_ids.json $CHUNKS $CATS/CATALOGUES.json runs/v3/INDEX_FROZEN.json \
          scripts/eval2.py scripts/eval2_score.py scripts/eval2_judge.py scripts/eval2_idcheck.py scripts/eval2_compare.py scripts/eval2_pilot_report.py \
          scripts/eval2_sealed_reading.py scripts/eval2_first_words.py scripts/run_guarded.py scripts/m4_e2_manifest.py; do
   [ -s $f ] || { [ $DRY = yes ] && { echo "input $f is missing or empty"; exit 1; }; echo "REFUSED: input $f is missing or empty; nothing started" >&2; exit 2; }
@@ -320,10 +330,16 @@ fi
 
 # ---------------------------------------------------------------- the hidden gate (every launch that touches a hidden item)
 if want H1 || want H2 || want H3 || want H4 || want H5; then
+  # the shape of the hidden judged and mechanical files, before the gate and before the first hidden item: key names and counts only; the
+  # stub answer step, the stub judge, a throwaway reading bundle and the scorer run on the real files (temporary .enc files, removed)
+  hb "$N: the shape check of the hidden files runs (key names and counts only)"
+  $PYH shape --hidden $HIDDEN_ARGS > $W/shape.out 2>&1 || { cat $W/shape.out; fail "the shape check of the hidden files FAILED (see $W/shape.out: key names and counts only); no hidden item was run"; }
+  cat $W/shape.out
+  hb "$N: the shape check of the hidden files passed"
   snapshot $W/server_now.json; api /v1/models > $W/models_now.json 2>/dev/null || true
   GA_G="--tests run --tests-ok-file $W/tests.ok"; [ $DRY = yes ] && GA_G="--tests skip --allow-dirty"
   hb "$N: the hidden gate runs"
-  $PYH gate --manifest $MANIFEST --ledger $LEDGER --work-dir $W --markers $W --exclude $L --server-json $W/server_now.json \
+  $PYH gate --manifest $MANIFEST --ledger $LEDGER --work-dir $W --markers $W --exclude $L --also $HB $L/$N.* --server-json $W/server_now.json \
     --models-json $W/models_now.json --hidden $HIDDEN_ARGS $GA_G > $W/hidden_gate.out 2>&1 || { cat $W/hidden_gate.out; fail "the hidden gate REFUSED (see $W/hidden_gate.out); no hidden item was run"; }
   cat $W/hidden_gate.out
   .venv/bin/python - $MANIFEST $W <<'PY'
@@ -496,7 +512,9 @@ if want SCORE; then
     echo "Records: \`$H/revise_Q4D_judged.jsonl.enc\` (60 records, encrypted). Counts are read by the reading script, not here."
   } > $REPORT.tmp && mv $REPORT.tmp $REPORT
   # nothing under the work folder may hold a hidden id in plain text (the logs, which carry ids by design, are outside or excluded)
-  $PYH scan --dir $W --exclude $L --hidden $HIDDEN_ARGS > $W/scan_after.txt || fail "after the run: a plain-text file under $W holds a hidden id ($W/scan_after.txt)"
+  # ids: nothing under the work folder (the logs, which carry ids by design, excluded); text: no distinctive line of a hidden row in any plain file
+  # of the work folder, in this run's logs or in the heartbeat
+  $PYH scan --dir $W --exclude $L --text --also $HB $L/$N.* --hidden $HIDDEN_ARGS > $W/scan_after.txt || fail "after the run: a plain-text file holds a hidden id or hidden text ($W/scan_after.txt)"
   cat $W/scan_after.txt
   if [ $DRY = yes ]; then
     echo M4_E2_DRY_RUN_DONE >> $L/$N.done

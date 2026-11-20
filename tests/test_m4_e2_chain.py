@@ -18,7 +18,7 @@ HELP = ROOT / "scripts/m4_e2_manifest.py"
 PY = ROOT / ".venv/bin/python"
 NEED = [ROOT / "eval/m4/open/tier_a.jsonl", ROOT / "eval/m4/open/tier_a3.jsonl", ROOT / "eval/m4/b1/items.jsonl", ROOT / "eval/m4/b2/items.jsonl",
         ROOT / "eval/m4/b1/rubrics.jsonl", ROOT / "eval/m4/b2/rubrics.jsonl", ROOT / "eval/m4/pilot2/items.jsonl",
-        ROOT / "eval/m4/pilot2/rubrics.jsonl", ROOT / "work/v3/chunks_s1.jsonl", ROOT / "work/m4/catalogues/CATALOGUES.json",
+        ROOT / "eval/m4/pilot2/rubrics.jsonl", ROOT / "work/v3/chunks_s1.jsonl", ROOT / "work/m4/s6/ans_A1.jsonl", ROOT / "work/m4/catalogues/CATALOGUES.json",
         ROOT / "runs/v3/INDEX_FROZEN.json", ROOT / "eval/m4/SPLIT.json", ROOT / "eval/m4/SPLIT_A3.json", ROOT / "eval/m4/smoke_ids.json", PY]
 READY = all(p.exists() for p in NEED)
 MARK = "ZQXMARKER"
@@ -80,6 +80,32 @@ class Static(unittest.TestCase):
             for bad in ("/Users/", "192.168.", "10.0.", "sk-", "Bearer sk", "omlx_url_value"):
                 self.assertNotIn(bad, t, f"{f.name}: {bad}")
         self.assertIn("OMLX_URL", SH.read_text())
+
+    def test_unload_checks_the_servers_answer_and_logs_it(self):
+        text = SH.read_text()
+        fn = text[text.index("unload_now() {"):text.index("unload() {")]
+        d = Path(tempfile.mkdtemp(prefix="e2_unload_"))
+        self.addCleanup(shutil.rmtree, d, True)
+        (d / "bin").mkdir()
+
+        def run(reply):
+            c = d / "bin/curl"
+            c.write_text("#!/bin/sh\nprintf '%s' '" + reply + "'\n")
+            c.chmod(0o755)
+            script = ("N=chain; DRY=no; BASE=http://example.invalid; OMLX_API_KEY=k; PYH=true; idle() { :; }; "
+                      "hb() { echo \"HB $1\"; }; fail() { echo \"FAIL $1\"; exit 1; }\n" + fn + "\nunload_now Some-Model\necho after\n")
+            return subprocess.run(["sh", "-c", script], capture_output=True, text=True, env={"PATH": f"{d / 'bin'}:/usr/bin:/bin"})
+        ok = run('{"status":"ok"}\n200')
+        self.assertIn("HB chain: unloaded Some-Model (no active or waiting requests; the server answered 200: {\"status\":\"ok\"})", ok.stdout)
+        self.assertIn("after", ok.stdout)
+        bad = run('{"error":"busy"}\n409')
+        self.assertEqual(bad.returncode, 1)
+        self.assertIn("HB chain: unload of Some-Model FAILED (the server answered 409", bad.stdout)
+        self.assertIn("FAIL the unload of Some-Model was not accepted (the server answered 409)", bad.stdout)
+        self.assertNotIn("after", bad.stdout)
+        gone = run("")
+        self.assertEqual(gone.returncode, 1)
+        self.assertIn("answered 000", gone.stdout)
 
     def test_no_default_for_the_margin_reading_and_the_verdict_is_withheld(self):
         r = sh("--dry-run", "--margin-reading", "sideways")
@@ -198,6 +224,80 @@ class HelperUnits(unittest.TestCase):
         self.assertEqual((row["tier"], row["kind"], row["family"], row["domain"], row["domains"]), ("B", "open", "p1", "kafka,k8s", ["kafka", "k8s"]))
         r = helper("merge", "--out", str(self.tmp / "plain.jsonl"), "--in", str(i1))
         self.assertEqual(r.returncode, 1)   # a plain output for an encrypted input is refused
+
+    def test_merged_kind_groups_leave_no_group_under_five(self):
+        mk = self.mm.merged_kind_groups
+        self.assertEqual(mk({"a": 8, "b": 6}), [("a", 8), ("b", 6)])
+        self.assertEqual(mk({"a": 8, "b": 2, "c": 1}), [("a + merged 2 kind(s)", 11)])   # 3 left over: they join the smallest shown group
+        self.assertEqual(mk({"a": 8, "b": 3, "c": 3}), [("a", 8), ("merged 2 kind(s)", 6)])
+        self.assertEqual(mk({"a": 3, "b": 1}), [("all 2 kind(s)", 4)])
+        for counter in ({"a": 20, "b": 4, "c": 4, "d": 1}, {"a": 5, "b": 4, "c": 1}, {"x": 7}):
+            self.assertTrue(all(c >= 5 for _, c in mk(counter)) or sum(counter.values()) < 5, counter)
+            self.assertEqual(sum(c for _, c in mk(counter)), sum(counter.values()))
+
+    def judged_rows(self, n=12):
+        return [{"id": f"j-{i}", "tier": "B", "kind": "debugging", "family": f"f{i}", "domain": ["kafka"], "question": f"{MARK} question {i} words words",
+                 "evidence": f"{MARK} evidence of {i} some words" if i % 2 else None} for i in range(n)]
+
+    def test_shape_file_names_keys_and_counts_never_values(self):
+        rows = self.judged_rows()
+        rows[0].pop("question")
+        rows[1]["evidence"] = ""
+        for r in rows[:4]:
+            r["logs"] = f"{MARK} a log line with words"          # a text key that nothing reads
+        rows[5]["tier"] = "Z"
+        lines, problems = self.mm.shape_file("judged_1", "judged_items", rows)
+        out = "\n".join(lines + problems)
+        self.assertNotIn(MARK, out)
+        self.assertIn("judged_1: required key question: 1 lacking, 0 empty", problems)
+        self.assertIn("judged_1: key logs holds text in 4 row(s) and nothing reads it", problems)
+        self.assertIn("judged_1: tier is not one of ['A', 'B', 'legacy'] in 1 row(s)", problems)
+        self.assertTrue(any("evidence (optional)" in l and "5 filled, 0 lacking, 7 empty" in l for l in lines), out)
+        self.assertEqual(self.mm.shape_file("judged_1", "judged_items", self.judged_rows())[1], [])
+        # a key that holds no text (a number, a flag, an empty string) is not a problem
+        ok = self.judged_rows()
+        for r in ok:
+            r.update({"weight": 3, "flag": True, "blank": " "})
+        self.assertEqual(self.mm.shape_file("judged_1", "judged_items", ok)[1], [])
+
+    def test_shape_rubrics_and_mechanical_rows(self):
+        rub = [{"id": f"j-{i}", "must": [{"id": "m1", "text": f"{MARK} text", "weight": 2}], "must_not": [{"id": "n1", "text": "x", "severity": "wrong"}],
+                "covered_chunks": ["c1"]} for i in range(6)]
+        self.assertEqual(self.mm.shape_file("rubrics_1", "judged_rubrics", rub)[1], [])
+        rub[0]["must"][0].pop("weight")
+        rub[1]["must"] = []
+        rub[2]["context"] = f"{MARK} an unread rubric field"
+        _, probs = self.mm.shape_file("rubrics_1", "judged_rubrics", rub)
+        self.assertIn("rubrics_1: required key must: 0 lacking, 1 empty", probs)
+        self.assertIn("rubrics_1: a must point lacks id, text or weight in 1 row(s)", probs)
+        self.assertIn("rubrics_1: key context holds text in 1 row(s) and nothing reads it", probs)
+        self.assertNotIn(MARK, "".join(probs))
+        mech = [{"id": f"a-{i}", "tier": "A", "kind": "k", "family": "f", "domain": "kafka", "question": "q", "checks": [{"type": "has_command"}]} for i in range(3)]
+        self.assertEqual(self.mm.shape_file("tier_a", "mech_items", mech)[1], [])
+        mech[0]["checks"] = [{"command": "x"}]
+        mech[1]["hint"] = "an unread hint with words"
+        _, probs = self.mm.shape_file("tier_a", "mech_items", mech)
+        self.assertIn("tier_a: checks are not a non-empty list of typed objects in 1 row(s)", probs)
+        self.assertIn("tier_a: key hint holds text in 1 row(s) and nothing reads it", probs)
+
+    def test_row_markers_and_scan_text(self):
+        row = {"id": "x-1", "question": f"{MARK}-x-1 which flags does the tool need\nsecond line of the question text here", "kind": "name_setting",
+               "must": [{"id": "m1", "text": f"{MARK}-m1 a must point that is distinctive enough"}], "short": "yes it is"}
+        marks = self.mm.row_markers(row)
+        self.assertTrue(all(len(m) <= 60 and m == " ".join(m.lower().split()) for m in marks))
+        self.assertTrue(any("must point" in m for m in marks))
+        self.assertFalse(any(m in ("yes it is", "name_setting") for m in marks))
+        d = self.tmp / "scan_text"
+        (d / "logs").mkdir(parents=True)
+        (d / "ok.txt").write_text("nothing about the row here\n")
+        (d / "x.enc").write_bytes(f"{MARK}-m1 a must point that is distinctive enough".encode())
+        self.assertEqual(self.mm.scan_text(d, marks), [])
+        (d / "logs/run.log").write_text("progress\n  " + f"{MARK}-m1  A MUST POINT\nthat is distinctive enough".replace("\n", " ") + "\n")
+        self.assertEqual(self.mm.scan_text(d, marks), ["logs/run.log"])      # logs are scanned too; case and spacing do not matter
+        hb = self.tmp / "hb.md"
+        hb.write_text('{"t": "' + f"{MARK}-x-1 which flags does the tool need" + '"}')
+        self.assertEqual(self.mm.scan_text(self.tmp / "nodir", marks, also=[hb]), ["hb.md"])
+        self.assertEqual(self.mm.scan_text(d, set()), [])
 
     def test_verdict_is_withheld_without_the_chosen_reading(self):
         f = self.tmp / "cmp.txt"
@@ -351,6 +451,152 @@ class HiddenGate(unittest.TestCase):
         import m4_e2_manifest as mm
         return mm.tree_dirty(ROOT)
 
+    def test_a_changed_chunks_file_or_s6_reference_fails_the_gate_and_prepare(self):
+        ch = self.tmp / "chunks_changed.jsonl"
+        ch.write_bytes((ROOT / "work/v3/chunks_s1.jsonl").read_bytes() + b"\n")
+        rc, out = self.gate(extra=("--chunks", str(ch)))
+        self.assertEqual(rc, 1)
+        self.assertIn("gate FAIL: manifest hashes", out)
+        self.assertIn("chunks.sha256", out)
+        self.assertIn("hidden gate: REFUSED", out)
+        ref = self.tmp / "ans_A1_changed.jsonl"
+        ref.write_bytes((ROOT / "work/m4/s6/ans_A1.jsonl").read_bytes() + b"\n")
+        rc, out = self.gate(extra=("--s6-ref", str(ref)))
+        self.assertEqual(rc, 1)
+        self.assertIn("s6_reference.sha256", out)
+        # prepare refuses a chunks file that is not the frozen one
+        r = helper("prepare", "--out", str(self.tmp / "m_chunks.json"), "--server-json", str(self.tmp / "server.json"), "--models-json", str(self.tmp / "models.json"),
+                   "--chunks", str(ch), "--hidden", *self.hidden, env=self.env)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("chunks file hash differs", r.stderr)
+        self.assertFalse((self.tmp / "m_chunks.json").exists())
+
+    def decrypted(self, name):
+        import eval2
+        old = os.environ.get("EVAL_HIDDEN_KEY")
+        os.environ["EVAL_HIDDEN_KEY"] = self.env["EVAL_HIDDEN_KEY"]
+        try:
+            return eval2.read_jsonl(self.sd / name)
+        finally:
+            if old is None:
+                os.environ.pop("EVAL_HIDDEN_KEY", None)
+            else:
+                os.environ["EVAL_HIDDEN_KEY"] = old
+
+    def test_the_synthetic_rows_carry_a_marker_in_every_text_field(self):
+        it = self.decrypted("judged_1_items.jsonl.enc")
+        self.assertTrue(all(MARK in r["question"] for r in it))
+        self.assertTrue(any(MARK in (r.get("evidence") or "") for r in it))
+        rb = self.decrypted("judged_1_rubrics.jsonl.enc")
+        for r in rb:
+            for k in ("question", "reference", "generic", "correct_alternative", "note"):
+                if r.get(k):
+                    self.assertIn(MARK, r[k], k)
+            self.assertTrue(all(MARK in p["text"] for p in r["must"]))
+            self.assertTrue(all(MARK in p["text"] for p in r["must_not"]))
+        for name in ("tier_a.jsonl.enc", "tier_a3.jsonl.enc"):
+            self.assertTrue(all(MARK in r["question"] for r in self.decrypted(name)))
+            self.assertTrue(all(MARK in r["reference"] for r in self.decrypted(name) if r.get("reference")))
+
+    def test_a_leak_of_any_text_field_is_found_by_the_scan_and_refused_by_the_gate(self):
+        import m4_e2_manifest as mm
+        old = os.environ.get("EVAL_HIDDEN_KEY")
+        os.environ["EVAL_HIDDEN_KEY"] = self.env["EVAL_HIDDEN_KEY"]
+        try:
+            marks, nrows, _ = mm.text_markers(mm.parse_hidden(self.hidden))
+        finally:
+            if old is None:
+                os.environ.pop("EVAL_HIDDEN_KEY", None)
+            else:
+                os.environ["EVAL_HIDDEN_KEY"] = old
+        self.assertEqual(nrows, 245 + 60 + 24 + 36 + 24 + 36)
+        # one leaked line of each kind of field: the question, a must text, a must_not text, the reference, the evidence, a mechanical reference
+        rb = self.decrypted("judged_1_rubrics.jsonl.enc")[0]
+        it = next(r for r in self.decrypted("judged_1_items.jsonl.enc") if r.get("evidence"))
+        mech = next(r for r in self.decrypted("tier_a.jsonl.enc") if r.get("reference"))
+        longest = lambda s: max(s.split("\n"), key=len)
+        samples = {"question": it["question"], "evidence": longest(it["evidence"]), "must": rb["must"][0]["text"], "must_not": rb["must_not"][0]["text"],
+                   "reference": longest(rb["reference"]), "generic": longest(rb["generic"]), "mech reference": longest(mech["reference"])}
+        for label, text in samples.items():
+            d = self.tmp / ("leak_" + label.replace(" ", "_"))
+            d.mkdir(exist_ok=True)
+            (d / "plain.txt").write_text("log line: " + text + "\n")
+            self.assertEqual(mm.scan_text(d, marks), ["plain.txt"], label)
+        # the gate: a leak in a logs folder of the work folder, and a leak in an extra file (the heartbeat), each refuse it, naming the file only
+        w = self.tmp / "work_text_leak"
+        shutil.copytree(self.work, w)
+        (w / "logs").mkdir()
+        (w / "logs/run.log").write_text("[answer] " + samples["must"] + "\n")
+        rc, out = self.gate(work=w, markers=self.work)
+        self.assertEqual(rc, 1)
+        self.assertEqual(self.failed(out), ["gate FAIL: no plain file with hidden text (1 file(s): logs/run.log)"], out)
+        self.assertNotIn(MARK, out)
+        hb = self.tmp / "HB_leak.md"
+        hb.write_text("### 2026 - run: " + samples["question"] + "\n")
+        rc, out = self.gate(extra=("--also", str(hb)))
+        self.assertEqual(rc, 1)
+        self.assertIn("gate FAIL: no plain file with hidden text (1 file(s): HB_leak.md)", out)
+        rc, out = self.gate(extra=("--also", str(self.tmp / "no_such_heartbeat.md")))
+        self.assertEqual(rc, 0, out)
+
+    def test_shape_ok_on_the_synthetic_files_runs_the_tools_and_removes_its_temporary_folder(self):
+        priv = self.tmp / "shape_tmp"      # the tools make their temporary folder here (TMPDIR), so that parallel runs of the suite cannot disturb the check
+        priv.mkdir()
+        r = helper("shape", "--hidden", *self.hidden, env={**self.env, "TMPDIR": str(priv)}, timeout=900)
+        out = r.stdout + r.stderr
+        self.assertEqual(r.returncode, 0, out[-2500:])
+        for need in ("shape: OK", "stub judge rows: 120 valid of 120 (expected 120)", "stub answers on the judged items: 60 of 60 usable",
+                     "scorer: 305 scored, 0 missing", "throwaway reading bundle (two answer sets, 6 first and 2 second sessions): exit 0",
+                     "the temporary folder is removed (yes)", "read by answer, judge, bundle: evidence (optional)", "kinds (merged so that no group is under 5)"):
+            self.assertIn(need, out)
+        self.assertNotIn(MARK, out)
+        for rid in ("hj-001", "hj-060", "tier_a-001", "tier_a3-060"):
+            self.assertNotIn(rid, out)
+        self.assertEqual(list(priv.iterdir()), [])
+
+    def reencrypt(self, name, edit):
+        import eval2
+        old = os.environ.get("EVAL_HIDDEN_KEY")
+        os.environ["EVAL_HIDDEN_KEY"] = self.env["EVAL_HIDDEN_KEY"]
+        try:
+            rows = eval2.read_jsonl(self.sd / name)
+            edit(rows)
+            sd2 = self.tmp / ("syn_" + name.split(".")[0])
+            shutil.copytree(self.sd, sd2, dirs_exist_ok=True)
+            eval2.write_jsonl(sd2 / name, rows)
+            return sd2
+        finally:
+            if old is None:
+                os.environ.pop("EVAL_HIDDEN_KEY", None)
+            else:
+                os.environ["EVAL_HIDDEN_KEY"] = old
+
+    def test_shape_fails_on_a_missing_key_an_unread_text_key_or_an_empty_field_naming_keys_and_counts_only(self):
+        def edit(rows):
+            rows[0].pop("question")
+            rows[1]["question"] = " "
+            for r in rows[:3]:
+                r["scenario_notes"] = f"{MARK} notes the answer step never reads"
+        sd2 = self.reencrypt("judged_1_items.jsonl.enc", edit)
+        r = helper("shape", "--hidden", *self.hargs(sd2), "--no-tools", env=self.env, timeout=300)
+        out = r.stdout + r.stderr
+        self.assertEqual(r.returncode, 1, out[-2000:])
+        self.assertIn("shape PROBLEM: judged_1: required key question: 1 lacking, 1 empty", out)
+        self.assertIn("shape PROBLEM: judged_1: key scenario_notes holds text in 3 row(s) and nothing reads it", out)
+        self.assertNotIn(MARK, out)
+        self.assertNotIn("hj-", out)
+        # with the tools: they are not run on files that already have problems
+        r = helper("shape", "--hidden", *self.hargs(sd2), env=self.env, timeout=300)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("shape tools: not run", r.stdout)
+        # a rubric whose point lacks its weight: the stub judge is not needed to see it
+        def edit2(rows):
+            rows[0]["must"][0].pop("weight")
+        sd3 = self.reencrypt("judged_2_rubrics.jsonl.enc", edit2)
+        r = helper("shape", "--hidden", *self.hargs(sd3), "--no-tools", env=self.env, timeout=300)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("shape PROBLEM: rubrics_2: a must point lacks id, text or weight in 1 row(s)", r.stdout)
+
     def test_manifest_is_not_overwritten(self):
         before = self.manifest.read_bytes()
         r = helper("prepare", "--out", str(self.manifest), "--server-json", str(self.tmp / "server.json"), "--models-json", str(self.tmp / "models.json"),
@@ -361,8 +607,11 @@ class HiddenGate(unittest.TestCase):
 
     def test_manifest_fields(self):
         m = json.loads(self.manifest.read_text())
-        for k in ("commit", "index", "catalogues", "golden_prompts", "scorer", "idcheck", "judge", "revise", "checker", "hidden_files", "split", "server"):
+        for k in ("commit", "index", "chunks", "s6_reference", "catalogues", "golden_prompts", "scorer", "idcheck", "judge", "revise", "checker", "hidden_files", "split", "server"):
             self.assertIn(k, m)
+        self.assertEqual(m["chunks"]["sha256"], m["chunks"]["recorded_sha256"])   # equals the hash in runs/v3/INDEX_FROZEN.json
+        self.assertEqual(m["chunks"]["recorded_sha256"], json.loads((ROOT / "runs/v3/INDEX_FROZEN.json").read_text())["sha256"])
+        self.assertEqual(len(m["s6_reference"]["sha256"]), 64)
         self.assertEqual(m["scorer"]["version"], "eval2_score/3")
         self.assertEqual(m["idcheck"]["version"], "eval2_idcheck/1")
         self.assertEqual(sorted(m["hidden_files"]), ["judged_1", "judged_2", "rubrics_1", "rubrics_2", "tier_a", "tier_a3"])
@@ -440,6 +689,41 @@ class DryRun(unittest.TestCase):
         # the logs hold ids and timings: progress lines of the hidden stages
         logs = "".join(p.read_text(errors="ignore") for p in (self.w / "logs").glob("*.log"))
         self.assertIn("tier_a-001", logs)
+
+    def test_the_shape_check_runs_before_the_gate_and_the_text_scan_passes_on_the_run(self):
+        shape = (self.w / "shape.out").read_text()
+        self.assertIn("shape: OK", shape)
+        self.assertIn("stub judge rows: 120 valid of 120", shape)
+        self.assertNotIn(MARK, shape)
+        self.assertLess(self.out1.index("shape: OK"), self.out1.index("hidden gate: OPEN"))
+        hb = (self.w / "HEARTBEAT.md").read_text()
+        self.assertLess(hb.index("the shape check of the hidden files passed"), hb.index("hidden gate open"))
+        after = (self.w / "scan_after.txt").read_text()
+        self.assertIn("holds distinctive text of a hidden row", after)
+        self.assertIn("logs and the heartbeat included", after)
+        # the same scan by hand, then with a leaked line in a log of the run: refused
+        sd = self.w / "synthetic_hidden"
+        hargs = ["tier_a=%s/tier_a.jsonl.enc" % sd, "tier_a3=%s/tier_a3.jsonl.enc" % sd, "judged_1=%s/judged_1_items.jsonl.enc" % sd,
+                 "judged_2=%s/judged_2_items.jsonl.enc" % sd, "rubrics_1=%s/judged_1_rubrics.jsonl.enc" % sd, "rubrics_2=%s/judged_2_rubrics.jsonl.enc" % sd]
+        env = {"EVAL_HIDDEN_KEY": str(self.w / "dry.key")}
+        r = helper("scan", "--dir", str(self.w), "--exclude", str(self.w / "logs"), "--text", "--also", str(self.w / "HEARTBEAT.md"), "--hidden", *hargs, env=env)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        import eval2
+        old = os.environ.get("EVAL_HIDDEN_KEY")
+        os.environ["EVAL_HIDDEN_KEY"] = env["EVAL_HIDDEN_KEY"]
+        try:
+            line = next(p["text"] for p in eval2.read_jsonl(sd / "judged_2_rubrics.jsonl.enc")[3]["must"])
+        finally:
+            if old is None:
+                os.environ.pop("EVAL_HIDDEN_KEY", None)
+            else:
+                os.environ["EVAL_HIDDEN_KEY"] = old
+        leak = self.tmp / "heartbeat_with_leak.md"
+        leak.write_text("### run\n" + line.split("\n")[0] + "\n")
+        r = helper("scan", "--dir", str(self.w), "--exclude", str(self.w / "logs"), "--text", "--also", str(leak), "--hidden", *hargs, env=env)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("hold hidden text: heartbeat_with_leak.md", r.stdout)
+        self.assertNotIn(MARK, r.stdout)
 
     def test_heartbeat_has_the_swaps_and_the_stage_lines(self):
         hb = (self.w / "HEARTBEAT.md").read_text()
@@ -520,6 +804,7 @@ class DryRunRefusals(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout[-1500:])
         hb = (d / "run/HEARTBEAT.md").read_text()
         self.assertIn("unloaded DeepSeek-V4.1-Flash-1017-oQ4e-mtp", hb)
+        self.assertIn("the server answered 200", hb)      # the answer of the unload call is checked and logged
         self.assertTrue((d / "run/G.passed").exists())
 
 
