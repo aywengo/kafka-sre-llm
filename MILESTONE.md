@@ -565,6 +565,27 @@ and J6 come from the mechanical tier and block nothing yet):
   real model on this machine (all phases; scrubbed bundle clean; n=2: 79.5 s median, every
   answer cut at 2,048 tokens, first words 14.4 s, 20.3 GB peak); fixes committed
   (`ddf33b1`); the plan is ready for the Owner.
+- 2026-11-20, 02:40 to about 05:00: the plan for E2 with the E3 and E4 runs
+  (`runs/m4/reports/e2_plan.md`): two hidden looks (E2, E3), about 20 to 29 h of server
+  time, five gaps in the harness. Built and committed since: WP1c T10, several items
+  files (`a3f2fc7`); the hidden path of the judge and the chunk helper fix (`4f9e8a6`);
+  the sealed reading tools (`2da54a7`); the hidden scorer (`3fcb583`); the E2 decision
+  rules by code (`008b818`; on the open S6 data, deciding nothing: 4-bit minus full
+  precision +0.80 points, 90 % interval −2.83 to +4.53); first-words timing (`b8e9d45`);
+  closed-book mode and the M4 reference label (`2b0c767`); the revise step after the
+  patch reading (`c32559d`). Running: the E2 chain with its gate and dry runs (B6), the
+  revise step's second development run on B1, a full test run on the committed tree.
+  An old stash entry ("local fixes": `scripts/chunk_docs.py`, `scripts/generate_qa.py`)
+  exists and was left alone.
+- **Waiting for the Owner before E2 (the plan's decisions, each with its
+  recommendation):** L1 the 4-bit test one-sided (recommended) or two-sided; L2 the model
+  patch step in the E3 measurement (recommended: no, inline marks only); L3 strict answers
+  in the sealed reading (yes); L4 the second judge's cross-check on 24 items (keep);
+  L5 full precision on the judged tier (no); L6 what the 60 s bar is measured on and the
+  answer limit (report the tiers apart; a lower limit as its own item); L7 redraw the 7
+  tagged hidden valid-but-wrong items or tag only; L8 the E3 reading while E2's
+  mechanical runs still go (yes). And the go for the run itself, after the chain's dry
+  run and a review.
 - Waiting for the Owner, not blocking: redraw the 7 tagged valid-but-wrong hidden items
   or keep the tag only; the review lists above. The Owner sees the failed R3 check here;
   nothing further runs in WP5.
