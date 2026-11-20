@@ -319,6 +319,22 @@ def split_families(items, seed, share=0.5):
             [it for it in items if it["family"] in hidden])
 
 
+MIN_GROUP = 5
+
+
+def hidden_kind_groups(counts):
+    """Kinds that a hidden report may show: -> (shown, other). shown: {kind: n} for kinds with at least MIN_GROUP items;
+    other: the kinds merged into 'other' (a list). The remainder is empty or has at least MIN_GROUP items, so the total
+    minus the shown kinds never isolates fewer than MIN_GROUP items; the smallest shown kinds are merged until that holds."""
+    shown = {k: n for k, n in counts.items() if n >= MIN_GROUP}
+    other = [k for k in counts if k not in shown]
+    while shown and 0 < sum(counts[k] for k in other) < MIN_GROUP:
+        k = min(shown, key=lambda x: (shown[x], x))
+        del shown[k]
+        other.append(k)
+    return shown, sorted(other)
+
+
 def counts_by_cell(items):
     return dict(sorted(Counter(f"{it['tier']}/{it['kind']}" for it in items).items()))
 
@@ -476,6 +492,9 @@ def fmt_progress(i, n, iid, row, hidden):
     tail = "FAILED" if row["error"] else "ok"
     if row["error"] and not hidden:
         tail += f" {row['error']}"
+    if hidden:   # id, timings and whether the row is valid; the token count shows which answers were cut, so it is a total only
+        return (f"[answer] {i}/{n} id={iid} search={s['search_terms']:.1f}s retrieval={s['retrieval']:.1f}s "
+                f"answer={s['answer']:.1f}s total={s['total']:.1f}s {tail}")
     toks = row["tokens"] if row["tokens"] is not None else "-"
     return (f"[answer] {i}/{n} id={iid} search={s['search_terms']:.1f}s retrieval={s['retrieval']:.1f}s "
             f"answer={s['answer']:.1f}s total={s['total']:.1f}s tokens={toks} {tail}")
@@ -598,10 +617,14 @@ def cmd_revise(a, out=sys.stdout):
             consecutive += 1
         row["seconds"] = {"total": time.monotonic() - t0}
         store.add(row)
-        st = (row.get("r2") or {}).get("status", "-")
-        print(f"[revise] {i}/{len(todo)} id={it['id']} flagged={row.get('flagged', '-')} r2={st} "
-              f"total={row['seconds']['total']:.1f}s {'FAILED' if row['error'] else 'ok'}"
-              + ("" if hidden or not row["error"] else " " + row["error"]), file=out, flush=True)
+        if hidden:
+            print(f"[revise] {i}/{len(todo)} id={it['id']} total={row['seconds']['total']:.1f}s "
+                  f"{'FAILED' if row['error'] else 'ok'}", file=out, flush=True)
+        else:
+            st = (row.get("r2") or {}).get("status", "-")
+            print(f"[revise] {i}/{len(todo)} id={it['id']} flagged={row.get('flagged', '-')} r2={st} "
+                  f"total={row['seconds']['total']:.1f}s {'FAILED' if row['error'] else 'ok'}"
+                  + ("" if not row["error"] else " " + row["error"]), file=out, flush=True)
         if a.max_consecutive_errors and consecutive >= a.max_consecutive_errors:
             print(f"[revise] stopping: {consecutive} failed items in a row", file=out, flush=True)
             return 1
@@ -609,6 +632,11 @@ def cmd_revise(a, out=sys.stdout):
     write_manifest(a.out, manifest)
     print(f"[revise] done {len(store.rows)} rows, {sum(1 for r in store.rows if r['error'])} errors",
           file=out, flush=True)
+    if hidden:   # per-item values are not printed during the run; their totals are, once
+        good = [r for r in store.rows if not r["error"]]
+        r2 = Counter((r.get("r2") or {}).get("status", "-") for r in good)
+        print(f"[revise] totals over {len(good)} valid rows: flagged {sum(r.get('flagged') or 0 for r in good)}, "
+              "r2 " + ", ".join(f"{k} {v}" for k, v in sorted(r2.items(), key=lambda kv: str(kv[0]))), file=out, flush=True)
     return 0
 
 
@@ -699,6 +727,10 @@ def cmd_answer(a, out=sys.stdout):
     write_manifest(a.out, manifest)
     print(f"[answer] done {len(store.rows)} rows, {sum(1 for r in store.rows if r['error'])} errors",
           file=out, flush=True)
+    if hidden:
+        good = [r for r in store.rows if not r["error"]]
+        print(f"[answer] totals over {len(good)} valid rows: tokens {sum(r.get('tokens') or 0 for r in good)}, "
+              f"truncated {sum(1 for r in good if r.get('truncated'))}", file=out, flush=True)
     return 0
 
 
@@ -771,9 +803,14 @@ def items_breakdown(items, a_rows, hidden, P):
         k = sum(1 for _, s in pairs if s["all_pass"])
         P(f"items file {Path(p).name}: {len(rows)} items, scored {len(pairs)}, all-pass {k}/{len(pairs)}")
         kinds = sorted({it["kind"] for it, _ in pairs})
-        for kind in kinds:
-            ks = [s for it, s in pairs if it["kind"] == kind]
-            P(f"  kind {kind}: scored {len(ks)}, all-pass {sum(1 for s in ks if s['all_pass'])}/{len(ks)}")
+        if hidden:   # a kind is shown only when it and the remainder each hold at least MIN_GROUP items
+            shown, other = hidden_kind_groups(Counter(it["kind"] for it, _ in pairs))
+            groups = [(k, [k]) for k in sorted(shown)] + ([("other", other)] if other else [])
+        else:
+            groups = [(k, [k]) for k in kinds]
+        for label, members in groups:
+            ks = [s for it, s in pairs if it["kind"] in members]
+            P(f"  kind {label}: scored {len(ks)}, all-pass {sum(1 for s in ks if s['all_pass'])}/{len(ks)}")
         tagged = [s for it, s in pairs if it.get(SHARES_VARIANT)]
         if tagged:
             rest = [s for it, s in pairs if not it.get(SHARES_VARIANT)]
@@ -910,7 +947,11 @@ def main(argv=None):
             print(f"open {len(op)} items, hidden {len(hd)} items, families hidden "
                   f"{len({i['family'] for i in hd})} of {len({i['family'] for i in items})}")
             print("open  by tier/kind: " + json.dumps(counts_by_cell(op)))
-            print("hidden by tier/kind: " + json.dumps(counts_by_cell(hd)))
+            shown, other = hidden_kind_groups(counts_by_cell(hd))   # a cell is shown only if it and the remainder hold >= 5 items
+            hcells = {k: n for k, n in counts_by_cell(hd).items() if k in shown}
+            if other:
+                hcells["other"] = sum(n for k, n in counts_by_cell(hd).items() if k in other)
+            print("hidden by tier/kind: " + json.dumps(hcells))
         elif a.cmd == "answer":
             return cmd_answer(a)
         elif a.cmd == "report":

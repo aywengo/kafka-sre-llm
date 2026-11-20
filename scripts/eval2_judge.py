@@ -818,9 +818,10 @@ def job_keys(items, passes, chunks, cap, model, setting=DEFAULT_SETTING, instruc
 
 def run(items, passes, judge, model, chunks, cap, cache_path, concurrency=1, retry_invalid=False, calls=True,
         say=lambda s: print(s, flush=True), setting=DEFAULT_SETTING, write_cache=True, instruction="v1",
-        excerpt_cap=DEFAULT_EXCERPT_CHARS, coverage=False):
+        excerpt_cap=DEFAULT_EXCERPT_CHARS, coverage=False, hidden=False):
     """Judge every (item, pass) not in the cache. -> list of result rows in a fixed order.
-    Every progress line is flushed. write_cache False: the cache is read but not written (dry run)."""
+    Every progress line is flushed. write_cache False: the cache is read but not written (dry run).
+    hidden True: a progress line carries the set, id, pass, validity and seconds only (no per-item result)."""
     cache = load_cache(cache_path, retry_invalid)
     jobs = job_keys(items, passes, chunks, cap, model, setting, instruction, excerpt_cap)
     lock = threading.Lock()
@@ -847,10 +848,13 @@ def run(items, passes, judge, model, chunks, cap, cache_path, concurrency=1, ret
                     with open(cache_path, "a") as f:
                         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
             row = result_row(it, p, entry, coverage)
-            say(f"[judge] {len(cache)} cached  {it['set']} {it['id']} p{p} valid={row['valid_reply']}"
-                + (f" quotes_failed={row['quote_failed']}/{row['quote_claims']} S={row['S']:.2f} candidates={row['n_candidates']}"
-                   if row["valid_reply"] else "")
-                + f" {entry['seconds']}s tokens={row['completion_tokens']}")
+            if hidden:
+                say(f"[judge] {len(cache)} cached  {it['set']} {it['id']} p{p} valid={row['valid_reply']} {entry['seconds']}s")
+            else:
+                say(f"[judge] {len(cache)} cached  {it['set']} {it['id']} p{p} valid={row['valid_reply']}"
+                    + (f" quotes_failed={row['quote_failed']}/{row['quote_claims']} S={row['S']:.2f} candidates={row['n_candidates']}"
+                       if row["valid_reply"] else "")
+                    + f" {entry['seconds']}s tokens={row['completion_tokens']}")
 
     todo = [j for j in jobs if j[4] not in cache]
     if calls and todo:
@@ -1483,9 +1487,14 @@ def _main(argv=None):
     print(f"settings {a.settings_name}, instruction {a.instruction}: {reused} of {n_calls} judgments already in the cache", flush=True)
     rows, n_new, n_jobs = run(items, a.passes, judge, a.judge_model, chunks, a.source_chars, cache_path,
                               a.concurrency, a.retry_invalid, calls=not a.rescore, setting=a.settings_name,
-                              write_cache=(not a.stub) or a.stub_calls, instruction=a.instruction, excerpt_cap=a.excerpt_chars, coverage=a.coverage)
+                              write_cache=(not a.stub) or a.stub_calls, instruction=a.instruction, excerpt_cap=a.excerpt_chars, coverage=a.coverage, hidden=hidden)
     invalid = sum(not r["valid_reply"] for r in rows)
     print(f"{n_jobs} judgments, {n_new} called now, {len(rows) - invalid} valid replies, {invalid} unscored", flush=True)
+    if hidden:   # the per-item values are not printed during the run; their totals are, once
+        ok = [r for r in rows if r["valid_reply"]]
+        print(f"judge totals over {len(ok)} valid replies: quotes_failed {sum(r['quote_failed'] for r in ok)}"
+              f"/{sum(r['quote_claims'] for r in ok)}, candidates {sum(r['n_candidates'] for r in ok)}, "
+              f"completion tokens {sum(r['completion_tokens'] or 0 for r in rows)}", flush=True)
     if a.out:
         write_rows(a.out, rows)
         print(f"wrote {a.out}", flush=True)
