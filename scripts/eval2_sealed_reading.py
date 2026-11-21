@@ -86,6 +86,8 @@ def cmd_bundle(a):
         require_enc(p, what)
     if not sets:
         raise ReadingError("--answers: at least one answer set is needed")
+    if len(sets) > len(eb.LETTERS):
+        raise ReadingError(f"--answers: at most {len(eb.LETTERS)} answer sets")
     items = read_rows(a.items)
     rub = {r["id"]: r for r in read_rows(a.rubrics)}
     answers = {s: {r["id"]: r for r in read_rows(p)} for s, p in sets.items()}
@@ -228,6 +230,15 @@ def percentile(sorted_vals, q):
 def interval(vals):
     v = sorted(vals)
     return percentile(v, 0.05), percentile(v, 0.95)
+
+
+E5_KS = (1, 2, 3, 4)     # numbers of candidates k for which the superiority interval (two-sided, 1 - 0.10/k) is stored
+
+
+def interval_k(vals, k):
+    """Two-sided interval of confidence 1 - 0.10/k: the tails 5/k percent each (k = 1 is the 90 % interval)."""
+    v = sorted(vals)
+    return percentile(v, 0.05 / k), percentile(v, 1 - 0.05 / k)
 
 
 def per10(num, den):
@@ -374,13 +385,24 @@ def cmd_totals(a):
                               "disagreement_per_10": per10(abs(a1[1] - a2[1]), shared_n[s])}
                 out(f"  set {s}: {shared_n[s]} shared answers, first {a1[0]}, second {a2[0]} ({100 * pct(a1[0], a2[0]):.0f} %); "
                     f"non-minor first {a1[1]}, second {a2[1]} ({100 * pct(a1[1], a2[1]):.0f} %) (reported, not gating)")
-            pooled = per10(abs(n1 - n2), shared)
+            # the readers' disagreement. Each set: |first - second| non-minor rows per 10 shared answers of that set. Pooled: the sum over
+            # the sets of those absolute differences, per 10 of all shared answers; netting the signed differences over the sets (the earlier
+            # figure, kept as "net") hides a disagreement that has opposite signs in two sets. The mean of the per-set figures is what
+            # rule 3 of the E5 ledger row calls "the readers' mean per-set disagreement".
+            abs_sum = sum(abs(per_set[s]["nonminor_first"] - per_set[s]["nonminor_second"]) for s in sets)
+            pooled = per10(abs_sum, shared)
+            pooled_net = per10(abs(n1 - n2), shared)
+            per_vals = [per_set[s]["disagreement_per_10"] for s in sets if shared_n[s]]
+            mean_per_set = sum(per_vals) / len(per_vals) if per_vals else float("nan")
             disagreement = {"per_set_per_10": {s: per_set[s]["disagreement_per_10"] for s in sets}, "pooled_per_10": pooled,
+                            "mean_per_set_per_10": mean_per_set, "pooled_net_per_10": pooled_net,
                             "shared_answers": shared, "totals_first": t1, "totals_second": t2, "difference_pct": 100 * diff,
                             "nonminor_first": n1, "nonminor_second": n2, "nonminor_difference_pct": 100 * pct(n1, n2),
                             "per_set": per_set}
             out("readers' disagreement, |first - second| non-minor wrong+invented+harmful per 10 answers on the shared answers: "
-                + ", ".join(f"set {s} {per_set[s]['disagreement_per_10']:.2f}" for s in sets) + f"; pooled {pooled:.2f}")
+                + ", ".join(f"set {s} {per_set[s]['disagreement_per_10']:.2f}" for s in sets)
+                + f"; pooled {pooled:.2f} (sum of the per-set absolute differences over all shared answers); mean of the per-set figures "
+                f"{mean_per_set:.2f}; net of signs {pooled_net:.2f} (not used)")
         else:
             out("no second reader: the 30 % rule cannot be applied")
 
@@ -390,6 +412,9 @@ def cmd_totals(a):
             diffs = [rate_of(x, s) - rate_of(x, a.default) for x in samples]
             lo, hi = interval(diffs)
             pt = res[s]["rate_per_10"] - res[a.default]["rate_per_10"]
+            res[s]["paired_vs_default"] = {"diff": pt, "ci90": [lo, hi],
+                                           "ci_by_k": {str(k): list(interval_k(diffs, k)) for k in E5_KS},
+                                           "harmful_set": res[s]["harmful"], "harmful_default": res[a.default]["harmful"]}
             out(f"paired {s} minus {a.default}, non-minor wrong+invented+harmful per 10: {pt:+.2f} [{lo:+.2f}, {hi:+.2f}]; "
                 f"harmful {res[s]['harmful']} vs {res[a.default]['harmful']}")
 
@@ -433,17 +458,20 @@ def cmd_totals(a):
               "sets": {s: {k: v for k, v in res[s].items() if k != "nm"} for s in sets},
               "default_rate": r["rate_per_10"], "default_harmful": r["harmful"],
               "readers_usable": usable, "reader_disagreement": None if disagreement is None else disagreement["pooled_per_10"],
+              "reader_disagreement_mean_per_set": None if disagreement is None else disagreement["mean_per_set_per_10"],
+              "answer_sets": list(sets),
               "disagreement": disagreement, "readers_difference_pct": None if disagreement is None else disagreement["difference_pct"],
               "e3": {"verdict": e3, "reasons": reasons, "rate_limit": E3_RATE, "min_answers": E3_MIN_ANSWERS}}
         if without:
             js["without_tagged"] = {}
             for name, (res2, dis2, usable2, e32, reasons2, r2, n_ex) in without.items():
                 js["without_tagged"][name] = {
-                    "excluded_items": n_ex, "remaining_items": len(all_items) - n_ex,
+                    "excluded_items": n_ex, "remaining_items": len(all_items) - n_ex, "default_set": a.default,
                     "sets": {s: {k: v for k, v in res2[s].items() if k != "nm"} for s in sets},
                     "default_rate": r2["rate_per_10"], "default_harmful": r2["harmful"],
                     "readers_usable": usable2,
                     "reader_disagreement": None if dis2 is None else dis2["pooled_per_10"],
+                    "reader_disagreement_mean_per_set": None if dis2 is None else dis2["mean_per_set_per_10"],
                     "disagreement": dis2,
                     "readers_difference_pct": None if dis2 is None else dis2["difference_pct"],
                     "strict_rate": res2[strict]["rate_per_10"] if strict else None,

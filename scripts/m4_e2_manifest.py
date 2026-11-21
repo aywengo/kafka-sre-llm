@@ -10,7 +10,7 @@ condition, not values. Outputs that hold hidden rows end in .enc.
   gate             the hidden gate (every condition printed, exit 1 if any fails)
   pin-check        the pinned files only (tracked files under scripts/, kafka_sre_rag/, tests/golden/, eval/m4/, requirements.txt, the hidden .enc
                    files): the hash against the manifest, and no uncommitted change in a pinned path; the head commit is information only
-  ledger           ledger rows 1 and 2 present, each with a date and a decision rule (the file is read, never written)
+  ledger           ledger rows present (--rows, default 1 2), each with a date and a decision rule (the file is read, never written)
   counts           row counts of the hidden files (and rubric ids = item ids)
   shape            key names and counts of the hidden items and rubrics against what the answer step, the judge, the bundles and the scorer
                    read; the stub judge, the stub answers, the scorer and a throwaway reading bundle run on them (nothing plain is kept)
@@ -310,23 +310,31 @@ def cmd_verify_manifest(a):
 
 # ---------------------------------------------------------------- ledger
 
-def ledger_rows(path):
+def ledger_rows(path, wanted=("1", "2")):
     rows = {}
     for line in Path(path).read_text().splitlines():
         if not line.lstrip().startswith("|"):
             continue
         cells = [c.strip() for c in line.strip().strip("|").split("|")]
-        if cells and cells[0] in ("1", "2") and len(cells) >= 5:
+        if cells and cells[0] in wanted and len(cells) >= 5:
             rows[cells[0]] = cells
     return rows
 
 
-def ledger_problems(path):
+def ledger_label(nums):
+    """"rows 1 and 2" (the E2 wording); "row 3"; "rows 1, 2 and 3"."""
+    nums = [str(n) for n in nums]
+    return ("row " if len(nums) == 1 else "rows ") + (nums[0] if len(nums) == 1 else ", ".join(nums[:-1]) + " and " + nums[-1])
+
+
+def ledger_problems(path, nums=("1", "2")):
+    """Problems of the ledger rows `nums` (default 1 and 2, as for E2; a later chain, such as E5, requires row 3)."""
     out = []
+    nums = tuple(str(n) for n in nums)
     if not Path(path).exists():
         return ["the ledger file is missing"]
-    rows = ledger_rows(path)
-    for n in ("1", "2"):
+    rows = ledger_rows(path, nums)
+    for n in nums:
         c = rows.get(n)
         if not c:
             out.append(f"ledger row {n} is missing")
@@ -339,11 +347,12 @@ def ledger_problems(path):
 
 
 def cmd_ledger(a):
-    bad = ledger_problems(a.file)
+    nums = tuple(getattr(a, "rows", None) or ("1", "2"))
+    bad = ledger_problems(a.file, nums)
     for b in bad:
         print(b)
     if not bad:
-        print("ledger: rows 1 and 2 present, each with a date and a decision rule")
+        print(f"ledger: {ledger_label(nums)} present, each with a date and a decision rule")
     return 1 if bad else 0
 
 
@@ -997,8 +1006,9 @@ def cmd_gate(a):
         bad = check_manifest(a)
         cond("manifest hashes", not bad, "differs in: " + ", ".join(bad) if bad else "every field matches")
     # 4. ledger
-    lp = ledger_problems(a.ledger)
-    cond("ledger rows 1 and 2", not lp, "; ".join(lp))
+    lnums = tuple(getattr(a, "ledger_rows", None) or ("1", "2"))
+    lp = ledger_problems(a.ledger, lnums)
+    cond("ledger " + ledger_label(lnums), not lp, "; ".join(lp))
     # 5. counts
     h = parse_hidden(a.hidden)
     ex = parse_expected(a.expected)
@@ -1475,6 +1485,7 @@ def build_parser():
     pc.add_argument("--allow-dirty", action="store_true", help="dry runs: the uncommitted-change condition is not enforced")
     g = sub.choices["gate"]
     g.add_argument("--ledger", required=True)
+    g.add_argument("--ledger-rows", nargs="+", default=["1", "2"], metavar="N", help="the ledger rows to require (default 1 2; E5: 3)")
     g.add_argument("--work-dir", required=True)
     g.add_argument("--markers", required=True)
     g.add_argument("--exclude", nargs="*", default=[])
@@ -1487,6 +1498,7 @@ def build_parser():
     g.add_argument("--tests-ok-file")
     s = sub.add_parser("ledger")
     s.add_argument("--file", required=True)
+    s.add_argument("--rows", nargs="+", default=["1", "2"], metavar="N", help="the ledger rows to require (default 1 2)")
     s = sub.add_parser("counts")
     s.add_argument("--hidden", nargs="+", required=True)
     s.add_argument("--expected", nargs="*", default=[], metavar="NAME=COUNT")

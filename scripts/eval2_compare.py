@@ -19,12 +19,26 @@ gives totals only: no ids, no text. Given two answers files it also counts answe
         [--judged-results R --rubrics RB --judged-items JI] [--reading-json T.json | --reading-default-rate X ...] [--json out]
         the E2 decision rules of runs/m4/reports/e2_plan.md (sections 2 to 4) applied by code: (a) the cost of 4-bit, (b) the mode,
         (c) starting figures. Open files, or hidden .enc files (never mixed; hidden prints totals only).
+  eval2_compare.py e5 --reference R --candidate C1 [--candidate C2] --config R=r.scores --config C1=c1.scores ... --items I
+        [--judged-results J --rubrics RB] [--reading-json T.json] [--memory C1=GB --memory-limit GB --judged-answers R=a.jsonl --judged-answers C1=b.jsonl]
+        [--licence C1=yes|no] [--tag-file F] [--json-out out]
+        the decision rule of ledger row 3 of runs/m4/reports/e5_plan.md applied by code (k = number of candidates): Dm, Dp, Dr, the
+        superiority test at the two-sided (1 - 0.10/k) interval, the non-inferiority tests at 90 %, harmful, memory, speed, licence, the
+        tie-break; the verdict per candidate (REPLACES or STAYS) with every criterion's state, or "waiting for the reading". Open files, or
+        hidden .enc files (never mixed; hidden prints totals only). --reading-json is the JSON of eval2_sealed_reading.py totals (it
+        carries every answer set of the reading).
+  eval2_compare.py e5-screen --reference R --candidate C1 ... --scores NAME=file ... [--answers NAME=file] [--smoke-a NAME=f --smoke-b NAME=f]
+        [--judged-results J --rubrics RB] [--judged-answers NAME=file ...] [--s1 NAME.key=N] [--median-s NAME=S]
+        the screen's rule S1 to S4 of the E5 plan on open files. The S1 counts are read from the answer files (rows; the manifest's
+        items_count gives the expected number of answers) unless given on the command line with --s1; the output says which.
+  eval2_compare.py pick-model --id MODEL_ID < models.json     (explicit id, any model)
 Pure Python; no model, no server.
 """
 import argparse
 import json
 import math
 import random
+import re
 import sys
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -273,6 +287,26 @@ def pick_model(ids, kind):
     hits = [i for i, l in low if "qwen3.8-27b" in l and any(w in l for w in want) and "-mtp" not in l]
     if len(hits) != 1:
         raise CompareError(f"{kind}: {len(hits)} models match on the server ({', '.join(hits) or 'none'})")
+    return hits[0]
+
+
+def pick_model_id(ids, want):
+    """The server's own id for an explicit model id (any model, not only Qwen). Order: the id as given; the same ignoring case;
+    the one id that ends with the given one after "--" or "/" (the server lists some builds as "owner--name"). No substring match:
+    a name that fits several builds is an error."""
+    if not want or not want.strip():
+        raise CompareError("--id: an empty model id")
+    want = want.strip()
+    if want in ids:
+        return want
+    low = want.lower()
+    ci = [i for i in ids if i.lower() == low]
+    if len(ci) == 1:
+        return ci[0]
+    suf = [i for i in ids if i.lower().endswith("--" + low) or i.lower().endswith("/" + low)]
+    hits = ci or suf
+    if len(hits) != 1:
+        raise CompareError(f"model id {want}: {len(hits)} models match on the server ({', '.join(hits) or 'none'})")
     return hits[0]
 
 
@@ -907,6 +941,429 @@ def e2_verdicts(res):
     return out
 
 
+# ---------------------------------------------------------------- E5 decision rule (runs/m4/reports/e5_plan.md, section 2: ledger row 3)
+
+E5_MECH_MARGIN_PTS = 5.0      # non-inferiority, Dm: lower end of the 90 % interval above minus this, in points
+E5_P_MARGIN = 0.10            # non-inferiority, Dp
+E5_DR_MARGIN = 3.0            # non-inferiority, Dr: upper end of the 90 % interval below plus this, per 10
+E5_SPEED_FACTOR = 1.15        # (4) the median judged answer at most this times the reference's, over the same scenarios
+E5_ALPHA = 0.10               # superiority: two-sided interval of confidence 1 - E5_ALPHA / k
+
+
+def _sup_ci(boot, k):
+    """Percentiles of a sorted bootstrap sample for the two-sided interval of confidence 1 - E5_ALPHA / k."""
+    tail = 100 * E5_ALPHA / k / 2
+    return (percentile(boot, tail), percentile(boot, 100 - tail))
+
+
+def _num(x):
+    return isinstance(x, (int, float)) and not isinstance(x, bool) and x == x
+
+
+def e5_reading_for(reading, ref, cand, k):
+    """The reading's figures for one candidate, from the JSON of eval2_sealed_reading.py totals (every answer set of the reading).
+    -> dict with state "ok" | "waiting" | "not used" and a text; "ok" carries dr, hi90, hi_sup, harm_c, harm_r, dis_mean."""
+    if not reading:
+        return {"state": "waiting", "text": "waiting for the reading"}
+    if reading.get("readers_usable") is None and "readers_usable" in reading:
+        return {"state": "not used", "text": "reading not used: no second reader, the 30 % rule cannot be applied"}
+    if reading.get("readers_usable") is False:
+        return {"state": "not used", "text": "reading not used: the readers' totals differ by more than 30 %"}
+    sets = reading.get("sets") or {}
+    pv = (sets.get(cand) or {}).get("paired_vs_default")
+    miss = []
+    if reading.get("default_set") not in (None, ref):
+        return {"state": "waiting", "text": f"waiting for the reading: its reference set is {reading.get('default_set')}, not {ref}"}
+    for what, ok in (("readers_usable", "readers_usable" in reading), ("sets " + ref, ref in sets), ("sets " + cand, cand in sets),
+                     ("paired figures of " + cand, bool(pv)), ("reader_disagreement_mean_per_set",
+                                                                 _num(reading.get("reader_disagreement_mean_per_set")))):
+        if not ok:
+            miss.append(what)
+    if not miss and not _num((pv.get("ci_by_k") or {}).get(str(k), [None])[0]):
+        miss.append(f"interval for k = {k}")
+    if miss:
+        return {"state": "waiting", "text": "waiting for the reading (missing: " + ", ".join(miss) + ")"}
+    lo_sup, hi_sup = pv["ci_by_k"][str(k)]
+    return {"state": "ok", "dr": pv["diff"], "hi90": pv["ci90"][1], "lo90": pv["ci90"][0], "hi_sup": hi_sup, "lo_sup": lo_sup,
+            "harm_c": sets[cand]["harmful"], "harm_r": sets[ref]["harmful"], "dis_mean": reading["reader_disagreement_mean_per_set"],
+            "rate_c": sets[cand]["rate_per_10"], "rate_r": sets[ref]["rate_per_10"]}
+
+
+def compare_e5(configs, items_paths, judged, reference, candidates, reading=None, limits=None, licence=None, memory=None, judged_answers=None,
+               resamples=DEFAULT_RESAMPLES, seed=1, tags=None, exclude=frozenset()):
+    """configs: {name: [score files]} (the reference and every candidate); judged: {"results": [...], "rubrics": path} or None;
+    reading: dict of eval2_sealed_reading.py totals --json-out, or None; limits: {"memory_gb"}; licence: {name: bool}; memory: {name: GB loaded alone};
+    judged_answers: {name: [judged answers files]} for the reference and each candidate: the speed limit is E5_SPEED_FACTOR times the
+    reference's median seconds.total over the scenarios both answered. tags and exclude as in compare_e2. Totals only: no result holds an item id."""
+    limits, licence, memory, judged_answers = limits or {}, licence or {}, memory or {}, judged_answers or {}
+    if not candidates:
+        raise CompareError("e5: at least one candidate is needed")
+    if reference in candidates or len(set(candidates)) != len(candidates):
+        raise CompareError("e5: the reference is not a candidate, and a candidate is named once")
+    for n in [reference, *candidates]:
+        if n not in configs:
+            raise CompareError(f"e5: no score file for {n}")
+    k = len(candidates)
+    allp = [p for ps in configs.values() for p in ps] + list(items_paths)
+    if judged:
+        allp += list(judged["results"]) + [judged["rubrics"]]
+    allp += [p for ps in judged_answers.values() for p in ps]
+    flags = {eval2.is_hidden(p) for p in allp}
+    if len(flags) > 1:
+        raise CompareError("open and hidden files are never mixed in one comparison")
+    hidden = flags == {True}
+    items = load_items_many(items_paths)
+    sc = {n: load_scores_many(ps) for n, ps in configs.items()}
+    jp = load_judged_p(judged["results"], judged["rubrics"]) if judged else {}
+    mech_ids = set(items) | {i for d in sc.values() for i in d}
+    judged_ids = {i for d in jp.values() for i in d} | ({r["id"] for r in eval2.read_jsonl(judged["rubrics"])} if judged else set())
+    if tags:
+        for name, ids in tags.items():
+            bad = [i for i in ids if i not in mech_ids and i not in judged_ids]
+            if bad:
+                raise CompareError(f"tag {name}: id(s) not in the data: {', '.join(bad)}")
+    if exclude:
+        items = {i: it for i, it in items.items() if i not in exclude}
+        sc = {n: {i: v for i, v in d.items() if i not in exclude} for n, d in sc.items()}
+        jp = {st: {i: v for i, v in d.items() if i not in exclude} for st, d in jp.items()}
+    family = {i: it.get("family") or i for i, it in items.items()}
+    cluster = {i: (("pair", str(it["pair"])) if it.get("pair") else ("family", family[i])) for i, it in items.items()}
+    res = {"hidden": hidden, "resamples": resamples, "seed": seed, "reference": reference, "candidates": list(candidates), "k": k,
+           "sup_confidence_pct": 100 * (1 - E5_ALPHA / k), "limits": dict(limits), "speed_factor": E5_SPEED_FACTOR, "cands": {}}
+    for c in candidates:
+        ids = sorted(set(sc[reference]) & set(sc[c]))
+        if not ids:
+            raise CompareError(f"e5: {c} and {reference} have no mechanical item in common")
+        fam = {i: cluster.get(i, ("family", i)) for i in ids}
+        m = paired_stats(ids, sc[reference], sc[c], fam, resamples, seed, E5_MECH_MARGIN_PTS)
+        groups = defaultdict(lambda: [0, 0])
+        for i in ids:
+            groups[fam[i]][0] += int(sc[c][i]) - int(sc[reference][i])
+            groups[fam[i]][1] += 1
+        boot, _ = cluster_bootstrap(sorted(tuple(v) for v in groups.values()), resamples, seed)
+        sup = _sup_ci(boot, k)
+        dm = {"n": m["n"], "clusters": m["families"], "diff": m["diff"], "ci90": list(m["ci90"]), "sup_ci": list(sup),
+              "p_d": m["p_d"], "c_pass": m["b_pass"], "r_pass": m["a_pass"],
+              "only_in_r": len(set(sc[reference]) - set(sc[c])), "only_in_c": len(set(sc[c]) - set(sc[reference]))}
+        dp = judged_pair(jp[reference], jp[c], resamples, seed) if reference in jp and c in jp else None
+        rd = e5_reading_for(reading, reference, c, k)
+        st = {}
+        # (1) superiority
+        dm_arm = sup[0] > 0
+        dr_arm = rd["state"] == "ok" and rd["hi_sup"] < 0 and abs(rd["dr"]) > rd["dis_mean"]
+        if dm_arm or dr_arm:
+            st["1 superiority"] = "met"
+        elif rd["state"] == "ok" or rd["state"] == "not used":
+            st["1 superiority"] = "not met"
+        else:
+            st["1 superiority"] = "waiting"
+        # (2) non-inferiority
+        parts = {"Dm": "met" if m["ci90"][0] > -E5_MECH_MARGIN_PTS / 100 else "not met",
+                 "Dp": "waiting" if not dp else ("met" if dp["ci90"][0] > -E5_P_MARGIN else "not met"),
+                 "Dr observed": {"ok": None, "waiting": "waiting", "not used": "not met"}[rd["state"]],
+                 "Dr upper end": {"ok": None, "waiting": "waiting", "not used": "not met"}[rd["state"]]}
+        if rd["state"] == "ok":
+            parts["Dr observed"] = "met" if rd["dr"] <= 0 else "not met"          # the Owner's amendment of 2026-11-21
+            parts["Dr upper end"] = "met" if rd["hi90"] < E5_DR_MARGIN else "not met"
+        st["2 non-inferiority"] = ("not met" if "not met" in parts.values() else "waiting" if "waiting" in parts.values() else "met")
+        # (3) harmful
+        st["3 harmful"] = ({"waiting": "waiting", "not used": "not met"}[rd["state"]] if rd["state"] != "ok"
+                           else ("met" if rd["harm_c"] <= rd["harm_r"] else "not met"))
+        # (4) memory and speed
+        mem_state = ("waiting" if memory.get(c) is None or limits.get("memory_gb") is None
+                     else "met" if memory[c] <= limits["memory_gb"] else "not met")
+        r_med = c_med = n_med = None
+        if reference in judged_answers and c in judged_answers:
+            r_med, c_med, n_med = common_medians(judged_answers[reference], judged_answers[c], exclude)
+        spd_state = ("waiting" if c_med is None else "met" if c_med <= E5_SPEED_FACTOR * r_med else "not met")
+        st["4 memory and speed"] = ("not met" if "not met" in (mem_state, spd_state) else "waiting" if "waiting" in (mem_state, spd_state) else "met")
+        # (5) licence
+        st["5 licence"] = "met" if licence.get(c) else "not met"
+        res["cands"][c] = {"dm": dm, "dp": dp, "dr": rd, "criteria": st, "parts_2": parts, "memory": {"gb": memory.get(c), "state": mem_state},
+                           "speed": {"median_s": c_med, "reference_median_s": r_med, "scenarios": n_med,
+                                                                         "limit_s": None if r_med is None else E5_SPEED_FACTOR * r_med, "state": spd_state}, "licence_accepted": bool(licence.get(c)),
+                           "dm_arm": dm_arm, "dr_arm": dr_arm}
+    # verdicts
+    for c, x in res["cands"].items():
+        st, rd = x["criteria"], x["dr"]
+        notmet = [n for n, v in st.items() if v == "not met"]
+        if rd["state"] == "not used":
+            x["verdict"], x["qualifies"] = "STAYS (" + rd["text"] + "; the Owner sees it)", False
+        elif rd["state"] == "waiting":
+            x["verdict"], x["qualifies"] = "waiting for the reading", None
+            x["note"] = ("criteria already not met without the reading: " + ", ".join(n for n in notmet)) if notmet else ""
+        elif notmet:
+            x["verdict"], x["qualifies"] = "STAYS (not met: " + ", ".join(notmet) + ")", False
+        elif "waiting" in st.values():
+            x["verdict"], x["qualifies"] = "waiting for " + ", ".join(n for n, v in st.items() if v == "waiting"), None
+        else:
+            x["verdict"], x["qualifies"] = "qualifies", True
+    undecided = [c for c, x in res["cands"].items() if x["qualifies"] is None]
+    qual = [c for c, x in res["cands"].items() if x["qualifies"]]
+    if undecided:
+        res["winner"], res["overall"] = None, "waiting for " + ", ".join(undecided)
+    elif qual:
+        win = min(qual, key=lambda c: (res["cands"][c]["dr"]["dr"], -res["cands"][c]["dm"]["diff"], c))
+        res["winner"] = win
+        res["overall"] = f"{win} REPLACES {reference}"
+        for c in qual:
+            res["cands"][c]["verdict"] = "REPLACES" if c == win else f"STAYS (qualifies, ranked behind {win}: lowest Dr, then highest Dm)"
+    else:
+        res["winner"], res["overall"] = None, f"{reference} STAYS"
+    if tags and not exclude:
+        res["without_tagged"] = {}
+        for name, ids in tags.items():
+            ex = frozenset(ids)
+            sub_reading = ((reading or {}).get("without_tagged") or {}).get(name) or {}
+            sub = compare_e5(configs, items_paths, judged, reference, candidates, sub_reading, limits, licence, memory, judged_answers,
+                             resamples, seed, None, ex)
+            res["without_tagged"][name] = {"excluded": len(ex), "mechanical_affected": bool(ex & mech_ids),
+                                           "judged_affected": bool(ex & judged_ids), "res": sub}
+    return res
+
+
+def render_e5(res, out, info=False):
+    P = lambda s="": print(s, file=out)
+    pc = lambda x: "n/a" if x is None else f"{100 * x:+.2f}"
+    ci = lambda t: "[%s, %s]" % (pc(t[0]), pc(t[1]))
+    R = res["reference"]
+    if not info:
+        P("== E5 decision rule (ledger row 3)" + (" [hidden: totals only]" if res["hidden"] else "") +
+          f"  (bootstrap {res['resamples']} resamples, seed {res['seed']}; k = {res['k']}; superiority at the two-sided "
+          f"{res['sup_confidence_pct']:.2f} % interval; non-inferiority at 90 %)")
+        P(f"reference {R}; candidates " + ", ".join(res["candidates"]))
+        lim = res["limits"]
+        P("limits: memory " + ("n/a" if lim.get("memory_gb") is None else f"{lim['memory_gb']:g} GB") +
+          f"; median judged answer at most {res['speed_factor']:g} x the reference's, over the scenarios both answered")
+    for c, x in res["cands"].items():
+        dm, dp, rd = x["dm"], x["dp"], x["dr"]
+        P()
+        P(f"-- {c} against {R} (differences = {c} minus {R})")
+        P(f"  Dm all-pass, items {dm['n']} (clusters {dm['clusters']}): {c} {dm['c_pass']}, {R} {dm['r_pass']}; {pc(dm['diff'])} points  "
+          f"{res['sup_confidence_pct']:.2f} % interval {ci(dm['sup_ci'])}  90 % interval {ci(dm['ci90'])}  p_d {dm['p_d']:.4f}"
+          + (f"  (only in {R} {dm['only_in_r']}, only in {c} {dm['only_in_c']})" if dm["only_in_r"] or dm["only_in_c"] else ""))
+        if dp:
+            P(f"  Dp coverage P, scenarios {dp['n']}: {dp['mean']:+.4f}  90 % interval [{dp['ci90'][0]:+.4f}, {dp['ci90'][1]:+.4f}]"
+              + (f"  (only in {R} {dp['only_in_a']}, only in {c} {dp['only_in_b']})" if dp["only_in_a"] or dp["only_in_b"] else ""))
+        else:
+            P("  Dp coverage P: not computed (judged results of both are needed)")
+        if rd["state"] == "ok":
+            P(f"  Dr non-minor wrong+invented+harmful per 10: {rd['dr']:+.2f}  {res['sup_confidence_pct']:.2f} % interval "
+              f"[{rd['lo_sup']:+.2f}, {rd['hi_sup']:+.2f}]  90 % interval [{rd['lo90']:+.2f}, {rd['hi90']:+.2f}]  (rates {c} {rd['rate_c']:.2f}, "
+              f"{R} {rd['rate_r']:.2f}); harmful {c} {rd['harm_c']} against {R} {rd['harm_r']}; readers' mean per-set disagreement {rd['dis_mean']:.2f}")
+        else:
+            P("  Dr: " + rd["text"])
+        P(f"  memory loaded alone: " + ("not given" if x["memory"]["gb"] is None else f"{x['memory']['gb']:g} GB") +
+          f"; median judged answer: " + ("not given" if x["speed"]["median_s"] is None else
+                                          f"{x['speed']['median_s']:.1f} s against {x['speed']['reference_median_s']:.1f} s for {R} (limit {x['speed']['limit_s']:.1f} s, {x['speed']['scenarios']} scenarios)") +
+          f"; licence accepted by the Owner: {'yes' if x['licence_accepted'] else 'no (or not given)'}")
+        c1 = f"Dm lower end of the superiority interval {pc(dm['sup_ci'][0])} above 0: {'yes' if x['dm_arm'] else 'no'}"
+        c1 += ("; Dr upper end below 0 with |Dr| above the readers' mean disagreement: " + ("yes" if x["dr_arm"] else "no")) if rd["state"] == "ok" else "; Dr arm: " + rd["state"]
+        P(f"  (1) superiority: {x['criteria']['1 superiority']}  ({c1})")
+        p2 = x["parts_2"]
+        P(f"  (2) non-inferiority: {x['criteria']['2 non-inferiority']}  (Dm lower end above -{E5_MECH_MARGIN_PTS:g}: {p2['Dm']}; Dp lower end "
+          f"above -{E5_P_MARGIN:.2f}: {p2['Dp']}; Dr observed at most 0: {p2['Dr observed']}; Dr 90 % upper end below +{E5_DR_MARGIN:.1f}: {p2['Dr upper end']})")
+        P(f"  (3) harmful not above {R}'s: {x['criteria']['3 harmful']}")
+        P(f"  (4) memory at most the limit and median answer at most the limit: {x['criteria']['4 memory and speed']}  "
+          f"(memory {x['memory']['state']}, speed {x['speed']['state']})")
+        P(f"  (5) licence accepted: {x['criteria']['5 licence']}")
+        P(f"  verdict{' (for information, not the verdict that counts)' if info else ''}: {x['verdict']}" + (f"  [{x['note']}]" if x.get("note") else ""))
+    P()
+    P(f"overall{' (for information)' if info else ''}: {res['overall']}")
+    for name, w in res.get("without_tagged", {}).items():
+        P()
+        P(f"without the items tagged {name} ({w['excluded']} items; mechanical part " + ("touched" if w["mechanical_affected"] else "not touched") +
+          ", judged part " + ("touched" if w["judged_affected"] else "not touched") + ") (for information: the verdicts above, over all items, are the ones that count)")
+        render_e5(w["res"], out, info=True)
+
+
+def e5_verdicts(res):
+    """Totals only (no item id): the figures and verdicts of render_e5 as one dict."""
+    out = {"hidden": res["hidden"], "resamples": res["resamples"], "seed": res["seed"], "reference": res["reference"], "k": res["k"],
+           "sup_confidence_pct": res["sup_confidence_pct"], "limits": res["limits"], "overall": res["overall"], "winner": res["winner"],
+           "candidates": {}}
+    for c, x in res["cands"].items():
+        out["candidates"][c] = {k: x[k] for k in ("dm", "dp", "dr", "criteria", "parts_2", "memory", "speed", "licence_accepted", "verdict", "qualifies")}
+    if res.get("without_tagged"):
+        out["without_tagged"] = {n: {"for_information": True, "excluded": w["excluded"], "mechanical_affected": w["mechanical_affected"],
+                                     "judged_affected": w["judged_affected"], **e5_verdicts(w["res"])} for n, w in res["without_tagged"].items()}
+    return out
+
+
+# ---------------------------------------------------------------- E5 screen (runs/m4/reports/e5_plan.md, section 1: S1 to S4; open files only)
+
+S1_TRUNC_SHARE = 0.10
+S1_SMOKE_N = 20
+S2_MARGIN_PTS = -4.0
+S3_MARGIN_P = -0.08
+S4_FACTOR = 1.15
+
+def _think_re():
+    return re.compile(r"</?\s*(think|thinking|reasoning)\s*>", re.I)
+
+
+def s1_counts(answers_path):
+    """Counts over a mechanical answers file: expected answers (the manifest's items_count when there is a manifest, else the rows),
+    errors and missing answers, empty answers, answers with reasoning text or think tags, answers cut at the limit."""
+    rows = eval2.read_jsonl(answers_path)
+    man = eval2.read_manifest(answers_path) or {}
+    expected = man.get("items_count") if _num(man.get("items_count")) else len(rows)
+    rx = _think_re()
+    errors = sum(1 for r in rows if r.get("error")) + max(0, expected - len(rows))
+    ok = [r for r in rows if not r.get("error")]
+    empty = sum(1 for r in ok if not (r.get("text") or "").strip())
+    reasoning = sum(1 for r in ok if rx.search(r.get("text") or "") or r.get("reasoning") or r.get("reasoning_content"))
+    trunc = sum(1 for r in ok if r.get("truncated"))
+    return {"answers": expected, "errors": errors, "empty": empty, "reasoning": reasoning, "truncated": trunc}
+
+
+def smoke_nondeterministic(path_a, path_b, n=S1_SMOKE_N):
+    """Items of the first n answers of run A whose text is not byte-identical in run B (a missing one counts)."""
+    ra = [r for r in eval2.read_jsonl(path_a)][:n]
+    rb = {r["id"]: r for r in eval2.read_jsonl(path_b)}
+    bad = 0
+    for r in ra:
+        o = rb.get(r["id"])
+        if o is None or r.get("text") is None or o.get("text") is None or r["text"].encode("utf-8") != o["text"].encode("utf-8"):
+            bad += 1
+    return {"compared": len(ra), "different": bad}
+
+
+def judged_seconds(paths):
+    """{id: seconds.total} of the judged answers without error (several files merge)."""
+    out = {}
+    for p in ([paths] if isinstance(paths, (str, Path)) else paths):
+        for r in eval2.read_jsonl(p):
+            if not r.get("error") and _num((r.get("seconds") or {}).get("total")):
+                out[r["id"]] = r["seconds"]["total"]
+    return out
+
+
+def common_medians(ref_paths, cand_paths, exclude=frozenset()):
+    """(reference median, candidate median, number of scenarios) of seconds.total over the scenarios answered without error in both
+    sets of files: the same scenarios for both, so that the speed limit compares like with like. (None, None, 0) when none."""
+    a, b = judged_seconds(ref_paths), judged_seconds(cand_paths)
+    ids = sorted((set(a) & set(b)) - set(exclude))
+    if not ids:
+        return None, None, 0
+    return percentile(sorted(a[i] for i in ids), 50), percentile(sorted(b[i] for i in ids), 50), len(ids)
+
+
+def screen_e5(reference, candidates, scores, answers=None, smoke_a=None, smoke_b=None, judged=None, judged_answers=None,
+              s1_override=None, median_override=None):
+    """The screen's rule S1 to S4 for each candidate. Every number carries its source ("answer files" or "command line").
+    S1 drops a candidate for: an error or empty answer, reasoning text or think tags, more than 10 % of the mechanical answers cut at
+    the limit, or two smoke runs of the first 20 items that are not byte-identical. S2 below -4 points (all-pass, c minus R, the
+    point estimate). S3 coverage P difference below -0.08. S4 median judged answer above 1.15 times the reference's (both medians over the same scenarios).
+    State per criterion: "ok", "DROP", or "not measured"."""
+    answers, judged_answers = answers or {}, judged_answers or {}
+    s1_override, median_override = s1_override or {}, median_override or {}
+    allp = [p for ps in scores.values() for p in ps] + list(answers.values()) + list(judged_answers.values()) + \
+        [p for d in (smoke_a or {}, smoke_b or {}) for p in d.values()] + (list(judged["results"]) + [judged["rubrics"]] if judged else [])
+    if any(eval2.is_hidden(p) for p in allp):
+        raise CompareError("e5-screen takes open files only")
+    sc = {n: load_scores_many(ps) for n, ps in scores.items()}
+    jp = load_judged_p(judged["results"], judged["rubrics"]) if judged else {}
+    out = {"reference": reference, "cands": {}}
+    for c in candidates:
+        x = {"criteria": {}, "values": {}, "sources": {}}
+        # S1
+        cnt = dict(s1_counts(answers[c])) if c in answers else {}
+        src = "answer files" if c in answers else None
+        ov = s1_override.get(c, {})
+        if ov:
+            cnt.update(ov)
+            src = "command line" if c not in answers else "answer files, overridden on the command line"
+        need = ("answers", "errors", "empty", "reasoning", "truncated")
+        nd = None
+        if c in (smoke_a or {}) and c in (smoke_b or {}):
+            nd = smoke_nondeterministic(smoke_a[c], smoke_b[c])
+        elif "nondeterministic" in ov:
+            nd = {"compared": S1_SMOKE_N, "different": ov["nondeterministic"]}
+        x["values"]["S1"] = {k: cnt.get(k) for k in need}
+        x["values"]["S1"]["smoke"] = nd
+        x["sources"]["S1"] = (src or "none") + ("; smoke runs: " + ("answer files" if c in (smoke_a or {}) and c in (smoke_b or {}) else "command line" if nd else "none"))
+        if all(cnt.get(k) is not None for k in need):
+            reasons = []
+            if cnt["errors"] or cnt["empty"]:
+                reasons.append(f"errors {cnt['errors']}, empty {cnt['empty']}")
+            if cnt["reasoning"]:
+                reasons.append(f"reasoning or think tags in {cnt['reasoning']} answers")
+            if cnt["answers"] and cnt["truncated"] / cnt["answers"] > S1_TRUNC_SHARE:
+                reasons.append(f"{cnt['truncated']} of {cnt['answers']} answers cut at the limit (above {100 * S1_TRUNC_SHARE:.0f} %)")
+            if nd and nd["different"]:
+                reasons.append(f"{nd['different']} of {nd['compared']} smoke answers differ between the two runs")
+            x["criteria"]["S1"] = "DROP" if reasons else ("ok" if nd is not None else "not measured")
+            x["values"]["S1"]["reasons"] = reasons
+            if not reasons and nd is None:
+                x["values"]["S1"]["reasons"] = ["determinism: the two smoke runs are not given"]
+        else:
+            x["criteria"]["S1"] = "not measured"
+        # S2
+        if reference in sc and c in sc:
+            ids = sorted(set(sc[reference]) & set(sc[c]))
+            d = 100 * (sum(sc[c][i] for i in ids) - sum(sc[reference][i] for i in ids)) / len(ids) if ids else None
+            x["values"]["S2"] = {"n": len(ids), "diff_pts": d}
+            x["criteria"]["S2"] = "not measured" if d is None else ("DROP" if d < S2_MARGIN_PTS else "ok")
+            x["sources"]["S2"] = "score files"
+        else:
+            x["criteria"]["S2"] = "not measured"
+        # S3
+        if reference in jp and c in jp:
+            jr = judged_pair(jp[reference], jp[c], 100, 1)
+            x["values"]["S3"] = {"n": jr["n"], "diff_p": jr["mean"]} if jr else None
+            x["criteria"]["S3"] = "not measured" if not jr else ("DROP" if jr["mean"] < S3_MARGIN_P else "ok")
+            x["sources"]["S3"] = "judge results"
+        else:
+            x["criteria"]["S3"] = "not measured"
+        # S4
+        c_med, ref_med, n_med, src4 = None, None, None, None
+        if reference in judged_answers and c in judged_answers:
+            ref_med, c_med, n_med = common_medians(judged_answers[reference], judged_answers[c])
+            src4 = f"answer files, over the {n_med} scenarios answered by both"
+        if median_override.get(c) is not None and median_override.get(reference) is not None:
+            c_med, ref_med, n_med, src4 = median_override[c], median_override[reference], None, "command line"
+        if c_med is not None and ref_med:
+            x["values"]["S4"] = {"median_s": c_med, "reference_median_s": ref_med, "ratio": c_med / ref_med, "scenarios": n_med}
+            x["criteria"]["S4"] = "DROP" if c_med > S4_FACTOR * ref_med else "ok"
+            x["sources"]["S4"] = src4
+        else:
+            x["criteria"]["S4"] = "not measured"
+        cr = x["criteria"]
+        x["result"] = ("DROP" if "DROP" in cr.values() else "UNDECIDED" if "not measured" in cr.values() else "KEEP")
+        out["cands"][c] = x
+    keep = [c for c, x in out["cands"].items() if x["result"] == "KEEP"]
+    pending = [c for c, x in out["cands"].items() if x["result"] == "UNDECIDED"]
+    ranked = sorted(keep, key=lambda c: (-(out["cands"][c]["values"]["S2"]["diff_pts"]), c))
+    out["go_on"] = ranked[:2]
+    out["pending"] = pending
+    return out
+
+
+def render_screen(res, out):
+    P = lambda s="": print(s, file=out)
+    R = res["reference"]
+    P(f"== E5 screen (open files, no look), reference {R}; S1 breakage, S2 below {S2_MARGIN_PTS:g} points, S3 below {S3_MARGIN_P:g} coverage P, "
+      f"S4 median judged answer above {S4_FACTOR:g} x the reference's")
+    for c, x in res["cands"].items():
+        v = x["values"]
+        P()
+        P(f"-- {c}: {x['result']}")
+        s1 = v.get("S1") or {}
+        P(f"  S1 {x['criteria']['S1']}: answers {s1.get('answers')}, errors {s1.get('errors')}, empty {s1.get('empty')}, reasoning {s1.get('reasoning')}, "
+          f"cut at the limit {s1.get('truncated')}; smoke " + ("not given" if not s1.get("smoke") else f"{s1['smoke']['different']} of {s1['smoke']['compared']} differ")
+          + f"  (source: {x['sources'].get('S1')})" + ("  " + "; ".join(s1["reasons"]) if s1.get("reasons") else ""))
+        s2 = v.get("S2")
+        P(f"  S2 {x['criteria']['S2']}: " + (f"{s2['diff_pts']:+.2f} points on {s2['n']} items" if s2 and s2["diff_pts"] is not None else "not computed"))
+        s3 = v.get("S3")
+        P(f"  S3 {x['criteria']['S3']}: " + (f"{s3['diff_p']:+.4f} on {s3['n']} scenarios" if s3 else "not computed"))
+        s4 = v.get("S4")
+        P(f"  S4 {x['criteria']['S4']}: " + (f"median {s4['median_s']:.1f} s against {s4['reference_median_s']:.1f} s = {s4['ratio']:.2f} x  (source: {x['sources']['S4']})" if s4 else "not computed"))
+    P()
+    P("go on to the hidden look (the two with the highest S2 estimate among those kept): " + (", ".join(res["go_on"]) or "none")
+      + ("; undecided (a criterion not measured): " + ", ".join(res["pending"]) if res["pending"] else ""))
+
+
 # ---------------------------------------------------------------- cli
 
 def kv(s):
@@ -933,7 +1390,8 @@ def main(argv=None):
     p.add_argument("--answers-b")
     p.add_argument("--json", help="write the result here (an .enc name encrypts)")
     m = sub.add_parser("pick-model")
-    m.add_argument("--kind", choices=["q4", "bf16"], required=True)
+    m.add_argument("--kind", choices=["q4", "bf16"], help="the Qwen3.8-27B 4-bit or bf16 build (E2 and earlier)")
+    m.add_argument("--id", help="an explicit model id, resolved against the server's list (any model)")
     s = sub.add_parser("s6")
     s.add_argument("--run", action="append", type=kv, required=True, help="NAME=answers file; names A1 A2 S F FR; score file next to it")
     s.add_argument("--items", required=True)
@@ -964,8 +1422,102 @@ def main(argv=None):
     e.add_argument("--seed", type=int, default=1)
     e.add_argument("--json", help="write the result here (an .enc name encrypts; required for hidden input)")
     e.add_argument("--json-out", help="write the verdicts and figures (totals only, no ids) here; an .enc name encrypts and is required for hidden input")
+    f5 = sub.add_parser("e5", help="the E5 decision rule (ledger row 3) applied by code")
+    f5.add_argument("--reference", default="R")
+    f5.add_argument("--candidate", action="append", required=True)
+    f5.add_argument("--config", action="append", type=kv, required=True, help="NAME=score file (the reference and every candidate); repeat a name to merge files")
+    f5.add_argument("--items", action="append", required=True)
+    f5.add_argument("--judged-results", action="append", default=[], help="judge results; the row's set names the configuration")
+    f5.add_argument("--rubrics")
+    f5.add_argument("--reading-json", help="JSON of eval2_sealed_reading.py totals --json-out (every answer set of the one blind reading)")
+    f5.add_argument("--memory", action="append", type=kv, default=[], help="NAME=GB loaded alone")
+    f5.add_argument("--judged-answers", action="append", type=kv, default=[], help="NAME=judged answers file (reference and each candidate; .enc for hidden): "
+                    "the median seconds.total over the scenarios both answered gives the speed criterion")
+    f5.add_argument("--memory-limit", type=float, default=None, help="GB (ledger row 3: 16.7)")
+    f5.add_argument("--licence", action="append", type=kv, default=[], help="NAME=yes|no: the Owner has accepted the licence")
+    f5.add_argument("--tag-file")
+    f5.add_argument("--resamples", type=int, default=DEFAULT_RESAMPLES)
+    f5.add_argument("--seed", type=int, default=1)
+    f5.add_argument("--json-out", help="totals only; an .enc name encrypts and is required for hidden input")
+    sc5 = sub.add_parser("e5-screen", help="the E5 screen's rule S1 to S4 on open files")
+    sc5.add_argument("--reference", default="R")
+    sc5.add_argument("--candidate", action="append", required=True)
+    sc5.add_argument("--scores", action="append", type=kv, required=True, help="NAME=score file of the open mechanical items (reference and candidates)")
+    sc5.add_argument("--answers", action="append", type=kv, default=[], help="NAME=mechanical answers file (S1 counts)")
+    sc5.add_argument("--smoke-a", action="append", type=kv, default=[], help="NAME=answers of the first smoke run")
+    sc5.add_argument("--smoke-b", action="append", type=kv, default=[], help="NAME=answers of the repeat smoke run")
+    sc5.add_argument("--judged-results", action="append", default=[])
+    sc5.add_argument("--rubrics")
+    sc5.add_argument("--judged-answers", action="append", type=kv, default=[], help="NAME=judged answers file of the open judged set, for the reference and each candidate (S4: median of seconds.total over the scenarios both answered)")
+    sc5.add_argument("--s1", action="append", default=[], metavar="NAME.KEY=N", help="S1 numbers on the command line; keys answers, errors, empty, reasoning, truncated, nondeterministic")
+    sc5.add_argument("--median-s", action="append", type=kv, default=[], help="NAME=seconds on the command line, for the reference and the candidate (S4; replaces the answer files' medians)")
     a = ap.parse_args(argv)
     try:
+        if a.cmd == "e5":
+            cfg = defaultdict(list)
+            for n, pth in a.config:
+                cfg[n].append(pth)
+            judged = None
+            if a.judged_results:
+                if not a.rubrics:
+                    raise CompareError("--judged-results needs --rubrics")
+                judged = {"results": a.judged_results, "rubrics": a.rubrics}
+            tags = None
+            if a.tag_file:
+                from eval2_pilot_report import load_tag_file, TagError
+                try:
+                    tags = load_tag_file(a.tag_file, None)
+                except TagError as e:
+                    raise CompareError(str(e)) from None
+            reading = json.loads(eval2.read_text(a.reading_json)) if a.reading_json else None
+            try:
+                mem = {n: float(v) for n, v in a.memory}
+            except ValueError:
+                raise CompareError("--memory takes NAME=number") from None
+            ja = defaultdict(list)
+            for n, pth in a.judged_answers:
+                ja[n].append(pth)
+            lic = {}
+            for n, v in a.licence:
+                if v not in ("yes", "no"):
+                    raise CompareError("--licence takes NAME=yes or NAME=no")
+                lic[n] = v == "yes"
+            r = compare_e5(dict(cfg), a.items, judged, a.reference, a.candidate, reading,
+                           {"memory_gb": a.memory_limit}, lic, mem, dict(ja), a.resamples, a.seed, tags)
+            if a.json_out and eval2.is_hidden(a.json_out) != r["hidden"]:
+                raise CompareError("a hidden comparison writes a .enc json, a clear one does not")
+            render_e5(r, sys.stdout)
+            if a.json_out:
+                data = (json.dumps(e5_verdicts(r), indent=1, ensure_ascii=False) + "\n").encode()
+                eval2.write_atomic(a.json_out, eval2.encrypt_bytes(data) if r["hidden"] else data)
+            return 0
+        if a.cmd == "e5-screen":
+            scores = defaultdict(list)
+            for n, pth in a.scores:
+                scores[n].append(pth)
+            judged = None
+            if a.judged_results:
+                if not a.rubrics:
+                    raise CompareError("--judged-results needs --rubrics")
+                judged = {"results": a.judged_results, "rubrics": a.rubrics}
+            ov = defaultdict(dict)
+            for spec in a.s1:
+                key, sep, val = spec.partition("=")
+                name, dot, field = key.rpartition(".")
+                if not sep or not dot or field not in ("answers", "errors", "empty", "reasoning", "truncated", "nondeterministic"):
+                    raise CompareError("--s1 takes NAME.KEY=N with KEY one of answers, errors, empty, reasoning, truncated, nondeterministic")
+                try:
+                    ov[name][field] = int(val)
+                except ValueError:
+                    raise CompareError("--s1: N is a whole number") from None
+            try:
+                med = {n: float(v) for n, v in a.median_s}
+            except ValueError:
+                raise CompareError("--median-s takes NAME=number") from None
+            r = screen_e5(a.reference, a.candidate, dict(scores), dict(a.answers), dict(a.smoke_a), dict(a.smoke_b), judged,
+                          dict(a.judged_answers), dict(ov), med)
+            render_screen(r, sys.stdout)
+            return 0
         if a.cmd == "pair":
             if a.json and eval2.is_hidden(a.a) != eval2.is_hidden(a.json):
                 raise CompareError("a hidden comparison writes a .enc json, a clear one does not")
@@ -1004,7 +1556,9 @@ def main(argv=None):
         elif a.cmd == "pick-model":
             d = json.load(sys.stdin)
             ids = [x["id"] for x in (d.get("data") or []) if isinstance(x, dict) and x.get("id")]
-            print(pick_model(ids, a.kind))
+            if bool(a.kind) == bool(a.id):
+                raise CompareError("pick-model: give exactly one of --kind and --id")
+            print(pick_model(ids, a.kind) if a.kind else pick_model_id(ids, a.id))
         elif a.cmd == "s6":
             runs = dict(a.run)
             servers = {}
