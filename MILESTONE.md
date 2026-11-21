@@ -21,7 +21,7 @@ different base model does better.
 | E1 | A new evaluation exists: fresh items for the five task types of `GOAL.md`, a hidden part, mechanical checks, a measured noise level | 300 or more mechanical items, 120 or more judged items, the smallest visible difference stated per tier | mechanical tier built: 496 items, split 251 open and 245 hidden (encrypted); judged tier: after two failed pilots the judge's coverage role (J1) was checked on batch B1 (30 fresh scenarios): five criteria and the second half of the sixth pass, the rubric chunk check missed by about one point (94.0 % against 95 %); **the Owner accepted the coverage role on 2026-11-19 (K1)**; **the judged tier is written (2026-11-20): 120 scenarios, 60 open (B1, B2) and 60 hidden (the Owner's 24, B3's 36), every batch with an independent chunk count of 95 % or more before any answer**; the new mechanical kinds are built and accepted by an independent review (148 items, 88 open and 60 hidden), so the mechanical tier has 644 items (339 open, 305 hidden); integration into the harness (T10) is finishing |
 | E2 | The starting point is measured on it: plain base, base + retrieval at full precision, and the 4-bit model with retrieval, in default and strict mode, all on the same server path | numbers with their sizes; the cost of 4-bit shown inside a margin fixed before the run (5 points on the mechanical tier) | chain built, reviewed, **measured 2026-11-21 on the hidden half** (`runs/m4/E2_STARTING_POINT.md`): mechanical 305: 4-bit default 81.0 %, strict 75.7 %, closed book 52.8 %, full precision 82.6 %; judged coverage 0.55 with retrieval against 0.38 closed book (61 scenarios); **the 4-bit margin was missed by 0.10** (−1.64 points, interval −5.10 to +1.90 against a lower end above −5) **and the Owner accepted the stated loss on 2026-11-21: 4-bit stays the reference**; default stays the reference mode |
 | E3 | Every answer is checked before the user sees it (amended 2026-11-19, K4 b: prose streams as it is written, each code block is held until its check, which takes milliseconds, and corrections to prose follow the answer) | at most 2 invented or wrong items per 10 answers in default mode on fresh questions, **measured by a reading**, with the checker's own counts beside it; a statement marked "not confirmed" still counts; minor items are reported beside the bar, not counted (K4 a, c); measured on the hidden judged half after E2 (K4 g) | **measured 2026-11-20 on the hidden judged half: NOT MET**: 17.2 non-minor wrong, invented or harmful statements per 10 default answers (61 answers, 90 % interval 14.4 to 20.0; bar 2.0), 13 harmful (bar 0); two sealed readers 2 % apart; inline marks on, the model patch step off (built, not tested on hidden data). Strict: 14.6 per 10, 11 harmful |
-| E4 | Answers are fast on the 4-bit server path | median under 60 s in default mode on the Mac Studio; first words within 10 s | service and streaming built; retrieval 9.5 s to 4.4 s when kept loaded; not yet measured with a model |
+| E4 | Answers are fast on the 4-bit server path | median under 60 s in default mode on the Mac Studio; first words within 10 s | **measured 2026-11-21 on 120 open questions through the streamed service:** short mechanical questions 26.1 s median (met), judged scenarios 90.3 s (not met; 39 of 60 answers cut at 2,048 tokens); first words 19.2 s and 22.9 s median, none of 120 within 10 s (not met); the hidden runs agree (24.9 s and 81.8 s per answer) |
 | E5 | Base model decision | bake-off of the shortlist on the new evaluation; keep or switch recorded | shortlist done |
 
 Laptop measurements (the real bar of `GOAL.md`) need a 32 to 36 GB Apple Silicon laptop;
@@ -692,6 +692,16 @@ and J6 come from the mechanical tier and block nothing yet):
   stage SCREEN) and the amended rule by code. The screen starts when the chain passes
   its dry run and the first-words timing has freed the model server. Nothing waits for
   the Owner.
+- 2026-11-21, 14:5x: **E4 measured on open items through the streamed service**
+  (`runs/m4/reports/e4_first_words_run.md`; 4-bit reference, default mode, 120 questions,
+  no error). Judged scenarios (60, B1 and B2): complete answer median 90.3 s (90th
+  percentile 96.8), first words median 22.9 s, 39 of 60 answers cut at 2,048 tokens: both
+  bars missed. Mechanical items (60): complete answer median 26.1 s (35.5): the 60 s bar
+  is met; first words median 19.2 s: missed; none of the 120 questions had its first
+  words within 10 s. Caveat: another client's model was loaded on the server during the
+  run; if it generated at the same time, these times are too high (not known). The
+  bake-off's rule by code and the screen's chain are built and committed (`f1094ab`,
+  `7dc1de8`; full suite 1,694 tests, OK); the open screen was started after this run.
 - Earlier: **the go for the E2 run was asked** (two hidden looks, E2 and E3; about
   19 to 22 h of the model server by the rehearsal's rates, plus about 2 h for the
   first-words timing on open items; about eight sealed reader sessions).
