@@ -37,7 +37,8 @@ def build_parser():
         p.add_argument("--k", choices=["k6", "k3"], default="k6")
         p.add_argument("--profile", choices=list(profiles.PROFILES), default="frozen",
                        help="retrieval profile: frozen (default, the measured one) or the candidates r1, r2 and r3 "
-                            "(kafka_sre_rag/candidate.json; every answer is marked unmeasured)")
+                            "(kafka_sre_rag/candidate.json; every answer is marked unmeasured). "
+                            "EXPERIMENTAL: none of them passed its acceptance rule, so frozen stays the default")
         p.add_argument("--mode", choices=["default", "strict"], default="default")
         p.add_argument("--backend", choices=["mlx", "openai"], default="mlx")
         p.add_argument("--model", help="mlx: model directory; openai: model name sent to the server")
@@ -58,9 +59,11 @@ def build_parser():
                             "R1: each item the catalogues contradict is also marked at its line in the answer "
                             "(a comment line in a code block, a bracketed note in prose); no model call")
         p.add_argument("--revise", action="store_true",
-                       help="with --check: R2, one more call to the same model that replaces the flagged lines; "
-                            "the replacement is used only if the check passes it again, otherwise the R1 marks "
-                            "stay. Costs about 15 to 20 s on an answer with a contradicted item")
+                       help="EXPERIMENTAL, off by default (on open data it removed hardly any counted error and "
+                            "once produced a harmful command). With --check: R2, one more call to the same model "
+                            "that replaces the flagged lines; the replacement is used only if the check passes it "
+                            "again, otherwise the R1 marks stay. Costs about 15 to 20 s on an answer with a "
+                            "contradicted item")
         p.add_argument("--catalogues", metavar="DIR", default=None,
                        help="catalogues for --check (default: work/m4/catalogues)")
         p.add_argument("--dry-run", action="store_true",

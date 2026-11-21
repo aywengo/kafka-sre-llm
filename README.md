@@ -3,23 +3,72 @@
 A Kafka / Strimzi / Kubernetes / Argo CD SRE assistant on an open-weight 27B model
 (Qwen3.8-27B), on Apple Silicon with mlx-lm. This repository holds two things:
 
-- the **retrieval runtime** `kafka_sre_rag/` (v3), which is what currently works;
+- the **retrieval runtime** `kafka_sre_rag/` (v3.1.0), which is what currently works;
 - the **fine-tuning pipeline** that produced the v1 and v2 adapters (described at the end).
 
 ## Status
+
+**v3.1.0** is the retrieval runtime on the unmodified base model, with an answer checker and a streaming
+service. The measured reference configuration is Qwen3.8-27B at 4-bit (`mlx-community/Qwen3.8-27B-4bit`),
+served through a local OpenAI-compatible server, default mode, thinking off, on one Apple Silicon machine
+(a Mac Studio, not a laptop). The default answer path (prompts, retrieval, index) did not change after the
+evaluation below was run; v3.1.0 only changed help texts in `kafka_sre_rag/__main__.py` after it.
+
+**Read every answer before you act on it.** In the blind reading below, the default answers held on average
+about 1.7 non-minor wrong, invented or harmful statements each (17.2 per 10 answers). The assistant is a way to
+find the right documentation page quickly, not an authority.
+
+What was measured, on the new evaluation's **hidden half** (items that were never used to build or tune the
+assistant; the harness prints totals only; 2 of 6 allowed hidden runs were used before this release):
+
+- **Mechanical items** (305 items, all checks of an item must pass; a program scores them, no model judges):
+  81.0 % (247 of 305) with retrieval at 4-bit in default mode; 52.8 % (161 of 305) closed book (the same
+  base model, no retrieval); 82.6 % (252 of 305) with retrieval at full precision. 4-bit minus full
+  precision is -1.64 points (90 % interval -5.10 to +1.90). The margin fixed in advance was a lower end
+  above -5; it was **missed by 0.10** and the loss was accepted by the project owner, so 4-bit stays the
+  reference. Strict mode scored 75.7 % (231 of 305), 5.25 points below default (interval -8.54 to -2.01).
+- **Judged scenarios** (61 scenarios, a judge model scores the share of required points that an answer
+  covers, two passes): coverage 0.55 with retrieval and 0.38 closed book. Strict mode: about the same as
+  default (difference -0.02, interval -0.06 to +0.03).
+
+What is **not met** (the goals are in `GOAL.md`):
+
+- **Wrong statements.** A blind reading of 61 default answers (readers saw the answers without knowing the
+  configuration; two readers agreed within 2 % on the 32 answers both read) found **17.2 wrong, invented or
+  harmful statements, not counting minor ones, per 10 answers** (90 % interval 14.4 to 20.0; goal: at most
+  2), and **13 harmful ones** in total (goal: none). Minor statements (65 more) are not in that figure. Strict
+  mode: 14.6 per 10 and 11 harmful; the difference to default (-2.62 per 10, interval -5.57 to +0.33) is not
+  clearly different from zero. The answer checker (below) marks nonexistent names only; most of the counted
+  errors are wrong statements about behaviour, which it cannot see (an inference from the open reading; the
+  hidden reading returns totals only).
+- **Speed.** Through the streamed service, 4-bit: a short mechanical question takes about 25 s at the median
+  (26.1 s on 60 open questions, 24.9 s on the 305 hidden ones), a long scenario 80 to 90 s (90.3 s on 60 open
+  scenarios, 81.8 s on the 61 hidden ones; 39 of 60 and 36 of 61 answers hit the 2,048-token limit). The
+  goal is under 60 s. The first words appear after about 20 s (19.2 s on short questions, 22.9 s on scenarios,
+  60 open questions each; none of the 120 within the 10 s goal). Another client's model was loaded on the
+  server during the open timing run; the effect is not known.
+- **Laptop.** Everything above is from a Mac Studio. The measurements on a 32 to 36 GB laptop (memory,
+  speed, offline use) are not done yet; `agents/laptop-tests.md` is the plan.
+
+What comes next, in one line: retrieval ranking (the needed excerpt is often found but ranked below the six
+that are used) and fewer wrong statements.
+
+History, on a **legacy** question set (the 40 real questions of v3, reused many times; it is no longer a
+gate and nothing is tuned on it):
 
 - **v1** is published as an experimental preview. It is a fine-tuned model that did not pass
   its eval gate.
 - **v2** is released as a retrieval-only adapter (see "Published models"): it is for use with
   retrieved excerpts and its own search terms, not on its own. Base model plus retrieval stays
   the recommended default.
-- **v3:** retrieval on the unmodified base model is what works. On 40 real questions, scored
+- **v3 (legacy set):** retrieval on the unmodified base model is what works. On 40 real questions, scored
   by a local LLM judge in two passes, base model plus retrieval on the shipped index scores
   **+1.48** against the plain base model (standard error 0.21; 33 wins, 5 ties, 2 losses). The
   earlier measurement on the previous index was +1.19 (26 / 8 / 6). The fine-tuned adapters
   without retrieval score about zero (v1 +0.08, v2 -0.18). An adapter trained with retrieved
   excerpts in the prompt was stopped after a ceiling check. v3 therefore ships as retrieval on
-  the base model; the v2 adapter is an option on top of it, not the default.
+  the base model; the v2 adapter is an option on top of it, not the default. The v3.1.0 evaluation above
+  replaces this set as the measure; v3.1.0 does not change the index or the adapter.
 - The size of the result: 40 questions, two judge passes, one judge model, standard error
   0.21. The +1.19 was measured on the previous version of the documentation index (6,292
   chunks); +1.48 is on the shipped one (6,444 chunks). On the 34 questions whose answers are
@@ -62,11 +111,11 @@ weights are not what the v3 result is about: the v3 number is for the base model
 
 - Documentation index (the frozen 6,444-chunk file, with its attribution and checksums):
   [aywengo/kafka-sre-docs-index-v3](https://huggingface.co/datasets/aywengo/kafka-sre-docs-index-v3),
-  going out with the v3.0.0 release.
+  published with v3.0.0 and unchanged in v3.1.0.
 
 Feedback and review are welcome.
 
-## Run with retrieval (v3)
+## Run with retrieval
 
 What it does, for each question:
 
@@ -119,7 +168,7 @@ The unit tests (`python -m unittest discover -s tests`) skip four tests that nee
 
 ### Ask a question
 
-In-process with mlx-lm (the path that was measured; the model is the bf16 base model wrapped
+In-process with mlx-lm (the path of the v3 measurements on the legacy set; the model is the bf16 base model wrapped
 so that its chat template is non-thinking, see "How v1 was trained", section 4):
 
 ```bash
@@ -152,8 +201,12 @@ thinking off, 3 questions. They took 134 to 212 s per question in default mode a
 strict mode. The output was **not** identical to the mlx path: the search terms diverge after 260
 to 440 characters; that changes the order of the excerpts (on one of 3 questions also two of
 them), and the answers differ from the first sentence. The measured results
-therefore apply to the mlx path; the server path is checked but not measured. An earlier path
-check with another model (GLM-5.3-Flash-oQ8e-mtp, `--max-tokens 16000`) also produced answers.
+of v3 (the +1.48 and +1.19 on the 40 legacy questions) therefore apply to the mlx path. The v3.1.0
+evaluation (see "Status") was run through the server path, with the 4-bit build of the base model
+(`Qwen3.8-27B-4bit`), thinking off, and that is the measured reference configuration of v3.1.0. Because
+`frozen.json` still names the bf16 model as the reference of the v3 runtime, a run on the 4-bit build prints
+`UNMEASURED CONFIGURATION: generator is not the reference model`; that line is expected there and is not a
+fault. An earlier path check with another model (GLM-5.3-Flash-oQ8e-mtp, `--max-tokens 16000`) also produced answers.
 
 A second path check, from the published artefacts in a fresh clone of the tag (2026-11-18): the MLX
 4-bit build of the base model, `mlx-community/Qwen3.8-27B-4bit` (about 16 GB), downloaded and
@@ -253,16 +306,44 @@ header is not a loopback name are refused too.
 `ask --stream` prints the answer as it is generated, with or without a service, and then the sources; a
 `<think>` block is not shown. The final text is the same as without `--stream`.
 
-Not yet measured: the time to the first words and the total time per answer with a real model through the
-service. Only retrieval was timed without a model (see the work-package report in `runs/m4/reports/`).
+What the service keeps loaded: the index with its BM25 structures and the reranker (about 3.8 GB resident
+when idle, after 11 requests, `ps` rss, not a peak; 7.1 s to start; retrieval inside a running service takes
+about 4.4 s per question against about 9.5 s for a fresh `ask`, 10 questions, no model; `runs/m4/reports/wp3a_service.md`).
+The model itself stays in the model server (the 4-bit build held about 16.9 GB there). Times per answer
+through the service with a real model are in "Status" (speed) and "Timings".
 
 ### Checking an answer
 
+`ask --check` marks, in place, identifiers in the answer that do not exist in the pinned versions. It is
+off by default. It checks against **catalogues** built from the pinned sources (Apache Kafka 4.3.2 configuration
+reference, command-line tools and protocol errors; Strimzi 1.3.1 custom resource schemas; Argo CD v3.6.1; the
+Kubernetes v1.37.2 API) and against the excerpts the answer was written from. It looks up names; it **cannot see a
+wrong statement about behaviour** that uses real names.
+
+The catalogues are not in the repository (`raw_catalogue/` and `work/` are git-ignored). Build them once, after
+fetching the documentation sources (see "Get the index"); the second fetch clones five public repositories
+(about 10.5 MB, no token needed) and the build reads only files on disk:
+
 ```bash
-python scripts/build_catalogues.py        # once: the catalogues of what really exists (work/m4/catalogues/)
+python scripts/fetch_sources.py                 # if raw/ is not there yet
+python scripts/fetch_catalogue_sources.py       # the catalogue sources of catalogue_sources.yaml -> raw_catalogue/
+python scripts/build_catalogues.py              # -> work/m4/catalogues/ (CATALOGUES.json holds the hash)
+python -m kafka_sre_rag verify                  # its last line shows the catalogue hash, or "catalogues: not built"
 python -m kafka_sre_rag ask --check --sources "How do I check consumer lag?"
-python -m kafka_sre_rag serve --check ...  # the same for every request; or {"check": true} in one request body
+python -m kafka_sre_rag serve --check ...       # the same for every request; or {"check": true} in one request body
 ```
+
+The catalogues built here had the hash `e319653a5432...` (first 12 characters) in the evaluation. That a fresh
+build on another machine gives the same hash was not checked. `--check` stops with an error that says how to
+build the catalogues when the directory is missing.
+
+`--revise` (with `--check`) is a model patch step: one more call to the model that rewrites the lines the check
+flagged. It exists, is **off by default and experimental**. It was read on the 30 open default answers of one
+batch (development data, so the figures flatter it): the first reading found that it removed no counted
+(non-minor) error; after changes, a second reading found 2 removed and 1 introduced (net +0.3 per 10 answers),
+and the one it introduced was a harmful command (it deleted a flag that narrowed a reset to one partition). It
+was not tested on the hidden half (`runs/m4/reports/wp2b_t4_patch_reading.md`). Do not use it for answers you will
+act on.
 
 After the answer is complete, the checker looks up the names in it (configuration keys and their values, fields of
 Strimzi resources, command-line tools and flags, REST paths, error names, annotations) in the catalogues and in the
@@ -285,8 +366,11 @@ What it can and cannot do: it catches made-up names and wrong values; it does no
 real names. On the 30 errors that readers had found in stored answers (a set the checker's rules were developed on) it
 caught 7, reported 5 as unverified and did not catch 18, of which 15 were wrong statements that use real names and 3
 were names a catalogue could in principle judge but this one does not. It also gave no false `invented` finding on 244
-stored answers, again the set it was developed on. It is not yet measured on fresh answers (see
-`runs/m4/reports/wp2b_checker.md`).
+stored answers, again the set it was developed on. It was not measured separately on fresh answers; its effect on the number of wrong statements is not
+established, and the blind reading in "Status" (17.2 per 10 answers) was made on the answers as first written, before any
+mark (`runs/m4/reports/wp2b_checker.md`). On 60 open judged default answers the same identifier lookup, run as a
+separate program, found 21 nonexistent identifiers in 11 answers (3.5 per 10 answers; `runs/m4/reports/e5_screen.md`);
+identifiers it cannot decide are not counted.
 
 ### Modes
 
@@ -300,8 +384,8 @@ stored answers, again the set it was developed on. It is not yet measured on fre
   against base plus retrieval on the 40 questions (standard error 0.16; 9 wins, 16 ties, 15
   losses), so no such prompt ships.
 
-Evidence on the two modes. Both readings are by one reader, one pass; invented or wrong items
-are counted from a reviewer's reading against the excerpts, not by a program.
+Evidence on the two modes, first from the v3 readings on legacy sets (one reader, one pass; invented or wrong
+items are counted from a reviewer's reading against the excerpts, not by a program), then from the v3.1.0 hidden half.
 
 | | Default | Strict |
 |---|---|---|
@@ -318,9 +402,14 @@ most 1 wrong refusal and at most 1 dropped essential step per 10. On the 10 real
 set reused many times): default has 17 items in 7 answers, one of them damaging; strict has 1
 item, but drops an essential step in 2 answers (1 more partly) and wrongly refuses 1. On the 10
 holdout questions: default has 3 items in 1 answer, one probably damaging; strict has none, and
-no omissions (2 partial). So: **use `--mode strict` for anything you will paste into a cluster,
-and check that no step is missing.** The price is that when retrieval misses the page, strict
-can give a non-answer ("the excerpts do not cover this") where default writes something.
+no omissions (2 partial). Those readings are small (10 questions each) and the first set was reused many times.
+The larger, blind reading of the v3.1.0 hidden half (61 scenarios, 4-bit) found a smaller gap: strict 14.6 against
+default 17.2 non-minor wrong, invented or harmful statements per 10 answers (difference -2.62, 90 % interval -5.57
+to +0.33, so not clearly different from zero), 11 harmful against 13. On the 305 hidden mechanical items strict
+passed 5.25 points fewer (75.7 % against 81.0 %), and judged coverage was the same within noise (-0.02). So strict
+may lessen invented names but does not make an answer safe: **check every answer, in either mode, and check
+that no step is missing.** The price of strict is that when retrieval misses the page, it can give a non-answer
+("the excerpts do not cover this") where default writes something.
 Default stays the default because it is the mode every headline number was measured in. Sources: `runs/v3/reports/`
 (`strict_mode_invention_reading.md`, `strict_holdout_reading.md`) and `runs/v3/STRICT_HOLDOUT_CHECK.md`.
 
@@ -335,7 +424,8 @@ not grounded in them.
 If a run differs from the configuration behind the headline number, a line
 `UNMEASURED CONFIGURATION: <reasons>` is printed (and `measured: false` is in the JSON). The
 reasons are: mode other than default, `--k k3`, a generator that is not the reference model
-(the bf16 base model, no adapter), a different index file, or no reranker. It does not mean
+(the bf16 base model, no adapter; see the note on the 4-bit build above), a retrieval profile other than `frozen`,
+a different index file, or no reranker. It does not mean
 the run is broken. For `k3` it means the number was measured on an earlier
 index, not on this exact setup. For `strict`, the 40-question figure is from the earlier index;
 on the shipped index it was measured on the 42 holdout questions only. For another model, a 4-bit or GGUF build, or a server, it
@@ -343,15 +433,25 @@ means nobody has measured it.
 
 ### Timings
 
-Measured on one Apple Silicon machine in Phase 0, per question:
+Through the streamed service, 4-bit build on the model server, Mac Studio, default mode, per question (median of
+the whole answer, including search terms, retrieval and answering; `runs/m4/reports/e4_first_words_run.md` for the
+open runs, `runs/m4/E2_STARTING_POINT.md` for the hidden ones):
 
-| Step | Time |
-|---|---|
-| Search terms (base model) | about 8 s |
-| BM25 and rerank on CPU | about 6 s |
-| Answer, bf16 model through mlx-lm | about 1.6 minutes (3 chunks) to 1.9 minutes (6 chunks) |
+| Questions | Median per answer | Median to the first words | Cut at 2,048 tokens |
+|---|---|---|---|
+| 60 open short (mechanical) questions | 26.1 s | 19.2 s | 3 of 60 |
+| 60 open judged scenarios | 90.3 s | 22.9 s | 39 of 60 |
+| 305 hidden mechanical items (no first-word timing) | 24.9 s | - | 8 of 305 |
+| 61 hidden judged scenarios (no first-word timing) | 81.8 s | - | 36 of 61 |
 
-About 2 minutes in total.
+An answer that runs to the 2,048-token limit needs about 70 s at the observed 29 tokens per second (inferred from the
+rate), which is why long scenarios miss the 60 s goal. Full precision on the 305 hidden mechanical items: 48.2 s
+median, about twice the 4-bit time. Another client's model was loaded on the server during the open timing run
+(effect not known).
+
+Phase 0 of v3 (bf16 model through mlx-lm on the same kind of machine, 40 legacy questions): search terms about 8 s,
+BM25 and rerank on CPU about 6 s, answer about 1.6 minutes (3 chunks) to 1.9 minutes (6 chunks); about 2 minutes in
+total. No laptop was measured.
 
 ### What to expect
 
@@ -365,8 +465,9 @@ About 2 minutes in total.
   Apache Kafka, Strimzi, Argo CD and the Kubernetes concepts and tasks pages, plus a few
   Schema Registry, cAdvisor and runbook pages. It has little on Schema Registry and on CPU
   throttling.
-- Answers in the default mode are long (about 1,200 tokens on average); 2 of 40 hit the
-  2,048-token limit.
+- Answers in the default mode are long (about 1,200 tokens on average on the 40 legacy questions, 2 of 40 at
+  the 2,048-token limit); on the judged scenarios of v3.1.0, 36 of 61 hidden and 39 of 60 open answers were cut at
+  that limit.
 - Some default-mode answers carried wrong advice, found by a reviewer's reading of 20 answers: a
   statement that the offset-reset time is read in the broker's timezone (in Kafka 4.3.2 a
   `--to-datetime` value without an offset is read as UTC; write the offset explicitly, for example
@@ -380,13 +481,76 @@ About 2 minutes in total.
 - Retrieval missed the source page on at least 5 of the 42 holdout questions (13, 14, 22, 34,
   41): the source page was not among the excerpts. Strict mode then can give a non-answer (questions 13, 14, 34);
   default may fill the gap from memory.
-- Time per answer: about 2 minutes in Phase 0; 112, 151 and 170 s in the one end-to-end check
-  (3 questions, default mode, bf16 27B through mlx-lm). `GOAL.md` asks for a median under 60 s;
-  that is not met. Strict mode is shorter and quicker (77 to 117 s on the server path check).
+- Time per answer: at 4-bit through the service, about 25 s for a short question and 80 to 90 s for a long
+  scenario, first words after about 20 s (see "Timings"); about 2 minutes in Phase 0 with bf16;
+  112, 151 and 170 s in the one end-to-end check (3 questions, default mode, bf16 27B through mlx-lm).
+  `GOAL.md` asks for a median under 60 s and the first words within 10 s; that is not met for long scenarios,
+  and the first words are not met at all. Strict mode is shorter and quicker (77 to 117 s on the server path check).
   On the 4-bit server path check (10 questions per mode, large machine): median 70.8 s in default mode,
   47.2 s in strict mode.
 - The documentation snapshots are fixed (Kafka 4.3.2, Strimzi 1.3.1, Argo CD v3.6.1).
-- English only. Tested on short questions, not on long incident threads.
+- English only. Tested on short questions and on judged scenarios of a paragraph or two, not on long incident threads.
+
+### The evaluation, and how to run its open half
+
+v3.1.0 comes with a new evaluation of 644 mechanical items (a program scores each: commands, manifests, error
+names, numbers) and 121 judged scenarios (a judge model scores coverage of required points). Half of it is hidden.
+
+In the repository:
+
+- **Open half:** `eval/m4/open/tier_a.jsonl` and `eval/m4/open/tier_a3.jsonl` (251 and 88 mechanical items, 339 in
+  all) and `eval/m4/b1/` and `eval/m4/b2/` (30 judged scenarios each, items, rubrics and second-review changes).
+  These were used to build and tune the runtime, so they are development data: numbers on them are not the gate.
+- **Hidden half:** 305 mechanical items and 61 scenarios, committed **encrypted** under `eval/hidden/`. They cannot
+  be read without a key that is not in the repository; the harness prints totals only. They are not described here.
+- **Harness:** `scripts/eval2.py` (answers and manifest), `scripts/eval2_score.py` (mechanical scorer),
+  `scripts/eval2_idcheck.py` (nonexistent identifiers), `scripts/eval2_judge.py` and `scripts/eval2_compare.py`
+  (judged scenarios and the decision rules; the judge needs a second, stronger model on a server and is not
+  covered here), `scripts/eval2_first_words.py` (timing through the service).
+
+To run the mechanical open half on your own setup (needs the index, the catalogues and a model server as above; the
+answers file must be a new path, an existing one is resumed):
+
+```bash
+export OMLX_URL=<your server>/v1
+python scripts/eval2.py answer --items eval/m4/open/tier_a.jsonl eval/m4/open/tier_a3.jsonl \
+  --out out/my_run/answers.jsonl --config my-run --backend openai --model <model name on the server> \
+  --extra-body '{"chat_template_kwargs": {"enable_thinking": false}}' --catalogue work/m4/catalogues
+python scripts/eval2_score.py --items eval/m4/open/tier_a.jsonl eval/m4/open/tier_a3.jsonl \
+  --answers out/my_run/answers.jsonl --scores out/my_run/scores.jsonl --summary out/my_run/summary.json
+python scripts/eval2_idcheck.py --answers out/my_run/answers.jsonl --totals-only
+```
+
+The first command writes one line per answer as it goes and can be stopped and resumed (339 answers at the
+24.9 s median measured on the hidden mechanical items come to about 2.3 hours on the Mac Studio, an estimate). The
+second prints the share of items where every check passes. The commands were checked against the scripts' options
+with the stub backend on three items (no model); a full run with a model was not repeated for this README.
+
+**Retrieval profiles.** `--profile r1`, `r2` and `r3` (on `ask`, `chat`, `serve` and `eval2.py answer`) select
+candidate retrieval settings (`kafka_sre_rag/candidate.json`). They are **experimental**: none passed its
+acceptance rule fixed in advance (R3 gained 7.4 points on one open batch against the 15 required, and the earlier
+check of R2 failed), so `frozen` stays the default and every answer with a candidate profile is marked unmeasured.
+
+### Other base models tried
+
+A bake-off of other base models ran on the open half only (339 mechanical items and 60 judged scenarios per model,
+the same prompts, retrieval, greedy decoding and 2,048-token limit; no hidden run; `runs/m4/reports/e5_screen.md`).
+The reference on the same items: 255 of 339 and judged coverage 0.563 (60 scenarios), median 86.0 s per judged answer.
+None replaced Qwen3.8-27B at 4-bit:
+
+- **Gemma 4 26B-A4B** (4-bit, 15.26 GB loaded): 247 of 339 (-2.36 points) and coverage 0.463 (-0.10 against the
+  allowed -0.08), but 24.6 s per judged answer and no answer cut at the limit. Dropped on coverage. It is the candidate
+  for a faster setup later.
+- **GLM-4.7-Flash** (4-bit, 16.48 GB): 202 of 339 (-15.63 points), coverage 0.214 (-0.349), 21 of 339 answers cut
+  at the limit, 6 of 20 repeat answers differed. Dropped.
+- **Granite 4.2 30B:** median 100.4 s per judged answer against the limit of 98.9 s (1.15 times the reference's), 51 of
+  60 answers cut at the limit. Dropped on speed; its mechanical run was not made.
+- **Gemma 4 31B** was left out: loaded alone it holds 18.0 GB, above the 16.7 GB the project allowed for the model.
+
+### Laptop
+
+The measurements on a 32 to 36 GB laptop (memory, speed, offline use, install time) are **not done yet**. The plan,
+with the script that does them, is `agents/laptop-tests.md`. All figures in this README are from a Mac Studio.
 
 ## How v1 was trained (fine-tuning pipeline)
 
