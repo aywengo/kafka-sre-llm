@@ -5,7 +5,7 @@ Working name "M4"; the release number is decided at the end. Started 2026-11-18,
 release of v3.0.0 and v3.0.1. `GOAL.md` says where the project is going; this file says
 where the current milestone stands.
 
-Last updated: 2026-11-21, night. **M4 is closed** (the Owner's decision of 2026-11-21); the release is v3.1.0.
+Last updated: 2026-11-21, night. **M4 is closed** (the Owner's decision of 2026-11-21); **v3.1.0 was released on 2026-11-22**.
 
 ## Closing state (2026-11-21)
 
@@ -768,6 +768,11 @@ and J6 come from the mechanical tier and block nothing yet):
   run); GLM's mechanical run was made again from the start.
 - 2026-11-21, 23:00: the Owner decided E5: keep Qwen3.8-27B at 4-bit. All five exit
   criteria are now measured or decided.
+- 2026-11-22: **v3.1.0 is released** (tag `v3.1.0` on `bb4378e`, with a release page; the
+  Owner's go). Before the tag: the identity check on the real server (60 of 60 open check
+  answers and packs byte-identical to the stored reference run), the full suite (1,694
+  tests, OK), README and CHANGELOG for v3.1.0 with what is not met stated plainly. The
+  published index and adapter are unchanged.
 - 2026-11-21, 23:45: the Owner closed M4 with E3 and part of E4 recorded as not met,
   chose v3.1.0 as the release, and set the next milestone's targets (see "Closing
   state"). The sealed sessions' transcripts were deleted (27 sessions). In progress: the
