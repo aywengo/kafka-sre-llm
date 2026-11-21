@@ -19,7 +19,7 @@ different base model does better.
 | # | Criterion | Bar | Status |
 |---|---|---|---|
 | E1 | A new evaluation exists: fresh items for the five task types of `GOAL.md`, a hidden part, mechanical checks, a measured noise level | 300 or more mechanical items, 120 or more judged items, the smallest visible difference stated per tier | mechanical tier built: 496 items, split 251 open and 245 hidden (encrypted); judged tier: after two failed pilots the judge's coverage role (J1) was checked on batch B1 (30 fresh scenarios): five criteria and the second half of the sixth pass, the rubric chunk check missed by about one point (94.0 % against 95 %); **the Owner accepted the coverage role on 2026-11-19 (K1)**; **the judged tier is written (2026-11-20): 120 scenarios, 60 open (B1, B2) and 60 hidden (the Owner's 24, B3's 36), every batch with an independent chunk count of 95 % or more before any answer**; the new mechanical kinds are built and accepted by an independent review (148 items, 88 open and 60 hidden), so the mechanical tier has 644 items (339 open, 305 hidden); integration into the harness (T10) is finishing |
-| E2 | The starting point is measured on it: plain base, base + retrieval at full precision, and the 4-bit model with retrieval, in default and strict mode, all on the same server path | numbers with their sizes; the cost of 4-bit shown inside a margin fixed before the run (5 points on the mechanical tier) | chain built, reviewed, rehearsed against the real server without a defect; **running since 2026-11-20 (hidden gate opened 16:55; about 19 to 22 h)** |
+| E2 | The starting point is measured on it: plain base, base + retrieval at full precision, and the 4-bit model with retrieval, in default and strict mode, all on the same server path | numbers with their sizes; the cost of 4-bit shown inside a margin fixed before the run (5 points on the mechanical tier) | chain built, reviewed, **measured 2026-11-21 on the hidden half** (`runs/m4/E2_STARTING_POINT.md`): mechanical 305: 4-bit default 81.0 %, strict 75.7 %, closed book 52.8 %, full precision 82.6 %; judged coverage 0.55 with retrieval against 0.38 closed book (61 scenarios); **the 4-bit margin is missed by the letter** (−1.64 points, interval −5.10 to +1.90 against a lower end above −5): waits for the Owner; default stays the reference mode |
 | E3 | Every answer is checked before the user sees it (amended 2026-11-19, K4 b: prose streams as it is written, each code block is held until its check, which takes milliseconds, and corrections to prose follow the answer) | at most 2 invented or wrong items per 10 answers in default mode on fresh questions, **measured by a reading**, with the checker's own counts beside it; a statement marked "not confirmed" still counts; minor items are reported beside the bar, not counted (K4 a, c); measured on the hidden judged half after E2 (K4 g) | **measured 2026-11-20 on the hidden judged half: NOT MET**: 17.2 non-minor wrong, invented or harmful statements per 10 default answers (61 answers, 90 % interval 14.4 to 20.0; bar 2.0), 13 harmful (bar 0); two sealed readers 2 % apart; inline marks on, the model patch step off (built, not tested on hidden data). Strict: 14.6 per 10, 11 harmful |
 | E4 | Answers are fast on the 4-bit server path | median under 60 s in default mode on the Mac Studio; first words within 10 s | service and streaming built; retrieval 9.5 s to 4.4 s when kept loaded; not yet measured with a model |
 | E5 | Base model decision | bake-off of the shortlist on the new evaluation; keep or switch recorded | shortlist done |
@@ -653,6 +653,29 @@ and J6 come from the mechanical tier and block nothing yet):
   copies of bundle rows that the harness saved for over-long reader outputs were deleted
   (the Owner's standing decision); later sessions printed rows field by field. The
   mechanical stages of E2 continue.
+- 2026-11-21, 12:31: **E2 is done** (`runs/m4/E2_STARTING_POINT.md`, totals only; hidden
+  gate 2026-11-20 16:55 to the end, 19 h 36 min; every answer stage without an error;
+  the session restarted once during the run, which the chain did not notice). Hidden
+  mechanical tier, 305 items, all checks pass: 4-bit default 247 (81.0 %), 4-bit strict
+  231 (75.7 %), closed book 161 (52.8 %), full precision 252 (82.6 %), full precision on
+  the 4-bit run's excerpts 253 (83.0 %). **Rule 1(a), the cost of 4-bit: 4-bit minus full
+  precision −1.64 points, 90 % interval −5.10 to +1.90 (235 clusters); the one-sided
+  reading needs the lower end above −5, so by the letter it is NOT passed, by 0.10.**
+  With the same excerpts −1.97 (−4.92 to +0.97). **Rule 1(b): default stays the reference
+  mode** (strict minus default on the mechanical items −5.25, −8.54 to −2.01, not met;
+  judged coverage −0.018, met; reading met). Starting figures, deciding nothing:
+  retrieval against closed book +28.2 points on the mechanical items and +0.17 judged
+  coverage (0.55 against 0.38; +0.11 to +0.23) on 61 scenarios; the new mechanical kinds
+  (60 items) 76.7 % against 82.0 % for the older kinds (245); the second judge agrees on 70
+  of 72 essential units (24 answers). Identifier check, nonexistent identifiers per 10
+  answers: mechanical 0.49 default, 0.13 strict, 2.07 closed book; judged 2.62 default,
+  0.33 strict, 2.95 closed book. Seconds per answer, median: mechanical 24.9 (4-bit
+  default), 48.2 (full precision); judged 81.8, with 36 of 61 default answers cut at
+  2,048 tokens. The scoring stage was run a second time to add the reading to rule 1(b)
+  (the same look, L9).
+- **Waiting for the Owner:** (M1) the 4-bit bar after the narrow miss: accept a stated
+  loss, try another build, or report it as not met; (M2) the go for the base-model
+  bake-off (E5, the third look).
 - Earlier: **the go for the E2 run was asked** (two hidden looks, E2 and E3; about
   19 to 22 h of the model server by the rehearsal's rates, plus about 2 h for the
   first-words timing on open items; about eight sealed reader sessions).
