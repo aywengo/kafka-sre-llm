@@ -22,7 +22,7 @@ different base model does better.
 | E2 | The starting point is measured on it: plain base, base + retrieval at full precision, and the 4-bit model with retrieval, in default and strict mode, all on the same server path | numbers with their sizes; the cost of 4-bit shown inside a margin fixed before the run (5 points on the mechanical tier) | chain built, reviewed, **measured 2026-11-21 on the hidden half** (`runs/m4/E2_STARTING_POINT.md`): mechanical 305: 4-bit default 81.0 %, strict 75.7 %, closed book 52.8 %, full precision 82.6 %; judged coverage 0.55 with retrieval against 0.38 closed book (61 scenarios); **the 4-bit margin was missed by 0.10** (−1.64 points, interval −5.10 to +1.90 against a lower end above −5) **and the Owner accepted the stated loss on 2026-11-21: 4-bit stays the reference**; default stays the reference mode |
 | E3 | Every answer is checked before the user sees it (amended 2026-11-19, K4 b: prose streams as it is written, each code block is held until its check, which takes milliseconds, and corrections to prose follow the answer) | at most 2 invented or wrong items per 10 answers in default mode on fresh questions, **measured by a reading**, with the checker's own counts beside it; a statement marked "not confirmed" still counts; minor items are reported beside the bar, not counted (K4 a, c); measured on the hidden judged half after E2 (K4 g) | **measured 2026-11-20 on the hidden judged half: NOT MET**: 17.2 non-minor wrong, invented or harmful statements per 10 default answers (61 answers, 90 % interval 14.4 to 20.0; bar 2.0), 13 harmful (bar 0); two sealed readers 2 % apart; inline marks on, the model patch step off (built, not tested on hidden data). Strict: 14.6 per 10, 11 harmful |
 | E4 | Answers are fast on the 4-bit server path | median under 60 s in default mode on the Mac Studio; first words within 10 s | **measured 2026-11-21 on 120 open questions through the streamed service:** short mechanical questions 26.1 s median (met), judged scenarios 90.3 s (not met; 39 of 60 answers cut at 2,048 tokens); first words 19.2 s and 22.9 s median, none of 120 within 10 s (not met); the hidden runs agree (24.9 s and 81.8 s per answer) |
-| E5 | Base model decision | bake-off of the shortlist on the new evaluation; keep or switch recorded | shortlist done |
+| E5 | Base model decision | bake-off of the shortlist on the new evaluation; keep or switch recorded | **open screen done 2026-11-21: all three candidates dropped by rules fixed beforehand** (Gemma 4 26B-A4B on judged coverage, −0.10; GLM-4.7-Flash on breakage, mechanical and coverage; Granite 4.2 30B on speed); Gemma 4 31B left out (memory); no hidden look spent; the keep decision waits for the Owner |
 
 Laptop measurements (the real bar of `GOAL.md`) need a 32 to 36 GB Apple Silicon laptop;
 see "Waiting for the Owner".
@@ -692,6 +692,25 @@ and J6 come from the mechanical tier and block nothing yet):
   stage SCREEN) and the amended rule by code. The screen starts when the chain passes
   its dry run and the first-words timing has freed the model server. Nothing waits for
   the Owner.
+- 2026-11-21, 22:45: **the open screen of the bake-off is done: no candidate goes on, so
+  no hidden look is spent** (`runs/m4/reports/e5_screen.md`; open half, 339 mechanical
+  items and 60 judged scenarios per candidate, the reference's stored answers re-scored
+  and re-judged with the same code; 360 judge calls, none unscored). Reference: 255 of
+  339, judged coverage 0.563, median 86.0 s per judged answer. **Gemma 4 26B-A4B:** 247 of
+  339 (−2.36 points, inside the −4 limit), coverage 0.463 (−0.100, limit −0.08: dropped
+  on S3), 24.6 s per judged answer, 15.26 GB loaded alone, 20 of 20 check answers
+  reproduced, no answer cut at the limit (median 1,150 tokens), 0.8 nonexistent
+  identifiers per 10 judged answers against the reference's 3.5 (identifier check, not
+  read). **GLM-4.7-Flash:** 202 of 339 (−15.63), coverage 0.214 (−0.349), 6 of 20 check
+  answers not reproduced, 16.48 GB: dropped on S1, S2 and S3. **Granite 4.2 30B:** median
+  100.4 s per judged answer against the limit of 98.9 s, 51 of 60 answers cut at the
+  limit: dropped on S4 after its judged run; its mechanical run was not made. Events:
+  the server reloaded its settings at 17:20 and unloaded GLM under the running job; the
+  resume refused because the reloaded model carries a new load stamp, and the chain went
+  on to the next step instead of stopping (both to be fixed before any further hidden
+  run); GLM's mechanical run was made again from the start.
+- **Waiting for the Owner:** the base-model decision (E5): recommended, keep Qwen3.8-27B
+  at 4-bit; and how M4 closes (E3 and part of E4 are not met).
 - 2026-11-21, 14:25: **E4 measured on open items through the streamed service**
   (`runs/m4/reports/e4_first_words_run.md`; 4-bit reference, default mode, 120 questions,
   no error). Judged scenarios (60, B1 and B2): complete answer median 90.3 s (90th
