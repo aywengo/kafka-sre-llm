@@ -5,7 +5,62 @@ Working name "M4"; the release number is decided at the end. Started 2026-11-18,
 release of v3.0.0 and v3.0.1. `GOAL.md` says where the project is going; this file says
 where the current milestone stands.
 
-Last updated: 2026-11-19, night.
+Last updated: 2026-11-21, night. **M4 is closed** (the Owner's decision of 2026-11-21); the release is v3.1.0.
+
+## Closing state (2026-11-21)
+
+M4 ran from 2026-11-18 to 2026-11-21. The Owner closed it on 2026-11-21 with two exit
+criteria recorded as not met. What was measured is stated with its size; what is inferred
+is marked.
+
+| # | Criterion | Result |
+|---|---|---|
+| E1 | A new evaluation with a hidden half | **Done.** 644 mechanical items (339 open, 305 hidden) and 121 judged scenarios (60 open, 61 hidden, of which 25 are the Owner's). Every judged batch passed an independent chunk count of 95 % or more before any answer existed. Two of six hidden looks are used |
+| E2 | The starting point | **Measured** on the hidden half (305 items, 61 scenarios). All checks pass: closed book 52.8 %, 4-bit with retrieval 81.0 %, strict 75.7 %, full precision 82.6 %. Judged coverage 0.38 closed book, 0.55 with retrieval. The 4-bit margin was missed by 0.10 (−1.64 points, interval −5.10 to +1.90) and the Owner accepted the stated loss. Default stays the reference mode |
+| E3 | At most 2 wrong or invented items per 10 answers | **Not met.** A sealed blind reading of 61 hidden default answers found 17.2 non-minor wrong, invented or harmful statements per 10 answers (90 % interval 14.4 to 20.0) and 13 harmful ones (bar 0); two readers 2 % apart. The checker marks nonexistent identifiers in place; the model patch step is built, off, and not tested on hidden data |
+| E4 | Fast answers | **Met for short questions only.** 120 open questions through the streamed service: 26.1 s median on short mechanical questions, 90.3 s on judged scenarios (39 of 60 cut at 2,048 tokens); first words 19.2 s and 22.9 s, none within 10 s. Another client's model was loaded during that run (effect not known); the hidden runs gave 24.9 s and 81.8 s |
+| E5 | Base model | **Keep Qwen3.8-27B at 4-bit.** An open screen (339 items, 60 scenarios per candidate) dropped Gemma 4 26B-A4B (judged coverage −0.10), GLM-4.7-Flash (mechanical −15.6 points, coverage −0.35, answers not reproduced) and Granite 4.2 30B (speed) by rules fixed beforehand; Gemma 4 31B was left out for memory; no hidden look spent |
+
+Other results that shape what comes next:
+
+- **Retrieval is the lever and its ranking is the limit.** On the two open batches the
+  frozen retrieval put the needed chunk in front of the model for 37 of 149 and 56 of 166
+  indexed must points; most of the rest are found by the search and ranked below the
+  six-chunk pack (63 and 68), the others never found (44 and 41). Two candidates (R2, R3)
+  failed rules fixed beforehand; the frozen retrieval stays.
+- **The checker cannot close E3.** Most counted errors are wrong statements about
+  behaviour, not names it can look up (inferred from the B1 reading; the hidden reading
+  returns totals only).
+- **Answer length drives time.** 36 of 61 hidden default answers were cut at 2,048 tokens;
+  at 29 tokens per second that alone is about 70 s.
+
+Not done in M4: laptop measurements (the Owner runs `agents/laptop-tests.md` himself);
+the Owner's review of the architecture rubrics of the open batches; a grounded default
+prompt variant (WP2d).
+
+Known defects carried over: the E2 chain reuses a stored manifest and stage markers
+without checking them at the start; a resume refuses after the server reloads a model
+(the load stamp is compared); the E5 chain goes on when a step refuses; the checker does
+not find names in prose and comments; the reading totals' fix for the readers'
+disagreement is in (`f1094ab`).
+
+Hidden content: the conductor saw the Owner's notes on 11 of his hidden items on
+2026-11-20; they are tagged and every hidden judged result is reported with and without
+them. The sealed sessions' transcripts (27 sessions, 54 files) and the plain-text tool
+outputs of hidden content were deleted on 2026-11-20 and 2026-11-21, as the Owner
+decided. This session's own transcript still holds the Owner's notes on those 11 items.
+
+The release, v3.1.0 (the Owner's decision): the retrieval runtime with the answer checker
+(inline marks) and the streaming service, the open half of the evaluation with its
+harness, the laptop test plan; the model patch step and the retrieval candidates stay in
+the code, off by default and marked experimental; the published index and adapter are
+unchanged; no hidden look for the release, because the default answer path has not
+changed since the E2 run (`kafka_sre_rag/` and `tests/golden/` are identical to commit
+`48f98a9`).
+
+The next milestone (the Owner's decision): retrieval ranking; fewer wrong statements (a
+default mode that keeps closer to the excerpts, shorter answers); and the repairs listed
+above.
 
 ## What this milestone is for
 
@@ -113,6 +168,7 @@ thinking off.
 | 2026-11-18 | The 15 changes of the design review are accepted into the design; those that are the Owner's are marked as waiting | conductor |
 | 2026-11-18 | **Yes to all recommendations:** the 4-bit model on oMLX is the reference configuration; half of each tier hidden, encrypted, decisions on the hidden half, at most six looks; the downloads and installs for catalogues and checks; loading the 4-bit and full-precision 27B builds for the comparison; `questions_real` becomes a legacy set and the 4-bit bar a margin fixed before the run; public questions may be raw material after a licence check; the four bake-off candidates may be downloaded; other clients' models on the server may be unloaded when it is idle | Owner |
 | 2026-11-19 | **After the failed judging pilot:** build the judged tier with the analysis's changes and a second small pilot on fresh items; the first pilot stays a no-go and the second gets new criteria fixed beforehand; the judge's error flags count toward the bars of `GOAL.md` only after a reader has confirmed them; DeepSeek stays the judge, with the earlier judge re-judging a 24-item subset on every decision run; the Owner reviews which points are essential on his own questions | Owner |
+| 2026-11-21 | **M4 is closed**, with E3 and part of E4 recorded plainly as not met. **The release is v3.1.0**: the retrieval runtime with the additions that work (the answer checker with inline marks, the streaming service, the open half of the evaluation with its harness, the laptop test plan); the model patch step and the retrieval candidates stay off by default and experimental; no hidden look for the release. **The next milestone targets** retrieval ranking, fewer wrong statements (a default mode closer to the excerpts, shorter answers) and the repairs found on the way; speed work and the laptop run are not targets of it | Owner |
 | 2026-11-21 | **Base model (E5): keep Qwen3.8-27B at 4-bit.** The open screen dropped all three candidates by rules fixed beforehand (Gemma 4 26B-A4B on judged coverage, −0.10 against −0.08; GLM-4.7-Flash on breakage, mechanical items and coverage; Granite 4.2 30B on speed); Gemma 4 31B was left out for memory; no hidden look was spent (2 of 6 used). Gemma 4 26B-A4B is noted as a candidate for a faster configuration in a later milestone: 24.6 s per judged answer against 86.0 s, no answer cut at the limit, fewer nonexistent identifiers by the identifier check, at a cost of 0.10 judged coverage on the open half | Owner |
 | 2026-11-21 | **The 4-bit model stays the reference; the margin was missed and the loss is accepted (M1).** On 305 hidden mechanical items 4-bit passed 247 and full precision 252: an estimated loss of 1.64 points, 90 % interval −5.10 to +1.90, so the lower end missed the gate (above −5) by 0.10. Median time per mechanical answer 24.9 s at 4-bit against 48.2 s at full precision. `GOAL.md` allows a stated and accepted loss | Owner |
 | 2026-11-21 | **The bake-off (E5):** Gemma 4 31B is left out: loaded alone it holds 18.0 GB, above the 16.7 GB allowance, and its full laptop footprint is projected over budget (only its model load was measured) (N1); the same decoding for every model: greedy, thinking off, the same prompts, the 2,048-token limit (N2); speed is a hard limit on the median over the judged answers, 1.15 times the reference's median on the same set (N3); the reference's stored answers are read again, blind, mixed with the finalists' (N4); the correction for several finalists stays, and the error rule is tightened: a candidate needs an observed difference in non-minor errors per 10 of at most 0 against the reference, a 90 % upper end below +3.0, and the separate cap on harmful findings (N5); Qwen3.5-9B is deferred to a later milestone, for the 16 to 24 GB laptop (N6); **go for the open screen** of Gemma 4 26B-A4B, GLM-4.7-Flash and Granite 4.2 30B on 339 open mechanical items and 60 open judged scenarios each, no hidden look (N7) | Owner |
@@ -712,8 +768,11 @@ and J6 come from the mechanical tier and block nothing yet):
   run); GLM's mechanical run was made again from the start.
 - 2026-11-21, 23:00: the Owner decided E5: keep Qwen3.8-27B at 4-bit. All five exit
   criteria are now measured or decided.
-- **Waiting for the Owner:** how M4 closes (E3 and part of E4 are not met), what the
-  release holds, and what the next milestone targets.
+- 2026-11-21, 23:45: the Owner closed M4 with E3 and part of E4 recorded as not met,
+  chose v3.1.0 as the release, and set the next milestone's targets (see "Closing
+  state"). The sealed sessions' transcripts were deleted (27 sessions). In progress: the
+  release preparation, an identity check of the default path on open items, and the plan
+  for the next milestone.
 - 2026-11-21, 14:25: **E4 measured on open items through the streamed service**
   (`runs/m4/reports/e4_first_words_run.md`; 4-bit reference, default mode, 120 questions,
   no error). Judged scenarios (60, B1 and B2): complete answer median 90.3 s (90th
