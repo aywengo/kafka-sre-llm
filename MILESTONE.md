@@ -692,7 +692,7 @@ and J6 come from the mechanical tier and block nothing yet):
   stage SCREEN) and the amended rule by code. The screen starts when the chain passes
   its dry run and the first-words timing has freed the model server. Nothing waits for
   the Owner.
-- 2026-11-21, 14:5x: **E4 measured on open items through the streamed service**
+- 2026-11-21, 14:25: **E4 measured on open items through the streamed service**
   (`runs/m4/reports/e4_first_words_run.md`; 4-bit reference, default mode, 120 questions,
   no error). Judged scenarios (60, B1 and B2): complete answer median 90.3 s (90th
   percentile 96.8), first words median 22.9 s, 39 of 60 answers cut at 2,048 tokens: both
