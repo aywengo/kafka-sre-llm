@@ -10,7 +10,11 @@ excerpts in the prompt) was stopped on 2026-11-17 after a ceiling check: the tea
 beat base + retrieval by the margin fixed in advance. v3 was released on 2026-11-18: the
 retrieval runtime on the base model, the documentation index as a dataset, and the v2
 adapter as a retrieval-only model. `v3.0.0` is the measured release; `v3.0.1` adds the
-fixes from the end-to-end test (`agents/e2e-v3.0.0.md`).
+fixes from the end-to-end test (`agents/e2e-v3.0.0.md`). M4 (an evaluation with a hidden
+half, the answer checker, the streaming service, a base-model bake-off) closed on
+2026-11-21 with two criteria not met, and `v3.1.0` was released on 2026-11-22
+(`milestones/M4.md`). The current milestone is M5: retrieval ranking, fewer wrong
+statements, repairs.
 
 ## Start of every session
 
@@ -21,7 +25,8 @@ fixes from the end-to-end test (`agents/e2e-v3.0.0.md`).
    anything on the GPU or the model server next to it, unless the task says so.
 
 The mission brief is `agents/train-v3.md`, amended by `agents/train-v3-stage1.md` (the
-amendment wins). The run log is `runs/v3/HEARTBEAT.md`.
+amendment wins). The brief of M5 is `agents/m5-plan.md`; the evaluation's rules are
+`agents/m4-evaluation.md`. The run log is `runs/v3/HEARTBEAT.md`.
 
 ## Who does what
 
@@ -50,7 +55,7 @@ GPU, model server), and where the report goes.
 
 ## Reports
 
-Each worker writes its full report to a file (`runs/v3/reports/<task>.md`, or the session's
+Each worker writes its full report to a file (`runs/m5/reports/<task>.md` in M5, or the session's
 scratch directory for throwaway detail) and returns at most about 150 words: pass or fail of
 each acceptance item, the files it changed, anything that needs a decision. It says what it
 could not verify. A failed check is reported as failed, with the output.
@@ -67,10 +72,9 @@ with bulk generation or training. A failed gate stops the stage until the Owner 
 it. The Owner is whoever `CODEOWNERS` names.
 Loading and unloading the three models named below is covered by the Owner's standing go, when no
 other client is active.
-For M4 the Owner's go of 2026-11-18 also covers: loading the 4-bit and the full-precision
-build of the base model and the bake-off candidates of `MILESTONE.md` for measurement runs,
-and unloading models another client left loaded when the server has no active or waiting
-request.
+For M5 the Owner's go of 2026-11-22 also covers loading the 4-bit build of the base model
+for measurement runs. The wider go of M4 (the full-precision build, the bake-off
+candidates, unloading models another client left loaded) ended with M4.
 
 ## Repository map
 
@@ -78,6 +82,7 @@ request.
 |---|---|
 | `GOAL.md` | Where the project is going and how success is judged; changes only by the Owner's decision |
 | `MILESTONE.md` | Progress of the current milestone; kept by the conductor, not edited by workers |
+| `milestones/` | Tracking documents of closed milestones; code comments that cite "MILESTONE.md" for decisions J, K, L, M and N mean `milestones/M4.md` |
 | `agents/` | Mission briefs, one per version or work package |
 | `kafka_sre_rag/` | Retrieval runtime: `prompts.py` (the only place prompt text lives), `frozen.json`, `ask` / `chat` / `verify` |
 | `scripts/` | Pipeline: sources, chunking, retrieval, question bank, packs, generation and verification, guard, chain scripts (`s1_*.sh`) |
@@ -103,11 +108,13 @@ Commands: `.venv/bin/python -m unittest discover -s tests` (offline, seconds);
   old 40) and the 42 runbook-holdout questions are legacy sets: kept for continuity with v3,
   no longer a gate, no prompt or retrieval tuning on them, and say so whenever a conclusion
   leans on them. Differences under about 0.2 on 40 questions are noise (the standard error
-  is about 0.2).
+  is about 0.2). The open judged batches B1 and B2, the pilot sets and the open mechanical
+  half are development data in M5. B4 is the out-of-sample check for a retrieval candidate:
+  its rule is fixed beforehand and it is used once.
 - **The hidden part of the M4 evaluation** (`agents/m4-evaluation.md`) is the gate. Nobody
   opens its items, the answers to them or per-item results; the harness prints totals only.
   Every run on it is written in `runs/m4/HIDDEN_LEDGER.md` with its decision rule before
-  the run, at most six in M4. A change prompted by particular open items lists those items
+  the run. Six looks in total: two were used in M4, and M5 uses at most two of the rest. A change prompted by particular open items lists those items
   and is judged on the hidden part.
 - **The catalogues** (`work/m4/catalogues/`, built by `scripts/build_catalogues.py`) are
   hashed like the index. The evaluation's scorer and the runtime's answer checker share
