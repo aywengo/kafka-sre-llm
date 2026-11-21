@@ -113,6 +113,7 @@ thinking off.
 | 2026-11-18 | The 15 changes of the design review are accepted into the design; those that are the Owner's are marked as waiting | conductor |
 | 2026-11-18 | **Yes to all recommendations:** the 4-bit model on oMLX is the reference configuration; half of each tier hidden, encrypted, decisions on the hidden half, at most six looks; the downloads and installs for catalogues and checks; loading the 4-bit and full-precision 27B builds for the comparison; `questions_real` becomes a legacy set and the 4-bit bar a margin fixed before the run; public questions may be raw material after a licence check; the four bake-off candidates may be downloaded; other clients' models on the server may be unloaded when it is idle | Owner |
 | 2026-11-19 | **After the failed judging pilot:** build the judged tier with the analysis's changes and a second small pilot on fresh items; the first pilot stays a no-go and the second gets new criteria fixed beforehand; the judge's error flags count toward the bars of `GOAL.md` only after a reader has confirmed them; DeepSeek stays the judge, with the earlier judge re-judging a 24-item subset on every decision run; the Owner reviews which points are essential on his own questions | Owner |
+| 2026-11-21 | **Licences of the bake-off candidates** (`runs/m4/reports/e5_t5_licences.md`): (1) Gemma 4: the Apache-2.0 licence page is enough; the older Gemma terms scope themselves to the models in their appendix and send Gemma 4 users to the separate licence, so the prohibited-use policy is not read as a licence condition for the official Gemma 4 weights. (2) GLM-4.7-Flash: the MIT field is enough for local evaluation and for a runtime that links users to the upstream download; before bundling, mirroring or publishing a quantised build of the weights, get the exact copyright and permission notice from Z.ai. (3) The LM Studio 4-bit build of Gemma 26B (from a QAT checkpoint) is acceptable for the local bake-off; before it becomes the release default or is redistributed, have LM Studio confirm the source revision, or measure a build with a documented source. (4) Quantised builds the project publishes ship the full licence text and a pinned source link, mark modified files prominently, keep applicable upstream notices and NOTICE attributions; a GLM build carries the confirmed MIT notice | Owner |
 | 2026-11-20 | **Agreed with all recommendations L1 to L11 for the E2 and E3 runs:** the cost of 4-bit is tested one-sided (pass if a loss of more than 5 points is ruled out) (L1); the model patch step R2 stays off in the E3 measurement, inline marks only, and R2 is recorded as built but not tested on hidden data (L2); the sealed readers read default and strict answers (L3); the second judge's cross-check on 24 scenarios stays (L4); no full-precision run on the judged tier (L5); speed is reported per tier, a lower answer limit is its own item (L6); the 7 hidden valid-but-wrong items that share a published variant are redrawn (L7); the E3 reading may run while E2's mechanical runs go (L8); a restart after a crash, or a re-run of the scoring, is the same look (L9); the shape check of the hidden files is not a look (L10); E2 uses the Owner's questions and B3 as the hidden judged files (L11) | Owner |
 | 2026-11-20 | The Owner reviewed his own hidden questions: changes to nine, one kept as it is, oq-010 restored. The conductor saw his notes on these eleven items (see the log); the Owner's decision: the eleven stay in the hidden half, tagged (`eval/m4/HIDDEN_TAGS.json`), and every hidden judged result is reported with and without them | Owner |
 | 2026-11-20 | The new mechanical items stay at 88 open and 60 hidden (the mechanical tier is then 339 open and 305 hidden, 47 % hidden); the moved items are not dropped and no further hidden items are drawn | Owner |
@@ -673,9 +674,24 @@ and J6 come from the mechanical tier and block nothing yet):
   default), 48.2 (full precision); judged 81.8, with 36 of 61 default answers cut at
   2,048 tokens. The scoring stage was run a second time to add the reading to rule 1(b)
   (the same look, L9).
+- 2026-11-21, afternoon: the plan for the bake-off (`runs/m4/reports/e5_plan.md`): an open
+  screen of three candidates without a look, then at most two finalists in one hidden
+  look, each compared with the reference's stored E2 answers; a switch only on measured
+  superiority and no loss elsewhere; about 19 to 30 h of the model server and about 12
+  sealed reader sessions (inferred from 3 questions per model). Checked: every
+  candidate's chat template keeps the system prompt in its own turn; the thinking
+  switch works for GLM and Granite and changes nothing for Gemma
+  (`runs/m4/reports/e5_t4_templates.md`). The Owner decided the licence points (see
+  "Decisions"). Running: the first-words timing on open items (E4); the decision rule by
+  code. A flaw found in the reading totals: the pooled disagreement of the two readers
+  netted signed differences (printed 0.00; 0.62 per set); it does not change rule 1(b).
 - **Waiting for the Owner:** (M1) the 4-bit bar after the narrow miss: accept a stated
-  loss, try another build, or report it as not met; (M2) the go for the base-model
-  bake-off (E5, the third look).
+  loss, try another build, or report it as not met; and for the bake-off: (N1) leave
+  Gemma 4 31B out; (N2) the same deterministic decoding for all; (N3) speed as a hard
+  limit (a judged answer at most 15 % slower than the reference's); (N4) the reference's
+  answers read again with the candidates'; (N5) the correction for several candidates and
+  the +3.0 per 10 margin on the reading; (N6) Qwen3.5-9B deferred; (N7) the go for the
+  open screen.
 - Earlier: **the go for the E2 run was asked** (two hidden looks, E2 and E3; about
   19 to 22 h of the model server by the rehearsal's rates, plus about 2 h for the
   first-words timing on open items; about eight sealed reader sessions).
