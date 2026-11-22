@@ -1,0 +1,298 @@
+{
+  "date": "2026-11-22",
+  "rule": "a set is recorded only if an independent checker found that its chunks, as the model receives them (each with its title line and its text), together and nothing else state the point's whole fact; a point is served when one whole set is served",
+  "first_independent_count": {
+    "points_with_sets": 227,
+    "ok": 187,
+    "partial": 40,
+    "sets": 344,
+    "sets_ok": 295,
+    "sets_partial": 49,
+    "sets_wrong": 0
+  },
+  "second_pass": {
+    "points_rechecked": 46,
+    "sets_rerated": 72,
+    "sets_changed_to_ok": 6,
+    "points_ok_after_of_227": 193
+  },
+  "replacements_independent_count": {
+    "scenarios": [
+      "d5-24",
+      "d5-30"
+    ],
+    "points_with_sets": 10,
+    "ok": 6,
+    "partial": 4,
+    "sets": 20,
+    "sets_ok": 15,
+    "sets_partial": 5,
+    "sets_wrong": 0,
+    "unrecorded_sets_found": 4,
+    "second_pass": "none (made under the corrected test)"
+  },
+  "final_state": {
+    "scenarios": 50,
+    "must_points": 269,
+    "points_with_at_least_one_set": 227,
+    "points_served_only_through_sets_of_two_chunks": 17,
+    "only_two_chunk_points": [
+      [
+        "d5-03",
+        "m3"
+      ],
+      [
+        "d5-04",
+        "m2"
+      ],
+      [
+        "d5-09",
+        "m2"
+      ],
+      [
+        "d5-11",
+        "m3b"
+      ],
+      [
+        "d5-18",
+        "m1"
+      ],
+      [
+        "d5-22",
+        "m2"
+      ],
+      [
+        "d5-23",
+        "m4"
+      ],
+      [
+        "d5-26",
+        "m2"
+      ],
+      [
+        "d5-27",
+        "m4"
+      ],
+      [
+        "d5-30",
+        "m5"
+      ],
+      [
+        "d5-32",
+        "m4"
+      ],
+      [
+        "d5-33",
+        "m2"
+      ],
+      [
+        "d5-34",
+        "m3"
+      ],
+      [
+        "d5-35",
+        "m1"
+      ],
+      [
+        "d5-41",
+        "m2"
+      ],
+      [
+        "d5-42",
+        "m1"
+      ],
+      [
+        "d5-48",
+        "m4"
+      ]
+    ],
+    "sets_by_size": {
+      "1": 316,
+      "2": 38
+    },
+    "sets_total": 354,
+    "sets_from_checkers": 39,
+    "points_no_covering_set": [
+      {
+        "id": "d5-02",
+        "point": "m3"
+      },
+      {
+        "id": "d5-15",
+        "point": "m5"
+      },
+      {
+        "id": "d5-20",
+        "point": "m3"
+      },
+      {
+        "id": "d5-22",
+        "point": "m1"
+      },
+      {
+        "id": "d5-23",
+        "point": "m2"
+      },
+      {
+        "id": "d5-23",
+        "point": "m3"
+      },
+      {
+        "id": "d5-25",
+        "point": "m3a"
+      },
+      {
+        "id": "d5-25",
+        "point": "m3c"
+      },
+      {
+        "id": "d5-27",
+        "point": "m1"
+      },
+      {
+        "id": "d5-27",
+        "point": "m5"
+      },
+      {
+        "id": "d5-29",
+        "point": "m1"
+      },
+      {
+        "id": "d5-29",
+        "point": "m4"
+      },
+      {
+        "id": "d5-49",
+        "point": "m1"
+      }
+    ],
+    "points_not_indexed": 29,
+    "not_indexed_points": [
+      {
+        "id": "d5-02",
+        "point": "m2"
+      },
+      {
+        "id": "d5-03",
+        "point": "m4b"
+      },
+      {
+        "id": "d5-05",
+        "point": "m5"
+      },
+      {
+        "id": "d5-07",
+        "point": "m2"
+      },
+      {
+        "id": "d5-08",
+        "point": "m2"
+      },
+      {
+        "id": "d5-08",
+        "point": "m3"
+      },
+      {
+        "id": "d5-09",
+        "point": "m3"
+      },
+      {
+        "id": "d5-09",
+        "point": "m6"
+      },
+      {
+        "id": "d5-10",
+        "point": "m5"
+      },
+      {
+        "id": "d5-10",
+        "point": "m6"
+      },
+      {
+        "id": "d5-11",
+        "point": "m1"
+      },
+      {
+        "id": "d5-18",
+        "point": "m2"
+      },
+      {
+        "id": "d5-18",
+        "point": "m3"
+      },
+      {
+        "id": "d5-19",
+        "point": "m5"
+      },
+      {
+        "id": "d5-19",
+        "point": "m6"
+      },
+      {
+        "id": "d5-20",
+        "point": "m5"
+      },
+      {
+        "id": "d5-29",
+        "point": "m6"
+      },
+      {
+        "id": "d5-30",
+        "point": "m6"
+      },
+      {
+        "id": "d5-33",
+        "point": "m5"
+      },
+      {
+        "id": "d5-34",
+        "point": "m2"
+      },
+      {
+        "id": "d5-38",
+        "point": "m1b"
+      },
+      {
+        "id": "d5-39",
+        "point": "m3"
+      },
+      {
+        "id": "d5-39",
+        "point": "m5"
+      },
+      {
+        "id": "d5-39",
+        "point": "m6"
+      },
+      {
+        "id": "d5-40",
+        "point": "m5"
+      },
+      {
+        "id": "d5-40",
+        "point": "m6"
+      },
+      {
+        "id": "d5-47",
+        "point": "m2"
+      },
+      {
+        "id": "d5-48",
+        "point": "m6"
+      },
+      {
+        "id": "d5-49",
+        "point": "m6"
+      }
+    ],
+    "indexed_points_per_item": {
+      "min": 2,
+      "median": 4.0,
+      "max": 7
+    }
+  },
+  "sha256": {
+    "rubrics.jsonl": "922f3516f6d0b2fe90749dd14bb0fd87cecdabec4444304c81da850472da7932",
+    "items.jsonl": "cda0cec5b0ada56aef41b5b2383c523ba9ef0be3c8c2dac668312bcaab74306f"
+  }
+}

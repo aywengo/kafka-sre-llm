@@ -14,8 +14,11 @@ fixes from the end-to-end test (`agents/e2e-v3.0.0.md`). M4 (an evaluation with 
 half, the answer checker, the streaming service, a base-model bake-off) closed on
 2026-11-21 with two criteria not met, and `v3.1.0` was released on 2026-11-22
 (`milestones/M4.md`). `v3.1.1` (2026-11-22, branch `release/v3.1.1`) fixes the checker's
-setup from a fresh clone; its commits are also on `main`. The current milestone is M5:
-retrieval ranking, fewer wrong statements, repairs.
+setup from a fresh clone; its commits are also on `main`. M5 (retrieval ranking, fewer
+wrong statements) closed on 2026-11-22 with both criteria not met, each candidate stopped
+by a rule fixed beforehand; `v3.2.0` (2026-11-22) carries its candidates as experimental
+options, off by default (`milestones/M5.md`). The current milestone is M6: a combined
+candidate (a grounded prompt with better ranking), harmful statements, repairs.
 
 ## Start of every session
 
@@ -26,8 +29,9 @@ retrieval ranking, fewer wrong statements, repairs.
    anything on the GPU or the model server next to it, unless the task says so.
 
 The mission brief is `agents/train-v3.md`, amended by `agents/train-v3-stage1.md` (the
-amendment wins). The brief of M5 is `agents/m5-plan.md`; the evaluation's rules are
-`agents/m4-evaluation.md`. The run log is `runs/v3/HEARTBEAT.md`.
+amendment wins). The brief of M6 is `agents/m6-plan.md` (`MILESTONE.md` wins where they
+differ); the evaluation's rules are `agents/m4-evaluation.md`. The run log is
+`runs/v3/HEARTBEAT.md`.
 
 ## Who does what
 
@@ -56,7 +60,7 @@ GPU, model server), and where the report goes.
 
 ## Reports
 
-Each worker writes its full report to a file (`runs/m5/reports/<task>.md` in M5, or the session's
+Each worker writes its full report to a file (`runs/m6/reports/<task>.md` in M6, or the session's
 scratch directory for throwaway detail) and returns at most about 150 words: pass or fail of
 each acceptance item, the files it changed, anything that needs a decision. It says what it
 could not verify. A failed check is reported as failed, with the output.
@@ -73,7 +77,7 @@ with bulk generation or training. A failed gate stops the stage until the Owner 
 it. The Owner is whoever `CODEOWNERS` names.
 Loading and unloading the three models named below is covered by the Owner's standing go, when no
 other client is active.
-For M5 the Owner's go of 2026-11-22 also covers loading the 4-bit build of the base model
+For M6 the Owner's go of 2026-11-22 also covers loading the 4-bit build of the base model
 for measurement runs, and unloading any model from the server, also one that another
 client left loaded, when the server has no active or waiting request. The rest of M4's
 wider go (the full-precision build, the bake-off candidates) ended with M4.
@@ -84,7 +88,7 @@ wider go (the full-precision build, the bake-off candidates) ended with M4.
 |---|---|
 | `GOAL.md` | Where the project is going and how success is judged; changes only by the Owner's decision |
 | `MILESTONE.md` | Progress of the current milestone; kept by the conductor, not edited by workers |
-| `milestones/` | Tracking documents of closed milestones; code comments that cite "MILESTONE.md" for decisions J, K, L, M and N mean `milestones/M4.md` |
+| `milestones/` | Tracking documents of closed milestones; code comments that cite "MILESTONE.md" for decisions J, K, L, M and N mean `milestones/M4.md`, for P and Q `milestones/M5.md` |
 | `agents/` | Mission briefs, one per version or work package |
 | `kafka_sre_rag/` | Retrieval runtime: `prompts.py` (the only place prompt text lives), `frozen.json`, `ask` / `chat` / `verify` |
 | `scripts/` | Pipeline: sources, chunking, retrieval, question bank, packs, generation and verification, guard, chain scripts (`s1_*.sh`) |
@@ -111,12 +115,18 @@ Commands: `.venv/bin/python -m unittest discover -s tests` (offline, seconds);
   no longer a gate, no prompt or retrieval tuning on them, and say so whenever a conclusion
   leans on them. Differences under about 0.2 on 40 questions are noise (the standard error
   is about 0.2). The open judged batches B1 and B2, the pilot sets and the open mechanical
-  half are development data in M5. B4 is the out-of-sample check for a retrieval candidate:
-  its rule is fixed beforehand and it is used once.
+  half are worn development data. D5 (`eval/m6/d5/`) is the fresh development batch of M6.
+  B4 is the out-of-sample check for a retrieval candidate: its rule is fixed beforehand
+  and it is used once.
+- **Covering sets:** a must point of B4 and D5 records sets of one or two chunks that an
+  independent checker found to state its whole fact, read as the model receives them
+  (title line and text). A point is served when one whole set is in the pack. Nobody adds
+  a set that an independent checker has not rated.
 - **The hidden part of the M4 evaluation** (`agents/m4-evaluation.md`) is the gate. Nobody
   opens its items, the answers to them or per-item results; the harness prints totals only.
   Every run on it is written in `runs/m4/HIDDEN_LEDGER.md` with its decision rule before
-  the run. Six looks in total: two were used in M4, and M5 uses at most two of the rest. A change prompted by particular open items lists those items
+  the run. Six looks in total: two were used in M4, none in M5; M6 uses one and keeps one
+  spare, and its look runs on a new hidden judged part written in M6. A change prompted by particular open items lists those items
   and is judged on the hidden part.
 - **The catalogues** (`work/m4/catalogues/`, built by `scripts/build_catalogues.py`) are
   hashed like the index. The evaluation's scorer and the runtime's answer checker share

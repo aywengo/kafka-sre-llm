@@ -27,6 +27,19 @@
    ],
    "since": "2026-11-22",
    "reason": "a sealed session found these hidden judged items to be of the same family as a scenario of the open batch B4 (the B4 scenarios are not named); Owner's decision: keep them and report every hidden judged result with and without them; near and not tagged: b3-13, b3-18, b3-31, b3-36, oq-004, oq-050"
+  },
+  "shares_family_with_d5": {
+   "ids": [
+    "b3-02",
+    "b3-05",
+    "b3-13",
+    "b3-29",
+    "b3-30",
+    "b3-31",
+    "oq-005"
+   ],
+   "since": "2026-11-22",
+   "reason": "a sealed session found these hidden judged items to be of the same family as a scenario of the open development batch D5 (the D5 scenarios are not named); Owner's decision S8: keep them and report every hidden judged result with and without them; the hidden look of milestone M6 runs on a new hidden judged part; near and not tagged: b3-03, b3-15, b3-17, b3-18, b3-19, b3-20, b3-21, b3-33, oq-036"
   }
  }
 }
