@@ -314,8 +314,14 @@ class TestTags(E5Base):
         cmp.render_e5(r, out)
         self.assertIn("without the items tagged t (6 items", out.getvalue())
         self.assertIn("for information", out.getvalue())
-        with self.assertRaises(cmp.CompareError):
-            self.run_e5({"C": set()}, rd, jp, tags={"t": ["nope"]})
+        # an id that is not in the data is not an error: counted as not present
+        r2 = self.run_e5({"C": set()}, rd, jp, tags={"t": ["nope"]})
+        w = r2["without_tagged"]["t"]
+        self.assertEqual((w["excluded"], w["tagged"], w["judged_affected"], w["mechanical_affected"]), (0, 1, False, False))
+        out = io.StringIO()
+        cmp.render_e5(r2, out)
+        self.assertIn("without the items tagged t (0 of 1 tagged items present;", out.getvalue())
+        self.assertNotIn("nope", out.getvalue())
 
 
 @NEEDS_OPENSSL

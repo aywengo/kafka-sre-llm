@@ -715,6 +715,14 @@ class CoverageTagFile(unittest.TestCase):
                                  "# without the union of all tagged items (2 of 4 tagged items present; 1 remain)"])
         self.assertNotIn("zz-", out)
 
+    def test_malformed_tag_files_stay_errors(self):
+        tmp = Path(tempfile.mkdtemp())
+        for n, body in enumerate(('[]', '{"tags": []}', '{"tags": {"a": {}}}', '{"tags": {"a": {"ids": "b3-07"}}}', '{"tags": {"a": {"ids": ["x", "x"]}}}')):
+            f = tmp / f"bad{n}.json"
+            f.write_text(body)
+            with self.assertRaises(pr.TagError):
+                pr.load_tag_file(str(f), None)
+
     def test_one_tag_has_no_union_block(self):
         tmp = Path(tempfile.mkdtemp())
         _, out, _, tf = self.run_main(tmp, ["t-00"], extra=["--tag-file", str(tmp / "tags.json")])

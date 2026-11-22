@@ -113,9 +113,16 @@ def load_tag_file(path, known_ids):
     try:
         data = json.loads(Path(path).read_text(encoding="utf-8"))
         tags = data["tags"]
+        if not isinstance(tags, dict) or any(not isinstance(v, dict) or not isinstance(v.get("ids"), list) for v in tags.values()):
+            raise TypeError
         out = OrderedDict((str(name), sorted({str(i) for i in v["ids"]})) for name, v in tags.items())
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         raise TagError(f"{Path(path).name}: not a tag file ({{\"tags\": {{name: {{\"ids\": [...]}}}}}})") from None
+    for name, v in tags.items():
+        ids = [str(i) for i in v["ids"]]
+        dup = sorted({i for i in ids if ids.count(i) > 1})
+        if dup:
+            raise TagError(f"tag {name}: duplicate id(s): {', '.join(dup)}")
     return out
 
 
