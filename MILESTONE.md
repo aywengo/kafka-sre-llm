@@ -64,7 +64,7 @@ Speed work as such and the laptop run are not targets. The base model stays Qwen
 | G1 | The grounded mode as a new prompt constant with its own hashes; the default and the golden hashes unchanged | implementer | CPU | **done** 2026-11-22 01:38, commit `06dc7d5` (the `scripts/eval2.py` part and a refusal in `serve` follow F1) |
 | G2 | B2 answered in the grounded mode; a blind reading mixed with the stored default answers; judge; open mechanical 339 | job-operator, readers | server about 3 h | after G1 |
 | G3 | Experiment: can the reranker's score tell supported from unsupported sentences, on the 56 errors of the B1 reading | implementer | CPU, reranker | after R0 (not on the critical path) |
-| R5 | The second reranker (Q8): licence and usage read directly; design of the offline test and its rule; download; build; run | researcher, complex-reviewer, job-operator, implementer | CPU, one download of about 1.2 GB | licence read, design and download done (2026-11-22 08:25); the build is running |
+| R5 | The second reranker (Q8): licence and usage read directly; design of the offline test and its rule; download; build; run | researcher, complex-reviewer, job-operator, implementer | CPU, one download of about 1.2 GB | licence read, design and download done (2026-11-22 08:21); the build is running |
 | H1 | Hidden look 3: r4 with the grounded mode against E2's stored default answers; ledger row and rule first | job-operator, sealed readers | server about 4 h | after R4 and G2 |
 
 Not in M5 (P7): dense retrieval; index changes (the
@@ -152,6 +152,15 @@ misses not more than default + 1.0 per 10; at most 5 of 54 answers cut; median a
 default. G1 if eligible, else G2 if eligible, else stop without spending B2. Server time
 2.6 to 4 h (inferred).
 
+Clarified before the run (the conductor, 2026-11-22, after the chain's review): the
+wrong-decline share is estimated with the sample's weights, because the sample
+over-represents declines by design (it holds all 56 items strict declined on). Unweighted,
+strict itself would read 10 of 46 covered items (21.7 %) on the sample, against 10 of 161
+(6.2 %) on all 251 items; weighted, 6.8 %. The weighted share decides; the unweighted one
+is printed beside it. Also changed after the review: B1's default answers are judged
+again in the same run as the variants; the run's manifest pins the code; an unload's
+result is checked; the server's echoed model is compared with the reference runs'.
+
 **The B2 check, rule fixed before the run.** The picked variant answers B2 on the stored
 packs; a blind reading of the 60 answers mixed, second reader on a quarter. Go on to the
 hidden look only if: the readers' totals differ by at most 30 %; wrong statements per 10,
@@ -209,7 +218,7 @@ The stage stops here until the Owner has seen it (Q7). B4 is not spent and no r4
 is recorded as chosen. A reviewer is checking the verdict and where the points are still
 lost; a researcher is listing other rerankers with their licences (nothing is downloaded).
 
-## R5: the second reranker (design of 2026-11-22 08:25, before any score)
+## R5: the second reranker (design of 2026-11-22 08:21, before any score)
 
 `Qwen/Qwen3-Reranker-0.6B`, revision `e61197ed…`, licence field `apache-2.0` on its model
 card and in the hub's metadata (no licence file in the repository; the card's text calls
@@ -375,5 +384,8 @@ Later in M5: whether candidate C becomes the default (after look 3).
 - 2026-11-22 08:16: the Owner answered Q9: any model may be unloaded from the server.
   `AGENTS.md` updated. The development check starts when the chain's review is back.
 - 2026-11-22 08:17: the direct read of the Qwen3 reranker's card is back (licence field
-  apache-2.0, no licence file); the download ran and passed its checks. 08:25: the design
+  apache-2.0, no licence file); the download ran and passed its checks. 08:21: the design
   of the offline test is back and its rule is fixed (section "R5"). The build started.
+- 2026-11-22 08:30: the review of the development chain is back: one blocker (the
+  wrong-decline share on a sample that over-represents declines) and five smaller
+  points; the fixes are being made (section "Grounded mode"). The run follows them.
