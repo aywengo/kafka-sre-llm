@@ -357,7 +357,12 @@ spent on the same 61 scenarios.
 
 ## Waiting for the Owner
 
-Nothing is open for the Owner now.
+- Q12 (asked 2026-11-22 13:05): the development check has all its answers and 179 of 180
+  valid judge rows on B1; one row (variant G2, b1-09, pass 1) is malformed JSON in four
+  attempts, and the chain requires 180. Recommended: leave that one row out, so that this
+  answer's judged measures rest on its one valid pass, stated in the report; at most one
+  such row per judged set; the chain resumes with its code change recorded in the
+  manifest.
 
 Still open from M4, none blocking:
 
@@ -483,3 +488,12 @@ Later in M5: whether candidate C becomes the default (after look 3).
   `b9fcc6e`, release page published). 12:16: its three commits cherry-picked onto `main`
   without conflicts; the nine touched test modules and `verify` pass here; pushed after
   the two slow chain test modules.
+- 2026-11-22 12:27: the development check finished answering (reference and both
+  variants on B1, the pilot and the mechanical sample) and began judging. 12:40: the
+  v3.1.1 commits pushed to `main` (`984af74`) after the chain tests (115) passed.
+- 2026-11-22 12:54: the development check stopped in judging: one of 180 rows on B1
+  (variant G2, b1-09, pass 1) has no valid judge reply (malformed JSON, not cut off). One
+  resume gave two more attempts, both malformed (12:59). No further retry. The full suite
+  on the head passed at about 12:55 (1,899 tests, 57 skipped); the chain of the
+  informative run R6 committed (`a5d111e`). Q12 for the Owner; the option it needs is
+  being prepared, off by default.
