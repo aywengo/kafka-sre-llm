@@ -52,8 +52,8 @@ What M5 measured that was not known before:
   reached the model (inferred).
 - **Stored long answers are not always reproduced** after days (1 of 3 probes differed;
   inside one day 3 of 3 were identical), so a comparison answers its own reference in
-  the same run. A judge reply can be malformed in every attempt (1 row of 708 judged in
-  M5's checks); such a row is left out and named.
+  the same run. A judge reply can be malformed in every attempt (one judge call among the 648 judge rows of
+  M5's three checks; it recurred in the second); such a row is left out and named.
 
 In the code as experimental options, off by default: the modes `grounded-g1`,
 `grounded-g2`, `grounded-g3`; the retrieval candidate `r4`; the offline test of the
