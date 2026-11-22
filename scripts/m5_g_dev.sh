@@ -10,8 +10,9 @@
 #   --mechanical all: all 251 + 88 = 339 open mechanical items instead of the 116 (the Owner has not yet decided; sample is the default).
 # Steps (each resumable, each prints a line per item; a stage marker work/.../stage_NAME.done records the manifest hash and every output hash):
 #   0. Start check (CPU, refusal exit 2, nothing moved or deleted): the stored manifest and the stage markers against the state now (pinned files
-#      by sha256: the item and rubric files, the stored default answers whose packs are replayed with their manifests, the judge cache, the catalogue
-#      record, the index record; the prompt hashes of frozen.json; the rule text; the options). A marker without a manifest, for another manifest, or
+#      by sha256: the item and rubric files, the stored default answers whose packs are replayed with their manifests, the stored B1 judge results, the catalogue
+#      record, the index record; the prompt hashes of frozen.json; the rule text; the options; the code (m5_g_rule.py, this script, eval2.py,
+#      eval2_score.py, eval2_judge.py, eval2_idcheck.py, prompts.py, frozen.json) by sha256; the judge's arguments; the git head is recorded only). A marker without a manifest, for another manifest, or
 #      with a missing or changed output is refused.
 #   1. Gate: inputs, ids file reproduces from its rule, stored default answers complete, kafka_sre_rag verify; the server (real runs): the 4-bit base
 #      model listed, no other chain or guarded job, no active or waiting request, no model of another client loaded (our judge builds are unloaded).
@@ -19,7 +20,8 @@
 #   3. Determinism check: 3 B1 default replays against the stored default answers, byte for byte. On failure the chain stops and says that default
 #      must be answered again.
 #   4. Answers of g1 and g2 on b1, pilot2, tier_a part, tier_a3 part (guarded, stall limit 40 min), pack equality with the stored packs.
-#   5. Judge (DeepSeek, coverage role, instruction v2, setting deepseek-nothink-12k, two passes) on B1 and pilot2, default included; guarded.
+#   5. Judge (DeepSeek, coverage role, instruction v2, setting deepseek-nothink-12k, two passes) on B1 and pilot2, default included and judged again
+#      in this run (fresh caches, the same code and setting as the variants); the stored B1 results are compared afterwards and decide nothing; guarded.
 #   6. Identifier check (CPU). 7. The scorer with decline outcomes (CPU). 8. Measures (a) to (h), the rule, the report runs/m5/G_DEV.md.
 #   scripts/m5_g_dev.sh > runs/m5/logs/m5_g_dev.out 2>&1 &
 #   scripts/m5_g_dev.sh --dry-run [--work DIR] [--mechanical all]   # stub model, stub judge, no server, no markers outside DIR, no heartbeat, no
@@ -37,9 +39,9 @@ case $MECH in sample|all) ;; *) echo "REFUSED: --mechanical is sample or all; no
 L=runs/m5/logs; N=m5_g_dev; R=scripts/m5_g_rule.py
 CATS=work/m4/catalogues; CHUNKS=work/v3/chunks_s1.jsonl; FROZEN=kafka_sre_rag/frozen.json
 B1_ITEMS=eval/m4/b1/items.jsonl; B1_RUBS=eval/m4/b1/rubrics.jsonl; P2_ITEMS=eval/m4/pilot2/items.jsonl; P2_RUBS=eval/m4/pilot2/rubrics.jsonl
-B1_ANS=work/m4/b1/ans_default.jsonl; P2_ANS=work/m4/pilot2/ans_default.jsonl
+B1_ANS=work/m4/b1/ans_default.jsonl; B1_JUDGED=work/m4/b1/judge_results.jsonl; P2_ANS=work/m4/pilot2/ans_default.jsonl
 TA_ITEMS=eval/m4/open/tier_a.jsonl; TA3_ITEMS=eval/m4/open/tier_a3.jsonl
-TA_ANS=work/m4/s6/ans_A1.jsonl; TA3_ANS=work/m4/e2/ans_O_Q4D_a3.jsonl; B1_CACHE=work/m4/b1/judge_cache.jsonl
+TA_ANS=work/m4/s6/ans_A1.jsonl; TA3_ANS=work/m4/e2/ans_O_Q4D_a3.jsonl
 DS=DeepSeek-V4.1-Flash-1017-oQ4e-mtp; GLM8=GLM-5.3-Flash-oQ8e-mtp; GLM4=GLM-5.3-Flash-oQ4e
 EB='{"chat_template_kwargs": {"enable_thinking": false}}'
 JEB='{"chat_template_kwargs": {"thinking_mode": "chat"}, "max_tokens": 4096}'
@@ -69,13 +71,12 @@ fail() { if [ $DRY = yes ]; then echo "DRY RUN FAILED: $1"; exit 1; fi
 
 # ---------------------------------------------------------------- 0 and 1. inputs, the model, the start check (CPU; nothing is written before the check passes, except $W itself)
 for f in $B1_ITEMS $B1_RUBS $P2_ITEMS $P2_RUBS $TA_ITEMS $TA3_ITEMS $B1_ANS $B1_ANS.manifest.json $P2_ANS $P2_ANS.manifest.json $TA_ANS $TA_ANS.manifest.json \
-         $TA3_ANS $TA3_ANS.manifest.json $CHUNKS $FROZEN $CATS/CATALOGUES.json runs/v3/INDEX_FROZEN.json scripts/eval2.py scripts/eval2_judge.py \
-         scripts/eval2_idcheck.py scripts/eval2_score.py scripts/eval2_compare.py scripts/run_guarded.py $R; do
+         $TA3_ANS $TA3_ANS.manifest.json $B1_JUDGED $CHUNKS $FROZEN $CATS/CATALOGUES.json runs/v3/INDEX_FROZEN.json scripts/eval2.py scripts/eval2_judge.py \
+         scripts/eval2_idcheck.py scripts/eval2_score.py scripts/eval2_compare.py scripts/run_guarded.py kafka_sre_rag/prompts.py scripts/m5_g_dev.sh $R; do
   [ -s $f ] || refuse "input $f is missing or empty"
 done
 [ -s $IDS ] || refuse "the ids file $IDS is missing (python scripts/m5_g_rule.py draw-ids --tier-a $TA_ITEMS --tier-a3 $TA3_ITEMS --out $IDS)"
 if [ $DRY = no ]; then
-  [ -s $B1_CACHE ] || refuse "input $B1_CACHE is missing or empty"
   export OMLX_URL=${OMLX_URL:-$(cat "$HOME/.config/kafka-sre-llm/omlx_url" 2>/dev/null)}
   export OMLX_API_KEY=${OMLX_API_KEY:-$(cat "$HOME/.config/kafka-sre-llm/judge_key" 2>/dev/null)}
   [ -n "$OMLX_URL" ] && [ -n "$OMLX_API_KEY" ] || refuse "no server address or key (OMLX_URL, OMLX_API_KEY or ~/.config/kafka-sre-llm/)"
@@ -87,14 +88,26 @@ api() { curl -s -m 20 -H "Authorization: Bearer $OMLX_API_KEY" "$BASE$1"; }
 busy() { api /api/status | python3 -c 'import sys,json; d=json.load(sys.stdin); print(int(d.get("active_requests",1))+int(d.get("waiting_requests",0)))' 2>/dev/null || echo 1; }
 idle() { n=0; until [ "$(busy)" = "0" ]; do sleep 30; n=$((n+1)); [ $n -lt 120 ] || fail "server still busy after 60 min"; done; }
 loaded() { api /api/status | python3 -c 'import sys,json; print("yes" if sys.argv[1] in (json.load(sys.stdin).get("loaded_models") or []) else "no")' "$1" 2>/dev/null || echo no; }
-foreign() { # loaded models that are not ours (the 4-bit model, DeepSeek and the GLM builds are ours)
-  api /api/status | python3 -c 'import sys,json; ours=set(sys.argv[1:]); print(" ".join(m for m in (json.load(sys.stdin).get("loaded_models") or []) if m not in ours))' $DS $GLM8 $GLM4 $Q4 2>/dev/null || echo "status-unreadable"; }
-unload() { idle; [ "$(loaded $1)" = "yes" ] || return 0   # only models this chain knows as its own (never another client's)
-  curl -s -m 300 -X POST -H "Authorization: Bearer $OMLX_API_KEY" "$BASE/admin/api/models/$1/unload" >/dev/null; hb "$N: unloaded $1 (no active or waiting requests)"; }
-server_free() { n=0; until [ "$(busy)" = "0" ] && [ -z "$(foreign)" ]; do
-    sleep 30; n=$((n+1))
-    [ $n -lt 120 ] || fail "server not free after 60 min (active or waiting requests, or a model of another client loaded: $(foreign))"
-  done; }
+loaded_list() { api /api/status | python3 -c 'import sys,json; print(" ".join(json.load(sys.stdin).get("loaded_models") or []))' 2>/dev/null || echo "status-unreadable"; }
+unload_now() { # any model; only when no request is active or waiting (the Owner's decision of 2026-11-22); the server's answer is checked and logged
+  idle
+  uresp=$(curl -s -m 300 -w '\n%{http_code}' -X POST -H "Authorization: Bearer $OMLX_API_KEY" "$BASE/admin/api/models/$1/unload" 2>/dev/null) || uresp=""
+  ucode=$(printf '%s' "$uresp" | tail -n 1); ubody=$(printf '%s' "$uresp" | sed '$d' | tr '\n' ' ' | cut -c1-160 | sed 's/ *$//')
+  case $ucode in [0-9][0-9][0-9]) ;; *) ucode=000;; esac
+  case $ucode in
+    2??) hb "$N: unloaded $1 (no active or waiting requests; the server answered $ucode: ${ubody:-no body})";;
+    *) hb "$N: unload of $1 FAILED (the server answered $ucode: ${ubody:-no body})" yes; fail "the unload of $1 was not accepted (the server answered $ucode)";;
+  esac; }
+unload() { [ "$(loaded $1)" = "yes" ] || return 0; unload_now $1; }
+clear_server() { # before the first request: no active or waiting request; every loaded model but the 4-bit model is unloaded (each unload checked and logged)
+  idle
+  for m in $(loaded_list); do
+    [ "$m" = "$Q4" ] && continue
+    [ "$m" = "status-unreadable" ] && fail "the server status is unreadable"
+    unload_now $m
+  done
+  left=$(for m in $(loaded_list); do [ "$m" = "$Q4" ] || echo $m; done)
+  [ -z "$left" ] || fail "models are still loaded after the unloads: $left"; }
 others() { pgrep -fl 'scripts/(m4|m5|s1)_[a-z0-9_]*\.sh|run_guarded\.py' | grep -v "$N" || true; }
 
 if [ $DRY = yes ]; then
@@ -103,13 +116,19 @@ else
   api /v1/models > $W/models.json 2>/dev/null || true
   Q4=${M5_Q4_MODEL:-$(.venv/bin/python scripts/eval2_compare.py pick-model --kind q4 < $W/models.json)} || refuse "the 4-bit model is not listed by the server (or ambiguous)"
 fi
-DRYFLAG=""; [ $DRY = yes ] && DRYFLAG="--dry"
+DRYFLAG=""; DRYFLAG_ECHO=""; [ $DRY = yes ] && { DRYFLAG="--dry"; DRYFLAG_ECHO="--dry"; }
 PINS="--pin $B1_ITEMS --pin $B1_RUBS --pin $P2_ITEMS --pin $P2_RUBS --pin $TA_ITEMS --pin $TA3_ITEMS --pin $IDS --pin $B1_ANS --pin $B1_ANS.manifest.json \
   --pin $P2_ANS --pin $P2_ANS.manifest.json --pin $TA_ANS --pin $TA_ANS.manifest.json --pin $TA3_ANS --pin $TA3_ANS.manifest.json \
-  --pin $CATS/CATALOGUES.json --pin runs/v3/INDEX_FROZEN.json"
-[ $DRY = yes ] || PINS="$PINS --pin $B1_CACHE"
+  --pin $CATS/CATALOGUES.json --pin runs/v3/INDEX_FROZEN.json --pin $B1_JUDGED"
+# the code the run depends on is pinned too (frozen.json is pinned by --frozen below and here as a file)
+for f in scripts/m5_g_rule.py scripts/m5_g_dev.sh scripts/eval2.py scripts/eval2_score.py scripts/eval2_judge.py scripts/eval2_idcheck.py kafka_sre_rag/prompts.py $FROZEN; do
+  PINS="$PINS --pin $f"; done
+GIT_HEAD=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)   # recorded for the reader, never compared
+gstate() { # SUBCOMMAND: the manifest and the start check take the same state; the judge's arguments contain spaces, so they are passed quoted
+  .venv/bin/python $R "$1" $STATE --info "git_head=$GIT_HEAD" --judge-arg "model=$DS" --judge-arg "setting=$SETTING" --judge-arg "extra_body=$JEB" \
+    --judge-arg "source_chars=$SRC" --judge-arg "instruction=v2" --judge-arg "passes=1 2" --judge-arg "role=coverage"; }
 STATE="--manifest $W/MANIFEST.json --work $W $PINS --frozen $FROZEN --mechanical $MECH --model $Q4 $DRYFLAG"
-.venv/bin/python $R start-check $STATE || refuse "the start check failed (see above; nothing was moved or deleted)"
+gstate start-check || refuse "the start check failed (see above; nothing was moved or deleted)"
 .venv/bin/python $R draw-ids --tier-a $TA_ITEMS --tier-a3 $TA3_ITEMS --check $IDS || refuse "$IDS does not reproduce from its rule"
 for s in "$B1_ANS 30" "$P2_ANS 24" "$TA_ANS 251" "$TA3_ANS 88"; do
   set -- $s; .venv/bin/python $R check-answers --file $1 --expect $2 --mode default || refuse "the stored default answers $1 are incomplete, have errors or another mode"
@@ -127,14 +146,14 @@ for p in sys.argv[1:5]:
 PY
 .venv/bin/python -m kafka_sre_rag verify > $W/verify.out 2>&1 || { cat $W/verify.out >&2; refuse "kafka_sre_rag verify failed (frozen index, prompts or reranker revision)"; }
 grep -E '^prompt ' $W/verify.out | head -8
-.venv/bin/python $R manifest $STATE
+gstate manifest
 mkdir -p "$(dirname $REPORT)"
 
 # ---------------------------------------------------------------- the plan and the estimate
 if [ $MECH = all ]; then NMECH=339; else NMECH=116; fi
-est() { awk -v m=$NMECH 'BEGIN{ lo=54*2*35+m*2*10+3*35+264*10+1200; hi=54*2*70+m*2*13+3*70+264*10+1800; printf "%.1f to %.1f", lo/3600, hi/3600 }'; }
-echo "planned: 54 judged answers and $NMECH mechanical items, each in 2 variants (grounded-g1, grounded-g2), the determinism check (3 answers), about 264 judge calls: $(est) h of model-server time"
-echo "estimate basis: the design's rates (35 to 70 s per judged answer, 10 to 13 s per mechanical answer, about 10 s per judge call, B1: 180 calls in 30.6 min, loads 0.3 to 0.5 h); not measured on the grounded modes"
+est() { awk -v m=$NMECH 'BEGIN{ lo=54*2*35+m*2*10+3*35+324*10+1200; hi=54*2*70+m*2*13+3*70+324*10+1800; printf "%.1f to %.1f", lo/3600, hi/3600 }'; }
+echo "planned: 54 judged answers and $NMECH mechanical items, each in 2 variants (grounded-g1, grounded-g2), the determinism check (3 answers), about 324 judge calls (B1's default answers are judged again): $(est) h of model-server time"
+echo "estimate basis: the design's rates (35 to 70 s per judged answer, 10 to 13 s per mechanical answer, about 10 s per judge call, B1: 180 calls in 30.6 min, 324 calls now that B1 default is judged again, loads 0.3 to 0.5 h); not measured on the grounded modes"
 
 stage_done() { [ -f $W/stage_$1.done ]; }
 mark() { st=$1; shift; .venv/bin/python $R mark --work $W --stage $st --out "$@" > /dev/null; }
@@ -170,9 +189,8 @@ if [ $DRY = no ] && [ $SERVER_NEEDED = yes ]; then
   n=0; until [ -z "$(others)" ]; do sleep 60; n=$((n+1)); [ $n -lt 720 ] || fail "another chain or guarded job still runs after 12 h: $(others | head -3)"; done
   hb "$N: started; 4-bit model $Q4, grounded-g1 and grounded-g2 on J (54) and the mechanical set ($NMECH); judge $DS (coverage role, instruction v2, $SETTING); mechanical: $MECH"
   status RUNNING no "$N running: determinism check, answers, judging, scoring; markers $L/$N.done / .failed"
-  server_free
-  unload $DS; unload $GLM4; unload $GLM8
-  hb "$N: DeepSeek and the GLM builds unloaded if they were loaded; the 4-bit model loads on the first request"
+  clear_server
+  hb "$N: the server is idle and no model but $Q4 is loaded; the 4-bit model loads on the first request"
 fi
 
 # ---------------------------------------------------------------- prepare: items and reference files (CPU)
@@ -198,9 +216,13 @@ echo "sets: b1 $NB1, pilot2 $NP2, tier_a part $NMA, tier_a3 part $NM3"
 
 # ---------------------------------------------------------------- answers (one request at a time; the 4-bit model)
 if [ $DRY = yes ]; then GA="--backend stub --no-rerank"; else GA="--backend openai --model $Q4"; fi
+echo_check() { # the model the server echoed equals the stored runs' model_echoed (a difference stops the chain before the judge)
+  .venv/bin/python $R check-echo --stored $replay.manifest.json --new $out.manifest.json $DRYFLAG_ECHO \
+    || fail "answers $config: the server echoed another model than the stored default runs (the reference answers are not comparable)"; }
 answer_run() { # OUT ITEMS REPLAY EXPECT MODE CONFIG [--limit N]: all items, one request at a time
   out=$1; items=$2; replay=$3; expect=$4; mode=$5; config=$6; shift 6
-  if .venv/bin/python $R check-answers --file $out --expect $expect --mode $mode > $W/check.out 2>&1; then echo "skip answers: $(cat $W/check.out)"; return 0; fi
+  if .venv/bin/python $R check-answers --file $out --expect $expect --mode $mode > $W/check.out 2>&1; then
+    echo "skip answers: $(cat $W/check.out)"; echo_check; return 0; fi
   tries=0
   while :; do
     [ $DRY = yes ] || idle
@@ -212,6 +234,7 @@ answer_run() { # OUT ITEMS REPLAY EXPECT MODE CONFIG [--limit N]: all items, one
     tries=$((tries+1)); [ $tries -lt 3 ] || fail "answers $config: incomplete, with errors, empty or without a pack after $tries passes ($out)"
   done
   .venv/bin/python $R packs-equal --a $replay --b $out || fail "answers $config: the packs differ from the stored packs (replay failed)"
+  echo_check
 }
 if ! stage_done determinism; then
   DET=$W/det_default.jsonl
@@ -249,7 +272,7 @@ if ! stage_done judge; then
         --chunks $CHUNKS --source-chars $SRC --instruction v2 --coverage --answers $SETS --judge-model $DS --judge-extra-body "$JEB" \
         --settings-name $SETTING --concurrency 3 --judge-url "$OMLX_URL/v1" --passes 1 2 --cache $cache --out $jout "$@"
     fi; }
-  [ $DRY = yes ] || [ -f $W/judge_cache_b1.jsonl ] || cp $B1_CACHE $W/judge_cache_b1.jsonl   # B1's default answers are in the cache of the earlier run
+  # no cache is taken over: B1's default answers are judged again, with the same code, setting and time as the variants (as pilot2's are)
   for set_ in b1 p2; do
     if [ $set_ = b1 ]; then items=$B1_ITEMS; rubs=$B1_RUBS; dans=$B1_ANS; n=$NB1; else items=$P2_ITEMS; rubs=$P2_RUBS; dans=$P2_ANS; n=$NP2; fi
     jout=$W/judge_$set_.jsonl; cache=$W/judge_cache_$set_.jsonl; calls=$((n * 3 * 2))
@@ -314,9 +337,15 @@ CHOICE=$(sed -n 's/^CHOICE: \([A-Za-z0-9]*\).*/\1/p' $W/rule_out.txt)
   echo
   echo '```'; cat $W/rule_out.txt; echo '```'
   echo
+  echo "Note on (f): $(.venv/bin/python $R f-note)"
+  echo
   echo "### Determinism check"
   echo
   echo '```'; .venv/bin/python $R determinism --stored $B1_ANS --new $W/det_default.jsonl --n 3 || true; echo '```'
+  echo
+  echo "### B1 default answers: judged again in this run against the stored judge results"
+  echo
+  echo '```'; .venv/bin/python $R judge-compare --stored $B1_JUDGED --new $W/judge_b1.jsonl --rubrics $B1_RUBS --set default || true; echo '```'
   echo
   echo "### Files"
   echo

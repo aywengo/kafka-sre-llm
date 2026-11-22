@@ -20,7 +20,7 @@ import m5_g_rule as R  # noqa: E402
 TIER_A, TIER_A3 = ROOT / "eval/m4/open/tier_a.jsonl", ROOT / "eval/m4/open/tier_a3.jsonl"
 IDS_FILE = ROOT / "eval/m4/g_dev_ids.json"
 B1_DEFAULT = ROOT / "work/m4/b1/ans_default.jsonl"
-HAVE_WORK = all(p.exists() for p in (B1_DEFAULT, ROOT / "work/m4/pilot2/ans_default.jsonl", ROOT / "work/m4/s6/ans_A1.jsonl",
+HAVE_WORK = all(p.exists() for p in (B1_DEFAULT, ROOT / "work/m4/b1/judge_results.jsonl", ROOT / "work/m4/pilot2/ans_default.jsonl", ROOT / "work/m4/s6/ans_A1.jsonl",
                                      ROOT / "work/m4/e2/ans_O_Q4D_a3.jsonl", ROOT / "work/v3/chunks_s1.jsonl", TIER_A, TIER_A3))
 
 
@@ -82,11 +82,14 @@ class ServeRefusal(unittest.TestCase):
 
 
 # ---------------------------------------------------------------- the rule on synthetic inputs
-def variant(P=0.60, S=4.0, cut=2, med=1200, ident=3.0, d=None, ff=3, ffr=3, wd=4, cov=80, dec=20):
+def variant(P=0.60, S=4.0, cut=2, med=1200, ident=3.0, d=None, ff=3, ffr=3, wd=4, cov=80, dec=20, wdw=None, covw=None, decw=None):
+    """wd, cov, dec: unweighted over the sample (printed); wdw, covw, decw: weighted like (e) (they decide (f)); default: the same numbers."""
     return {"P": P, "answers_judged": 54, "supp_miss_per10": S, "supp_miss_answers": 30, "cut": cut, "answers": 54, "median_tokens": med,
             "idents_per10": ident,
             "mech": {"d_all_pass": d if d is not None else {"M1": 0, "M2": 0, "M3": 0}, "format_failures": ff, "ref_format_failures": ffr,
-                     "wrong_declines": wd, "covered": cov, "declines": dec}}
+                     "wrong_declines": wd, "covered": cov, "declines": dec,
+                     "wd_weighted": wd if wdw is None else wdw, "covered_weighted": cov if covw is None else covw,
+                     "declines_weighted": dec if decw is None else decw}}
 
 
 def measures(g1=None, g2=None):
@@ -145,9 +148,63 @@ class Rule(unittest.TestCase):
 
     def test_wrong_declines_are_counted_against_the_covered_items_and_the_share_of_declines_is_printed(self):
         code, out, err = self.verdict(measures(g1=variant(wd=8, cov=100, dec=10)))
-        self.assertIn("8 of 100 items whose covering chunk is in the pack = 8.0 %", out)
-        self.assertIn("8 of 10 declines = 80.0 %", out)
+        self.assertIn("8.0 of 100.0 items whose covering chunk is in the pack = 8.0 %", out)
+        self.assertIn("8.0 of 10.0 = 80.0 % weighted, 8 of 10 = 80.0 % unweighted", out)
         self.assertIn("CHOICE: G1", out)          # the first decides
+
+    def test_f_the_weighted_share_decides_when_the_unweighted_share_fails(self):
+        # the sample over-represents declines: 10 of 46 = 21.7 % unweighted, but 10 of 146.8 = 6.8 % weighted
+        code, out, err = self.verdict(measures(g1=variant(wd=10, cov=46, dec=30, wdw=10.0, covw=146.8, decw=40.0)))
+        self.assertEqual(code, 0, err)
+        self.assertIn("CHOICE: G1", out)
+        self.assertIn("6.8 %", out)
+        self.assertIn("unweighted over the sample 10 of 46 = 21.7 %", out)
+        self.assertEqual(out.count("FAIL"), 0)
+
+    def test_f_the_weighted_share_decides_when_the_unweighted_share_passes(self):
+        code, out, err = self.verdict(measures(g1=variant(wd=4, cov=46, dec=30, wdw=20.0, covw=146.8, decw=60.0)))
+        self.assertEqual(code, 0, err)
+        self.assertIn("CHOICE: G2", out)
+        self.assertIn("FAIL  (f)", out)
+        self.assertIn("unweighted over the sample 4 of 46 = 8.7 %", out)      # printed, decides nothing
+
+    def test_f_the_share_of_declines_decides_nothing(self):
+        code, out, err = self.verdict(measures(g1=variant(wdw=5.0, covw=100.0, decw=5.0, wd=5, cov=100, dec=5)))
+        self.assertIn("CHOICE: G1", out)
+        self.assertIn("= 100.0 % weighted", out)
+
+    def test_f_weighted_inputs_are_required(self):
+        for k in ("wd_weighted", "covered_weighted", "declines_weighted"):
+            m = measures()
+            del m["variants"]["g1"]["mech"][k]
+            code, out, err = self.verdict(m)
+            self.assertEqual(code, 2, k)
+            self.assertIn("a missing input is not a pass", err)
+        m = measures(g1=variant(covw=0.0))
+        self.assertEqual(self.verdict(m)[0], 2)
+
+    def test_f_estimate_uses_the_weights_of_the_projection(self):
+        ids = {"M1": [f"a{i}" for i in range(56)], "M2": [f"b{i}" for i in range(40)]}
+        w = R.f_weights(ids, "sample")
+        self.assertEqual(w, {"M1": 1.0, "M2": 4.875})
+        self.assertEqual(R.f_weights(ids, "all"), {"all": 1.0})
+        est = R.f_estimate({"M1": {"wrong_declines": 9, "covered": 30, "declines": 40}, "M2": {"wrong_declines": 1, "covered": 16, "declines": 2}}, w)
+        self.assertAlmostEqual(est["wd_weighted"], 9 + 4.875)
+        self.assertAlmostEqual(est["covered_weighted"], 30 + 4.875 * 16)
+        self.assertAlmostEqual(est["declines_weighted"], 40 + 4.875 * 2)
+        self.assertEqual((est["wd"], est["covered"], est["declines"]), (10, 46, 42))
+        with self.assertRaises(R.RuleError):
+            R.f_estimate({"M1": {"wrong_declines": 0, "covered": 1, "declines": 0}}, w)
+
+    def test_the_rule_text_says_why_the_share_is_weighted_and_the_bias_sentence_exists(self):
+        code, o, e = run_rule(["rule-text"])
+        self.assertIn("weighted because the sample over-represents declines", o)
+        self.assertIn("(wd_M1 + 4.875 wd_M2) / (cov_M1 + 4.875 cov_M2)", o)
+        code, o, e = run_rule(["f-note"])
+        self.assertEqual(code, 0)
+        self.assertIn("without an ANSWER line", o)
+        self.assertIn("counts against the grounded variants", o)
+        self.assertIn("checks the answers counted as wrong declines", o)
 
     def test_all_mode(self):
         m = measures()
@@ -286,6 +343,19 @@ class StartCheck(unittest.TestCase):
         a[a.index("m")] = "other-model"
         self.assertEqual(run_rule(a)[0], 2)
 
+    def test_the_judge_arguments_are_compared_and_the_info_is_not(self):
+        run_rule(self.args("manifest", ["--judge-arg", "setting=s1", "--judge-arg", 'extra_body={"a": 1}', "--info", "git_head=abc"]))
+        m = json.load(open(self.w / "MANIFEST.json"))
+        self.assertEqual(m["judge_args"], {"setting": "s1", "extra_body": '{"a": 1}'})
+        self.assertEqual(m["info"], {"git_head": "abc"})
+        same = ["--judge-arg", "setting=s1", "--judge-arg", 'extra_body={"a": 1}']
+        self.assertEqual(run_rule(self.args("start-check", same + ["--info", "git_head=other"]))[0], 0)       # another head: information only
+        code, o, e = run_rule(self.args("start-check", ["--judge-arg", "setting=s2", "--judge-arg", 'extra_body={"a": 1}']))
+        self.assertEqual(code, 2)
+        self.assertIn("judge_args.setting", e)
+        self.assertEqual(run_rule(self.args("start-check", same[:2]))[0], 2)                                  # a missing argument differs too
+        self.assertEqual(run_rule(self.args("manifest", ["--judge-arg", "novalue"]))[0], 2)
+
     def test_a_missing_pinned_file_is_refused(self):
         run_rule(self.args("manifest"))
         self.f1.unlink()
@@ -339,6 +409,24 @@ class SmallChecks(unittest.TestCase):
             self.assertEqual(code, 1)
             self.assertIn("default must be answered again", o)
 
+    def test_check_echo(self):
+        with tempfile.TemporaryDirectory() as t:
+            st, st2, new = (Path(t) / n for n in ("s.json", "s2.json", "n.json"))
+            st.write_text(json.dumps({"model_echoed": "m-4bit"}))
+            st2.write_text(json.dumps({"model_echoed": "m-4bit"}))
+            new.write_text(json.dumps({"model_echoed": "m-4bit"}))
+            self.assertEqual(run_rule(["check-echo", "--stored", str(st), str(st2), "--new", str(new)])[0], 0)
+            new.write_text(json.dumps({"model_echoed": "m-8bit"}))
+            code, o, e = run_rule(["check-echo", "--stored", str(st), "--new", str(new)])
+            self.assertEqual(code, 1)
+            self.assertIn("DIFFERENT", o)
+            new.write_text(json.dumps({"model_echoed": None}))
+            self.assertEqual(run_rule(["check-echo", "--stored", str(st), "--new", str(new)])[0], 1)      # not echoed: not verified
+            self.assertEqual(run_rule(["check-echo", "--stored", str(st), "--new", str(new), "--dry"])[0], 0)
+            new.write_text(json.dumps({"model_echoed": "m-4bit"}))
+            st2.write_text(json.dumps({"model_echoed": "other"}))
+            self.assertEqual(run_rule(["check-echo", "--stored", str(st), str(st2), "--new", str(new)])[0], 1)
+
     def test_packs_equal(self):
         with tempfile.TemporaryDirectory() as t:
             a, b = Path(t) / "a.jsonl", Path(t) / "b.jsonl"
@@ -380,6 +468,16 @@ class ChainDryRun(unittest.TestCase):
         self.assertIn("The rule of the development check", rep)
         self.assertLess(rep.index("The rule of the development check"), rep.index("## Result"))
         self.assertIn("CHOICE", (self.w / "rule_out.txt").read_text())
+        self.assertIn("Note on (f): Known bias of the decline detector", rep)
+        self.assertIn("B1 default answers: judged again in this run", rep)
+        self.assertIn("answers differ in the two-pass mean", rep)
+        man = json.load(open(self.w / "MANIFEST.json"))
+        for f in ("scripts/m5_g_rule.py", "scripts/m5_g_dev.sh", "scripts/eval2.py", "scripts/eval2_score.py", "scripts/eval2_judge.py",
+                  "scripts/eval2_idcheck.py", "kafka_sre_rag/prompts.py", "kafka_sre_rag/frozen.json", "work/m4/b1/judge_results.jsonl"):
+            self.assertIn(f, man["pins"])
+        self.assertEqual(man["judge_args"]["setting"], "deepseek-nothink-12k")
+        self.assertIn("git_head", man["info"])
+        self.assertNotIn("judge_cache.jsonl", " ".join(man["pins"]))
         for f in ("stage_header.done", "stage_determinism.done", "stage_answers.done", "stage_judge.done", "stage_checks.done", "MANIFEST.json"):
             self.assertTrue((self.w / f).exists(), f)
         self.assertEqual(sum(1 for _ in open(self.w / "ans_b1_g1.jsonl")), 30)

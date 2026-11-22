@@ -14,6 +14,10 @@ Pure Python, CPU only; no model, no server. Used by scripts/m5_g_dev.sh and test
   check-answers --file F --expect N [--mode M]   complete, no error, no empty text, a pack on every row, manifest ended
   determinism --stored F --new F --n N        the first N replayed default answers equal the stored ones byte for byte
   packs-equal --a F --b F                     the pack lists of the ids of --b equal those in --a
+  f-estimate --scores F --ids F               condition (f) on a stored score file: weighted estimate on the sample beside the full-set share
+  f-note                                      print the fixed sentence about the decline detector's bias (written under the (f) result)
+  check-echo --stored F... --new F [--dry]    the model the server echoed in the new run's manifest equals the stored runs' model_echoed
+  judge-compare --stored F --new F --rubrics F --set NAME   stored judge results against this run's (count of answers whose mean differs)
   measures   --work D ...                     the measures (a) to (h) from the files of the chain; writes measures.json and measures.md
   rule       --measures F                     the rule by code: PASS or FAIL per condition and variant, and the choice (G1, G2 or neither)
 
@@ -68,8 +72,11 @@ Reference = the stored default answers on the same packs. A variant is eligible 
 5. (e) Projected mechanical change >= -3.0 points, where the projection is (dM1 + 4.875 dM2 + 4.4 dM3) / 339 * 100 (d = all-pass count of V minus
    the reference on the same items; with --mechanical all: the change over the 339 items / 339 * 100), and format failures of V on the
    mechanical items no more than the reference's + 2.
-6. (f) Wrong declines on M1 + M2 (the items of the tier_a part; all 251 with --mechanical all) at most 10 % of the items whose covering chunk
-   is in the pack. The share of all declines (correct + wrong) is printed beside it and does not decide.
+6. (f) Wrong declines at most 10 % of the items whose covering chunk is in the pack, on the open mechanical half, estimated from the sample
+   with the weights of (e): (wd_M1 + 4.875 wd_M2) / (cov_M1 + 4.875 cov_M2) (with --mechanical all: all 251 tier_a items, weight 1). The share is
+   weighted because the sample over-represents declines by design (M1 is the 56 items that strict declined or abstained on), so an unweighted
+   share over the sample is not the share on the open half. This weighted share decides. Printed beside it, deciding nothing: the unweighted
+   share over the sample, and the share of all declines (correct + wrong), weighted and unweighted.
 7. (g) Nonexistent identifiers per 10 answers on J (scripts/eval2_idcheck.py): V <= default.
 Reported, deciding nothing: (h) gap sentences per answer on J, answers that open with meta text, median seconds, M1 declines.
 Choice: G1 if eligible; otherwise G2 if eligible; otherwise neither (stop, back to design, B2 not spent).
@@ -213,6 +220,16 @@ def prompt_hashes(frozen):
     return json.load(open(frozen, encoding="utf-8"))["prompts_sha256"]
 
 
+def kv(items):
+    out = {}
+    for x in items or []:
+        k, sep, v = x.partition("=")
+        if not sep or not k:
+            raise RuleError(f"not NAME=VALUE: {x!r}")
+        out[k] = v
+    return out
+
+
 def current_state(a):
     """The state computed now: pinned files by sha256, the prompt hashes of frozen.json, the options, the rule text."""
     missing = [p for p in a.pin if not Path(p).is_file()]
@@ -220,6 +237,7 @@ def current_state(a):
         raise RuleError(f"pinned file missing: {missing[0]}" + (f" (and {len(missing) - 1} more)" if len(missing) > 1 else ""))
     return {"schema": SCHEMA, "kind": "dry" if a.dry else "real", "mechanical": a.mechanical, "model": a.model or None,
             "rule_text_sha256": sha256_text(RULE_TEXT), "prompts_sha256": prompt_hashes(a.frozen),
+            "judge_args": kv(a.judge_arg), "info": kv(a.info),
             "pins": {p: sha256_file(p) for p in sorted(a.pin)}}
 
 
@@ -230,7 +248,7 @@ def manifest_hash(m):
 def diff_state(old, new):
     out = []
     for k in sorted(set(old) | set(new)):
-        if old.get(k) == new.get(k):
+        if k == "info" or old.get(k) == new.get(k):     # "info" (the git head) is recorded for the reader and never decides
             continue
         if isinstance(old.get(k), dict) and isinstance(new.get(k), dict):
             for kk in sorted(set(old[k]) | set(new[k])):
@@ -249,6 +267,8 @@ def add_state_args(p):
     p.add_argument("--mechanical", choices=["sample", "all"], default="sample")
     p.add_argument("--model", default=None, help="the 4-bit model id (real runs)")
     p.add_argument("--dry", action="store_true")
+    p.add_argument("--judge-arg", action="append", default=[], help="NAME=VALUE of the judge's arguments (setting, extra body, source characters); compared")
+    p.add_argument("--info", action="append", default=[], help="NAME=VALUE recorded for the reader (the git head); never compared")
 
 
 def cmd_manifest(a):
@@ -438,10 +458,85 @@ def score_stats(path, ids_by_part):
             raise RuleError(f"{path}: a score row has no decline outcome (run the scorer without --no-outcomes)")
         cnt[o] = cnt.get(o, 0) + 1
     out["outcomes"] = cnt
+    out["parts"] = {}
+    for part, ids in ids_by_part.items():
+        rs = [rows[i] for i in ids]
+        out["parts"][part] = {"n": len(rs), "wrong_declines": sum(1 for r in rs if r["outcome"] == "wrong_decline"),
+                              "covered": sum(1 for r in rs if (r.get("coverage") or {}).get("covering_in_pack")),
+                              "declines": sum(1 for r in rs if r["outcome"] in ("wrong_decline", "correct_decline"))}
     out["covered"] = sum(1 for r in rows.values() if (r.get("coverage") or {}).get("covering_in_pack"))
     out["wrong_declines"] = cnt.get("wrong_decline", 0)
     out["declines"] = cnt.get("wrong_decline", 0) + cnt.get("correct_decline", 0)
     return out
+
+
+def f_weights(ids, mechanical):
+    """The weights of the projection of (e), used for (f): sample part -> population / sample size; --mechanical all: every item counts once."""
+    if mechanical == "all":
+        return {"all": 1.0}
+    return {k: POP[k] / len(ids[k]) for k in ("M1", "M2")}
+
+
+def f_estimate(parts, weights):
+    """parts: {part: {"wrong_declines", "covered", "declines"}} (score_stats()["parts"]). Weighted sums decide (f); the unweighted ones are printed."""
+    if set(parts) != set(weights):
+        raise RuleError(f"(f): parts {sorted(parts)} and weights {sorted(weights)} differ")
+    out = {"weights": dict(weights)}
+    for k, name in (("wrong_declines", "wd"), ("covered", "covered"), ("declines", "declines")):
+        out[name + "_weighted"] = sum(weights[p] * parts[p][k] for p in parts)
+        out[name] = sum(parts[p][k] for p in parts)
+    return out
+
+
+def pct(a, b):
+    return "n/a" if not b else f"{100 * a / b:.1f} %"
+
+
+def cmd_f_estimate(a):
+    ids = json.load(open(a.ids, encoding="utf-8"))
+    rows = rd(a.scores)
+    parts_s = {"M1": ids["M1"], "M2": ids["M2"]}
+    est = f_estimate(score_stats(a.scores, parts_s)["parts"], f_weights(ids, "sample"))
+    full = score_stats(a.scores, {"all": [r["id"] for r in rows]})["parts"]["all"]
+    print(f"{a.scores}: sample M1 {len(ids['M1'])} + M2 {len(ids['M2'])}, weights {est['weights']}")
+    print(f"  weighted estimate on the sample: wrong declines {est['wd_weighted']:.1f} of {est['covered_weighted']:.1f} covered = "
+          f"{pct(est['wd_weighted'], est['covered_weighted'])}")
+    print(f"  unweighted over the sample: {est['wd']} of {est['covered']} = {pct(est['wd'], est['covered'])}")
+    print(f"  full set ({full['n']} items): {full['wrong_declines']} of {full['covered']} = {pct(full['wrong_declines'], full['covered'])}")
+    return 0
+
+
+F_NOTE = ("Known bias of the decline detector: an answer without an ANSWER line that fails a check and contains a gap sentence is counted as a "
+          "decline. That counts against the grounded variants, which write gap sentences. A reader checks the answers counted as wrong "
+          "declines before a failure of (f) is acted on.")
+
+
+def cmd_check_echo(a):
+    def echoed(p):
+        return json.load(open(str(p), encoding="utf-8")).get("model_echoed")
+    stored = {p: echoed(p) for p in a.stored}
+    new = echoed(a.new)
+    ok = new is not None and all(v == new for v in stored.values())
+    print(f"model echoed by the server: this run {new!r}; stored runs {sorted(set(map(repr, stored.values())))}: {'equal' if ok else 'DIFFERENT'}")
+    if not ok and a.dry:
+        print("dry run: the stub backend echoes no model; the comparison is not binding here (the real run stops)")
+        return 0
+    return 0 if ok else 1
+
+
+def cmd_judge_compare(a):
+    """Deciding nothing: how many answers' two-pass means (P, supported essential-miss units) differ between the stored judge results and this run's."""
+    rub = a.rubrics
+    old = judged(a.stored, rub, {a.set})
+    new = judged(a.new, rub, {a.set})
+    ids = sorted({i for _, i in old} | {i for _, i in new})
+    diff = [i for i in ids if (a.set, i) not in old or (a.set, i) not in new
+            or abs(old[(a.set, i)][0] - new[(a.set, i)][0]) > 1e-9 or abs(old[(a.set, i)][1] - new[(a.set, i)][1]) > 1e-9]
+    both = [i for i in ids if (a.set, i) in old and (a.set, i) in new]
+    pm = lambda d: sum(d[(a.set, i)][0] for i in both) / len(both) if both else float("nan")  # noqa: E731
+    print(f"stored judge results against this run's, set {a.set}: {len(diff)} of {len(ids)} answers differ in the two-pass mean "
+          f"(P mean stored {pm(old):.3f}, this run {pm(new):.3f}); printed, decides nothing")
+    return 0
 
 
 def cmd_measures(a):
@@ -463,6 +558,7 @@ def cmd_measures(a):
     m["sizes"]["mech"] = {k: len(parts_a.get(k, [])) + len(parts_3.get(k, [])) if k == "all" else len(v)
                           for k, v in {**parts_a, **parts_3}.items()}
     m["pop"] = POP if a.mechanical == "sample" else {"all": POP_ALL}
+    fw = f_weights(ids, a.mechanical)
     ref_scores = {"ma": score_stats(W / "score_ma_ref.jsonl", parts_a), "m3": score_stats(W / "score_m3_ref.jsonl", parts_3)}
     names = {"default": "default", "g1": "g1", "g2": "g2"}
     for v in ("default",) + VARIANTS:
@@ -495,6 +591,7 @@ def cmd_measures(a):
         if v != "default":
             sa = score_stats(W / f"score_ma_{v}.jsonl", parts_a)
             s3 = score_stats(W / f"score_m3_{v}.jsonl", parts_3)
+            fe = f_estimate(sa["parts"], fw)
             d = {k: sa["all_pass"][k] - ref_scores["ma"]["all_pass"][k] for k in parts_a}
             for k in parts_3:       # in the one-part case ("all") the two files add up
                 d[k] = d.get(k, 0) + s3["all_pass"][k] - ref_scores["m3"]["all_pass"][k]
@@ -502,7 +599,9 @@ def cmd_measures(a):
                          "ref_all_pass": {"ma": ref_scores["ma"]["all_pass"], "m3": ref_scores["m3"]["all_pass"]},
                          "format_failures": sa["format_failures"] + s3["format_failures"],
                          "ref_format_failures": ref_scores["ma"]["format_failures"] + ref_scores["m3"]["format_failures"],
-                         "wrong_declines": sa["wrong_declines"], "covered": sa["covered"], "declines": sa["declines"],
+                         "wrong_declines": fe["wd"], "covered": fe["covered"], "declines": fe["declines"],
+                         "wd_weighted": fe["wd_weighted"], "covered_weighted": fe["covered_weighted"], "declines_weighted": fe["declines_weighted"],
+                         "f_weights": fe["weights"],
                          "outcomes_tier_a": sa["outcomes"], "outcomes_a3": s3["outcomes"],
                          "m1_declines": None}
             if a.mechanical == "sample":
@@ -525,12 +624,13 @@ def measures_md(m):
         L.append(f"| {v} | {f(e['P'], 3)} (n {e['answers_judged']}) | {f(e['supp_miss_per10'], 2)} (n {e['supp_miss_answers']}) | {e['cut']} of {e['answers']} | "
                  f"{f(e['median_tokens'], 0)} | {f(e['median_answer_s'], 1)} / {f(e['median_total_s'], 1)} | {f(e['idents_per10'], 2)} ({e['idents']} in {e['idents_answers']}) | "
                  f"{f(e['gap_sentences_per_answer'], 2)} | {e['meta_openers']} |")
-    L += ["", "| variant | all-pass change per part (e) | format failures (variant / reference) | wrong declines / covered (f) | declines | M1 declines |", "|---|---|---|---|---|---|"]
+    L += ["", "| variant | all-pass change per part (e) | format failures (variant / reference) | wrong declines / covered, weighted (f) | wrong declines / covered, unweighted | declines (weighted / unweighted) | M1 declines |", "|---|---|---|---|---|---|---|"]
     for v, e in m["variants"].items():
         if "mech" in e:
             x = e["mech"]
             L.append(f"| {v} | {x['d_all_pass']} (variant {x['all_pass']}, reference {x['ref_all_pass']}) | {x['format_failures']} / {x['ref_format_failures']} | "
-                     f"{x['wrong_declines']} / {x['covered']} | {x['declines']} | {x['m1_declines']} |")
+                     f"{x['wd_weighted']:.1f} / {x['covered_weighted']:.1f} | {x['wrong_declines']} / {x['covered']} | "
+                     f"{x['declines_weighted']:.1f} / {x['declines']} | {x['m1_declines']} |")
     for v, e in m["variants"].items():
         if "mech" in e:
             L.append(f"\nDecline outcomes of {v}: tier_a part {e['mech']['outcomes_tier_a']}; tier_a3 part {e['mech']['outcomes_a3']}")
@@ -586,8 +686,11 @@ def evaluate(m):
         wd = need(m, *pre, "mech", "wrong_declines")
         cov = need(m, *pre, "mech", "covered")
         dec = need(m, *pre, "mech", "declines")
-        if cov <= 0:
-            raise RuleError(f"input is not usable: variants.{v}.mech.covered is {cov}")
+        wdw = need(m, *pre, "mech", "wd_weighted")
+        covw = need(m, *pre, "mech", "covered_weighted")
+        decw = need(m, *pre, "mech", "declines_weighted")
+        if covw <= 0:
+            raise RuleError(f"input is not usable: variants.{v}.mech.covered_weighted is {covw}")
         eps = 1e-9
         c = {
             "a": (P - Pd >= -0.05 - eps, f"(a) coverage P: {v} {P:.3f}, default {Pd:.3f}, difference {P - Pd:+.3f} (needs >= -0.05; {int(nJ)} answers, two passes)"),
@@ -596,9 +699,10 @@ def evaluate(m):
             "d": (med <= 1400, f"(d) median completion tokens: {med:.0f} (needs <= 1,400; {int(nJ)} answers)"),
             "e": (proj >= -3.0 - eps and ff <= ffr + 2,
                   f"(e) projected mechanical change {proj:+.2f} points (needs >= -3.0; parts {dall}, sizes {sizes}); format failures {int(ff)} against the reference's {int(ffr)} (needs <= reference + 2)"),
-            "f": (wd <= 0.10 * cov + eps,
-                  f"(f) wrong declines {int(wd)} of {int(cov)} items whose covering chunk is in the pack = {100 * wd / cov:.1f} % (needs <= 10 %; this decides); "
-                  f"beside it: {int(wd)} of {int(dec)} declines = {('n/a' if dec == 0 else '%.1f %%' % (100 * wd / dec))} (printed, does not decide)"),
+            "f": (wdw <= 0.10 * covw + eps,
+                  f"(f) wrong declines, weighted like (e): {wdw:.1f} of {covw:.1f} items whose covering chunk is in the pack = {pct(wdw, covw)} "
+                  f"(needs <= 10 %; this decides); beside it, deciding nothing: unweighted over the sample {int(wd)} of {int(cov)} = {pct(wd, cov)}; "
+                  f"share of all declines {wdw:.1f} of {decw:.1f} = {pct(wdw, decw)} weighted, {int(wd)} of {int(dec)} = {pct(wd, dec)} unweighted"),
             "g": (ident <= Id + eps, f"(g) nonexistent identifiers per 10 answers: {v} {ident:.2f}, default {Id:.2f} (needs <= default; {int(nJ)} answers)"),
         }
         L.append(f"Variant {v.upper()}:")
@@ -677,12 +781,26 @@ def main(argv=None):
         p.add_argument("--" + k, required=True)
     p = sub.add_parser("rule")
     p.add_argument("--measures", required=True)
+    p = sub.add_parser("f-estimate")
+    p.add_argument("--scores", required=True)
+    p.add_argument("--ids", required=True)
+    sub.add_parser("f-note")
+    p = sub.add_parser("check-echo")
+    p.add_argument("--stored", nargs="+", required=True)
+    p.add_argument("--new", required=True)
+    p.add_argument("--dry", action="store_true")
+    p = sub.add_parser("judge-compare")
+    for k in ("stored", "new", "rubrics", "set"):
+        p.add_argument("--" + k, required=True)
     a = ap.parse_args(argv)
     try:
         if a.cmd == "rule-text":
             print(RULE_TEXT, end="")
             return 0
-        fn = {"draw-ids": cmd_draw_ids, "verify-m1": cmd_verify_m1, "select": cmd_select, "harness-items": cmd_harness_items,
+        if a.cmd == "f-note":
+            print(F_NOTE)
+            return 0
+        fn = {"f-estimate": cmd_f_estimate, "check-echo": cmd_check_echo, "judge-compare": cmd_judge_compare, "draw-ids": cmd_draw_ids, "verify-m1": cmd_verify_m1, "select": cmd_select, "harness-items": cmd_harness_items,
               "manifest": cmd_manifest, "start-check": cmd_start_check, "mark": cmd_mark, "check-answers": cmd_check_answers,
               "determinism": cmd_determinism, "packs-equal": cmd_packs_equal, "measures": cmd_measures, "rule": cmd_rule}[a.cmd]
         return fn(a)
