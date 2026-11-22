@@ -80,10 +80,10 @@ under this test before B4 is used (task B4R).
 | M0 | The second reranker's memory, scores and time under smaller batches and half precision | implementer | CPU | **done** 2026-11-22 21:00 (`runs/m6/reports/m0_reranker_memory.md`): full precision adds about 3.2 GB after load and 3.35 GB at peak, 4.6 s per call; half precision 1.3 to 1.8 GB at peak but 29 to 41 s per call; nothing meets 1.5 GB at a usable speed |
 | H0 | Classification of the harmful statements of the open readings | complex-reviewer | CPU | **done** 2026-11-22 18:14 (`runs/m6/reports/h0_harmful_classes.md`): 16 statements: 9 destructive steps, 6 wrong claims about behaviour, 1 unsafe order; 8 not foreseen by a rubric; a draft list of 17 patterns finds 8 of the 9 destructive steps and 1 of the other 7 |
 | D5 | The fresh development batch: 50 open scenarios with covering sets verified before any answer | writers, reviewers, independent checkers | Claude workers | **done** 2026-11-22 19:34 (`eval/m6/d5/`, `CHUNK_CHECK.json`): 269 must points, 227 with at least one verified set (316 sets of one chunk, 38 of two), 13 with no covering set in the index, 29 not indexed; 7 hidden items tagged as sharing a family |
-| F | (F-a and F-b running since 2026-11-22 21:05) Repairs before any hidden run: a prompt hash per answer; the decline detector reading a gap sentence as a decline; a judge parser that tolerates a misplaced bracket only when every rubric id is present; the B4 check chain made independent of r4, and a runtime profile for a second reranker; the checker's names in prose and comments; the chains' stale wording on a resume | implementer | CPU | next |
+| F | (F-a **done** 2026-11-22 22:00, commit `3cb9127`: the prompt hash, the judge repair and the resume wording are in; the decline detector is left as it is, see Decisions. F-b running since 21:05) Repairs before any hidden run: a prompt hash per answer; the decline detector reading a gap sentence as a decline; a judge parser that tolerates a misplaced bracket only when every rubric id is present; the B4 check chain made independent of r4, and a runtime profile for a second reranker; the checker's names in prose and comments; the chains' stale wording on a resume | implementer | CPU | next |
 | B4R | Recount of B4's dropped chunks under the covering test with title lines | independent checkers | CPU | **done** 2026-11-22 21:06: the three checkers re-rated 92 chunk verdicts and 17 sets they had rated partial; none changed to ok, no point gains a set; B4's files stand as released (one possible pair for b4-26 m4, outside the pass's scope, was not added) |
-| T | The set for harmful statements: 35 scenarios where a destructive shortcut is tempting and wrong, 8 where a destructive step is right; harm points judge the consequence, with a condition and a near-miss | writers, reviewers | Claude workers | next |
-| H1 | Marking of destructive steps in the checker (marking only, S7) | implementer | CPU | after F |
+| T | The set for harmful statements: 35 scenarios where a destructive shortcut is tempting and wrong, 8 where a destructive step is right; harm points judge the consequence, with a condition and a near-miss | writers, reviewers | Claude workers | four writers running since 2026-11-22 22:03 (ids t-01 to t-43) |
+| H1 | Marking of destructive steps in the checker (marking only, S7), experimental and off by default | implementer | CPU | running since 2026-11-22 22:03 |
 | HP | The new hidden judged part, written, reviewed and set-checked in sealed sessions, with a family check against every open batch | sealed writers, reviewers | Claude workers | next |
 | DF | D5 funnel, strict count: r4g2 (within the memory limit) and, for information only, the Qwen reranker at full precision | job-operator | CPU, reranker | after F |
 | B4 | The one-time check of the chosen retrieval setting on B4 | job-operator | server 0.2 to 0.5 h | after DF and B4R |
@@ -116,6 +116,7 @@ goes to G2.
 | 2026-11-22 | S8 | The seven hidden items of the same family as a D5 scenario are tagged; the hidden look runs on the new hidden judged part, and the existing 61 are reported beside it (this replaces the second half of S5) |
 | 2026-11-22 | conductor | The covering test reads a chunk as the model receives it, with its title line |
 | 2026-11-22 | conductor | After M0: S3's limit stands; the Qwen reranker at full precision is measured on D5's funnel for information only; only a setting within the limit goes on to B4 and the hidden look |
+| 2026-11-22 | conductor | The decline detector stays as it is: counting a gap sentence followed by a concrete answer as an answer would change six stored M4 outcomes (five strict answers and one a3 answer would turn from declines into wrong answers) and turn most grounded correct declines into wrong answers. Stored and new runs stay comparable; reports keep the sentence on the detector's bias, and a reader checks the answers counted as wrong declines before a failure of that condition is acted on |
 | 2026-11-22 | conductor | T's harm points judge the consequence (data loss, an outage), with a condition and a near-miss, not the command alone |
 
 ## Waiting for the Owner
@@ -150,3 +151,9 @@ candidate C becomes the default, after the look.
   for seven hidden items. Started: the harness repairs (F-a), the D5 funnel chain and the
   B4 check made independent of r4 (F-b), and the recount of B4 (B4R).
 - 2026-11-22 21:06: B4R done: nothing changes under the corrected test.
+- 2026-11-22 22:00: F-a done and committed (`3cb9127`): every answer row records the
+  sha256 of the messages sent; a judge reply with one misplaced bracket is repaired when
+  it holds exactly the rubric's ids (all 646 stored valid judge rows of M5 give the same
+  verdicts; the reply that blocked M5's checks is repaired); full suite 1,982 tests with
+  one failure, fixed, the module rerun. The decline detector is not changed (Decisions).
+  22:03: four writers for T and the destructive-step marking (H1) started.
