@@ -27,14 +27,34 @@ def _capture_ce():
     return model._last_ce
 
 
-def _select_candidate(question, expansion, profile, index_path, rerank):
-    """Pack of a candidate profile (r1, r2; candidate.json). Unmeasured. Chunk dicts as select() returns them;
-    bm25_rank is the rank in the whole BM25 list (0: not in it, a lookup hit), ce_score only for r1's pool."""
+_RERANKERS = {}
+
+
+def _reranker_at(max_length):
+    """The pinned reranker with a window of max_length tokens: the frozen instance (RT.reranker(), 512) or, for
+    another length, a second cached CrossEncoder of the same pinned model and revision (CPU, offline)."""
+    if max_length == config.load()["retrieval"]["reranker"]["max_length"]:
+        return RT.reranker()
+    if max_length not in _RERANKERS:
+        from sentence_transformers import CrossEncoder
+        _RERANKERS[max_length] = CrossEncoder(RT.RERANKER_MODEL, revision=RT.RERANKER_REVISION, device="cpu",
+                                              max_length=max_length)
+    return _RERANKERS[max_length]
+
+
+def _select_candidate(question, expansion, profile, index_path, rerank, settings=None):
+    """Pack of a candidate profile (r1 to r4; candidate.json). Unmeasured. Chunk dicts as select() returns them;
+    bm25_rank is the rank in the whole BM25 list (0: not in it, a lookup hit), ce_score only for r1's pool.
+    settings: a dict replacing the profile's own settings (r4 grid settings r4g1 to r4g8)."""
     cfg = config.load()
     prof = profiles.load_candidate()["profiles"][profile]
+    if settings is not None:
+        prof = settings
     path = str(index_path or profiles.index_file(profile, cfg))
     if prof["order"] == "additive":
         return _select_additive(question, expansion, prof, path, rerank, cfg)
+    if prof["order"] == "r4":
+        return _select_r4(question, expansion, prof, path, rerank, cfg)
     chunks = RT.index(path)[0]
     ids = [c["id"] for c in chunks]
     byid = {c["id"]: c for c in chunks}
@@ -97,6 +117,56 @@ def _select_additive(question, expansion, prof, path, rerank, cfg):
     return [{**byid[c], "bm25_rank": rank.get(c, 0), "ce_score": ce_of.get(c)} for c in pack]
 
 
+def _select_r4(question, expansion, prof, path, rerank, cfg):
+    """Profile r4: the frozen pack exactly, then up to k - 6 chunks from a scored set (profiles.r4_rerank_set) ordered
+    by ONE second reranker call (profiles.r4_query, profiles.r4_passage; window ce_max_length), appended by
+    profiles.r4_pack. rerank=False: the fused order stands in for both reranker calls (unmeasured, already flagged).
+    ce_score: the frozen call's score for frozen-pool chunks, the r4 call's score for the others."""
+    chunks = RT.index(path)[0]
+    ids = [c["id"] for c in chunks]
+    byid = {c["id"]: c for c in chunks}
+    exp = expansion or ""
+    sc = RT.scores(question + " " + exp if exp else question, path)
+    bm = [ids[i] for i, _ in sc.most_common()]
+    score = {ids[i]: s for i, s in sc.items()}
+    pool = [ids[i] for i, _ in sc.most_common(cfg["retrieval"]["pool"])]
+    if not pool:
+        return []
+    frozen_list, ce_of = list(pool), {}
+    if rerank:
+        last = _capture_ce()
+        last.pop("ce", None)
+        ranked = RT.rank(question, exp, index_path=path)  # the frozen ordering
+        ce = last.get("ce", [])
+        if sorted(ranked) != sorted(i for i, _ in sc.most_common(cfg["retrieval"]["pool"])) or len(ce) != len(pool):
+            raise RuntimeError("retrieve.rank() no longer matches the candidate pool; retrieval changed")
+        frozen_list = [ids[i] for i in ranked]
+        ce_of = {c: round(float(ce[j]), 6) for j, c in enumerate(pool)}
+    source_of = {c["id"]: c["source"] for c in chunks}
+    lens = {c["id"]: len(c["text"]) for c in chunks}
+    frozen_pack = profiles.select_ranked(frozen_list, lens, prof["base_k"], prof["base_chars"])
+    terms, _ = profiles.r4_terms(prof, question, exp)
+    term_list = profiles.term_order([[ids[i] for i, _ in RT.scores(t, path).most_common(prof["per_term_n"])]
+                                     for t in terms])
+    rank = {c: r + 1 for r, c in enumerate(bm)}
+    depth = prof["lookup_score_depth"]
+    lk = _lookup(path).hits(question, "", prof["lookup"],
+                            lambda c: score.get(c, 0.0) if rank.get(c, 10 ** 9) <= depth else 0.0,
+                            prof["lookup_max_chunks"])
+    r = profiles.r4_rerank_set(prof, bm=bm, term_list=term_list, frozen_list=frozen_list, lookup_hits=lk,
+                               frozen_pack=frozen_pack)
+    order_r = r
+    if rerank and r:
+        query = profiles.r4_query(prof, question, terms)
+        pairs = [(query, profiles.r4_passage(prof, byid[c])) for c in r]
+        s4 = _reranker_at(prof["ce_max_length"]).predict(pairs, batch_size=prof["ce_batch_size"])   # one call
+        order_r = [r[j] for j in sorted(range(len(r)), key=lambda j: -float(s4[j]))]   # ties: position in R
+        for j, c in enumerate(r):
+            ce_of.setdefault(c, round(float(s4[j]), 6))
+    pack, _, _, _ = profiles.r4_pack(prof, frozen_list=frozen_list, order_r=order_r, source_of=source_of, lens=lens)
+    return [{**byid[c], "bm25_rank": rank.get(c, 0), "ce_score": ce_of.get(c)} for c in pack]
+
+
 _LOOKUPS = {}
 
 
@@ -106,13 +176,15 @@ def _lookup(path):
     return _LOOKUPS[path]
 
 
-def select(question, expansion, *, k="k6", index_path=None, rerank=True, profile="frozen"):
+def select(question, expansion, *, k="k6", index_path=None, rerank=True, profile="frozen", settings=None):
     """profile r1 / r2 (candidate.json, unmeasured) take their own pack size; k must stay k6 then. rerank=False skips the cross-encoder (unmeasured). Chunk dicts with full text, best first; the ids are exactly those retrieve.retrieve() returns for k
     (k6 = 6 / 14,000 chars, k3 = 3 / 6,000). Each dict also has bm25_rank (1 = best) and ce_score."""
     if profiles.check(profile) != profiles.FROZEN:
         if k != "k6":
             raise ValueError(f"profile {profile} sets its own pack size; k must be 'k6', got {k!r}")
-        return _select_candidate(question, expansion, profile, index_path, rerank)
+        return _select_candidate(question, expansion, profile, index_path, rerank, settings)
+    if settings is not None:
+        raise ValueError("settings apply to candidate profiles only")
     cfg = config.load()
     if k not in ("k6", "k3"):
         raise ValueError(f"k must be 'k6' or 'k3', got {k!r}")

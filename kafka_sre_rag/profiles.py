@@ -1,4 +1,4 @@
-"""Retrieval profiles: `frozen` (the default, frozen.json) and the candidates `r1`, `r2` and `r3` (candidate.json).
+"""Retrieval profiles: `frozen` (the default, frozen.json) and the candidates `r1` to `r4` (candidate.json).
 
 Everything here is pure (no scripts/retrieve.py, no model); kafka_sre_rag/retrieval.py feeds it the BM25 lists.
 The ordering rules are those of scripts/retrieval_funnel.py (the funnel tool's simulation), written out here so
@@ -11,7 +11,7 @@ import re
 from . import config
 
 FROZEN = "frozen"
-CANDIDATES = ("r1", "r2", "r3")
+CANDIDATES = ("r1", "r2", "r3", "r4")
 PROFILES = (FROZEN,) + CANDIDATES
 CANDIDATE_FILE = config.PKG / "candidate.json"
 
@@ -27,23 +27,37 @@ def load_candidate():
         return json.load(f)
 
 
-def settings(profile, cand=None, cfg=None):
+def grid_settings(name, cand=None):
+    """The settings of one named grid setting of r4 (candidate.json `r4_grid`: r4g1 to r4g8)."""
+    cand = cand or load_candidate()
+    if name not in cand.get("r4_grid", {}):
+        raise ValueError(f"unknown r4 grid setting {name!r}; known: {', '.join(cand.get('r4_grid', {}))}")
+    return cand["r4_grid"][name]
+
+
+def settings(profile, cand=None, cfg=None, grid=None):
     """The complete settings of a candidate profile: its own, the candidate index record and the frozen retrieval
-    block it inherits (reranker, BM25, pool). Raises for `frozen` (its settings are frozen.json itself)."""
+    block it inherits (reranker, BM25, pool). Raises for `frozen` (its settings are frozen.json itself). `grid`: the
+    name of an r4 grid setting (r4g1 to r4g8); its values stand in for the profile's own (profile must be r4)."""
     check(profile)
     if profile == FROZEN:
         raise ValueError("the frozen profile has no candidate settings; see frozen.json")
     cand = cand or load_candidate()
     cfg = cfg or config.load()
-    return {"profile": profile, "index": cand["index"], "profile_settings": cand["profiles"][profile],
+    own = cand["profiles"][profile]
+    if grid is not None:
+        if profile != "r4":
+            raise ValueError("grid settings exist for r4 only")
+        own = grid_settings(grid, cand)
+    return {"profile": profile, "index": cand["index"], "profile_settings": own,
             "inherited_frozen_retrieval": {k: cfg["retrieval"][k] for k in ("reranker", "bm25", "pool", "chunk_chars",
                                                                            "rrf", "rrf_constant")}}
 
 
-def settings_sha256(profile, cand=None, cfg=None):
+def settings_sha256(profile, cand=None, cfg=None, grid=None):
     """sha256 over the canonical JSON (sorted keys, no spaces, UTF-8) of settings(profile). frozen.json carries no
     settings hash of its own (only the index and prompt hashes), so there is no existing recipe to follow."""
-    blob = json.dumps(settings(profile, cand, cfg), sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    blob = json.dumps(settings(profile, cand, cfg, grid), sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
@@ -224,3 +238,148 @@ def order(prof, question, exp, *, bm, score, term_lists, frozen_list, source_of,
     if prof["runbook_cap"] >= 0:
         rk = cap_runbooks(rk, source_of, prof["runbook_cap"])
     return rk
+
+
+# ---------------------------------------------------------------- profile r4 (M5)
+# DRIFT GUARD: clean_terms, question_identifiers, r4_terms, r4_rerank_set, r4_query, r4_pack are copied in
+# scripts/retrieval_funnel.py (r4_ranking); tests/test_profile_r4.py asserts identical packs. Change both together.
+_FENCE = re.compile(r"```.*?(```|\Z)", re.S)
+_DROP_LINE = (re.compile(r"^\s*ANSWER\s*:", re.I), re.compile(r"^\s*[-#>]"), re.compile(r"^\s*[A-Za-z_][\w.\-]*\s*:(\s|$)"))
+
+
+def clean_terms(exp):
+    """(terms, malformed): the expansion's search terms with fenced blocks, ANSWER lines, bullet / heading / quote
+    lines and YAML key lines removed; terms over 80 characters or 8 words dropped; duplicates removed
+    case-insensitively (first kept); at most 40; malformed when fewer than 3 remain."""
+    text = _FENCE.sub("", exp or "")
+    lines = [l for l in text.split("\n") if not any(p.match(l) for p in _DROP_LINE)]
+    out, seen = [], set()
+    for t in ", ".join(lines).split(","):
+        t = t.strip(" `'\"\t\r\n")
+        if not t or len(t) > 80 or len(t.split()) > 8 or t.lower() in seen:
+            continue
+        seen.add(t.lower())
+        out.append(t)
+    out = out[:40]
+    return out, len(out) < 3
+
+
+def question_identifiers(q):
+    """The identifier rule of Lookup applied to the question only."""
+    return Lookup.identifiers(q, "")
+
+
+def _dedupe_ci(seq, n):
+    out, seen = [], set()
+    for t in seq:
+        if t.lower() not in seen:
+            seen.add(t.lower())
+            out.append(t)
+    return out[:n]
+
+
+def r4_terms(prof, question, exp):
+    """(terms, malformed) for prof["terms_source"]: E (cleaned expansion terms; question identifiers instead when the
+    expansion is malformed), EI (question identifiers, then cleaned expansion terms) or I (question identifiers).
+    `malformed` is the flag of clean_terms(exp), whatever the source."""
+    n = prof["max_terms"]
+    ex, bad = clean_terms(exp)
+    ids = question_identifiers(question)
+    src = prof["terms_source"]
+    if src == "E":
+        return (_dedupe_ci(ids, n) if bad else ex[:n]), bad
+    if src == "EI":
+        return _dedupe_ci(ids + ex, n), bad
+    if src == "I":
+        return _dedupe_ci(ids, n), bad
+    raise ValueError(f"unknown terms_source {src!r}")
+
+
+def term_order(term_lists):
+    """Chunks of the per-term lists, each at its best rank, sorted as in order() (stable)."""
+    per = {}
+    for L in term_lists:
+        for r, c in enumerate(L):
+            per[c] = min(per.get(c, 99), r)
+    return sorted(per, key=lambda c: per[c])
+
+
+def r4_rerank_set(prof, *, bm, term_list, frozen_list, lookup_hits, frozen_pack):
+    """The scored set R: lookup hits first, then the RRF (constant 60) of bm[:bm25_depth], the term list and the
+    frozen list; without the frozen-pack chunks; the first rerank_set kept."""
+    pre = rrf([bm[:prof["bm25_depth"]], term_list, frozen_list])
+    inpack = set(frozen_pack)
+    return [c for c in dict.fromkeys(list(lookup_hits) + pre) if c not in inpack][:prof["rerank_set"]]
+
+
+def _head(s, n):
+    if len(s) <= n:
+        return s
+    cut = s[:n]
+    i = max(cut.rfind(ch) for ch in " \n\t\r")
+    return cut[:i] if i > 0 else cut
+
+
+def _join_terms(terms, n):
+    out, used = [], 0
+    for t in terms:
+        add = len(t) + (2 if out else 0)
+        if used + add > n:
+            break
+        out.append(t)
+        used += add
+    return ", ".join(out)
+
+
+def r4_query(prof, question, terms):
+    """The reranker query of r4: Qf (the question), Qa (question head + "Search terms: " + terms) or Qb (terms only;
+    the question head when there are none). Qa without terms is the question head alone."""
+    q = prof["query"]
+    if q == "Qf":
+        return question
+    head = _head(question, prof["q_head_chars"])
+    joined = _join_terms(terms, prof["terms_chars"])
+    if q == "Qa":
+        return head + "\nSearch terms: " + joined if joined else head
+    if q == "Qb":
+        return joined or head
+    raise ValueError(f"unknown query {q!r}")
+
+
+def r4_passage(prof, chunk):
+    """(title + newline + text) cut to ce_chunk_chars, the frozen passage format."""
+    return (chunk["title"] + "\n" + chunk["text"])[:prof["ce_chunk_chars"]]
+
+
+def r4_pack(prof, *, frozen_list, order_r, source_of, lens):
+    """The r4 pack: the frozen pack exactly (select_ranked over frozen_list with base_k / base_chars), then the scored
+    chunks in `order_r` (best first): a chunk already in the pack is skipped; filling stops at k chunks or when
+    max_chars minus the accounted usage is under 500; at most added_runbook_cap runbook chunks are added (the frozen
+    pack's are kept and not counted); a chunk that crosses the limit is delivered whole. Returns
+    (pack, capped, rest, stop): capped = chunks refused by the runbook cap, rest = chunks of order_r not reached
+    (not in the pack, not capped), stop = "k", "chars" or "end"."""
+    pack = select_ranked(frozen_list, lens, prof["base_k"], prof["base_chars"])
+    used = 0
+    for c in pack:
+        used += min(lens[c], prof["base_chars"] - used)
+    inpack = set(pack)
+    runbooks, capped, rest, stop = 0, [], [], "end"
+    for j, c in enumerate(order_r):
+        if c in inpack:
+            continue
+        if len(pack) >= prof["k"]:
+            stop = "k"
+        elif prof["max_chars"] - used < 500:
+            stop = "chars"
+        if stop != "end":
+            rest = [x for x in order_r[j:] if x not in inpack]
+            break
+        if source_of[c] == "runbooks":
+            if runbooks >= prof["added_runbook_cap"]:
+                capped.append(c)
+                continue
+            runbooks += 1
+        pack.append(c)
+        inpack.add(c)
+        used += min(lens[c], prof["max_chars"] - used)
+    return pack, capped, rest, stop

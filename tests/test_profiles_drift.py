@@ -72,6 +72,26 @@ class TestProfileDrift(unittest.TestCase):
                 nonempty += bool(got)
         self.assertGreaterEqual(nonempty, 8)   # the test must exercise real packs
 
+    def test_r4_grid_packs_equal_funnel(self):
+        """r4 (M5): the eight grid settings, runtime against the funnel's r4_ranking, with the stand-in reranker."""
+        from kafka_sre_rag import profiles
+        grid = profiles.load_candidate()["r4_grid"]
+        ix = F.Index(self.path)
+        scorer = F.CEScorer(ix.byid, self.tmp / "ce4.jsonl", model=self.model)
+        scorer.heartbeat = 0
+        scorer.r4 = F.R4Scorers(ix, self.tmp / "r4", model_of=lambda L: self.model, say=lambda *a: None)
+        n = 0
+        with mock.patch.object(retrieval, "_reranker_at", lambda L: self.model):
+            for q, exp in QUESTIONS:
+                st = F.ItemState(ix, q, exp)
+                for name, g in grid.items():
+                    st.__dict__.pop("_rk_cache", None)
+                    want = F.pack_of(st, F.parse_variant(name)[1], scorer)
+                    got = [c["id"] for c in retrieval.select(q, exp, profile="r4", index_path=self.path, settings=g)]
+                    self.assertEqual(got, want, f"{name} drifted from the funnel tool on {q!r}")
+                    n += bool(got)
+        self.assertGreaterEqual(n, 40)
+
 
 if __name__ == "__main__":
     unittest.main()
