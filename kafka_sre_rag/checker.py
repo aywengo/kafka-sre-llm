@@ -1656,3 +1656,203 @@ def checked_count(result: CheckResult) -> int:
     """How many distinct names were looked up and confirmed (in the excerpts or in a catalogue). Items that were
     reported, skipped or not covered are not counted. Added for `ask --check`; no decision depends on it."""
     return sum(1 for i in result.items if i.status in (IN_EXCERPTS, KNOWN))
+
+
+# ----------------------------------------------------------------------------- destructive steps (M6 H1, experimental)
+# Where an answer recommends or shows as a command a step listed in destructive_patterns.json. Data and rules:
+#  * 'command' patterns are matched on the lines of code blocks (a command wrapped with a backslash is one line; a
+#    comment line is skipped) and on inline code; 'prose' patterns on running text; 'any' on both.
+#  * Negation: a match is skipped, not marked, when its sentence warns against it. Before the match, from the start of
+#    the sentence (a colon or semicolon does not end it): do not, never, avoid, instead of, rather than, should not,
+#    not recommended, no need to, ... . That is the clear case. Doubtful cases are also skipped but counted apart
+#    (`doubtful`): a warning word after the match in the same sentence ("... is not recommended"), a warning word in the
+#    line that introduces the list or the code block ("Do not:"), a heading that says what not to do.
+#    A step the answer calls dangerous without one of those words is marked.
+# The checker only reads the text: it does not know what a step does in the user's cluster.
+import json as _json
+import os as _os
+
+DESTRUCTIVE_FILE = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "destructive_patterns.json")
+_NEG_BEFORE = re.compile(
+    r"\b(?:do not|don't|dont|never|avoid|avoiding|instead of|rather than|should not|shouldn't|must not|mustn't|"
+    r"not recommended|no need to|no need for|not to|won't|will not|cannot|can't|not safe to|unsafe to|"
+    r"stop short of|skip)\b", re.I)
+_NEG_AFTER = re.compile(
+    r"\b(?:not recommended|should be avoided|must be avoided|is to be avoided|don't|do not|never|should not|"
+    r"is not safe|is unsafe|not advisable|is dangerous)\b", re.I)
+_NEG_HEADING = re.compile(r"\b(?:do not|don't|avoid|never|what not to do|anti-?pattern|bad practice|"
+                          r"not recommended)\b", re.I)
+_NEG_CODE_COMMENT = re.compile(r"(?:#|//|--)\s*(?:do not|don't|never|avoid|bad|wrong|dangerous|not recommended)\b", re.I)
+_SENT_END = re.compile(r"[.!?](?=\s|$)")
+_DESTR_CACHE: Dict[str, Any] = {}
+
+
+def load_destructive_patterns(path: Optional[str] = None) -> List[Dict[str, Any]]:
+    """The list of destructive-step patterns, compiled (cached per file)."""
+    path = path or DESTRUCTIVE_FILE
+    if path not in _DESTR_CACHE:
+        out = []
+        with open(path, encoding="utf-8") as fh:
+            listed = _json.load(fh)["patterns"]
+        for p in listed:
+            q = dict(p)
+            q["_re"] = re.compile(p["pattern"], re.I)
+            q["_unless"] = re.compile(p["unless"], re.I) if p.get("unless") else None
+            q["_needs"] = re.compile(p["needs_prose"], re.I) if p.get("needs_prose") else None
+            out.append(q)
+        _DESTR_CACHE[path] = out
+    return _DESTR_CACHE[path]
+
+
+def _sentence_bounds(line: str, pos: int) -> Tuple[int, int]:
+    """Start and end of the real sentence (. ! ? only) around pos."""
+    start = 0
+    for m in _SENT_END.finditer(line):
+        if m.end() <= pos:
+            start = m.end()
+        else:
+            return start, m.end()
+    return start, len(line)
+
+
+def _negation(before: str, after: str, intro: str, heading: str) -> Tuple[Optional[str], bool]:
+    """(reason, doubtful): reason is None when nothing warns against the step."""
+    if _NEG_BEFORE.search(before):
+        return "warned before", False
+    if _NEG_AFTER.search(after):
+        return "warned after", True
+    if intro and _NEG_BEFORE.search(intro):
+        return "warned in the introducing line", True
+    if heading and _NEG_HEADING.search(heading):
+        return "warned in the heading", True
+    return None, False
+
+
+def _logical_lines(lines: List[Tuple[int, str]]) -> List[Tuple[int, int, str]]:
+    """(first line number, last line number, text) of a code block's commands; a line ending in a backslash goes on."""
+    out, i = [], 0
+    while i < len(lines):
+        no, raw = lines[i]
+        text, end = raw, no
+        while text.rstrip().endswith("\\") and i + 1 < len(lines):
+            i += 1
+            end, nxt = lines[i]
+            text = text.rstrip()[:-1] + " " + nxt.strip()
+        out.append((no, end, text))
+        i += 1
+    return out
+
+
+def find_destructive(text: str, patterns: Optional[List[Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
+    """Every place a listed step occurs. Each match: id, name, consequence, kind ('fence', 'prose' or 'table'),
+    line, end (last line of a wrapped command), lang, pos (end of the sentence in a prose line), matched, skipped
+    (None, or the reason a warning sentence leaves it unmarked), doubtful."""
+    pats = patterns if patterns is not None else load_destructive_patterns()
+    res: List[Dict[str, Any]] = []
+    lines = text.split("\n")
+    for seg in split_markdown(text):
+        if seg.kind == "fence":
+            intro_lines = [l for l in (seg.before or "").split("\n") if l.strip()]
+            intro = intro_lines[-1] if intro_lines else ""
+            for first, last, unit in _logical_lines(seg.lines):
+                if not unit.strip() or unit.lstrip().startswith(("#", "//")):
+                    continue
+                prev = lines[first - 2] if first >= 2 else ""
+                for p in pats:
+                    if p["applies"] == "prose":
+                        continue
+                    m = p["_re"].search(unit)
+                    if not m or (p["_unless"] and p["_unless"].search(unit)):
+                        continue
+                    skipped, doubtful = None, False
+                    if _NEG_CODE_COMMENT.search(prev):
+                        skipped, doubtful = "warned by a comment", False
+                    else:
+                        skipped, doubtful = _negation("", "", intro if intro.rstrip().endswith(":") else "", seg.heading)
+                    res.append({"id": p["id"], "name": p["name"], "consequence": p["consequence"], "kind": "fence",
+                                "line": first, "end": last, "lang": seg.lang, "pos": None, "matched": m.group(0)[:80],
+                                "skipped": skipped, "doubtful": doubtful})
+            continue
+        no, raw = seg.lines[0]
+        if not raw.strip():
+            continue
+        prev_text = (seg.before or "").split("\n")[-1] if seg.before else ""
+        intro = prev_text if prev_text.rstrip().endswith(":") else ""
+        spans = [(m.start(), m.group(0).strip("`")) for m in INLINE_CODE_RE.finditer(raw)]
+        for p in pats:
+            hits = []   # (start, end, matched, from inline code)
+            if p["applies"] in ("command", "any"):
+                for st, code in spans:
+                    for m in p["_re"].finditer(code):
+                        hits.append((st + 1 + m.start(), st + 1 + m.end(), m.group(0), True))
+            if p["applies"] in ("prose", "any"):
+                for m in p["_re"].finditer(raw):
+                    hits.append((m.start(), m.end(), m.group(0), False))
+            seen = set()
+            for s, e, mt, in_code in hits:
+                if s in seen:
+                    continue
+                seen.add(s)
+                lo, hi = _sentence_bounds(raw, s)
+                if p["_unless"] and p["_unless"].search(raw[lo:hi]):
+                    continue
+                before, after = raw[lo:s], raw[e:hi]
+                if p["_needs"] and not p["_needs"].search(before):
+                    continue
+                skipped, doubtful = _negation(before, after, intro, seg.heading)
+                res.append({"id": p["id"], "name": p["name"], "consequence": p["consequence"],
+                            "kind": "table" if raw.lstrip().startswith("|") else "prose", "line": no, "end": no,
+                            "lang": "", "pos": _sentence_span_end(raw, s), "matched": mt[:80],
+                            "skipped": skipped, "doubtful": doubtful})
+    return res
+
+
+def _sentence_span_end(line: str, pos: int) -> int:
+    """Where an inline mark goes: the end of the sentence (colons and semicolons end it too, as for R1)."""
+    sentence = _sentence_of(line, pos)
+    idx = line.find(sentence) if sentence else -1
+    return idx + len(sentence) if idx >= 0 else len(line.rstrip())
+
+
+def destructive_report(answers: Dict[str, str], patterns: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+    """Per pattern: matches, marks (matches not skipped), skipped (negated) and of those doubtful; and per answer the
+    number of marks. `answers` maps an id to the answer text."""
+    pats = patterns if patterns is not None else load_destructive_patterns()
+    per = {p["id"]: {"name": p["name"], "matches": 0, "marked": 0, "skipped_negated": 0, "doubtful": 0} for p in pats}
+    per_answer = {}
+    for aid, text in answers.items():
+        n = 0
+        for m in find_destructive(text, pats):
+            r = per[m["id"]]
+            r["matches"] += 1
+            if m["skipped"]:
+                r["skipped_negated"] += 1
+                r["doubtful"] += 1 if m["doubtful"] else 0
+            else:
+                r["marked"] += 1
+                n += 1
+        per_answer[aid] = n
+    return {"patterns": per, "marked_answers": sum(1 for n in per_answer.values() if n), "answers": len(per_answer),
+            "marks": sum(per_answer.values()), "per_answer": per_answer}
+
+
+def format_destructive_report(rep: Dict[str, Any]) -> str:
+    out = ["%-5s %-42s %7s %7s %8s %8s" % ("id", "step", "matches", "marked", "skipped", "doubtful")]
+    for pid, r in rep["patterns"].items():
+        out.append("%-5s %-42s %7d %7d %8d %8d" % (pid, r["name"][:42], r["matches"], r["marked"], r["skipped_negated"], r["doubtful"]))
+    out.append("answers %d, with a mark %d, marks %d" % (rep["answers"], rep["marked_answers"], rep["marks"]))
+    return "\n".join(out)
+
+
+if __name__ == "__main__":   # python -m kafka_sre_rag.checker destructive FILE.jsonl  (a file of {"id", "text"} lines)
+    import sys as _sys
+    if len(_sys.argv) == 3 and _sys.argv[1] == "destructive":
+        _ans = {}
+        for _i, _l in enumerate(open(_sys.argv[2], encoding="utf-8")):
+            if _l.strip():
+                _r = _json.loads(_l)
+                _ans[str(_r.get("id", _i))] = _r.get("text", "")
+        print(format_destructive_report(destructive_report(_ans)))
+    else:
+        print("usage: python -m kafka_sre_rag.checker destructive FILE.jsonl", file=_sys.stderr)
+        _sys.exit(2)

@@ -29,6 +29,16 @@ class StubGenerator:
         return text, 0, False
 
 
+def mark_option(p):
+    p.add_argument("--mark-destructive", action="store_true",
+                   help="EXPERIMENTAL, off by default: mark each place where the answer recommends or shows as a command "
+                        "a destructive step (delete a consumer group, a topic, a PVC or an Argo CD Application, reset "
+                        "offsets, force, shorten retention, ...) with a bracketed note that names the step and its "
+                        "consequence; a step the sentence warns against is not marked. Nothing is removed or reworded. "
+                        "It marks what the text says; it cannot tell whether a claim about behaviour is true, and it is "
+                        "no measure of harm. The answer is printed when it is complete (not streamed)")
+
+
 def build_parser():
     ap = argparse.ArgumentParser(prog="python -m kafka_sre_rag", description="Retrieval-augmented Kafka SRE answers.")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -78,6 +88,7 @@ def build_parser():
     a = sub.add_parser("ask", help="answer one question")
     a.add_argument("question")
     common(a)
+    mark_option(a)
     a.add_argument("--stream", action="store_true",
                    help="print the answer as it is generated (a <think> block is not shown); the sources follow")
     a.add_argument("--service-url", metavar="URL",
@@ -86,6 +97,7 @@ def build_parser():
     c = sub.add_parser("chat", help="interactive loop; each turn is retrieved and answered independently "
                                     "(no conversation history is sent; multi-turn is unmeasured)")
     common(c)
+    mark_option(c)
     sv = sub.add_parser("serve", help="long-running local service, OpenAI-compatible, loopback only")
     common(sv)
     sv.add_argument("--host", default="127.0.0.1", help="bind address (default 127.0.0.1; loopback only)")
@@ -236,7 +248,8 @@ def run_one(question, gen, cfg, a, checker=None):
     flt = ThinkFilter() if getattr(a, "stream", False) and not (a.json or a.dry_run) else None
     gate = None
     seen_now = []
-    live = not (a.json or a.dry_run)  # the answer is printed while it is generated
+    mark_d = getattr(a, "mark_destructive", False)
+    live = not (a.json or a.dry_run or mark_d)  # the answer is printed while it is generated
     if live and checker is not None:  # decision O2, option c: prose as written, a code block only after its check
         gate = revise_mod.FenceGate(lambda s: print(s, end="", flush=True), checker.check,
                                     lambda: seen_now[0] if seen_now else [])
@@ -273,11 +286,16 @@ def run_one(question, gen, cfg, a, checker=None):
         shown = rec["final_text"]
         if accepted:
             check = rec["check_after"]
+    n_marks = 0
+    if mark_d:  # the answer as it is, with a bracketed note after each destructive step
+        shown, n_marks, _ = revise_mod.mark_destructive(ans.text if shown is None else shown)
     if a.json:
         out = {"question": question, "text": ans.text if shown is None else shown, "sources": ans.sources,
                "expansion": ans.expansion, "timings": ans.timings, "measured": ans.measured, "tokens": ans.tokens,
                "truncated": ans.truncated, "unmeasured_reasons": ans.unmeasured_reasons}
         out.update(ans.profile_fields)  # nothing for frozen
+        if mark_d:
+            out["destructive_marks"] = n_marks
         if check is not None:
             out["check"] = check
             out["first_pass_text"] = ans.text
@@ -299,6 +317,8 @@ def run_one(question, gen, cfg, a, checker=None):
         print("\n" + (rec["check_first"]["note"] if gate else check["note"]))
         if gate and rec["r2"]["status"] == "accepted":  # streamed: the corrections follow the answer
             print("\n" + revise_mod.corrections_block(rec["patches"]))
+    if mark_d:
+        print("\n(destructive-step marks written: %d; experimental)" % n_marks)
     if a.sources:
         print_sources(ans.sources)
     if ans.truncated:
@@ -326,6 +346,9 @@ def main(argv=None):
         print(f"error: --mode {a.mode} cannot be used with serve: the service has no grounded mode "
               "(a request would be answered in the default mode)", file=sys.stderr)
         return 2
+    if a.cmd == "ask" and a.service_url and a.mark_destructive:
+        print("error: --mark-destructive is not available with --service-url", file=sys.stderr)
+        return 2
     if a.cmd == "ask" and a.service_url:
         if a.mode.startswith("grounded"):
             print(f"error: --mode {a.mode} cannot be used with --service-url: the service has no grounded mode "
@@ -348,6 +371,10 @@ def main(argv=None):
         return 0
     if getattr(a, "revise", False) and not a.check:
         print("error: --revise needs --check", file=sys.stderr)
+        return 2
+    if getattr(a, "mark_destructive", False) and getattr(a, "stream", False):
+        print("error: --mark-destructive prints the answer when it is complete; do not combine it with --stream",
+              file=sys.stderr)
         return 2
     checker = None
     if a.check:  # before anything slow is loaded

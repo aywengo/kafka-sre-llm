@@ -41,7 +41,7 @@ import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from . import prompts
-from .checker import INVENTED, WRONG_USE, split_markdown
+from .checker import INVENTED, WRONG_USE, find_destructive, split_markdown
 
 VERSION = "revise/2"
 LAYOUT = "revise-layout/2"   # how the answer and the findings are laid out in the prompt (the text is REVISE_PROMPT)
@@ -180,6 +180,73 @@ def render_range(lines: List[str], marks: Marks, lo: int = 1, hi: Optional[int] 
         out.append(line)
         out.extend(marks.after.get(n, []))
     return out
+
+
+DESTRUCTIVE_TAG = "destructive step"   # the words every mark of the destructive-step option starts with
+
+
+def _destructive_text(m: Dict[str, Any]) -> str:
+    return "%s: %s; %s" % (DESTRUCTIVE_TAG, m["name"], m["consequence"])
+
+
+def plan_destructive_marks(text: str, matches: Optional[List[Dict[str, Any]]] = None) -> Marks:
+    """Marks (same placement as R1) for the destructive steps that find_destructive() lists and does not skip.
+    EXPERIMENTAL; nothing is removed or reworded."""
+    matches = find_destructive(text) if matches is None else matches
+    marks, lines = Marks(), text.split("\n")
+    prose: Dict[Tuple[int, int], List[str]] = {}
+    for m in matches:
+        if m["skipped"]:
+            continue
+        note = _destructive_text(m)
+        n = m["line"]
+        if m["kind"] == "fence":
+            lang, end = m["lang"], m["end"]
+            seg_last = end
+            while seg_last < len(lines) and not lines[seg_last].strip()[:3] in ("```", "~~~"):
+                seg_last += 1
+            if lang in NO_COMMENT_LANGS:
+                close = seg_last + 1 if seg_last < len(lines) else seg_last
+                t = "[%s]" % note
+                if t not in marks.after.setdefault(close, []):
+                    marks.after[close].append(t)
+                continue
+            indent = lines[n - 1][:len(lines[n - 1]) - len(lines[n - 1].lstrip())]
+            t = "%s%s %s" % (indent, COMMENT_PREFIX.get(lang, "#"), note.replace("`", "'"))
+            if t not in marks.after.setdefault(end, []):
+                marks.after[end].append(t)
+        elif m["kind"] == "table":
+            e = n
+            while e < len(lines) and lines[e].lstrip().startswith("|"):
+                e += 1
+            t = "[%s]" % note
+            if t not in marks.after.setdefault(e, []):
+                marks.after[e].append(t)
+        else:
+            if note not in prose.setdefault((n, m["pos"]), []):
+                prose[(n, m["pos"])].append(note)
+    for (n, pos), ms in prose.items():
+        marks.inline.setdefault(n, []).append((pos, " [%s]" % "; ".join(ms)))
+    return marks
+
+
+def mark_destructive(text: str) -> Tuple[str, int, List[Dict[str, Any]]]:
+    """(text with the marks, how many marks were written, the matches). Unchanged text when there is no mark."""
+    matches = find_destructive(text)
+    marks = plan_destructive_marks(text, matches)
+    if not len(marks):
+        return text, 0, matches
+    return "\n".join(render_range(text.split("\n"), marks)), len(marks), matches
+
+
+def strip_destructive_marks(text: str) -> str:
+    """The inverse of mark_destructive (used by the tests): the text without any destructive-step mark."""
+    out = []
+    for line in text.split("\n"):
+        if re.match(r"^\s*(?:#|//|--)\s%s: " % DESTRUCTIVE_TAG, line) or re.match(r"^\[%s: .*\]$" % DESTRUCTIVE_TAG, line):
+            continue
+        out.append(re.sub(r" \[%s: [^\]]*\]" % DESTRUCTIVE_TAG, "", line))
+    return "\n".join(out)
 
 
 def mark_in_place(text: str, findings: List[Dict[str, Any]]) -> str:
