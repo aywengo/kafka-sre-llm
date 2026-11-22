@@ -66,7 +66,7 @@ Speed work as such and the laptop run are not targets. The base model stays Qwen
 | G2 | B2 answered in the grounded mode; a blind reading mixed with the stored default answers; judge; open mechanical 339 | job-operator, readers | server about 3 h | not started: the development check (GD) ended 2026-11-22 13:38 with the choice "neither"; B2 is not spent |
 | G3 | Experiment: can the reranker's score tell supported from unsupported sentences, on the 56 errors of the B1 reading | implementer | CPU, reranker | after R0 (not on the critical path) |
 | R5 | The second reranker (Q8): licence and usage read directly; design of the offline test and its rule; download; build; run | researcher, complex-reviewer, job-operator, implementer | CPU, one download of about 1.2 GB | licence read, design and download done (2026-11-22 08:21); **done** 2026-11-22 11:44: **the rule says fail** (section "R5: the rule's verdict") |
-| R6 | Informative run, deciding nothing (Q11): the picked grounded variant answers B1 and the pilot on r4g2's packs; coverage (two judge passes), length, cut share, identifier check, against the same variant on the frozen packs | implementer, job-operator | server about 1 h | chain committed (`a5d111e`); started 2026-11-22 13:45 with `grounded-g2` |
+| R6 | Informative run, deciding nothing (Q11): the picked grounded variant answers B1 and the pilot on r4g2's packs; coverage (two judge passes), length, cut share, identifier check, against the same variant on the frozen packs | implementer, job-operator | server about 1 h | chain committed (`a5d111e`); started 2026-11-22 13:41 with `grounded-g2` |
 | H1 | Hidden look 3: r4 with the grounded mode against E2's stored default answers; ledger row and rule first | job-operator, sealed readers | server about 4 h | after R4 and G2 |
 
 Not in M5 (P7): dense retrieval; index changes (the
@@ -353,6 +353,38 @@ bar allows. The rule sends the mode back to design. Running: an analysis of wher
 coverage is lost with a proposal for a third variant, and the informative run R6 with G2
 (the variant nearer its bar; no variant was picked) on r4g2's packs.
 
+## Grounded mode: where the coverage is lost, and a third variant (2026-11-22 13:48)
+
+From `runs/m5/reports/g_dev_analysis.md` (one reviewer; the 54 development scenarios;
+paired standard errors over scenarios; nothing run):
+
+- G1 loses 0.122 (standard error 0.030): 0.067 on points outside the pack, where the ban
+  on memory bites (present 0.293 of the time against 0.405 for default), and 0.046 on
+  points whose chunk is in the pack.
+- G2 loses 0.069 (0.029), nearly all of it on points whose chunk **is** in the pack
+  (−0.049; present 0.575 of the time against 0.726). Outside the pack it equals default
+  (0.401 against 0.405). So G2's loss is not about memory.
+- G2's loss sits in the diagnostics scenarios (−0.187 on 14, standard error 0.049); on
+  the other kinds it is level with default. Its ten worst scenarios carry 99 % of the
+  net loss; it loses on 24 scenarios, gains on 12, ties on 18.
+- Reading ten scenarios per variant (23 lost units each): the grounded answer commits to
+  the one cause an excerpt describes or stops a review after the first problem (9 for G1,
+  7 for G2), or drops a check, a verification step or an alternative the rubric counts
+  (6 and 6). The judge's two passes differ by 0.04 to 0.07 on one answer.
+- Beyond the rule's table: wrong mechanical answers fall from 40 of 116 (default) to 19
+  (G1) and 21 (G2), mostly by becoming correct declines; on the 20 a3 items wrong
+  declines rise from 2 to 4 and 3, which condition (f) does not count.
+
+Proposed G3 (the text is in the report; sha256 `a5a55771…`, 245 words): G2 with three
+changes: the lead names the cause that fits all the evidence, not only one excerpt's;
+"answer every part of the question" (the read-only checks that confirm a cause, the
+change and how to verify it, every problem in a review); an alternative only when the
+question asks or the evidence leaves the cause open; and the plan's 700 words instead of
+600. The changes were prompted by particular open scenarios (p2-05, p2-11, p2-19, p2-22,
+b1-02, b1-06, b1-11, b1-16, b1-20, b1-22, b1-23, b1-25). The reviewer's own estimate:
+coverage about −0.045 against the −0.05 bar, a pass in 50 to 60 % of cases; a narrow pass
+on these worn scenarios would not tell G3 from G2; B2 and the hidden half decide.
+
 ## Hidden looks
 
 Six looks on the hidden part in total. M4 used two (E2, E3). The Owner carried the
@@ -387,7 +419,14 @@ spent on the same 61 scenarios.
 
 ## Waiting for the Owner
 
-Nothing is open for the Owner now.
+- Q13 (asked 2026-11-22 13:50): the grounded mode after its failed development check.
+  Recommended: one more variant, G3 (G2 with three changes aimed at the diagnostics
+  scenarios, 700 words), checked with the same seven conditions, reusing this run's
+  default reference after a repeat probe; about 1.3 to 1.8 h of server time after R6. G3
+  keeps G2's labelled general-knowledge lines, which depart from the plan's wording
+  ("behaviour claims only where an excerpt supports them"); that is recorded as an
+  amendment if G3 goes ahead. Not recommended: accepting G2's coverage loss, which would
+  change a bar after seeing the result.
 
 Still open from M4, none blocking:
 
@@ -529,5 +568,7 @@ Later in M5: whether candidate C becomes the default (after look 3).
   `--max-unjudged 1` and the recorded code change.
 - 2026-11-22 13:38: the development check ended: **neither variant passes** (coverage
   −0.122 for G1 and −0.069 for G2 against a bar of −0.05; the other six conditions pass
-  for both). Section "Grounded mode: the development check's verdict". 13:45: started the
+  for both). Section "Grounded mode: the development check's verdict". 13:41: started the
   analysis of the coverage loss with a proposal for a third variant, and R6 with G2.
+- 2026-11-22 13:48: the analysis is back (section "Grounded mode: where the coverage is
+  lost"). Q13 for the Owner. G3 cannot be built while R6 runs (it changes files R6 pins).
