@@ -9,7 +9,7 @@ stands, and wins where the two differ.
 Earlier tracking documents: `milestones/M5.md` (its decisions P1 to P8 and Q1 to Q17 stay
 in force where this file does not change them) and `milestones/M4.md`.
 
-Last updated: 2026-11-22, 21:15.
+Last updated: 2026-11-22, 21:07.
 
 ## What this milestone is for
 
@@ -80,8 +80,8 @@ under this test before B4 is used (task B4R).
 | M0 | The second reranker's memory, scores and time under smaller batches and half precision | implementer | CPU | **done** 2026-11-22 21:00 (`runs/m6/reports/m0_reranker_memory.md`): full precision adds about 3.2 GB after load and 3.35 GB at peak, 4.6 s per call; half precision 1.3 to 1.8 GB at peak but 29 to 41 s per call; nothing meets 1.5 GB at a usable speed |
 | H0 | Classification of the harmful statements of the open readings | complex-reviewer | CPU | **done** 2026-11-22 18:14 (`runs/m6/reports/h0_harmful_classes.md`): 16 statements: 9 destructive steps, 6 wrong claims about behaviour, 1 unsafe order; 8 not foreseen by a rubric; a draft list of 17 patterns finds 8 of the 9 destructive steps and 1 of the other 7 |
 | D5 | The fresh development batch: 50 open scenarios with covering sets verified before any answer | writers, reviewers, independent checkers | Claude workers | **done** 2026-11-22 19:34 (`eval/m6/d5/`, `CHUNK_CHECK.json`): 269 must points, 227 with at least one verified set (316 sets of one chunk, 38 of two), 13 with no covering set in the index, 29 not indexed; 7 hidden items tagged as sharing a family |
-| F | (F-a and F-b running since 2026-11-22 21:08) Repairs before any hidden run: a prompt hash per answer; the decline detector reading a gap sentence as a decline; a judge parser that tolerates a misplaced bracket only when every rubric id is present; the B4 check chain made independent of r4, and a runtime profile for a second reranker; the checker's names in prose and comments; the chains' stale wording on a resume | implementer | CPU | next |
-| B4R | Recount of B4's dropped chunks under the covering test with title lines | independent checkers | CPU | **done** 2026-11-22 21:12: the three checkers re-rated 92 chunk verdicts and 17 sets they had rated partial; none changed to ok, no point gains a set; B4's files stand as released (one possible pair for b4-26 m4, outside the pass's scope, was not added) |
+| F | (F-a and F-b running since 2026-11-22 21:05) Repairs before any hidden run: a prompt hash per answer; the decline detector reading a gap sentence as a decline; a judge parser that tolerates a misplaced bracket only when every rubric id is present; the B4 check chain made independent of r4, and a runtime profile for a second reranker; the checker's names in prose and comments; the chains' stale wording on a resume | implementer | CPU | next |
+| B4R | Recount of B4's dropped chunks under the covering test with title lines | independent checkers | CPU | **done** 2026-11-22 21:06: the three checkers re-rated 92 chunk verdicts and 17 sets they had rated partial; none changed to ok, no point gains a set; B4's files stand as released (one possible pair for b4-26 m4, outside the pass's scope, was not added) |
 | T | The set for harmful statements: 35 scenarios where a destructive shortcut is tempting and wrong, 8 where a destructive step is right; harm points judge the consequence, with a condition and a near-miss | writers, reviewers | Claude workers | next |
 | H1 | Marking of destructive steps in the checker (marking only, S7) | implementer | CPU | after F |
 | HP | The new hidden judged part, written, reviewed and set-checked in sealed sessions, with a family check against every open batch | sealed writers, reviewers | Claude workers | next |
@@ -146,7 +146,7 @@ candidate C becomes the default, after the look.
   reproduced (3.2 to 3.4 GB).
 - 2026-11-22 21:03: the Owner gave the go for `v3.2.0` (tagged on `0021039`, release page
   published) and agreed with S8. This document replaces M5's.
-- 2026-11-22 21:05: M6's setup committed (`66859be`): this document, the plan, D5, the tag
+- 2026-11-22 21:04: M6's setup committed (`66859be`): this document, the plan, D5, the tag
   for seven hidden items. Started: the harness repairs (F-a), the D5 funnel chain and the
   B4 check made independent of r4 (F-b), and the recount of B4 (B4R).
-- 2026-11-22 21:12: B4R done: nothing changes under the corrected test.
+- 2026-11-22 21:06: B4R done: nothing changes under the corrected test.
