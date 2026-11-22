@@ -66,6 +66,7 @@ Speed work as such and the laptop run are not targets. The base model stays Qwen
 | G2 | B2 answered in the grounded mode; a blind reading mixed with the stored default answers; judge; open mechanical 339 | job-operator, readers | server about 3 h | after the development check (GD), which is running since 2026-11-22 09:01 (4.5 to 6.5 h) |
 | G3 | Experiment: can the reranker's score tell supported from unsupported sentences, on the 56 errors of the B1 reading | implementer | CPU, reranker | after R0 (not on the critical path) |
 | R5 | The second reranker (Q8): licence and usage read directly; design of the offline test and its rule; download; build; run | researcher, complex-reviewer, job-operator, implementer | CPU, one download of about 1.2 GB | licence read, design and download done (2026-11-22 08:21); **done** 2026-11-22 11:44: **the rule says fail** (section "R5: the rule's verdict") |
+| R6 | Informative run, deciding nothing (Q11): the picked grounded variant answers B1 and the pilot on r4g2's packs; coverage (two judge passes), length, cut share, identifier check, against the same variant on the frozen packs | implementer, job-operator | server about 1 h | the chain is being built; the run follows the development check |
 | H1 | Hidden look 3: r4 with the grounded mode against E2's stored default answers; ledger row and rule first | job-operator, sealed readers | server about 4 h | after R4 and G2 |
 
 Not in M5 (P7): dense retrieval; index changes (the
@@ -284,7 +285,7 @@ errors) and clears the frozen bar (124 against 120). S is the half r4g2 was chos
 which flatters r4g2 there (inferred). Over both halves r5a serves 235 of 421 indexed
 points, r4g2 210, frozen 125. Nothing was measured on answers.
 
-X1 is not met by R5. B4 stays unspent. Q11 for the Owner.
+X1 is not met by R5. B4 stays unspent. The Owner accepted the stop (Q11).
 
 ## B4 (the out-of-sample batch)
 
@@ -351,16 +352,12 @@ spent on the same 61 scenarios.
 | 2026-11-22 | Q6 | The three hidden judged items of the same family as a B4 scenario (b3-07, b3-17, b3-26) are tagged and every hidden judged result is reported with and without them; B4 stays as written |
 | 2026-11-22 | Q7 | The r4 stop is accepted: X1 is not met by r4, B4 stays unspent, and the grounded mode goes on with the frozen retrieval; the hidden look tests the grounded mode alone |
 | 2026-11-22 | Q8 | Ranking continues in M5 with one reranker download, `Qwen/Qwen3-Reranker-0.6B`, for an offline re-score of the same scored candidates, with a rule fixed beforehand; if it does not clearly beat r4g2 it stops there |
+| 2026-11-22 | Q11 | The stop of the second reranker is accepted: the ranking target ends for M5 with X1 not met; r4 and R5 stay in the code as experimental; after the development check the picked grounded variant answers B1 and the pilot once on r4g2's packs, without readers and deciding nothing |
 | 2026-11-22 | Q9 | The conductor may unload any model from the model server ("you can unload all models from oMLX"), when no request is active or waiting |
 
 ## Waiting for the Owner
 
-- Q11 (asked 2026-11-22 11:50): the second reranker was stopped by its rule. Recommended:
-  accept the stop, end the ranking target for M5 with X1 not met, keep both candidates
-  in the code as experimental, and after the development check answer B1 and the pilot
-  once on r4g2's packs in the picked grounded variant, without readers and deciding
-  nothing, to see whether more excerpts served turns into more points covered. A further
-  ranking round would need a fresh development batch first.
+Nothing is open for the Owner now.
 
 Still open from M4, none blocking:
 
@@ -480,3 +477,5 @@ Later in M5: whether candidate C becomes the default (after look 3).
   mechanical default answers); 10:52 to 11:08: G1 answered B1's 30 scenarios in 16.5 min.
 - 2026-11-22 11:44: the R5 chain ended: timing (busy machine), funnel (224 questions),
   rule: fail (section "R5: the rule's verdict"). Q11 for the Owner.
+- 2026-11-22 11:50: the Owner agreed with Q11. The chain of the informative run on
+  r4g2's packs (R6) is being built.
