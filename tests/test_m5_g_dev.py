@@ -393,7 +393,7 @@ class StartCheck(unittest.TestCase):
 
 
 class SmallChecks(unittest.TestCase):
-    def test_determinism(self):
+    def test_determinism_is_a_measurement_and_stops_nothing(self):
         with tempfile.TemporaryDirectory() as t:
             st, new = Path(t) / "s.jsonl", Path(t) / "n.jsonl"
             rows = [{"id": f"i{n}", "text": f"text {n}", "truncated": False} for n in range(4)]
@@ -401,13 +401,48 @@ class SmallChecks(unittest.TestCase):
             R.wr(new, rows[:3])
             code, o, e = run_rule(["determinism", "--stored", str(st), "--new", str(new), "--n", "3"])
             self.assertEqual(code, 0)
-            self.assertIn("byte for byte", o)
+            self.assertIn("3 of 3 fresh default answers equal the stored ones", o)
             bad = [dict(r) for r in rows[:3]]
-            bad[1]["text"] += " "
+            bad[1]["text"] = "text 1 plus more"
             R.wr(new, bad)
             code, o, e = run_rule(["determinism", "--stored", str(st), "--new", str(new), "--n", "3"])
-            self.assertEqual(code, 1)
-            self.assertIn("default must be answered again", o)
+            self.assertEqual(code, 0)          # a difference is printed, the chain goes on
+            self.assertIn("i1: DIFFERENT (stored 6 characters, fresh 16; first difference at character 6)", o)
+            self.assertIn("2 of 3 fresh default answers equal", o)
+            self.assertEqual(run_rule(["determinism", "--stored", str(st), "--new", str(new), "--n", "5"])[0], 1)   # too few rows is an error
+
+    def test_repeat_within_the_run_prints_the_fixed_sentence_on_a_difference_and_stops_nothing(self):
+        with tempfile.TemporaryDirectory() as t:
+            a, b = Path(t) / "a.jsonl", Path(t) / "b.jsonl"
+            rows = [{"id": f"i{n}", "text": f"text {n}" * 5, "truncated": False} for n in range(3)]
+            R.wr(a, rows)
+            R.wr(b, rows)
+            code, o, e = run_rule(["repeat", "--first", str(a), "--again", str(b), "--n", "3"])
+            self.assertEqual(code, 0)
+            self.assertIn("3 of 3 answers equal this run's first answers", o)
+            self.assertNotIn(R.REPEAT_SENTENCE, o)
+            alt = [dict(r) for r in rows]
+            alt[2]["text"] = alt[2]["text"][:7] + "X" + alt[2]["text"][8:]
+            R.wr(b, alt)
+            code, o, e = run_rule(["repeat", "--first", str(a), "--again", str(b), "--n", "3"])
+            self.assertEqual(code, 0)
+            self.assertIn("i2: DIFFERENT", o)
+            self.assertIn("first difference at character 7", o)
+            self.assertIn("The server does not reproduce long answers between two requests, so single answers are not exactly repeatable and the "
+                          "rule's measures are averages over 54 and 116 answers.", o)
+
+    def test_the_rule_follows_the_fresh_default_not_the_stored_one(self):
+        # the rule reads variants.default only (the chain fills it from this run's own default answers). The same variant passes against a
+        # fresh default of 0.62 and fails against a fresh default of 0.70, whatever a stored default would have been.
+        m = measures(g1=variant(P=0.60))
+        code, out, err = Rule.verdict(self, m)
+        self.assertIn("CHOICE: G1", out)
+        m["variants"]["default"]["P"] = 0.70
+        code, out, err = Rule.verdict(self, m)
+        self.assertIn("FAIL  (a) coverage P: g1 0.600, default 0.700", out)
+        self.assertNotIn("CHOICE: G1", out)
+        self.assertIn("this run's own default answers", R.RULE_TEXT)
+        self.assertIn("decide nothing", " ".join(R.RULE_TEXT.split()))
 
     def test_check_echo(self):
         with tempfile.TemporaryDirectory() as t:
@@ -469,7 +504,7 @@ class ChainDryRun(unittest.TestCase):
         self.assertLess(rep.index("The rule of the development check"), rep.index("## Result"))
         self.assertIn("CHOICE", (self.w / "rule_out.txt").read_text())
         self.assertIn("Note on (f): Known bias of the decline detector", rep)
-        self.assertIn("B1 default answers: judged again in this run", rep)
+        self.assertIn("B1: the stored judge results against this run's judgement of the fresh default answers", rep)
         self.assertIn("answers differ in the two-pass mean", rep)
         man = json.load(open(self.w / "MANIFEST.json"))
         for f in ("scripts/m5_g_rule.py", "scripts/m5_g_dev.sh", "scripts/eval2.py", "scripts/eval2_score.py", "scripts/eval2_judge.py",
@@ -478,15 +513,56 @@ class ChainDryRun(unittest.TestCase):
         self.assertEqual(man["judge_args"]["setting"], "deepseek-nothink-12k")
         self.assertIn("git_head", man["info"])
         self.assertNotIn("judge_cache.jsonl", " ".join(man["pins"]))
-        for f in ("stage_header.done", "stage_determinism.done", "stage_answers.done", "stage_judge.done", "stage_checks.done", "MANIFEST.json"):
+        self.assertIn("stored against fresh default; decides nothing", rep)
+        self.assertIn("Determinism measurement", rep)
+        self.assertIn("determinism (i) stored against fresh", rep)
+        self.assertIn("determinism (ii) within this run", rep)
+        self.assertIn("this run's own default answers", rep)
+        self.assertIn("this run's own default answers", man["reference"] if "reference" in man else json.load(open(self.w / "measures.json"))["reference"])
+        for f in ("stage_header.done", "stage_reference.done", "stage_determinism.done", "stage_answers.done", "stage_judge.done", "stage_checks.done", "MANIFEST.json"):
             self.assertTrue((self.w / f).exists(), f)
         self.assertEqual(sum(1 for _ in open(self.w / "ans_b1_g1.jsonl")), 30)
+        for name, n in (("b1", 30), ("p2", 24), ("ma", 116 - 20), ("m3", 20)):
+            self.assertEqual(sum(1 for _ in open(self.w / f"ans_{name}_default.jsonl")), n, name)
+        dm = json.load(open(str(self.w / "ans_b1_default.jsonl") + ".manifest.json"))
+        self.assertEqual(dm["mode"], "default")
+        self.assertEqual(sum(1 for _ in open(self.w / "det_default.jsonl")), 3)
+        self.assertEqual(json.load(open(str(self.w / "det_default.jsonl") + ".manifest.json"))["mode"], "default")
         man = json.load(open(str(self.w / "ans_ma_g2.jsonl") + ".manifest.json"))
         self.assertEqual(man["mode"], "grounded-g2")
 
     def test_2_the_header_was_written_before_any_answer(self):
-        h, a = (self.w / "stage_header.done").stat().st_mtime, (self.w / "ans_b1_g1.jsonl").stat().st_mtime
-        self.assertLess(h, a)
+        h = (self.w / "stage_header.done").stat().st_mtime
+        for f in ("ans_b1_default.jsonl", "ans_b1_g1.jsonl", "det_default.jsonl"):
+            self.assertLess(h, (self.w / f).stat().st_mtime, f)
+        self.assertLess((self.w / "stage_reference.done").stat().st_mtime, (self.w / "ans_b1_g1.jsonl").stat().st_mtime)
+
+    def test_2b_the_measures_take_the_default_from_the_fresh_answers(self):
+        # the stub's fresh default answers differ from the stored ones; the measures follow the fresh file
+        m = json.load(open(self.w / "measures.json"))
+        fresh = R.answer_stats(R.rd(self.w / "ans_b1_default.jsonl") + R.rd(self.w / "ans_p2_default.jsonl"), [], True, True)
+        stored = R.answer_stats(R.rd(ROOT / "work/m4/b1/ans_default.jsonl") + R.rd(ROOT / "work/m4/pilot2/ans_default.jsonl"), [], True, True)
+        self.assertNotEqual((fresh["cut"], fresh["median_tokens"]), (stored["cut"], stored["median_tokens"]))
+        self.assertEqual((m["variants"]["default"]["cut"], m["variants"]["default"]["median_tokens"]), (fresh["cut"], fresh["median_tokens"]))
+        rep = (self.w / "G_DEV_from_stub_data.md").read_text()
+        row = [l for l in rep.splitlines() if l.startswith("| B1 | 30 |")]
+        self.assertEqual(len(row), 1, rep[-3000:])
+
+    def test_2c_a_stopped_runs_state_is_refused_with_the_mv_lines(self):
+        # the work folder of this dry run with another rule text in its manifest stands for the stopped run's manifest
+        mp = self.w / "MANIFEST.json"
+        good = mp.read_text()
+        d = json.loads(good)
+        d["rule_text_sha256"] = "0" * 64
+        mp.write_text(json.dumps(d))
+        try:
+            r = self.chain()
+            self.assertEqual(r.returncode, 2, r.stdout[-1000:] + r.stderr[-1000:])
+            self.assertIn("rule_text_sha256", r.stderr)
+            self.assertIn(f"mv {self.w} {self.w}.stopped_20261122", r.stderr)
+            self.assertEqual(mp.read_text(), json.dumps(d))        # nothing moved or deleted
+        finally:
+            mp.write_text(good)
 
     def test_3_resumes(self):
         r = self.chain()

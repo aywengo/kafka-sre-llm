@@ -3,7 +3,8 @@
 # Both variants, grounded-g1 and grounded-g2, answer STORED default packs (eval2.py answer --replay-packs) on the reference configuration
 # (the 4-bit base model on the server, thinking off, the frozen index, the 2,048-token limit), then the rule of section 3 is applied by code
 # (scripts/m5_g_rule.py): PASS or FAIL per condition and variant, and the choice G1, G2 or neither. The rule's text is written into the report
-# header before any answer exists. Reference for every comparison: the stored default answers on the same packs.
+# header before any answer exists. Reference for every comparison: THIS RUN's own default answers on the same stored packs (the stored default
+# answers were not reproduced on the server, runs/m5/reports/gdev_run_start.md); they are only compared with the fresh ones, deciding nothing.
 # Sets (the ids of the mechanical sample are in eval/m4/g_dev_ids.json, drawn by scripts/m5_g_rule.py draw-ids):
 #   J  judged: B1 (30, eval/m4/b1) and pilot2 (24, eval/m4/pilot2); packs of work/m4/b1 and work/m4/pilot2 default answers
 #   M1 + M2  tier_a: 56 + 40 items (packs of work/m4/s6/ans_A1.jsonl);  M3  tier_a3: 20 items (packs of work/m4/e2/ans_O_Q4D_a3.jsonl)
@@ -17,12 +18,16 @@
 #   1. Gate: inputs, ids file reproduces from its rule, stored default answers complete, kafka_sre_rag verify; the server (real runs): the 4-bit base
 #      model listed, no other chain or guarded job, no active or waiting request, no model of another client loaded (our judge builds are unloaded).
 #   2. Report header with the rule text (written once, before any answer).
-#   3. Determinism check: 3 B1 default replays against the stored default answers, byte for byte. On failure the chain stops and says that default
-#      must be answered again.
+#   3. Reference stage: default answered on the stored packs (replay), every set (B1 30, pilot2 24, the mechanical parts), the same call as the
+#      variants except the mode. Then a determinism MEASUREMENT (it stops nothing): (i) the first 3 B1 fresh default answers against the stored ones;
+#      (ii) within this run: those 3 answered a second time against this run's first answers (a difference prints the fixed sentence that the server
+#      does not reproduce long answers between two requests).
 #   4. Answers of g1 and g2 on b1, pilot2, tier_a part, tier_a3 part (guarded, stall limit 40 min), pack equality with the stored packs.
-#   5. Judge (DeepSeek, coverage role, instruction v2, setting deepseek-nothink-12k, two passes) on B1 and pilot2, default included and judged again
-#      in this run (fresh caches, the same code and setting as the variants); the stored B1 results are compared afterwards and decide nothing; guarded.
-#   6. Identifier check (CPU). 7. The scorer with decline outcomes (CPU). 8. Measures (a) to (h), the rule, the report runs/m5/G_DEV.md.
+#   5. Judge (DeepSeek, coverage role, instruction v2, setting deepseek-nothink-12k, two passes) on B1 and pilot2, this run's fresh default answers
+#      included (fresh caches, the same code and setting as the variants); the stored B1 results are compared afterwards and decide nothing; guarded.
+#   6. Identifier check (CPU; fresh default, g1, g2, and the stored default for the comparison). 7. The scorer with decline outcomes (CPU; the
+#      same). 8. Measures (a) to (h), the rule, the report runs/m5/G_DEV.md with the table "stored against fresh default; decides nothing".
+#   A state left by a stopped run (work folder, manifest, report, failed marker) is refused by the start check; the refusal prints the mv lines.
 #   scripts/m5_g_dev.sh > runs/m5/logs/m5_g_dev.out 2>&1 &
 #   scripts/m5_g_dev.sh --dry-run [--work DIR] [--mechanical all]   # stub model, stub judge, no server, no markers outside DIR, no heartbeat, no
 #                                                                   # file written outside DIR (default: a temporary directory); the numbers are not measurements
@@ -64,6 +69,11 @@ json.dump({"ts": datetime.datetime.now().astimezone().isoformat(timespec="second
           open("runs/v3/status.json", "w"), indent=2)
 PY
 }
+STOPPED_SUFFIX=stopped_20261122   # the first real run (stopped at its determinism check) is moved aside under this suffix
+moveaside() { # the lines that move the state of a stopped run out of the way (printed, never executed here)
+  echo "to start again, first move the stopped run's files aside (the chain never moves or deletes them):" >&2
+  for f in $W $REPORT $L/$N.failed; do [ -e $f ] && echo "  mv $f $f.$STOPPED_SUFFIX" >&2; done
+  echo "  (and runs/m5/logs/$N.out, if it holds the stopped run's output, before the next start redirects into it)" >&2; return 0; }
 refuse() { echo "REFUSED: $1; nothing started" >&2; exit 2; }
 fail() { if [ $DRY = yes ]; then echo "DRY RUN FAILED: $1"; exit 1; fi
   hb "$N: STOPPED: $1" yes; echo "$1" >> $L/$N.failed
@@ -128,7 +138,7 @@ gstate() { # SUBCOMMAND: the manifest and the start check take the same state; t
   .venv/bin/python $R "$1" $STATE --info "git_head=$GIT_HEAD" --judge-arg "model=$DS" --judge-arg "setting=$SETTING" --judge-arg "extra_body=$JEB" \
     --judge-arg "source_chars=$SRC" --judge-arg "instruction=v2" --judge-arg "passes=1 2" --judge-arg "role=coverage"; }
 STATE="--manifest $W/MANIFEST.json --work $W $PINS --frozen $FROZEN --mechanical $MECH --model $Q4 $DRYFLAG"
-gstate start-check || refuse "the start check failed (see above; nothing was moved or deleted)"
+gstate start-check || { moveaside; refuse "the start check failed (see above; nothing was moved or deleted)"; }
 .venv/bin/python $R draw-ids --tier-a $TA_ITEMS --tier-a3 $TA3_ITEMS --check $IDS || refuse "$IDS does not reproduce from its rule"
 for s in "$B1_ANS 30" "$P2_ANS 24" "$TA_ANS 251" "$TA3_ANS 88"; do
   set -- $s; .venv/bin/python $R check-answers --file $1 --expect $2 --mode default || refuse "the stored default answers $1 are incomplete, have errors or another mode"
@@ -151,22 +161,26 @@ mkdir -p "$(dirname $REPORT)"
 
 # ---------------------------------------------------------------- the plan and the estimate
 if [ $MECH = all ]; then NMECH=339; else NMECH=116; fi
-est() { awk -v m=$NMECH 'BEGIN{ lo=54*2*35+m*2*10+3*35+324*10+1200; hi=54*2*70+m*2*13+3*70+324*10+1800; printf "%.1f to %.1f", lo/3600, hi/3600 }'; }
-echo "planned: 54 judged answers and $NMECH mechanical items, each in 2 variants (grounded-g1, grounded-g2), the determinism check (3 answers), about 324 judge calls (B1's default answers are judged again): $(est) h of model-server time"
-echo "estimate basis: the design's rates (35 to 70 s per judged answer, 10 to 13 s per mechanical answer, about 10 s per judge call, B1: 180 calls in 30.6 min, 324 calls now that B1 default is judged again, loads 0.3 to 0.5 h); not measured on the grounded modes"
+# 3 modes now (default again, g1, g2): 54 judged answers and m mechanical answers each; 6 answers for the determinism measurement (3 in the reference
+# stage, 3 again); the upper rate 85 s is the measured one of the 3 B1 replays (74 to 84 s, 1,923 to 2,048 tokens)
+est() { awk -v m=$NMECH 'BEGIN{ lo=54*3*35+m*3*10+3*35+324*10+1200; hi=54*3*85+m*3*13+3*85+324*10+1800; printf "%.1f to %.1f", lo/3600, hi/3600 }'; }
+echo "planned: 54 judged answers and $NMECH mechanical items, each in 3 modes (default again, grounded-g1, grounded-g2), the determinism measurement (3 more answers), about 324 judge calls (the fresh default answers are judged too): $(est) h of model-server time"
+echo "estimate basis: the design's rates (35 to 85 s per judged answer, the upper end measured on 3 B1 replays, 10 to 13 s per mechanical answer, about 10 s per judge call, B1: 180 calls in 30.6 min, 324 calls now that B1 default is judged again, loads 0.3 to 0.5 h); not measured on the grounded modes"
 
 stage_done() { [ -f $W/stage_$1.done ]; }
 mark() { st=$1; shift; .venv/bin/python $R mark --work $W --stage $st --out "$@" > /dev/null; }
 ANS_FILES=""
 for v in g1 g2; do for s in b1 p2 ma m3; do ANS_FILES="$ANS_FILES $W/ans_${s}_$v.jsonl"; done; done
+REF_FILES=""
+for s in b1 p2 ma m3; do REF_FILES="$REF_FILES $W/ans_${s}_default.jsonl"; done
 SERVER_NEEDED=no
-for st in determinism answers judge; do stage_done $st || SERVER_NEEDED=yes; done
+for st in reference determinism answers judge; do stage_done $st || SERVER_NEEDED=yes; done
 
 # ---------------------------------------------------------------- 2. report header (before any answer exists)
 HEAD=$W/report_header.md
 if ! stage_done header; then
-  for f in $ANS_FILES $W/det_default.jsonl; do [ ! -e $f ] || refuse "$f exists but the report header was not written yet; the rule text must come first"; done
-  [ $DRY = yes ] || [ ! -e $REPORT ] || refuse "$REPORT exists; it is not overwritten before the header of this run is written (move it away first)"
+  for f in $ANS_FILES $REF_FILES $W/det_default.jsonl; do [ ! -e $f ] || refuse "$f exists but the report header was not written yet; the rule text must come first"; done
+  [ $DRY = yes ] || [ ! -e $REPORT ] || { moveaside; refuse "$REPORT exists; it is not overwritten before the header of this run is written (move it away first)"; }
   {
     echo "# M5 development check of the grounded modes (G1, G2)$([ $DRY = yes ] && echo ' (DRY RUN: stub model, stub judge; no number below is a measurement)')"
     echo
@@ -187,8 +201,8 @@ if [ $DRY = no ] && [ $SERVER_NEEDED = yes ]; then
   status RUNNING no "$N waiting for other chains to end; markers $L/$N.done / .failed"
   rm -f $L/$N.failed $L/$N.done
   n=0; until [ -z "$(others)" ]; do sleep 60; n=$((n+1)); [ $n -lt 720 ] || fail "another chain or guarded job still runs after 12 h: $(others | head -3)"; done
-  hb "$N: started; 4-bit model $Q4, grounded-g1 and grounded-g2 on J (54) and the mechanical set ($NMECH); judge $DS (coverage role, instruction v2, $SETTING); mechanical: $MECH"
-  status RUNNING no "$N running: determinism check, answers, judging, scoring; markers $L/$N.done / .failed"
+  hb "$N: started; 4-bit model $Q4, default again, grounded-g1 and grounded-g2 on J (54) and the mechanical set ($NMECH); judge $DS (coverage role, instruction v2, $SETTING); mechanical: $MECH"
+  status RUNNING no "$N running: reference answers, determinism measurement, answers, judging, scoring; markers $L/$N.done / .failed"
   clear_server
   hb "$N: the server is idle and no model but $Q4 is loaded; the 4-bit model loads on the first request"
 fi
@@ -236,14 +250,23 @@ answer_run() { # OUT ITEMS REPLAY EXPECT MODE CONFIG [--limit N]: all items, one
   .venv/bin/python $R packs-equal --a $replay --b $out || fail "answers $config: the packs differ from the stored packs (replay failed)"
   echo_check
 }
+if ! stage_done reference; then
+  # the reference: default answered again on the stored packs, the same call as the variants except the mode
+  answer_run $W/ans_b1_default.jsonl $W/items_b1_h.jsonl $B1_ANS $NB1 default m5-gdev-b1-default
+  answer_run $W/ans_p2_default.jsonl $W/items_p2_h.jsonl $P2_ANS $NP2 default m5-gdev-p2-default
+  answer_run $W/ans_ma_default.jsonl $W/items_ma.jsonl $TA_ANS $NMA default m5-gdev-ma-default
+  answer_run $W/ans_m3_default.jsonl $W/items_m3.jsonl $TA3_ANS $NM3 default m5-gdev-m3-default
+  mark reference $REF_FILES
+  hb "$N: reference answers done (default again: B1 $NB1, pilot2 $NP2, tier_a part $NMA, tier_a3 part $NM3)"
+fi
 if ! stage_done determinism; then
+  # a measurement, not a gate: (i) stored against fresh is computed from the reference answers; (ii) the first 3 B1 answers a second time
   DET=$W/det_default.jsonl
-  answer_run $DET $W/items_b1_h.jsonl $B1_ANS 3 default m5-gdev-det --limit 3
-  if .venv/bin/python $R determinism --stored $B1_ANS --new $DET --n 3; then :
-  elif [ $DRY = yes ]; then echo "dry run: the stub answers cannot equal the stored ones; the comparison is not binding here (the real run stops)"
-  else fail "determinism check failed: default must be answered again on the same sets (the stored default answers are not reproducible on this server)"; fi
+  answer_run $DET $W/items_b1_h.jsonl $B1_ANS 3 default m5-gdev-det2 --limit 3
+  .venv/bin/python $R determinism --stored $B1_ANS --new $W/ans_b1_default.jsonl --n 3 || fail "determinism (i) could not be computed"
+  .venv/bin/python $R repeat --first $W/ans_b1_default.jsonl --again $DET --n 3 || fail "determinism (ii) could not be computed"
   mark determinism $DET
-  hb "$N: determinism check done"
+  hb "$N: determinism measurement done (printed in the report; it stops nothing)"
 fi
 if ! stage_done answers; then
   for v in g1 g2; do
@@ -263,7 +286,7 @@ if ! stage_done judge; then
   judge_done() { [ -f "$1" ] && .venv/bin/python -c 'import json,sys; r=[json.loads(l) for l in open(sys.argv[1]) if l.strip()]; sys.exit(0 if len(r)==int(sys.argv[2]) and all(x["valid_reply"] for x in r) else 1)' "$1" "$2" 2>/dev/null; }
   jrun() { # SET ITEMS RUBRICS DEFAULT_ANS CACHE OUT EXTRA...
     set_=$1; items=$2; rubs=$3; dans=$4; cache=$5; jout=$6; shift 6
-    SETS="default=$dans g1=$W/ans_${set_}_g1.jsonl g2=$W/ans_${set_}_g2.jsonl"
+    SETS="default=$W/ans_${set_}_default.jsonl g1=$W/ans_${set_}_g1.jsonl g2=$W/ans_${set_}_g2.jsonl"
     if [ $DRY = yes ]; then
       .venv/bin/python scripts/eval2_judge.py run --rubrics $rubs --items $items --chunks $CHUNKS --source-chars $SRC --instruction v2 --coverage \
         --answers $SETS --judge-model $DS --judge-extra-body "$JEB" --settings-name $SETTING --concurrency 3 --stub --passes 1 2 --cache $cache --out $jout "$@"
@@ -272,7 +295,7 @@ if ! stage_done judge; then
         --chunks $CHUNKS --source-chars $SRC --instruction v2 --coverage --answers $SETS --judge-model $DS --judge-extra-body "$JEB" \
         --settings-name $SETTING --concurrency 3 --judge-url "$OMLX_URL/v1" --passes 1 2 --cache $cache --out $jout "$@"
     fi; }
-  # no cache is taken over: B1's default answers are judged again, with the same code, setting and time as the variants (as pilot2's are)
+  # no cache is taken over: this run's fresh default answers are judged with the same code, setting and time as the variants
   for set_ in b1 p2; do
     if [ $set_ = b1 ]; then items=$B1_ITEMS; rubs=$B1_RUBS; dans=$B1_ANS; n=$NB1; else items=$P2_ITEMS; rubs=$P2_RUBS; dans=$P2_ANS; n=$NP2; fi
     jout=$W/judge_$set_.jsonl; cache=$W/judge_cache_$set_.jsonl; calls=$((n * 3 * 2))
@@ -298,15 +321,15 @@ if ! stage_done checks; then
   OUTS=""
   for s in b1 p2; do
     if [ $s = b1 ]; then dans=$B1_ANS; else dans=$P2_ANS; fi
-    for v in default g1 g2; do
-      if [ $v = default ]; then f=$dans; else f=$W/ans_${s}_$v.jsonl; fi
+    for v in stored default g1 g2; do
+      if [ $v = stored ]; then f=$dans; else f=$W/ans_${s}_$v.jsonl; fi
       .venv/bin/python scripts/eval2_idcheck.py --answers $f --catalogues $CATS --totals-only > $W/idcheck_${s}_$v.txt || fail "identifier check on $s $v failed"
       echo "idcheck $s $v: $(sed -n 4p $W/idcheck_${s}_$v.txt)"
       OUTS="$OUTS $W/idcheck_${s}_$v.txt"
     done
   done
   for grp in ma m3; do
-    for v in ref g1 g2; do
+    for v in ref default g1 g2; do      # ref = the stored default answers (comparison only), default = this run's own
       if [ $v = ref ]; then f=$W/ref_$grp.jsonl; else f=$W/ans_${grp}_$v.jsonl; fi
       .venv/bin/python scripts/eval2_score.py --items $W/items_$grp.jsonl --answers $f --catalogues $CATS --scores $W/score_${grp}_$v.jsonl \
         --summary $W/score_${grp}_$v.summary.json > $W/score_${grp}_$v.out 2> $W/score_${grp}_$v.err || fail "scorer on $grp $v failed (see $W/score_${grp}_$v.err)"
@@ -339,17 +362,22 @@ CHOICE=$(sed -n 's/^CHOICE: \([A-Za-z0-9]*\).*/\1/p' $W/rule_out.txt)
   echo
   echo "Note on (f): $(.venv/bin/python $R f-note)"
   echo
-  echo "### Determinism check"
+  echo "### The stored default answers beside the fresh ones"
   echo
-  echo '```'; .venv/bin/python $R determinism --stored $B1_ANS --new $W/det_default.jsonl --n 3 || true; echo '```'
+  .venv/bin/python $R compare-stored --work $W --stored-b1 $B1_ANS --stored-p2 $P2_ANS $([ $DRY = yes ] && echo --stub) || fail "the comparison of the stored and the fresh default answers failed"
   echo
-  echo "### B1 default answers: judged again in this run against the stored judge results"
+  echo "### Determinism measurement (decides nothing, stops nothing)"
+  echo
+  echo '```'; .venv/bin/python $R determinism --stored $B1_ANS --new $W/ans_b1_default.jsonl --n 3 || true
+  .venv/bin/python $R repeat --first $W/ans_b1_default.jsonl --again $W/det_default.jsonl --n 3 || true; echo '```'
+  echo
+  echo "### B1: the stored judge results against this run's judgement of the fresh default answers"
   echo
   echo '```'; .venv/bin/python $R judge-compare --stored $B1_JUDGED --new $W/judge_b1.jsonl --rubrics $B1_RUBS --set default || true; echo '```'
   echo
   echo "### Files"
   echo
-  echo "Answers \`$W/ans_*_g1.jsonl\`, \`ans_*_g2.jsonl\`; judge results \`$W/judge_b1.jsonl\`, \`judge_p2.jsonl\`; scores \`$W/score_*.jsonl\`; identifier checks \`$W/idcheck_*.txt\`; measures \`$W/measures.json\`. Open development data only: the result decides whether B2 is spent, and says nothing about the hidden part."
+  echo "Answers \`$W/ans_*_default.jsonl\` (the reference), \`ans_*_g1.jsonl\`, \`ans_*_g2.jsonl\`; judge results \`$W/judge_b1.jsonl\`, \`judge_p2.jsonl\`; scores \`$W/score_*.jsonl\`; identifier checks \`$W/idcheck_*.txt\`; measures \`$W/measures.json\`. Open development data only: the result decides whether B2 is spent, and says nothing about the hidden part."
 } > $REPORT.tmp && mv $REPORT.tmp $REPORT
 if [ $DRY = yes ]; then
   echo M5_G_DEV_DRY_RUN_DONE >> $L/$N.done

@@ -12,7 +12,9 @@ Pure Python, CPU only; no model, no server. Used by scripts/m5_g_dev.sh and test
   start-check ...                             compare the stored manifest and the stage markers with the state computed now; exit 2 on a difference
   mark       --work D --stage S [--out F ...] write the stage marker (manifest hash, sha256 of every output file)
   check-answers --file F --expect N [--mode M]   complete, no error, no empty text, a pack on every row, manifest ended
-  determinism --stored F --new F --n N        the first N replayed default answers equal the stored ones byte for byte
+  determinism --stored F --new F --n N        measurement, never stops: the first N fresh default answers against the stored ones, byte for byte
+  repeat      --first F --again F --n N       measurement, never stops: the first N default answers of this run against the same items answered a second time
+  compare-stored --work D ...                 one table: stored against fresh default answers, per set (decides nothing)
   packs-equal --a F --b F                     the pack lists of the ids of --b equal those in --a
   f-estimate --scores F --ids F               condition (f) on a stored score file: weighted estimate on the sample beside the full-set share
   f-note                                      print the fixed sentence about the decline detector's bias (written under the (f) result)
@@ -64,7 +66,9 @@ RULE_TEXT = """\
 ## The rule of the development check (fixed before the first answer; runs/m5/reports/g0_grounded_design.md, section 3)
 
 Each variant (G1 = grounded-g1, G2 = grounded-g2) answers the stored default packs (replayed) with the 4-bit model, thinking off, 2,048-token limit.
-Reference = the stored default answers on the same packs. A variant is eligible only if all of these hold:
+Reference = this run's own default answers: the default mode is answered again in this run, on the same stored packs, by the same call as the
+variants except the mode, on the same server, and judged in the same run. The stored default answers are compared with them in the report and decide
+nothing (the server did not reproduce a stored long answer). A variant is eligible only if all of these hold:
 1. (a) Judged coverage P on J (B1 30 + pilot2 24 = 54 answers, mean of two judge passes): P(V) - P(default) >= -0.05.
 2. (b) Supported essential-miss units per 10 answers, on B1 (30 answers): V <= default + 1.0.
 3. (c) Answers cut at the 2,048-token limit, on J: at most 5 of 54.
@@ -362,23 +366,66 @@ def cmd_check_answers(a):
     return 0 if len(rows) == a.expect and not err and not empty and not nopack and ended and modeok else 1
 
 
-def cmd_determinism(a):
-    stored = {r["id"]: r for r in rd(a.stored)}
-    new = rd(a.new)[: a.n]
-    if len(new) < a.n:
-        print(f"determinism: {len(new)} replayed answers, {a.n} expected")
-        return 1
-    bad = 0
+def first_diff(x, y):
+    """None when the two texts are equal, else the 0-based position of the first differing character (the length of the shorter text when one is a prefix)."""
+    if x == y:
+        return None
+    n = min(len(x), len(y))
+    return next((k for k in range(n) if x[k] != y[k]), n)
+
+
+REPEAT_SENTENCE = ("The server does not reproduce long answers between two requests, so single answers are not exactly repeatable and the "
+                   "rule's measures are averages over 54 and 116 answers.")
+
+
+def compare_texts(a_rows, b_rows, n, label_a, label_b):
+    """-> (lines, number of differing answers) for the first n rows of b_rows against the same ids in a_rows; raises RuleError when too few rows."""
+    first = {r["id"]: r for r in a_rows}
+    new = b_rows[:n]
+    if len(new) < n:
+        raise RuleError(f"{len(new)} answers in the second file, {n} expected")
+    bad, lines = 0, []
     for r in new:
-        s = stored.get(r["id"])
-        same = s is not None and s.get("text") == r.get("text") and bool(s.get("truncated")) == bool(r.get("truncated"))
-        print(f"determinism {r['id']}: {'identical' if same else 'DIFFERENT'} ({len(r.get('text') or '')} characters)")
-        bad += not same
-    if bad:
-        print(f"determinism check FAILED: {bad} of {a.n} replayed default answers differ from the stored ones. The stored default answers "
-              "cannot be used as the reference: default must be answered again on the same sets, then the chain starts again.")
+        s = first.get(r["id"])
+        if s is None:
+            raise RuleError(f"{r['id']}: no answer in the first file")
+        t1, t2 = s.get("text") or "", r.get("text") or ""
+        d = first_diff(t1, t2)
+        cut = bool(s.get("truncated")) != bool(r.get("truncated"))
+        if d is None and not cut:
+            lines.append(f"{r['id']}: identical ({len(t1)} characters)")
+        else:
+            bad += 1
+            lines.append(f"{r['id']}: DIFFERENT ({label_a} {len(t1)} characters, {label_b} {len(t2)}; "
+                         + (f"first difference at character {d}" if d is not None else "same text, another cut flag") + ")")
+    return lines, bad
+
+
+def cmd_determinism(a):
+    """(i) stored against fresh on the first N B1 items. A measurement: a difference is printed and the chain goes on."""
+    try:
+        lines, bad = compare_texts(rd(a.stored), rd(a.new), a.n, "stored", "fresh")
+    except RuleError as e:
+        print(f"determinism: {e}")
         return 1
-    print(f"determinism check passed: {a.n} of {a.n} replayed default answers equal the stored ones, byte for byte")
+    for l in lines:
+        print("determinism (i) stored against fresh, " + l)
+    print(f"determinism (i): {a.n - bad} of {a.n} fresh default answers equal the stored ones, byte for byte; measurement, decides nothing")
+    return 0
+
+
+def cmd_repeat(a):
+    """(ii) within this run: the same first N answers a second time against this run's first answers. A difference is printed with the fixed sentence."""
+    try:
+        lines, bad = compare_texts(rd(a.first), rd(a.again), a.n, "first", "second")
+    except RuleError as e:
+        print(f"repeat: {e}")
+        return 1
+    for l in lines:
+        print("determinism (ii) within this run, " + l)
+    print(f"determinism (ii): {a.n - bad} of {a.n} answers equal this run's first answers, byte for byte; measurement, decides nothing")
+    if bad:
+        print(REPEAT_SENTENCE)
     return 0
 
 
@@ -553,22 +600,22 @@ def cmd_measures(a):
     stored = {"b1": a.stored_b1, "p2": a.stored_p2}
     rub = {"b1": a.rubrics_b1, "p2": a.rubrics_p2}
     sets_n = {"b1": len(rd(rub["b1"])), "p2": len(rd(rub["p2"]))}
-    m = {"schema": SCHEMA, "mechanical": a.mechanical, "sizes": {"J": sets_n["b1"] + sets_n["p2"], "J_b1": sets_n["b1"],
+    m = {"schema": SCHEMA, "reference": "this run's own default answers (stored default answers compared only)", "mechanical": a.mechanical, "sizes": {"J": sets_n["b1"] + sets_n["p2"], "J_b1": sets_n["b1"],
                                                                "J_p2": sets_n["p2"]}, "variants": {}}
     m["sizes"]["mech"] = {k: len(parts_a.get(k, [])) + len(parts_3.get(k, [])) if k == "all" else len(v)
                           for k, v in {**parts_a, **parts_3}.items()}
     m["pop"] = POP if a.mechanical == "sample" else {"all": POP_ALL}
     fw = f_weights(ids, a.mechanical)
-    ref_scores = {"ma": score_stats(W / "score_ma_ref.jsonl", parts_a), "m3": score_stats(W / "score_m3_ref.jsonl", parts_3)}
+    # the reference is this run's own default answers (score_*_default); the stored default answers are only compared (compare-stored)
+    ref_scores = {"ma": score_stats(W / "score_ma_default.jsonl", parts_a), "m3": score_stats(W / "score_m3_default.jsonl", parts_3)}
     names = {"default": "default", "g1": "g1", "g2": "g2"}
     for v in ("default",) + VARIANTS:
         P, SM, nidc, kidc = [], [], 0, 0
         rows_all, d_rows_all = [], []
         stats = {}
         for s in ("b1", "p2"):
-            path = stored[s] if v == "default" else str(W / f"ans_{s}_{v}.jsonl")
-            rows = rd(path)
-            ds = rd(stored[s])
+            rows = rd(W / f"ans_{s}_{v}.jsonl")      # default included: this run's own default answers
+            ds = rd(stored[s])       # only for the search and retrieval seconds a replay skipped (h)
             rows_all += rows
             d_rows_all += ds
             jr = judged(str(W / f"judge_{s}.jsonl"), rub[s], set(names.values()))
@@ -614,8 +661,42 @@ def cmd_measures(a):
     return 0
 
 
+def set_stats(rows, stub=False):
+    toks = [r.get("tokens") if (r.get("tokens") or not stub) else max(1, len(r.get("text") or "") // 4) for r in rows]
+    return {"n": len(rows), "cut": sum(1 for r in rows if r.get("truncated")), "median_tokens": median([t for t in toks if num(t)])}
+
+
+def cmd_compare_stored(a):
+    """One table, decides nothing: the stored default answers against this run's fresh default answers, per set."""
+    W = Path(a.work)
+    f = lambda x: "n/a" if x is None else (f"{x:.0f}" if float(x).is_integer() else f"{x:.1f}")  # noqa: E731
+    sets = [("b1", a.stored_b1, W / "ans_b1_default.jsonl"), ("p2", a.stored_p2, W / "ans_p2_default.jsonl"),
+            ("ma", W / "ref_ma.jsonl", W / "ans_ma_default.jsonl"), ("m3", W / "ref_m3.jsonl", W / "ans_m3_default.jsonl")]
+    names = {"b1": "B1", "p2": "pilot2", "ma": "tier_a part", "m3": "tier_a3 part"}
+    L = ["stored against fresh default; decides nothing", "",
+         "| set | answers | byte-identical | median tokens stored / fresh | cut stored / fresh | all-pass stored / fresh | identifier-check totals (nonexistent in checked) stored / fresh |",
+         "|---|---|---|---|---|---|---|"]
+    for key, sp, fp in sets:
+        old, new = rd(sp), rd(fp)
+        o = {r["id"]: r for r in old}
+        ids = [r["id"] for r in new]
+        same = sum(1 for r in new if r["id"] in o and o[r["id"]].get("text") == r.get("text") and bool(o[r["id"]].get("truncated")) == bool(r.get("truncated")))
+        so, sn = set_stats([o[i] for i in ids if i in o], a.stub), set_stats(new, a.stub)
+        ap = "n/a"
+        if key in ("ma", "m3"):
+            parts = {"x": ids}
+            ap = f"{score_stats(W / f'score_{key}_ref.jsonl', parts)['all_pass']['x']} / {score_stats(W / f'score_{key}_default.jsonl', parts)['all_pass']['x']}"
+        idc = "n/a"
+        if key in ("b1", "p2"):
+            (n1, k1), (n2, k2) = parse_idcheck(W / f"idcheck_{key}_stored.txt"), parse_idcheck(W / f"idcheck_{key}_default.txt")
+            idc = f"{k1} in {n1} / {k2} in {n2}"
+        L.append(f"| {names[key]} | {len(new)} | {same} of {len(new)} | {f(so['median_tokens'])} / {f(sn['median_tokens'])} | {so['cut']} / {sn['cut']} | {ap} | {idc} |")
+    print("\n".join(L))
+    return 0
+
+
 def measures_md(m):
-    L = ["### Measures (a) to (h)", "",
+    L = ["### Measures (a) to (h)", "", f"Reference: {m.get('reference', 'not recorded')}.", "",
          f"J = {m['sizes']['J']} answers (B1 {m['sizes']['J_b1']}, pilot2 {m['sizes']['J_p2']}); mechanical sets: {m['sizes']['mech']} ({m['mechanical']}).", "",
          "| variant | P (a) | supp. essential-miss per 10, B1 (b) | cut (c) | median tokens (d) | median s answer / with search | nonexistent ids per 10 (g) | gap sentences per answer | meta openers |",
          "|---|---|---|---|---|---|---|---|---|"]
@@ -769,6 +850,15 @@ def main(argv=None):
     p.add_argument("--stored", required=True)
     p.add_argument("--new", required=True)
     p.add_argument("--n", type=int, default=3)
+    p = sub.add_parser("repeat")
+    p.add_argument("--first", required=True)
+    p.add_argument("--again", required=True)
+    p.add_argument("--n", type=int, default=3)
+    p = sub.add_parser("compare-stored")
+    p.add_argument("--work", required=True)
+    p.add_argument("--stub", action="store_true")
+    for k in ("stored-b1", "stored-p2"):
+        p.add_argument("--" + k, required=True)
     p = sub.add_parser("packs-equal")
     p.add_argument("--a", required=True)
     p.add_argument("--b", required=True)
@@ -802,7 +892,7 @@ def main(argv=None):
             return 0
         fn = {"f-estimate": cmd_f_estimate, "check-echo": cmd_check_echo, "judge-compare": cmd_judge_compare, "draw-ids": cmd_draw_ids, "verify-m1": cmd_verify_m1, "select": cmd_select, "harness-items": cmd_harness_items,
               "manifest": cmd_manifest, "start-check": cmd_start_check, "mark": cmd_mark, "check-answers": cmd_check_answers,
-              "determinism": cmd_determinism, "packs-equal": cmd_packs_equal, "measures": cmd_measures, "rule": cmd_rule}[a.cmd]
+              "determinism": cmd_determinism, "repeat": cmd_repeat, "compare-stored": cmd_compare_stored, "packs-equal": cmd_packs_equal, "measures": cmd_measures, "rule": cmd_rule}[a.cmd]
         return fn(a)
     except (RuleError, OSError, KeyError, ValueError) as e:
         print(f"ERROR: {type(e).__name__}: {e}", file=sys.stderr)
