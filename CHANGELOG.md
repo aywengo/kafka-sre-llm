@@ -3,6 +3,28 @@
 Numbers are given with their size. "Hidden half" means items of the new evaluation that were never used to build or
 tune the assistant; the harness prints totals only. The longer description is in `README.md` ("Status").
 
+## v3.1.1 (2026-11-22)
+
+A patch release: the published setup now works from a fresh clone. Nothing that was measured changed: the prompts,
+the retrieval settings, the index and the default answer path are those of `v3.1.0`.
+
+### Fixed
+
+- `scripts/build_catalogues.py` read `runs/v3/INDEX_FROZEN.json`, a file that is not in the repository, so the
+  catalogues could not be built from a fresh clone and `ask --check` could not be set up from the README. It now reads
+  the pins from the tracked `kafka_sre_rag/frozen.json`; if `runs/v3/INDEX_FROZEN.json` exists it must agree, or the
+  build stops and names the difference. The catalogue hash is unchanged (`e319653a5432...`).
+- The source paths that enter the catalogue files are now made relative lexically, so the hash does not depend on
+  whether `raw/` and `raw_catalogue/` are symlinks (with symlinks, `v3.1.0` gave another hash).
+- Tests that need built or downloaded files (the a3 catalogues, the built catalogues, the index) or a `.venv` failed
+  or errored in a fresh clone (9 failures, 15 errors). They now skip with a reason that names the file and the
+  command that makes it, and tests that start Python use the running interpreter. No assertion was changed.
+
+### Changed
+
+- `README.md`: closed-book judged coverage corrected to 0.39 (two-pass mean 0.387); the 10 s first-words bar is
+  attributed to the milestone, not to `GOAL.md`; the fresh-clone test is stated as what it was.
+
 ## v3.1.0 (2026-11-22)
 
 The retrieval runtime on the unmodified base model, with an answer checker, a streaming service and the open half of a
