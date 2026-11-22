@@ -789,3 +789,24 @@ Later in M5: whether candidate C becomes the default (after look 3).
   judge the consequence, with a condition and a near-miss. 18:16: the Owner agreed with
   S7: a checker's mark on a destructive step counts as "marked" under `GOAL.md`'s rule on
   harmful advice, as marking only, never reported as a reduction in harm.
+- 2026-11-22 18:34: the release preparation for `v3.2.0` committed and pushed (`b8d372c`):
+  fresh-clone test 1,942 tests, 0 failures, 0 errors (425 skipped); main tree 1,942 (57
+  skipped). The tag and the release page wait for the Owner's go.
+- 2026-11-22 18:05 to 19:45 (M6, D5): five writers wrote 50 scenarios with covering sets;
+  assembled (270 must points, 237 with sets); five second reviews (387 change records; two
+  scenarios rejected as repeats of B2 families, d5-24 and d5-30, replacements being
+  written); applied (48 scenarios, 257 must points, 227 with sets: 320 sets of one chunk,
+  24 of two). The independent count, set by set: **187 of 227 points ok (82.4 %; by range
+  93, 84, 64, 76, 90 %)**; 295 of 344 sets ok, 49 partial, 0 wrong; 16 of the 40 failing
+  points keep an ok set; 32 unrecorded sets found. Under the 95 % bar.
+- 2026-11-22 19:50: **a flaw in the covering test, the conductor's**: the checkers of B4
+  and of D5 were told to read a chunk's text and not its title, but the model is given
+  each chunk with its title line (`prompts.pack_text`), so a key or command that is the
+  chunk's title is served. 14 of D5's 49 partial sets name such a case. Corrected test: the
+  chunk as the model receives it, title line and text. D5's checkers re-rate their partial
+  sets under it and look for sets for the points that still have none. Consequence for B4,
+  not yet acted on: its sets were accepted under the stricter reading, so they are
+  conservative (chunks that do serve the fact were dropped: 83 of 285 chunk references
+  were rated partial in its first count); a recount of the dropped chunks under the
+  corrected test is due before B4 is used, and it will change B4's files and the counts
+  the README gives for it (140 points with a covering set).
