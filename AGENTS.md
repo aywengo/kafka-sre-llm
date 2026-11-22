@@ -13,8 +13,9 @@ adapter as a retrieval-only model. `v3.0.0` is the measured release; `v3.0.1` ad
 fixes from the end-to-end test (`agents/e2e-v3.0.0.md`). M4 (an evaluation with a hidden
 half, the answer checker, the streaming service, a base-model bake-off) closed on
 2026-11-21 with two criteria not met, and `v3.1.0` was released on 2026-11-22
-(`milestones/M4.md`). The current milestone is M5: retrieval ranking, fewer wrong
-statements, repairs.
+(`milestones/M4.md`). `v3.1.1` (2026-11-22, branch `release/v3.1.1`) fixes the checker's
+setup from a fresh clone; its commits are also on `main`. The current milestone is M5:
+retrieval ranking, fewer wrong statements, repairs.
 
 ## Start of every session
 
