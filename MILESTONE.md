@@ -63,10 +63,10 @@ Speed work as such and the laptop run are not targets. The base model stays Qwen
 | R4 | Expansions for B4, then the X1 rule applied once | job-operator | server 0.2 h | after R2 and R3 |
 | G0 | Design of the grounded mode: the prompt text (variants G1 and G2), the rule that separates them, the reading plan on B2 | complex-reviewer | CPU | **done** 2026-11-22 00:50 (`runs/m5/reports/g0_grounded_design.md`) |
 | G1 | The grounded mode as a new prompt constant with its own hashes; the default and the golden hashes unchanged | implementer | CPU | **done** 2026-11-22 01:38, commit `06dc7d5` (the `scripts/eval2.py` part and a refusal in `serve` follow F1) |
-| G2 | B2 answered in the grounded mode; a blind reading mixed with the stored default answers; judge; open mechanical 339 | job-operator, readers | server about 3 h | after the development check (GD), which is running since 2026-11-22 09:01 (4.5 to 6.5 h) |
+| G2 | B2 answered in the grounded mode; a blind reading mixed with the stored default answers; judge; open mechanical 339 | job-operator, readers | server about 3 h | not started: the development check (GD) ended 2026-11-22 13:38 with the choice "neither"; B2 is not spent |
 | G3 | Experiment: can the reranker's score tell supported from unsupported sentences, on the 56 errors of the B1 reading | implementer | CPU, reranker | after R0 (not on the critical path) |
 | R5 | The second reranker (Q8): licence and usage read directly; design of the offline test and its rule; download; build; run | researcher, complex-reviewer, job-operator, implementer | CPU, one download of about 1.2 GB | licence read, design and download done (2026-11-22 08:21); **done** 2026-11-22 11:44: **the rule says fail** (section "R5: the rule's verdict") |
-| R6 | Informative run, deciding nothing (Q11): the picked grounded variant answers B1 and the pilot on r4g2's packs; coverage (two judge passes), length, cut share, identifier check, against the same variant on the frozen packs | implementer, job-operator | server about 1 h | the chain is being built; the run follows the development check |
+| R6 | Informative run, deciding nothing (Q11): the picked grounded variant answers B1 and the pilot on r4g2's packs; coverage (two judge passes), length, cut share, identifier check, against the same variant on the frozen packs | implementer, job-operator | server about 1 h | chain committed (`a5d111e`); started 2026-11-22 13:45 with `grounded-g2` |
 | H1 | Hidden look 3: r4 with the grounded mode against E2's stored default answers; ledger row and rule first | job-operator, sealed readers | server about 4 h | after R4 and G2 |
 
 Not in M5 (P7): dense retrieval; index changes (the
@@ -324,6 +324,35 @@ weight-2 point that the index does not cover.
 The Owner decided (Q5): the strict count decides X1 on B4. Committed on 2026-11-22 after
 the Owner's decision on Q6 (the batch stays as written).
 
+## Grounded mode: the development check's verdict (2026-11-22 13:38)
+
+`CHOICE: neither  (stop: back to design, B2 is not spent)` (`runs/m5/G_DEV.md`)
+
+54 judged development scenarios (B1 30, the pilot 24), this run's own default answers as
+the reference on the same packs, two judge passes; a mechanical sample of 116 open items.
+
+| | default | G1 | G2 | the rule needs |
+|---|---|---|---|---|
+| Judged coverage | 0.545 | 0.423 (−0.122) | 0.476 (−0.069) | not more than 0.05 under default: **both fail** |
+| Supported essential misses per 10, B1 (30) | 1.00 | 1.50 | 2.00 | at most default + 1.0: pass |
+| Answers cut at 2,048 tokens | 29 of 54 | 1 of 54 | 1 of 54 | at most 5: pass |
+| Median tokens | 2,048 | 789 | 902 | at most 1,400: pass |
+| Median seconds, answer / with search | 75.6 | 28.2 / 41.0 | 29.9 / 42.4 | reported |
+| Nonexistent identifiers per 10 answers | 5.37 | 2.22 | 2.22 | not above default: pass |
+| Projected mechanical change, points | | +3.29 | +7.06 | not under −3.0: pass |
+| Wrong declines of covered items, weighted | | 0.7 % | 0.7 % | at most 10 %: pass |
+
+One judge row is left out (G2, b1-09, pass 1; Q12). The fresh default answers equal the
+stored ones byte for byte on 29 of 30 (B1), 23 of 24 (pilot) and 116 of 116 (mechanical);
+within the run three repeated answers were identical. Wrong statements were not measured:
+that needs readers, and the reading on B2 is not spent.
+
+So both variants do what they were built for on length, time, invented identifiers and the
+mechanical tier, and both lose judged coverage, G1 clearly and G2 by 0.019 more than the
+bar allows. The rule sends the mode back to design. Running: an analysis of where the
+coverage is lost with a proposal for a third variant, and the informative run R6 with G2
+(the variant nearer its bar; no variant was picked) on r4g2's packs.
+
 ## Hidden looks
 
 Six looks on the hidden part in total. M4 used two (E2, E3). The Owner carried the
@@ -498,3 +527,7 @@ Later in M5: whether candidate C becomes the default (after look 3).
   point; all rubric points are in it; it is not repaired.
 - 2026-11-22 13:12: the Owner agreed with Q12; the development check is resumed with
   `--max-unjudged 1` and the recorded code change.
+- 2026-11-22 13:38: the development check ended: **neither variant passes** (coverage
+  −0.122 for G1 and −0.069 for G2 against a bar of −0.05; the other six conditions pass
+  for both). Section "Grounded mode: the development check's verdict". 13:45: started the
+  analysis of the coverage loss with a proposal for a third variant, and R6 with G2.
