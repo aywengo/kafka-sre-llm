@@ -54,7 +54,7 @@ Speed work as such and the laptop run are not targets. The base model stays Qwen
 |---|---|---|---|---|
 | F1 | Chain repairs: the E2 chain checks a stored manifest and markers at the start; the E5 chain stops when a step refuses; a resume survives a reload of the same model; the inline-marks step takes `--allow-commit-change` | implementer | CPU | **done** 2026-11-22 01:45 (`runs/m5/reports/f1_chain_repairs.md`); commit `6905aa5` |
 | F2 | The scorer's decline outcomes and not-covered items made aware of the index in use; a guard on the default index path of `scripts/retrieve.py` | implementer | CPU | after F1 (shared files); not needed for r4, which keeps the index (the scorer's declines depend on the index and on the answer's own pack) |
-| F3 | Release defects of v3.1.0 found by a fresh-clone test (`runs/m5/reports/v310_fresh_clone_check.md`): `scripts/build_catalogues.py` reads the untracked `runs/v3/INDEX_FROZEN.json`, so the README's checker setup fails (exit 2) in a fresh clone; the catalogue hash depends on absolute paths when the source folders are symlinks; in the clone 9 unit tests fail and 15 error (a3 catalogue files missing, `.venv/bin/python` assumed); README: closed-book judged coverage 0.387 not 0.38, the 10 s bar is not `GOAL.md`'s | implementer | CPU | after the R5 timing pass (no test runs beside it); a v3.1.1 is the Owner's decision |
+| F3 | Release defects of v3.1.0 found by a fresh-clone test (`runs/m5/reports/v310_fresh_clone_check.md`): `scripts/build_catalogues.py` reads the untracked `runs/v3/INDEX_FROZEN.json`, so the README's checker setup fails (exit 2) in a fresh clone; the catalogue hash depends on absolute paths when the source folders are symlinks; in the clone 9 unit tests fail and 15 error (a3 catalogue files missing, `.venv/bin/python` assumed); README: closed-book judged coverage 0.387 not 0.38, the 10 s bar is not `GOAL.md`'s | the article fork's implementer | CPU | not done in this session: the article fork reports that the Owner decided there (2026-11-22) to release a v3.1.1 before the article, and prepares it on a branch `release/v3.1.1` cut from the tag, in its own worktree; nothing on `main`, nothing pushed or tagged without the Owner. This session makes no parallel fix; the fork names the commits to cherry-pick into `main` afterwards |
 | R0 | Design of profile r4: the exact settings to try, the rule that picks one on the development pool, what the simulation prints, the expansion leak | complex-reviewer | CPU | **done** 2026-11-22 00:46 (`runs/m5/reports/r0_r4_design.md`) |
 | R1 | Profile r4 and its funnel preset, next to the frozen profile | implementer | CPU, reranker | **done** 2026-11-22 01:50 (`runs/m5/reports/r1_r4_build.md`): frozen replay 423 of 423, runtime equals simulation 423 of 423 for all eight settings, live check 8 of 8; no r4 result on S or C looked at; commit `4e89031` |
 | R1b | The timing screen, the funnel over the eight settings, the rule (`choose-r4`) | job-operator | CPU, reranker; server idle | **done** 2026-11-22 04:49: **the rule says stop** (`runs/m5/reports/r1b_r4_choice.md`) |
@@ -429,7 +429,11 @@ Later in M5: whether candidate C becomes the default (after look 3).
   probably fails in a fresh clone (being tested there); the README gives closed-book
   judged coverage as 0.38 where the two-pass mean is 0.387; the README attributes the
   10 s bar for first words to `GOAL.md`, which sets only the 60 s bar.
-- 2026-11-22 09:24: the fork's fresh-clone test confirms the defect: in a clone of tag
+- 2026-11-22 09:20: the fork's fresh-clone test confirms the defect: in a clone of tag
   v3.1.0 `scripts/build_catalogues.py` exits 2 (the untracked index record), so
   `ask --check` and `serve --check` cannot be set up from the README. Task F3 added; a
   v3.1.1 is asked of the Owner.
+- 2026-11-22 09:27: the fork reports that the Owner decided in the fork to release a
+  v3.1.1 and that the fork prepares it on its own branch and worktree. F3 is therefore
+  not started here. Its test runs may load the CPU during the R5 timing pass; the
+  timing's reading for a busy machine (section "R5") covers that.
