@@ -595,7 +595,9 @@ In the repository:
   it overstates (on B4 an independent chunk-by-chunk check found 98 of 154 points fully covered by each recorded
   chunk, which is why the sets were added). That check read each chunk's text without its title line, although the
   model is given the title too, so B4's sets are on the strict side (some chunks that do carry the fact were
-  dropped); the dropped chunks are recounted before the batch is used. Its rule is fixed beforehand and it is used once.
+  dropped). After the release the dropped chunks were recounted with their title lines (2026-11-22, the same three
+  checkers: 92 chunk verdicts and 17 sets re-rated): none changed, so B4's sets stand as released. Its rule is fixed
+  beforehand and it is used once.
 
 To run the mechanical open half on your own setup (needs the index, the catalogues and a model server as above; the
 answers file must be a new path, an existing one is resumed):
