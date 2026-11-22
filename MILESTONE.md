@@ -54,6 +54,7 @@ Speed work as such and the laptop run are not targets. The base model stays Qwen
 |---|---|---|---|---|
 | F1 | Chain repairs: the E2 chain checks a stored manifest and markers at the start; the E5 chain stops when a step refuses; a resume survives a reload of the same model; the inline-marks step takes `--allow-commit-change` | implementer | CPU | **done** 2026-11-22 01:45 (`runs/m5/reports/f1_chain_repairs.md`); commit `6905aa5` |
 | F2 | The scorer's decline outcomes and not-covered items made aware of the index in use; a guard on the default index path of `scripts/retrieve.py` | implementer | CPU | after F1 (shared files); not needed for r4, which keeps the index (the scorer's declines depend on the index and on the answer's own pack) |
+| F3 | Release defects of v3.1.0 found by a fresh-clone test (`runs/m5/reports/v310_fresh_clone_check.md`): `scripts/build_catalogues.py` reads the untracked `runs/v3/INDEX_FROZEN.json`, so the README's checker setup fails (exit 2) in a fresh clone; the catalogue hash depends on absolute paths when the source folders are symlinks; in the clone 9 unit tests fail and 15 error (a3 catalogue files missing, `.venv/bin/python` assumed); README: closed-book judged coverage 0.387 not 0.38, the 10 s bar is not `GOAL.md`'s | implementer | CPU | after the R5 timing pass (no test runs beside it); a v3.1.1 is the Owner's decision |
 | R0 | Design of profile r4: the exact settings to try, the rule that picks one on the development pool, what the simulation prints, the expansion leak | complex-reviewer | CPU | **done** 2026-11-22 00:46 (`runs/m5/reports/r0_r4_design.md`) |
 | R1 | Profile r4 and its funnel preset, next to the frozen profile | implementer | CPU, reranker | **done** 2026-11-22 01:50 (`runs/m5/reports/r1_r4_build.md`): frozen replay 423 of 423, runtime equals simulation 423 of 423 for all eight settings, live check 8 of 8; no r4 result on S or C looked at; commit `4e89031` |
 | R1b | The timing screen, the funnel over the eight settings, the rule (`choose-r4`) | job-operator | CPU, reranker; server idle | **done** 2026-11-22 04:49: **the rule says stop** (`runs/m5/reports/r1b_r4_choice.md`) |
@@ -64,7 +65,7 @@ Speed work as such and the laptop run are not targets. The base model stays Qwen
 | G1 | The grounded mode as a new prompt constant with its own hashes; the default and the golden hashes unchanged | implementer | CPU | **done** 2026-11-22 01:38, commit `06dc7d5` (the `scripts/eval2.py` part and a refusal in `serve` follow F1) |
 | G2 | B2 answered in the grounded mode; a blind reading mixed with the stored default answers; judge; open mechanical 339 | job-operator, readers | server about 3 h | after the development check (GD), which is running since 2026-11-22 09:01 (4.5 to 6.5 h) |
 | G3 | Experiment: can the reranker's score tell supported from unsupported sentences, on the 56 errors of the B1 reading | implementer | CPU, reranker | after R0 (not on the critical path) |
-| R5 | The second reranker (Q8): licence and usage read directly; design of the offline test and its rule; download; build; run | researcher, complex-reviewer, job-operator, implementer | CPU, one download of about 1.2 GB | licence read, design and download done (2026-11-22 08:21); build done (`c5a3f42`); the runs started 2026-11-22 09:22 |
+| R5 | The second reranker (Q8): licence and usage read directly; design of the offline test and its rule; download; build; run | researcher, complex-reviewer, job-operator, implementer | CPU, one download of about 1.2 GB | licence read, design and download done (2026-11-22 08:21); build done (`c5a3f42`); the runs started 2026-11-22 09:19 |
 | H1 | Hidden look 3: r4 with the grounded mode against E2's stored default answers; ledger row and rule first | job-operator, sealed readers | server about 4 h | after R4 and G2 |
 
 Not in M5 (P7): dense retrieval; index changes (the
@@ -245,7 +246,7 @@ within r4's limits. Otherwise R5 stops with no profile and no B4. The C bar is r
 because B4 decides on the strict count and C has now been read point by point; a pass on
 these worn items means "it orders better on items we have studied", and only B4 is clean.
 
-Timing while the server is busy (fixed 2026-11-22 09:20, before any number): the model
+Timing while the server is busy (fixed 2026-11-22 09:18, before any number): the model
 server is occupied for hours by the grounded mode's development check, so the timing pass
 runs beside it. A timing taken then is final only for settings that pass it, since a busy
 machine can only make it slower; if a setting fails the time screen in that pass, the
@@ -428,3 +429,7 @@ Later in M5: whether candidate C becomes the default (after look 3).
   probably fails in a fresh clone (being tested there); the README gives closed-book
   judged coverage as 0.38 where the two-pass mean is 0.387; the README attributes the
   10 s bar for first words to `GOAL.md`, which sets only the 60 s bar.
+- 2026-11-22 09:24: the fork's fresh-clone test confirms the defect: in a clone of tag
+  v3.1.0 `scripts/build_catalogues.py` exits 2 (the untracked index record), so
+  `ask --check` and `serve --check` cannot be set up from the README. Task F3 added; a
+  v3.1.1 is asked of the Owner.
