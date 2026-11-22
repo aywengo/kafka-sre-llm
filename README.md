@@ -28,7 +28,7 @@ assistant; the harness prints totals only; 2 of 6 allowed hidden runs were used 
   above -5; it was **missed by 0.10** and the loss was accepted by the project owner, so 4-bit stays the
   reference. Strict mode scored 75.7 % (231 of 305), 5.25 points below default (interval -8.54 to -2.01).
 - **Judged scenarios** (61 scenarios, a judge model scores the share of required points that an answer
-  covers, two passes): coverage 0.55 with retrieval and 0.38 closed book. Strict mode: about the same as
+  covers, two passes): coverage 0.55 with retrieval and 0.39 closed book (two-pass mean 0.387). Strict mode: about the same as
   default (difference -0.02, interval -0.06 to +0.03).
 
 What is **not met** (the goals are in `GOAL.md`):
@@ -333,8 +333,10 @@ python -m kafka_sre_rag ask --check --sources "How do I check consumer lag?"
 python -m kafka_sre_rag serve --check ...       # the same for every request; or {"check": true} in one request body
 ```
 
-The catalogues built here had the hash `e319653a5432...` (first 12 characters) in the evaluation. That a fresh
-build on another machine gives the same hash was not checked. `--check` stops with an error that says how to
+The catalogues built here had the hash `e319653a5432...` (first 12 characters) in the evaluation. The build was tested from a fresh
+clone at `v3.1.1`: it gave the same hash on the same machine, in another directory. That a build on another
+machine gives the same hash was not checked. The sources (`raw/`, `raw_catalogue/`) are real directories under
+the repository; the build reads them by lexical path, so symlinks do not change the hash. `--check` stops with an error that says how to
 build the catalogues when the directory is missing.
 
 `--revise` (with `--check`) is a model patch step: one more call to the model that rewrites the lines the check
@@ -484,8 +486,8 @@ total. No laptop was measured.
 - Time per answer: at 4-bit through the service, about 25 s for a short question and 80 to 90 s for a long
   scenario, first words after about 20 s (see "Timings"); about 2 minutes in Phase 0 with bf16;
   112, 151 and 170 s in the one end-to-end check (3 questions, default mode, bf16 27B through mlx-lm).
-  `GOAL.md` asks for a median under 60 s and the first words within 10 s; that is not met for long scenarios,
-  and the first words are not met at all. Strict mode is shorter and quicker (77 to 117 s on the server path check).
+  `GOAL.md` asks for a median under 60 s; that is not met for long scenarios. The first words within 10 s
+  was the bar of the milestone, not of `GOAL.md`, and it is not met at all. Strict mode is shorter and quicker (77 to 117 s on the server path check).
   On the 4-bit server path check (10 questions per mode, large machine): median 70.8 s in default mode,
   47.2 s in strict mode.
 - The documentation snapshots are fixed (Kafka 4.3.2, Strimzi 1.3.1, Argo CD v3.6.1).

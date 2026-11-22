@@ -21,7 +21,7 @@ identifier that is absent from it does not exist. Anything else is "not covered"
 
 Reads only files already on disk. No network, no git commands, nothing under raw/ is changed.
 Deterministic: running it twice gives byte-identical files. Fails loudly (exit 2) when a
-source file it expects is absent. Pins come from sources.yaml and runs/v3/INDEX_FROZEN.json.
+source file it expects is absent. Pins come from sources.yaml and kafka_sre_rag/frozen.json (runs/v3/INDEX_FROZEN.json, if present, must agree).
 
 Usage: .venv/bin/python scripts/build_catalogues.py [--out DIR]
 """
@@ -29,6 +29,7 @@ import argparse
 import hashlib
 import html
 import json
+import os
 import re
 import sys
 from collections import defaultdict
@@ -53,8 +54,14 @@ class MissingSource(Exception):
 # ------------------------------------------------------------------ pins and helpers
 def load_pins():
     src = yaml.safe_load((ROOT / "sources.yaml").read_text())["sources"]
-    frozen = json.loads((ROOT / "runs" / "v3" / "INDEX_FROZEN.json").read_text())
-    commits = frozen["source_commits"]
+    commits = json.loads((ROOT / "kafka_sre_rag" / "frozen.json").read_text())["index"]["source_commits"]
+    old = ROOT / "runs" / "v3" / "INDEX_FROZEN.json"   # not tracked; when present it must agree
+    if old.is_file():
+        other = json.loads(old.read_text())["source_commits"]
+        if other != commits:
+            diff = sorted(k for k in set(commits) | set(other) if commits.get(k) != other.get(k))
+            raise MissingSource("runs/v3/INDEX_FROZEN.json and kafka_sre_rag/frozen.json disagree on source_commits: %s"
+                                % ", ".join(diff))
     pins = {}
     for s in src:
         name = s["name"]
@@ -132,8 +139,9 @@ def need(path):
 
 
 def rel(path):
+    # Lexical, not resolved: the path must not depend on where raw/ really sits (symlinks).
     try:
-        return str(Path(path).resolve().relative_to(ROOT))
+        return str(Path(os.path.abspath(path)).relative_to(ROOT))
     except ValueError:      # a file outside the repository (tests)
         return str(path)
 
