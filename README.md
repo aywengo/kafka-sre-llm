@@ -68,7 +68,9 @@ to build and tune), not the hidden half. Nothing here replaces the v3.1.0 headli
   setting gained 48 of 202 points on half S (+23.8 percentage points; bar +25) and 37 of 219 on half C (+16.9;
   bar +18), with no point lost. A second reranker, Qwen3-Reranker-0.6B, on the same candidates: +3 points over
   the best `r4` setting on S (bar +20) and +22 on C (about three standard errors), and it added 6.7 GB of memory
-  against a limit of 3.5. The out-of-sample batch B4 was not spent. Of 421 indexed development points, the frozen
+  against a limit of 3.5 (that figure was not reproduced: measured again in fresh processes on the evening of the
+  release, the same setup added 3.2 to 3.4 GB; the difference is not explained, and the verdict does not rest on
+  it, since the gain on S was under its bar). The out-of-sample batch B4 was not spent. Of 421 indexed development points, the frozen
   retrieval serves 125 and the best `r4` setting 210; a perfect ordering of the same 24 scored candidates would
   serve 103 more (the milestone's count; no model was run for it).
 - **Fewer wrong statements, not met.** Three grounded prompt variants failed the development check on judged
@@ -591,7 +593,9 @@ In the repository:
   covering set in the index, 16 not indexed). The strict count calls a point served only when a whole covering set
   is in the pack; the loose count of the earlier batches B1 and B2 calls it served when any recorded chunk is, so
   it overstates (on B4 an independent chunk-by-chunk check found 98 of 154 points fully covered by each recorded
-  chunk, which is why the sets were added). Its rule is fixed beforehand and it is used once.
+  chunk, which is why the sets were added). That check read each chunk's text without its title line, although the
+  model is given the title too, so B4's sets are on the strict side (some chunks that do carry the fact were
+  dropped); the dropped chunks are recounted before the batch is used. Its rule is fixed beforehand and it is used once.
 
 To run the mechanical open half on your own setup (needs the index, the catalogues and a model server as above; the
 answers file must be a new path, an existing one is resumed):

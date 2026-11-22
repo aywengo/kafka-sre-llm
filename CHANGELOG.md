@@ -26,9 +26,13 @@ half; no hidden run was used in M5 (4 of 6 remain).
   setting gained 48 of 202 points on half S (+23.8 percentage points; bar +25) and 37 of 219 on half C (+16.9; bar
   +18), with no point lost.
 - `scripts/r5_qwen.py`, an offline test of a second reranker (Qwen3-Reranker-0.6B), not a runtime option: +3 points over
-  the best `r4` setting on S (bar +20), +22 on C, 6.7 GB of added memory against a limit of 3.5.
+  the best `r4` setting on S (bar +20), +22 on C, 6.7 GB of added memory against a limit of 3.5 (not reproduced: 3.2
+  to 3.4 GB when measured again in fresh processes; the difference is not explained, and the gain on S was under its
+  bar either way).
 - The open batch B4 (`eval/m4/b4/`): 30 scenarios with covering sets for each must point (170 must points, 140 with a
-  covering set), for one out-of-sample check of a retrieval candidate. It was not spent.
+  covering set), for one out-of-sample check of a retrieval candidate. It was not spent. Its sets were checked on the
+  chunks' text without their title lines, which is stricter than what the model is given; the dropped chunks are
+  recounted before the batch is used.
 - The mechanical development sample `eval/m4/g_dev_ids.json`, and the development check chain for the grounded variants.
 
 ### Changed

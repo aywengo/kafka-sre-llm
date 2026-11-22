@@ -21,7 +21,7 @@ is stated with its size; what is inferred is marked.
 
 | # | Criterion | Result |
 |---|---|---|
-| X1 | Ranking | **Not met.** Two candidates were stopped by their rules on the 84 development scenarios (loose count). r4 (the frozen six, then up to four chunks ordered by a second call of the same reranker): best setting +48 of 202 points on half S (+23.8 percentage points; bar +25) and +37 of 219 on half C (+16.9; bar +18), no point lost. A second reranker, Qwen3-Reranker-0.6B, on the same candidates: +3 points over r4g2 on S (bar +20) and +22 on C (about three standard errors), 6.7 GB of added memory against a limit of 3.5. The out-of-sample batch B4 was not spent |
+| X1 | Ranking | **Not met.** Two candidates were stopped by their rules on the 84 development scenarios (loose count). r4 (the frozen six, then up to four chunks ordered by a second call of the same reranker): best setting +48 of 202 points on half S (+23.8 percentage points; bar +25) and +37 of 219 on half C (+16.9; bar +18), no point lost. A second reranker, Qwen3-Reranker-0.6B, on the same candidates: +3 points over r4g2 on S (bar +20) and +22 on C (about three standard errors), 6.7 GB of added memory against a limit of 3.5 (not reproduced later the same day: 3.2 to 3.4 GB in fresh processes; unexplained). The out-of-sample batch B4 was not spent |
 | X2 | Fewer wrong statements | **Not met.** Three grounded prompt variants failed the development check on judged coverage (54 scenarios: default 0.545; G1 0.423, G2 0.476, G3 0.493; bar: not more than 0.05 under default; G3 also failed on supported essential misses), so none reached the B2 reading or the hidden half |
 | X3, X4 | No loss; length and time | **No candidate to judge.** On development data the grounded variants answer in 789 to 1,139 tokens median against 2,048, are cut 1 time in 54 against 29, and take 41 to 51 s with search against 76 s |
 | X5 | Repairs | **Done for the chain defects**: the E2 chain checks a stored manifest and markers at its start, the E5 chain stops on a refused step, a resume survives a reload of the same model, the inline-marks step takes `--allow-commit-change`. `v3.1.1` (2026-11-22) fixed the checker's setup from a fresh clone. Not done: the checker still misses names in prose and comments; the scorer's index-aware declines (needed only for an index change) |
@@ -319,6 +319,11 @@ one. The bar above is the corrected one.
 ## R5: the rule's verdict (2026-11-22 11:44)
 
 `VERDICT: FAIL, R5 ENDS WITH NO PROFILE AND NO B4: no setting is eligible`
+
+(Correction of 2026-11-22, evening: the memory figure below was not reproduced. Measured
+again in fresh processes, the same setup adds 3,191 to 3,243 MB after load and about 3,350
+MB at peak, under M5's limit of 3,500; the difference is not explained. The verdict does
+not rest on it: the gain on S was under its bar.)
 
 Conditions: added memory 6,706 MB against at most 3,500 for all four settings (4,041 MB
 with the current reranker alone, 10,747 MB with Qwen3 loaded); the new call's median
@@ -810,7 +815,7 @@ Later in M5: whether candidate C becomes the default (after look 3).
   were rated partial in its first count); a recount of the dropped chunks under the
   corrected test is due before B4 is used, and it will change B4's files and the counts
   the README gives for it (140 points with a covering set).
-- 2026-11-22 19:20 to 20:05 (M6, D5): the checkers' second pass under the corrected
+- 2026-11-22 19:16 to 19:30 (M6, D5): the checkers' second pass under the corrected
   test: 6 of 49 partial sets became ok; 193 of 227 points ok (85.0 %). Only sets rated ok
   by the independent checkers, and the passing sets they found, were written into the
   rubrics. Two replacements (d5-24, d5-30) written, reviewed, set-checked (6 of 10 points
@@ -818,9 +823,21 @@ Later in M5: whether candidate C becomes the default (after look 3).
   committed; `CHUNK_CHECK.json`): 50 scenarios, 269 must points, 227 with at least one
   verified covering set (316 sets of one chunk, 38 of two), 13 with no covering set in
   the index, 29 not indexed.
-- 2026-11-22 20:08: the sealed family check of D5 against the 61 hidden judged items
+- 2026-11-22 19:34: the sealed family check of D5 against the 61 hidden judged items
   (ids and counts only): **7 hidden items are of the same family as a D5 scenario**
   (b3-02, b3-05, b3-13, b3-29, b3-30, b3-31, oq-005), 9 near (b3-03, b3-15, b3-17, b3-18,
   b3-19, b3-20, b3-21, b3-33, oq-036); 15 D5 scenarios involved, not named. A candidate is
   chosen and tuned on D5, so those hidden items are not clean for the hidden look. S8 for
   the Owner; D5 is not committed before the answer.
+- 2026-11-22 21:00 (M6, M0): the second reranker's memory, each option in a fresh process,
+  20 timing questions (`runs/m6/reports/m0_reranker_memory.md`): fp32 at batch 8 adds
+  3,191 MB after load and 3,352 MB at peak (repeat: 3,243 and 3,349), 4.6 s median per
+  call; **M5's 6,706 MB is not reproduced** (unexplained). Half precision on the CPU adds
+  1.2 to 1.9 GB at peak but takes 29 to 41 s per call; bfloat16 changes the four
+  best-scored candidates in 2 to 4 of 20 questions. Nothing meets S3's 1.5 GB limit at a
+  usable speed. The conductor: S3's limit stands; the Qwen reranker at fp32 is measured on
+  D5's funnel for information only, and only a setting within the limit can go on to B4
+  and the hidden look, which today means r4g2; S4 (a quantised build: a download or
+  install) is put to the Owner when D5 shows what the reranker gains on fresh data.
+  README and CHANGELOG of `v3.2.0` corrected for the memory figure and for B4's stricter
+  count.
