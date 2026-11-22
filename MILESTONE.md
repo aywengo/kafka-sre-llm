@@ -31,7 +31,7 @@ Speed work as such and the laptop run are not targets. The base model stays Qwen
 
 | # | Criterion | Bar | State |
 |---|---|---|---|
-| X1 | Ranking | On B4 (30 new open scenarios, used once): indexed must points served at least +15 percentage points over the frozen retrieval, and at most 5 % of the frozen-served points lost; the same direction in the hidden funnel totals | open |
+| X1 | Ranking (r4 stopped by its rule on 2026-11-22; B4 not spent) | On B4 (30 new open scenarios, used once): indexed must points served at least +15 percentage points over the frozen retrieval, and at most 5 % of the frozen-served points lost; the same direction in the hidden funnel totals | open |
 | X2 | Wrong statements | On the hidden half, candidate minus reference in one blind mixed reading: upper end of the 90 % interval below 0 and beyond the readers' disagreement; aim 12 or fewer per 10; harmful at most 13 | open |
 | X3 | No loss | Coverage not down by more than 0.08; mechanical not down by more than 3 points; wrong declines at most 1 in 10 | open |
 | X4 | Length and time | At most 10 % of judged answers cut at the limit; the median time reported | open |
@@ -52,13 +52,13 @@ Speed work as such and the laptop run are not targets. The base model stays Qwen
 
 | Task | What | Role | Needs | State |
 |---|---|---|---|---|
-| F1 | Chain repairs: the E2 chain checks a stored manifest and markers at the start; the E5 chain stops when a step refuses; a resume survives a reload of the same model; the inline-marks step takes `--allow-commit-change` | implementer | CPU | **done** 2026-11-22 01:45 (`runs/m5/reports/f1_chain_repairs.md`); commit after the test run |
+| F1 | Chain repairs: the E2 chain checks a stored manifest and markers at the start; the E5 chain stops when a step refuses; a resume survives a reload of the same model; the inline-marks step takes `--allow-commit-change` | implementer | CPU | **done** 2026-11-22 01:45 (`runs/m5/reports/f1_chain_repairs.md`); commit `6905aa5` |
 | F2 | The scorer's decline outcomes and not-covered items made aware of the index in use; a guard on the default index path of `scripts/retrieve.py` | implementer | CPU | after F1 (shared files); not needed for r4, which keeps the index (the scorer's declines depend on the index and on the answer's own pack) |
 | R0 | Design of profile r4: the exact settings to try, the rule that picks one on the development pool, what the simulation prints, the expansion leak | complex-reviewer | CPU | **done** 2026-11-22 00:46 (`runs/m5/reports/r0_r4_design.md`) |
-| R1 | Profile r4 and its funnel preset, next to the frozen profile | implementer | CPU, reranker | **done** 2026-11-22 01:50 (`runs/m5/reports/r1_r4_build.md`): frozen replay 423 of 423, runtime equals simulation 423 of 423 for all eight settings, live check 8 of 8; no r4 result on S or C looked at; commit after the test run |
-| R1b | The timing screen, the funnel over the eight settings, the rule (`choose-r4`) | job-operator | CPU, reranker; server idle | after R1 |
-| R2 | The reviewer confirms the rule's verdict and records the chosen setting's hash; the verdict "stop" goes to the Owner | complex-reviewer | CPU | after R1b |
-| R3 | B4: 30 new open scenarios with covering chunks; independent chunk count at least 95 % before any answer; family check against the hidden items in a sealed session | writers, reviewers | Claude workers | second review applied (229 records); **the independent chunk count failed** (98 of 154 points, section "B4"); completion running since 2026-11-22 01:55 |
+| R1 | Profile r4 and its funnel preset, next to the frozen profile | implementer | CPU, reranker | **done** 2026-11-22 01:50 (`runs/m5/reports/r1_r4_build.md`): frozen replay 423 of 423, runtime equals simulation 423 of 423 for all eight settings, live check 8 of 8; no r4 result on S or C looked at; commit `4e89031` |
+| R1b | The timing screen, the funnel over the eight settings, the rule (`choose-r4`) | job-operator | CPU, reranker; server idle | **done** 2026-11-22 04:52: **the rule says stop** (`runs/m5/reports/r1b_r4_choice.md`) |
+| R2 | The reviewer confirms the rule's verdict and records the chosen setting's hash; the verdict "stop" goes to the Owner | complex-reviewer | CPU | running since 2026-11-22 04:55 (confirms the verdict; where the points are still lost) |
+| R3 | B4: 30 new open scenarios with covering chunks; independent chunk count at least 95 % before any answer; family check against the hidden items in a sealed session | writers, reviewers | Claude workers | second review applied (229 records); **the independent chunk count failed** (98 of 154 points, section "B4"); completed and recounted: 140 points with independently verified covering sets (02:08); the sealed family check and the chain of the one-time check are running |
 | R4 | Expansions for B4, then the X1 rule applied once | job-operator | server 0.2 h | after R2 and R3 |
 | G0 | Design of the grounded mode: the prompt text (variants G1 and G2), the rule that separates them, the reading plan on B2 | complex-reviewer | CPU | **done** 2026-11-22 00:50 (`runs/m5/reports/g0_grounded_design.md`) |
 | G1 | The grounded mode as a new prompt constant with its own hashes; the default and the golden hashes unchanged | implementer | CPU | **done** 2026-11-22 01:38, commit `06dc7d5` (the `scripts/eval2.py` part and a refusal in `serve` follow F1) |
@@ -161,6 +161,25 @@ Disclosure: the designer loaded the stored B2 answer files while measuring lengt
 printed their token counts and cut flags only (default 21 of 30 cut; strict 11 of 30).
 No B2 text was read; the prompt text was written from B1 and the mechanical half.
 
+## r4: the rule's verdict (2026-11-22 04:52)
+
+`VERDICT: STOP AND REPORT, NO B4: gain on S 48 of 202 points (+23.8 pp) is under +25 pp;
+gain on C 37 of 219 points (+16.9 pp) is under +18 pp`
+
+Measured on the development scenarios (84 items, loose count as on B1 and B2), local
+reranker, no model. Time screen (20 questions): only r4g5 dropped (8.0 s median, 9.1 s at
+the 90th percentile); the others add 2.9 to 4.9 s median. Best setting r4g2 (terms-only
+query, 512-token window, 24 scored candidates): +48 of 202 on S (+23.8 points, standard
+error 5.0) and +37 of 219 on C (+16.9, standard error 3.5); 3.0 s added. r4g6 (the same
+with the 1,024-token window): +38 on S (+18.8) and +39 on C (+17.8). No setting lost a
+point. Ratio of the gain on C to the gain on S for r4g2: 0.77; projected gain on a fresh
+batch +10.1 to +16.9 points, against the +15 that X1 needs. The earlier candidate R3
+gained 7.4 to 7.8 points.
+
+The stage stops here until the Owner has seen it (Q7). B4 is not spent and no r4 setting
+is recorded as chosen. A reviewer is checking the verdict and where the points are still
+lost; a researcher is listing other rerankers with their licences (nothing is downloaded).
+
 ## B4 (the out-of-sample batch)
 
 Thirty scenarios written on 2026-11-22 by three writers blind to the assistant's results,
@@ -185,8 +204,16 @@ recorded chunks together" while the funnel credited any one chunk, so their serv
 include points of which only a part reached the model. The development numbers of r4
 carry the same looseness.
 
-Repair, running: per point, covering sets (one to three chunks that together state the
-whole fact; a point is served when one whole set is served), then an independent recount.
+Repair (01:55 to 02:08): three completion workers gave every point covering sets (one or
+two chunks that together state the whole fact; a point is served when one whole set is
+served); the first checkers recounted every new or combined set: 135 of 146 points with
+sets ok (92.5 %), 264 of 281 sets ok, 17 partial. Only the sets the independent checkers
+rated ok were written into the rubrics, so nothing unverified is recorded. Final state
+(`eval/m4/b4/CHUNK_CHECK.json`): 170 must points; 140 with at least one covering set (14
+of them only through a set of two chunks; 216 sets of one, 48 of two); 14 with no
+covering set in the index; 16 not indexed. Not measured: how many covering sets the
+searches missed. For a later judged use of B4: b4-03, b4-10 and b4-18 have more than one
+weight-2 point that the index does not cover.
 Open for the Owner (Q5): which count decides X1 on B4.
 
 ## Hidden looks
@@ -223,6 +250,15 @@ development check runs on the server (asked 2026-11-22 00:52):
 - Q5 (asked 2026-11-22 01:58): on B4, a point counts as served only when a whole covering
   set is in the pack (recommended; the looser count of B1 and B2 reported beside it), or
   as in M4, when any recorded chunk is.
+- Q6 (asked 2026-11-22 02:13): a sealed session found three hidden judged items of the
+  same family as a B4 scenario (b3-07, b3-17, b3-26) and six near ones (b3-13, b3-18,
+  b3-31, b3-36, oq-004, oq-050). Recommended: tag the three in `eval/m4/HIDDEN_TAGS.json`
+  and report every hidden judged result with and without them; B4 stays as written (the
+  sealed session did not name the B4 scenarios, so nothing about the hidden items is
+  shown). B4 is not committed before the answer.
+- Q7 (asked 2026-11-22 04:58): r4 was stopped by its rule. Accept the stop and go on with
+  the grounded mode on the frozen retrieval (recommended), and decide whether ranking
+  continues with a different reranker (a download and a licence, deferred by P5).
 
 Still open from M4, none blocking:
 
@@ -260,3 +296,15 @@ Later in M5: whether candidate C becomes the default (after look 3).
   also re-answer a few stored answers after a reload and compare them byte for byte.
 - 2026-11-22 01:50: R1 done. 01:52: the independent chunk count of B4 failed on the
   stricter per-chunk test (section "B4"). 01:55: completion started.
+- 2026-11-22 02:06: the chain tests passed (127 tests); F1 (`6905aa5`) and R1 (`4e89031`)
+  committed and pushed. 02:08: B4's covering sets recounted and written (140 points).
+- 2026-11-22 02:09: started R1b (timing screen, funnel over the eight settings, the
+  rule), the grounded-mode harness and development chain (G1b), the chain of the one-time
+  B4 check, and a sealed check of B4's families against the hidden judged items.
+- 2026-11-22 02:12: the sealed family check is back (61 of 61 hidden judged items read;
+  ids and counts only): 3 same family, 6 near, 10 B4 scenarios involved. Q6 for the Owner.
+- 2026-11-22 02:21 to 04:48: the funnel over the eight r4 settings (224 questions, 2 h 27
+  min, slowed by test suites running beside it). 03:46: the two chains committed
+  (`a56289c`, `b799e4d`) after a clean full suite (1,832 tests).
+- 2026-11-22 04:52: the rule's verdict on r4: stop, no B4 (section "r4: the rule's
+  verdict"). 04:55: R2 (reading of the result) and a survey of rerankers started.
