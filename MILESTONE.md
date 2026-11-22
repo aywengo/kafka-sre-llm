@@ -64,7 +64,7 @@ Speed work as such and the laptop run are not targets. The base model stays Qwen
 | G1 | The grounded mode as a new prompt constant with its own hashes; the default and the golden hashes unchanged | implementer | CPU | **done** 2026-11-22 01:38, commit `06dc7d5` (the `scripts/eval2.py` part and a refusal in `serve` follow F1) |
 | G2 | B2 answered in the grounded mode; a blind reading mixed with the stored default answers; judge; open mechanical 339 | job-operator, readers | server about 3 h | after the development check (GD), which is running since 2026-11-22 09:01 (4.5 to 6.5 h) |
 | G3 | Experiment: can the reranker's score tell supported from unsupported sentences, on the 56 errors of the B1 reading | implementer | CPU, reranker | after R0 (not on the critical path) |
-| R5 | The second reranker (Q8): licence and usage read directly; design of the offline test and its rule; download; build; run | researcher, complex-reviewer, job-operator, implementer | CPU, one download of about 1.2 GB | licence read, design and download done (2026-11-22 08:21); the build is running |
+| R5 | The second reranker (Q8): licence and usage read directly; design of the offline test and its rule; download; build; run | researcher, complex-reviewer, job-operator, implementer | CPU, one download of about 1.2 GB | licence read, design and download done (2026-11-22 08:21); build done (`c5a3f42`); the runs started 2026-11-22 09:22 |
 | H1 | Hidden look 3: r4 with the grounded mode against E2's stored default answers; ledger row and rule first | job-operator, sealed readers | server about 4 h | after R4 and G2 |
 
 Not in M5 (P7): dense retrieval; index changes (the
@@ -245,6 +245,12 @@ within r4's limits. Otherwise R5 stops with no profile and no B4. The C bar is r
 because B4 decides on the strict count and C has now been read point by point; a pass on
 these worn items means "it orders better on items we have studied", and only B4 is clean.
 
+Timing while the server is busy (fixed 2026-11-22 09:20, before any number): the model
+server is occupied for hours by the grounded mode's development check, so the timing pass
+runs beside it. A timing taken then is final only for settings that pass it, since a busy
+machine can only make it slower; if a setting fails the time screen in that pass, the
+rule's verdict is provisional until the timing is repeated with the server idle.
+
 Correction of an earlier figure: the reading of the r4 result called 8 points "two
 standard errors"; its standard errors were in percentage points, and 8 points is about
 one. The bar above is the corrected one.
@@ -410,3 +416,15 @@ Later in M5: whether candidate C becomes the default (after look 3).
   (`0946515`). 09:01: the development check restarted (the stopped run moved aside with
   the suffix `.stopped_20261122`); first nine reference answers 69 s each, 5 of 9 cut at
   the limit; estimate 4.5 to 6.5 h.
+- 2026-11-22 09:17: a fork of this session, opened for an article, acted on M5 between
+  about 08:53 and 09:17, taking three workers for lost, and then reported it: it
+  committed and pushed the R5 build (`c5a3f42`) and the tag work (`e221971`) unchanged
+  from this session's workers, without the full suite; it stopped two full-suite test
+  runs of those workers with SIGTERM; it started and stopped an operator for the R5 runs
+  before anything ran. It does no M5 work from now on. To reconcile: the full suite on
+  the committed state (a run is in progress); the R5 runs are started by this session.
+  Its fact check of the release found, for the repairs list: `scripts/build_catalogues.py`
+  reads `runs/v3/INDEX_FROZEN.json`, which is not tracked, so the README's checker setup
+  probably fails in a fresh clone (being tested there); the README gives closed-book
+  judged coverage as 0.38 where the two-pass mean is 0.387; the README attributes the
+  10 s bar for first words to `GOAL.md`, which sets only the 60 s bar.
