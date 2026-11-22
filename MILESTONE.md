@@ -132,7 +132,6 @@ go on in every case. **T1** (the base of the supported-miss condition) only matt
 under (b).
 
 Still open from earlier milestones, none blocking:
-Nothing blocks the work now. Still open from earlier milestones, none blocking:
 
 - The laptop run (`agents/laptop-tests.md`); it also decides whether the footprint fits
   `GOAL.md`'s "about 20 GB".
@@ -209,6 +208,6 @@ candidate C becomes the default, after the look.
   run; the B4 gate cannot be skipped after a failed check; the 60-second condition uses
   a measured whole retrieval; the supported-miss condition is also computed on the
   frozen pack and put to the Owner as T1).
-- 2026-11-23 00:00, the hidden part: reviews of all six ranges in (50 of 60 drafts
+- 2026-11-22 23:59, the hidden part: reviews of all six ranges in (50 of 60 drafts
   kept; h6-20 dropped as well, ten replacements being written); set checks: C 33 of 40
   points fully covered, A 26 of 33, E 32 of 35, F 38 of 44, D 31 of 41; B running.
