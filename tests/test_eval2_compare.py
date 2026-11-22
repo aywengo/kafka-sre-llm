@@ -682,14 +682,42 @@ class TestE2Tags(Base):
         self.assertIn("items 198", second)
         self.assertIn("judged part not affected", second)
 
-    def test_unknown_id_is_refused_naming_it(self):
-        with self.assertRaises(cmp.CompareError) as c:
-            self.run_e2({"Q4D": set(self.ids)}, tags={"t": ["a1-f00-0", "zz-404"]})
-        self.assertIn("zz-404", str(c.exception))
-        self.assertNotIn("a1-f00-0", str(c.exception))
-        with self.assertRaises(cmp.CompareError) as c:
-            self.run_e2({"Q4D": set(self.ids), "Q4S": set(self.ids)}, judged=self.judged_case(0), tags={"t": ["j99"]})
-        self.assertIn("j99", str(c.exception))
+    def test_unknown_id_is_counted_as_not_present_not_an_error(self):
+        r = self.run_e2({"Q4D": set(self.ids)}, tags={"t": ["a1-f00-0", "zz-404"]})
+        w = r["without_tagged"]["t"]
+        self.assertEqual((w["excluded"], w["tagged"], w["remain"]), (1, 2, 199))
+        text = self.render(r)
+        self.assertIn("without the items tagged t (1 of 2 tagged items present; 199 remain)", text)
+        self.assertNotIn("zz-404", text)
+        r = self.run_e2({"Q4D": set(self.ids), "Q4S": set(self.ids)}, judged=self.judged_case(0), tags={"t": ["j99"]})
+        w = r["without_tagged"]["t"]
+        self.assertEqual((w["excluded"], w["tagged"], w["mechanical_affected"], w["judged_affected"]), (0, 1, False, False))
+        self.assertIn("without the items tagged t (0 of 1 tagged items present;", self.render(r))
+        self.assertNotIn("without_tagged", w["res"])
+
+    def test_two_tags_overlapping_and_disjoint_give_one_block_each_and_the_union(self):
+        same = {"Q4D": set(self.ids), "Q4S": set(self.ids)}
+        tags = {"A": ["j00", "j01", "j02"], "B": ["j02", "j03", "zz-1"], "C": ["zz-2"]}
+        r = self.run_e2(same, judged=self.judged_case(12), tags=tags)
+        wt = r["without_tagged"]
+        self.assertEqual(list(wt), ["A", "B", "C", "union of all tags"])
+        self.assertEqual([(wt[k]["excluded"], wt[k]["tagged"]) for k in wt], [(3, 3), (2, 3), (0, 1), (4, 6)])
+        self.assertEqual([wt[k]["res"]["b_mode"]["judged_P"]["n"] if wt[k]["judged_affected"] else None for k in wt], [21, 22, None, 20])
+        self.assertEqual(r["b_mode"]["judged_P"]["n"], 24)         # the figures that count: all items
+        text = self.render(r)
+        for head in ("without the items tagged A (3 items; 21 remain)", "without the items tagged B (2 of 3 tagged items present; 22 remain)",
+                     "without the items tagged C (0 of 1 tagged items present;", "without the union of all tagged items (4 of 6 tagged items present; 20 remain)"):
+            self.assertIn(head, text)
+        self.assertIn("scenarios 20: difference", text)
+        v = cmp.e2_verdicts(r)
+        self.assertEqual(v["without_tagged"]["union of all tags"]["rule_1b"]["judged_P"]["n"], 20)
+        self.assertEqual(v["without_tagged"]["union of all tags"]["tagged"], 6)
+        json.dumps(v)
+
+    def test_one_tag_gives_no_union_block(self):
+        r = self.run_e2({"Q4D": set(self.ids), "Q4S": set(self.ids)}, judged=self.judged_case(12), tags={"only": self.JIDS})
+        self.assertEqual(list(r["without_tagged"]), ["only"])
+        self.assertNotIn("union", self.render(r))
 
     def test_output_is_unchanged_without_tags(self):
         sc = {"F": set(self.ids), "Q4D": self.spread_loss(7), "Q4S": self.spread_loss(9), "P0": set(self.ids[:100])}
@@ -728,15 +756,19 @@ class TestE2Tags(Base):
         self.assertEqual(v["without_tagged"]["judgedtag"]["rule_1b"]["judged_P"]["n"], 18)
         for i in self.JIDS:
             self.assertNotIn(i, json.dumps(v))
-        # an unknown id: exit 1, the id named, nothing printed
-        tf.write_text(json.dumps({"tags": {"judgedtag": {"ids": ["j77"]}}}))
+        # an unknown id is not an error: the block says how many tagged items are present, and prints no id
+        tf.write_text(json.dumps({"tags": {"judgedtag": {"ids": ["j77"]}, "other": {"ids": ["j00", "j78"]}}}))
         buf, err = io.StringIO(), io.StringIO()
         args = [x if x != str(self.tmp / "v.json.enc") else str(self.tmp / "v2.json.enc") for x in args]
         with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(err):
             rc = cmp.main(args)
-        self.assertEqual(rc, 1)
-        self.assertIn("j77", err.getvalue())
-        self.assertEqual(buf.getvalue(), "")
+        self.assertEqual((rc, err.getvalue()), (0, ""))
+        out = buf.getvalue()
+        self.assertIn("without the items tagged judgedtag (0 of 1 tagged items present;", out)
+        self.assertIn("without the items tagged other (1 of 2 tagged items present; 23 remain)", out)
+        self.assertIn("without the union of all tagged items (1 of 3 tagged items present; 23 remain)", out)
+        for i in ("j77", "j78", "j00"):
+            self.assertNotIn(i, out)
 
 
 class TestE2PairClustersAndVerdictJson(TestE2):

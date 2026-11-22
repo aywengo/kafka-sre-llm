@@ -38,7 +38,7 @@ import eval2  # noqa: E402
 import eval2_blind as eb  # noqa: E402
 import eval2_judge as ej  # noqa: E402
 from eval2 import EvalError  # noqa: E402
-from eval2_pilot_report import split_point_ids, load_tag_file, TagError  # noqa: E402
+from eval2_pilot_report import split_point_ids, load_tag_file, TagError, tag_blocks, tag_head  # noqa: E402
 
 KEY_NAME = "blind_key.json.enc"
 WIH = ("wrong", "invented", "harmful")
@@ -307,7 +307,7 @@ def cmd_totals(a):
                 c[1 + kcol[r["kind"]] + (3 if r.get("minor") else 0)] += 1
     items = sorted({i for i, _ in cells})
     all_items = items
-    tagged = load_tags(a.tag_file, set(all_items))
+    tagged = load_tags(a.tag_file, None)
 
     def analyse(excl, label):
         items = [i for i in all_items if i not in excl]
@@ -443,12 +443,11 @@ def cmd_totals(a):
     outl, res, disagreement, usable, e3, reasons, r = analyse(set(), "")
     print("\n".join(outl))
     without = {}
-    for name, ids in tagged.items():
-        excl = set(ids)
+    for name, tagged_ids, excl in tag_blocks(tagged, all_items):
         o2, res2, dis2, usable2, e32, reasons2, r2 = analyse(excl, "for information ")
-        print(f"\nwithout the items tagged {name} ({len(excl)} items; {len(all_items) - len(excl)} remain)")
+        print("\n" + tag_head(name, len(tagged_ids), len(excl), len(all_items) - len(excl)))
         print("\n".join(o2))
-        without[name] = (res2, dis2, usable2, e32, reasons2, r2, len(excl))
+        without[name] = (res2, dis2, usable2, e32, reasons2, r2, len(excl), len(tagged_ids))
 
     if a.json_out:
         others = [s for s in sets if s != a.default]
@@ -464,9 +463,9 @@ def cmd_totals(a):
               "e3": {"verdict": e3, "reasons": reasons, "rate_limit": E3_RATE, "min_answers": E3_MIN_ANSWERS}}
         if without:
             js["without_tagged"] = {}
-            for name, (res2, dis2, usable2, e32, reasons2, r2, n_ex) in without.items():
+            for name, (res2, dis2, usable2, e32, reasons2, r2, n_ex, n_tag) in without.items():
                 js["without_tagged"][name] = {
-                    "excluded_items": n_ex, "remaining_items": len(all_items) - n_ex, "default_set": a.default,
+                    "excluded_items": n_ex, "tagged_items": n_tag, "remaining_items": len(all_items) - n_ex, "default_set": a.default,
                     "sets": {s: {k: v for k, v in res2[s].items() if k != "nm"} for s in sets},
                     "default_rate": r2["rate_per_10"], "default_harmful": r2["harmful"],
                     "readers_usable": usable2,

@@ -693,11 +693,6 @@ def compare_e2(configs, items_paths, judged=None, resamples=DEFAULT_RESAMPLES, s
     jp = load_judged_p(judged["results"], judged["rubrics"]) if judged else {}
     mech_ids = set(items) | {i for d in sc.values() for i in d}
     judged_ids = {i for d in jp.values() for i in d} | ({r["id"] for r in eval2.read_jsonl(judged["rubrics"])} if judged else set())
-    if tags:
-        for name, ids in tags.items():
-            bad = [i for i in ids if i not in mech_ids and i not in judged_ids]
-            if bad:
-                raise CompareError(f"tag {name}: id(s) not in the data: {', '.join(bad)}")
     if exclude:
         items = {i: it for i, it in items.items() if i not in exclude}
         sc = {n: {i: v for i, v in d.items() if i not in exclude} for n, d in sc.items()}
@@ -802,13 +797,14 @@ def compare_e2(configs, items_paths, judged=None, resamples=DEFAULT_RESAMPLES, s
     res["c_closed_book_vs_retrieval"] = {"mechanical": pair("P0", "Q4D"), "judged_P": jpair("P0", "Q4D"), "descriptive": True}
     if tags and not exclude:
         res["without_tagged"] = {}
-        for name, ids in tags.items():
-            ex = frozenset(ids)
-            # items that remain in the parts of the data the tag touches
-            remain = sum(len(part - ex) for part in (mech_ids, judged_ids) if part & ex)
+        from eval2_pilot_report import tag_blocks
+        for name, ids, present in tag_blocks(tags, mech_ids | judged_ids):
+            ex = frozenset(present)
+            # items that remain in the parts of the data the tag touches (a tag with no item present touches none: both parts)
+            remain = sum(len(part - ex) for part in (mech_ids, judged_ids) if part & ex or not ex)
             sub_reading = ((reading or {}).get("without_tagged") or {}).get(name) or {}
             sub = compare_e2(configs, items_paths, judged, resamples, seed, sub_reading, None, ex)
-            res["without_tagged"][name] = {"excluded": len(ex), "remain": remain, "mechanical_affected": bool(ex & mech_ids),
+            res["without_tagged"][name] = {"excluded": len(ex), "tagged": len(ids), "remain": remain, "mechanical_affected": bool(ex & mech_ids),
                                            "judged_affected": bool(ex & judged_ids), "res": sub}
     return res
 
@@ -902,7 +898,8 @@ def render_e2(res, out, mech=True, judged=True, info=False):
                             if j else "not computed (P0 judged results not given)"))
     for name, w in res.get("without_tagged", {}).items():
         P()
-        P(f"without the items tagged {name} ({w['excluded']} items; {w['remain']} remain)")
+        from eval2_pilot_report import tag_head
+        P(tag_head(name, w["tagged"], w["excluded"], w["remain"]))
         P("(for information: the verdicts above, over all items, are the ones that count; mechanical part "
           + ("recomputed" if w["mechanical_affected"] else "not affected, not repeated") + "; judged part "
           + ("recomputed" if w["judged_affected"] else "not affected, not repeated") + ")")
@@ -931,7 +928,7 @@ def e2_verdicts(res):
         "mechanical": {"n": m["n"], "diff": m["diff"], "ci90": list(m["ci90"]), "mde": m["mde"], "noninferior": m["noninferior"]} if m else None,
         "judged_P": {"n": j["n"], "diff": j["mean"], "ci90": list(j["ci90"]), "noninferior": j["noninferior"]} if j else None}
     if res.get("without_tagged"):
-        out["without_tagged"] = {name: {"for_information": True, "excluded": w["excluded"], "remain": w["remain"],
+        out["without_tagged"] = {name: {"for_information": True, "excluded": w["excluded"], "tagged": w["tagged"], "remain": w["remain"],
                                         "mechanical_affected": w["mechanical_affected"], "judged_affected": w["judged_affected"],
                                         **e2_verdicts(w["res"])} for name, w in res["without_tagged"].items()}
     out["starting_figures"] = {"mechanical": res["c_figures"]["mechanical"], "judged_P": res["c_figures"]["judged_P"],
@@ -1017,11 +1014,6 @@ def compare_e5(configs, items_paths, judged, reference, candidates, reading=None
     jp = load_judged_p(judged["results"], judged["rubrics"]) if judged else {}
     mech_ids = set(items) | {i for d in sc.values() for i in d}
     judged_ids = {i for d in jp.values() for i in d} | ({r["id"] for r in eval2.read_jsonl(judged["rubrics"])} if judged else set())
-    if tags:
-        for name, ids in tags.items():
-            bad = [i for i in ids if i not in mech_ids and i not in judged_ids]
-            if bad:
-                raise CompareError(f"tag {name}: id(s) not in the data: {', '.join(bad)}")
     if exclude:
         items = {i: it for i, it in items.items() if i not in exclude}
         sc = {n: {i: v for i, v in d.items() if i not in exclude} for n, d in sc.items()}
@@ -1112,12 +1104,13 @@ def compare_e5(configs, items_paths, judged, reference, candidates, reading=None
         res["winner"], res["overall"] = None, f"{reference} STAYS"
     if tags and not exclude:
         res["without_tagged"] = {}
-        for name, ids in tags.items():
-            ex = frozenset(ids)
+        from eval2_pilot_report import tag_blocks
+        for name, ids, present in tag_blocks(tags, mech_ids | judged_ids):
+            ex = frozenset(present)
             sub_reading = ((reading or {}).get("without_tagged") or {}).get(name) or {}
             sub = compare_e5(configs, items_paths, judged, reference, candidates, sub_reading, limits, licence, memory, judged_answers,
                              resamples, seed, None, ex)
-            res["without_tagged"][name] = {"excluded": len(ex), "mechanical_affected": bool(ex & mech_ids),
+            res["without_tagged"][name] = {"excluded": len(ex), "tagged": len(ids), "mechanical_affected": bool(ex & mech_ids),
                                            "judged_affected": bool(ex & judged_ids), "res": sub}
     return res
 
@@ -1172,7 +1165,9 @@ def render_e5(res, out, info=False):
     P(f"overall{' (for information)' if info else ''}: {res['overall']}")
     for name, w in res.get("without_tagged", {}).items():
         P()
-        P(f"without the items tagged {name} ({w['excluded']} items; mechanical part " + ("touched" if w["mechanical_affected"] else "not touched") +
+        from eval2_pilot_report import tag_label
+        subj, cnt = tag_label(name, w["tagged"], w["excluded"])
+        P(f"without {subj} ({cnt}; mechanical part " + ("touched" if w["mechanical_affected"] else "not touched") +
           ", judged part " + ("touched" if w["judged_affected"] else "not touched") + ") (for information: the verdicts above, over all items, are the ones that count)")
         render_e5(w["res"], out, info=True)
 
@@ -1185,7 +1180,7 @@ def e5_verdicts(res):
     for c, x in res["cands"].items():
         out["candidates"][c] = {k: x[k] for k in ("dm", "dp", "dr", "criteria", "parts_2", "memory", "speed", "licence_accepted", "verdict", "qualifies")}
     if res.get("without_tagged"):
-        out["without_tagged"] = {n: {"for_information": True, "excluded": w["excluded"], "mechanical_affected": w["mechanical_affected"],
+        out["without_tagged"] = {n: {"for_information": True, "excluded": w["excluded"], "tagged": w["tagged"], "mechanical_affected": w["mechanical_affected"],
                                      "judged_affected": w["judged_affected"], **e5_verdicts(w["res"])} for n, w in res["without_tagged"].items()}
     return out
 

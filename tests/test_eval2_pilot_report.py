@@ -640,6 +640,7 @@ class CoverageTagFile(unittest.TestCase):
 
     def run_main(self, tmp, tags, hidden=False, extra=()):
         import io
+        tagmap = tags if isinstance(tags, dict) else {"exposed": tags}
         sfx = ".jsonl.enc" if hidden else ".jsonl"
         rows, rubs, f = self.small()
         for name, data in (("res", rows), ("rub", rubs), ("f", f)):
@@ -648,7 +649,7 @@ class CoverageTagFile(unittest.TestCase):
             else:
                 (tmp / (name + sfx)).write_text("".join(json.dumps(x) + "\n" for x in data))
         tf = tmp / "tags.json"
-        tf.write_text(json.dumps({"tags": {"exposed": {"ids": tags}}}))
+        tf.write_text(json.dumps({"tags": {n: {"ids": v} for n, v in tagmap.items()}}))
         argv = ["--coverage", "--results", str(tmp / ("res" + sfx)), "--rubrics", str(tmp / ("rub" + sfx)),
                 "--findings", str(tmp / ("f" + sfx)), "--idcheck-false-invented", "0", *extra]
         out, err = io.StringIO(), io.StringIO()
@@ -693,12 +694,31 @@ class CoverageTagFile(unittest.TestCase):
             self.assertIn("| reader_wih | default - strict | 2 | 1.000 (1.000) |", out)
             self.assertNotIn("t-0", out)
             self.assertFalse([p for p in tmp.iterdir() if p.suffix in (".jsonl",)])
-            # an unknown id is refused, naming the id
+            # an unknown id is not an error: the block says how many tagged items are present
             rc3, out3, err3, _ = self.run_main(tmp, ["t-00", "t-77"], hidden=True, extra=["--tag-file", str(tmp / "tags.json")])
-            self.assertEqual(rc3, 2)
-            self.assertIn("t-77", err3)
-            self.assertNotIn("t-00", err3)
-            self.assertEqual(out3, "")
+            self.assertEqual((rc3, err3), (0, ""))
+            self.assertIn("# without the items tagged exposed (1 of 2 tagged items present; 2 remain)", out3)
+            self.assertNotIn("t-77", out3)
+
+    def test_two_tags_give_one_block_each_and_the_union(self):
+        tmp = Path(tempfile.mkdtemp())
+        tags = {"A": ["t-00", "t-01"], "B": ["t-01", "zz-9"], "C": ["zz-8"]}
+        rc, plain, err, tf = self.run_main(tmp, tags)
+        rc, out, err, _ = self.run_main(tmp, tags, extra=["--tag-file", tf])
+        self.assertEqual((rc, err), (0, ""))
+        self.assertNotIn("without the", plain)
+        self.assertTrue(out.startswith(plain))
+        heads = [l for l in out.splitlines() if l.startswith("# without")]
+        self.assertEqual(heads, ["# without the items tagged A (2 items; 1 remain)",
+                                 "# without the items tagged B (1 of 2 tagged items present; 2 remain)",
+                                 "# without the items tagged C (0 of 1 tagged items present; 3 remain)",
+                                 "# without the union of all tagged items (2 of 4 tagged items present; 1 remain)"])
+        self.assertNotIn("zz-", out)
+
+    def test_one_tag_has_no_union_block(self):
+        tmp = Path(tempfile.mkdtemp())
+        _, out, _, tf = self.run_main(tmp, ["t-00"], extra=["--tag-file", str(tmp / "tags.json")])
+        self.assertNotIn("union", out)
 
     def test_tag_file_without_coverage_is_refused(self):
         with self.assertRaises(SystemExit):

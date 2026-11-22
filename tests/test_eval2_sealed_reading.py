@@ -611,13 +611,39 @@ class SealedReading(unittest.TestCase):
         self.totals("--json-out", str(target))
         self.assertNotIn("without_tagged", json.loads(target.read_text()))
 
-    def test_unknown_tag_id_is_refused_naming_it(self):
+    def test_unknown_tag_id_is_counted_as_not_present(self):
         self.tagged_case()
         rc, out, err = self.totals("--tag-file", str(self.tag_file(["zq-000", "zq-999"])))
-        self.assertEqual(rc, 1)
-        self.assertIn("zq-999", err)
-        self.assertNotIn("zq-000", err)
-        self.assertEqual(out, "")
+        self.assertEqual((rc, err), (0, ""))
+        self.assertIn("without the items tagged exposed (1 of 2 tagged items present; 19 remain)", out)
+        self.assertNotIn("zq-999", out)
+        rc, out, err = self.totals("--tag-file", str(self.tag_file(["zq-998"])))
+        self.assertEqual((rc, err), (0, ""))
+        self.assertIn("without the items tagged exposed (0 of 1 tagged items present; 20 remain)", out)
+
+    def test_two_tags_give_one_block_each_and_the_union(self):
+        self.tagged_case()
+        p = self.d / "tags2.json"
+        p.write_text(json.dumps({"tags": {"A": {"ids": ["zq-000", "zq-001"]}, "B": {"ids": ["zq-001", "zq-002", "zq-999"]},
+                                          "C": {"ids": ["zq-998"]}}}))
+        target = self.d / "totals2.json"
+        rc, out, err = self.totals("--tag-file", str(p), "--json-out", str(target))
+        self.assertEqual((rc, err), (0, ""))
+        heads = [l for l in out.splitlines() if l.startswith("without ")]
+        self.assertEqual(heads, ["without the items tagged A (2 items; 18 remain)",
+                                 "without the items tagged B (2 of 3 tagged items present; 18 remain)",
+                                 "without the items tagged C (0 of 1 tagged items present; 20 remain)",
+                                 "without the union of all tagged items (3 of 5 tagged items present; 17 remain)"])
+        self.assertNotIn("zq-", out)
+        w = json.loads(target.read_text())["without_tagged"]
+        self.assertEqual(list(w), ["A", "B", "C", "union of all tags"])
+        self.assertEqual([(w[k]["excluded_items"], w[k]["tagged_items"], w[k]["remaining_items"]) for k in w],
+                         [(2, 2, 18), (2, 3, 18), (0, 1, 20), (3, 5, 17)])
+
+    def test_one_tag_has_no_union_block(self):
+        self.tagged_case()
+        rc, out, err = self.totals("--tag-file", str(self.tag_file(["zq-000"])))
+        self.assertNotIn("union", out)
 
     def test_bad_tag_file_is_an_error(self):
         self.tagged_case()

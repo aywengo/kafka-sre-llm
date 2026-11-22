@@ -101,9 +101,13 @@ class TagError(Exception):
     """A tag file problem; the message names ids and the file name only."""
 
 
+UNION_TAG = "union of all tags"   # the key of the block without the items of every tag together (only when the file has two or more tags)
+
+
 def load_tag_file(path, known_ids):
-    """eval/m4/HIDDEN_TAGS.json -> {tag name: sorted list of ids}. Every id must be in known_ids (None: not checked here), else TagError naming the id(s).
-    None -> {}. Ids are not secret; the message carries ids, never item text."""
+    """eval/m4/HIDDEN_TAGS.json -> {tag name: sorted list of ids}. None -> {}. An id that is not in the data is not an error: the
+    reports count the tagged items that are present (tag_blocks, tag_head). known_ids is kept for the callers and not used.
+    Ids are not secret; the message carries ids, never item text."""
     if not path:
         return {}
     try:
@@ -112,11 +116,30 @@ def load_tag_file(path, known_ids):
         out = OrderedDict((str(name), sorted({str(i) for i in v["ids"]})) for name, v in tags.items())
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         raise TagError(f"{Path(path).name}: not a tag file ({{\"tags\": {{name: {{\"ids\": [...]}}}}}})") from None
-    for name, ids in out.items():
-        bad = [] if known_ids is None else [i for i in ids if i not in known_ids]
-        if bad:
-            raise TagError(f"tag {name}: id(s) not in the data: {', '.join(bad)}")
     return out
+
+
+def tag_blocks(tags, present_ids):
+    """[(name, ids tagged, ids tagged and present in the data)]: one block per tag in file order, then, with two or more tags, the
+    union of all tags under UNION_TAG. A tag whose ids are all absent has an empty present set."""
+    present_ids = set(present_ids)
+    blocks = [(n, list(ids), set(ids) & present_ids) for n, ids in tags.items()]
+    if len(blocks) > 1:
+        every = sorted({i for _, ids, _ in blocks for i in ids})
+        blocks.append((UNION_TAG, every, set(every) & present_ids))
+    return blocks
+
+
+def tag_label(name, tagged, present):
+    """('the items tagged X', '4 items'); when some tagged ids are not in the data: ('...', '1 of 2 tagged items present')."""
+    subject = "the union of all tagged items" if name == UNION_TAG else f"the items tagged {name}"
+    return subject, (f"{present} items" if present == tagged else f"{present} of {tagged} tagged items present")
+
+
+def tag_head(name, tagged, present, remain):
+    """'without the items tagged X (4 items; 16 remain)'."""
+    subject, counts = tag_label(name, tagged, present)
+    return f"without {subject} ({counts}; {remain} remain)"
 
 
 def rd(path):
@@ -1283,12 +1306,11 @@ def main(argv=None):
                 return 2
             text, _ = build_report_coverage(results, rubrics, findings, reads, args[0], args[1], args[2], title, hidden=hidden, items=items)
             result_ids = {r["id"] for r in results}
-            for name, ids in tags.items():
-                ex = set(ids)
+            for name, tagged, ex in tag_blocks(tags, data_ids):
 
                 def keep(rows):
                     return None if rows is None else [r for r in rows if r["id"] not in ex]
-                head = f"without the items tagged {name} ({len(ex)} items; {len(result_ids - ex)} remain)"
+                head = tag_head(name, len(tagged), len(ex), len(result_ids - ex))
                 t2, _ = build_report_coverage(keep(results), keep(rubrics), keep(findings), keep(reads), args[0], args[1], args[2], head,
                                               hidden=hidden, items=keep(items))
                 text += "\n" + t2
