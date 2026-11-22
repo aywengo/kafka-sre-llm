@@ -10,7 +10,65 @@ M4's tracking document is `milestones/M4.md`. Its decisions (J1 to J6, K1 to K6,
 L11, M1, N1 to N7) stay in force, and code comments that cite "MILESTONE.md" for them mean
 that file.
 
-Last updated: 2026-11-22, 00:35.
+Last updated: 2026-11-22, evening. **M5 is closed** (the Owner's decision of 2026-11-22, Q15). A release
+`v3.2.0` is being prepared (Q16); the next milestone's targets are set (Q17).
+
+## Closing state (2026-11-22)
+
+M5 ran on 2026-11-22. The Owner closed it the same day with its two main criteria not
+met: each target was stopped by a rule fixed before its result existed. What was measured
+is stated with its size; what is inferred is marked.
+
+| # | Criterion | Result |
+|---|---|---|
+| X1 | Ranking | **Not met.** Two candidates were stopped by their rules on the 84 development scenarios (loose count). r4 (the frozen six, then up to four chunks ordered by a second call of the same reranker): best setting +48 of 202 points on half S (+23.8 percentage points; bar +25) and +37 of 219 on half C (+16.9; bar +18), no point lost. A second reranker, Qwen3-Reranker-0.6B, on the same candidates: +3 points over r4g2 on S (bar +20) and +22 on C (about three standard errors), 6.7 GB of added memory against a limit of 3.5. The out-of-sample batch B4 was not spent |
+| X2 | Fewer wrong statements | **Not met.** Three grounded prompt variants failed the development check on judged coverage (54 scenarios: default 0.545; G1 0.423, G2 0.476, G3 0.493; bar: not more than 0.05 under default; G3 also failed on supported essential misses), so none reached the B2 reading or the hidden half |
+| X3, X4 | No loss; length and time | **No candidate to judge.** On development data the grounded variants answer in 789 to 1,139 tokens median against 2,048, are cut 1 time in 54 against 29, and take 41 to 51 s with search against 76 s |
+| X5 | Repairs | **Done for the chain defects**: the E2 chain checks a stored manifest and markers at its start, the E5 chain stops on a refused step, a resume survives a reload of the same model, the inline-marks step takes `--allow-commit-change`. `v3.1.1` (2026-11-22) fixed the checker's setup from a fresh clone. Not done: the checker still misses names in prose and comments; the scorer's index-aware declines (needed only for an index change) |
+
+No hidden look was used in M5; four of six remain. The hidden items b3-07, b3-17 and
+b3-26 are tagged as sharing a family with a B4 scenario.
+
+What M5 measured that was not known before:
+
+- **Retrieval's limit is the reranker's ordering.** Of 421 indexed development points the
+  frozen retrieval serves 125; r4g2 serves 210; a perfect ordering of the same 24 scored
+  candidates would serve 103 more; a better search at most 15 more (the last two from a
+  rebuild, no model).
+- **A grounded prompt trades coverage for fewer wrong statements.** A blind reading of
+  108 existing answers (54 development scenarios, nine reader sessions, readers 6 % apart;
+  it decided nothing): G2 makes 15.7 non-minor wrong, invented or harmful statements per
+  10 answers against 19.6 for default, paired difference −3.89 (90 % interval −6.85 to
+  −0.56); minor ones 3.9 against 9.4; harmful statements 6 against 5, not reduced;
+  omissions 31.3 against 26.9. Nonexistent identifiers per 10 answers 2.22 against 5.37;
+  projected mechanical change +7.06 points (116 open items); judged coverage −0.069.
+- **More excerpts served gives some coverage back.** G2 on r4g2's packs against G2 on the
+  frozen packs, same 54 scenarios: 146 against 88 of 272 points served, judged coverage
+  0.513 against 0.473 (+0.040, standard error 0.025).
+- **The covering chunks of the earlier batches were counted loosely.** On B4 an
+  independent chunk-by-chunk count found 98 of 154 points fully covered by each recorded
+  chunk; B4 now records covering sets (140 points), and its one-time check uses the
+  strict count. The served counts of B1 and B2 include points of which only a part
+  reached the model (inferred).
+- **Stored long answers are not always reproduced** after days (1 of 3 probes differed;
+  inside one day 3 of 3 were identical), so a comparison answers its own reference in
+  the same run. A judge reply can be malformed in every attempt (1 row of 708 judged in
+  M5's checks); such a row is left out and named.
+
+In the code as experimental options, off by default: the modes `grounded-g1`,
+`grounded-g2`, `grounded-g3`; the retrieval candidate `r4`; the offline test of the
+second reranker (`scripts/r5_qwen.py`). New open data: the batch B4 (`eval/m4/b4/`), the
+mechanical sample (`eval/m4/g_dev_ids.json`).
+
+The release `v3.2.0` (the Owner's decision Q16): `--mode grounded-g2` as an opt-in with
+its measured development numbers and the plain statement that it failed the gate to
+become the default; the chain repairs; B4; r4 as experimental; after a fresh-clone test.
+
+The next milestone (the Owner's decision Q17): a combined candidate (the grounded mode
+with better ranking, the Qwen3 reranker with its memory fixed), chosen on a fresh
+development batch with strict covering sets, checked once on B4, then taken to the hidden
+half with a reading; harmful statements, which grounding did not reduce; the leftover
+repairs.
 
 ## What this milestone is for
 
@@ -536,6 +594,9 @@ spent on the same 61 scenarios.
 | 2026-11-22 | Q12 | In the development check the one judge row that cannot be judged (variant G2, b1-09, pass 1) is left out; that answer's judged measures rest on its one valid pass, named in the report; at most one such row per judged set; the chain resumes with its code change recorded |
 | 2026-11-22 | Q13 | A third grounded variant, G3, is checked on the development scenarios with the same seven conditions, reusing the development check's default reference after a repeat probe. Amendment to the plan recorded with it: G2 and G3 allow general knowledge on labelled lines, where `agents/m5-plan.md` worded the mode as "behaviour claims only where an excerpt supports them" |
 | 2026-11-22 | Q14 | The grounded mode's stop is accepted: no B2 reading and no hidden look for it; G1, G2 and G3 stay in the code as experimental modes. One informative reading, deciding nothing: fresh blind readers read the default and G2 answers already produced for the 54 development scenarios |
+| 2026-11-22 | Q15 | M5 is closed; the ranking and the wrong-statements criteria are recorded as not met |
+| 2026-11-22 | Q16 | Release `v3.2.0`: `--mode grounded-g2` as an experimental opt-in with its measured development numbers, the chain repairs, B4, r4 as experimental; a fresh-clone test first |
+| 2026-11-22 | Q17 | Targets of the next milestone: a combined candidate (grounded mode with better ranking) on a fresh development batch, then B4, then the hidden half with a reading; harmful statements; the leftover repairs |
 | 2026-11-22 | Q9 | The conductor may unload any model from the model server ("you can unload all models from oMLX"), when no request is active or waiting |
 
 ## Waiting for the Owner
@@ -705,3 +766,5 @@ Later in M5: whether candidate C becomes the default (after look 3).
 - 2026-11-22 17:21: nine bundles ready (108 answers once, 28 twice); 17:22 to 17:38: nine
   reader sessions. 17:39: totals: G2 minus default −3.89 non-minor wrong statements per
   10 (−6.85 to −0.56); readers 6 % apart.
+- 2026-11-22 17:45: the Owner agreed with Q15 to Q17: M5 is closed; `v3.2.0` is
+  prepared; the plan of the next milestone is being drafted.
