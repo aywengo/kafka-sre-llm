@@ -32,7 +32,7 @@ The base model stays Qwen3.8-27B at 4-bit.
 
 | # | Criterion | Bar | State |
 |---|---|---|---|
-| Y1 | Ranking | On B4, strict count, once: served must points at least +15.0 percentage points over the frozen retrieval, at most 5 % of the frozen-served points lost | open |
+| Y1 | Ranking | On B4, strict count, once: served must points at least +15.0 percentage points over the frozen retrieval, at most 5 % of the frozen-served points lost | **not met** (2026-11-22 23:57, `runs/m5/B4_CHECK.md`): +10.7 percentage points (65 against 50 of 140 points with a covering set; standard error 3.6), nothing lost; the bar was +15.0. B4 is used |
 | Y2 | Combined candidate | The hidden look's rule (below), on the new hidden judged part | open |
 | Y3 | Harmful | The set T measured against default with readers; the destructive-step marking with its recall reported; no claim beyond what T shows | open |
 | Y4 | Time and fit | Median answer at most 60 s with search; the second reranker within 1.5 GB of added memory (S3); the whole footprint reported against `GOAL.md`'s "about 20 GB" | open |
@@ -86,7 +86,7 @@ under this test before B4 is used (task B4R).
 | H1 | Marking of destructive steps in the checker (marking only, S7), experimental and off by default | implementer | CPU | **done** 2026-11-22 23:18 (commit `098c00f`, `runs/m6/reports/h1_destructive_marking.md`): `--mark-destructive` on `ask` and `chat`, refused with `--stream` and `--service-url`; 19 destructive steps in 25 pattern entries, with a negation rule. In-sample on the 108 answers read in M5: all 9 destructive-step statements marked, none of the 7 other harmful statements (wrong claims about behaviour stay invisible to it); 18 answers carry a mark (56 marks), 8 of them with a harmful statement. No model run; the default output is unchanged; full suite 2,002 tests pass |
 | HP | The new hidden judged part (ids `h6-NN`): 60 scenarios, twelve per task type, with covering sets under the corrected test; written, reviewed and set-checked in sealed sessions, with a family check against every open batch (pilot2, B1, B2, B4, D5, T) and the existing hidden items | sealed writers, reviewers, checkers | Claude workers | six sealed writers running since 2026-11-22 22:56 (ten scenarios each, by domain); then sealed second reviews, an independent sealed set check (95 % rule), a sealed family check, assembly |
 | DF | D5 funnel, strict count: r4g2 (within the memory limit) and, for information only, the Qwen reranker at full precision | job-operator | CPU, reranker | **done** 2026-11-22 23:46 (`runs/m6/D5_FUNNEL.md`, `runs/m6/RETRIEVAL_CHOSEN.json`): **r4g2 goes on to B4**. Strict count over 227 points with a covering set: frozen 69 (30.4 %), r4g2 112 (49.3 %), gain +18.9 percentage points (standard error 3.4; needed +15.0); no frozen-served point lost; second call 2.25 s median, 2.37 s at the 90th percentile (20 questions). For information: the Qwen reranker serves 120 (+22.5 over frozen; +3.5 over r4g2 with standard error 3.1, gained 18 and lost 10), second call 4.76 s median |
-| B4 | The one-time check of the chosen retrieval setting on B4 | job-operator | server 0.2 to 0.5 h | after DF and B4R |
+| B4 | The one-time check of the chosen retrieval setting on B4 | job-operator | server 0.2 to 0.5 h | **done, FAIL** 2026-11-22 23:47 to 23:57 (`runs/m5/B4_CHECK.md`, marker `runs/m6/B4_USED`): strict count over 140 points with a covering set: frozen 50 (35.7 %), r4g2 65 (46.4 %), gain +10.7 percentage points (standard error 3.6; needed +15.0), gained 15, lost 0 (part (b) holds); weight-2 points +12.8 (34 against 24 of 78); loose count +10.0. **The combination stops here until the Owner has seen it** |
 | DA | D5 answers: default on the frozen packs as the reference in the same run; G2 and G3 on the chosen packs; two judge passes; the 116 mechanical items | job-operator | server 4 to 5.5 h | after DF |
 | RD, RT | Blind readings of D5 (S6) and of T | readers | about 8 and 5 sessions; server 2 to 2.5 h for T's answers | after DA |
 | H | The hidden look on the new hidden part; ledger row first | job-operator, sealed readers | server 5 to 7 h | after everything above |
@@ -121,6 +121,17 @@ goes to G2.
 
 ## Waiting for the Owner
 
+**U1 (2026-11-22 23:58): the B4 check failed, so by the plan the combination stops.** r4g2's
+gain on the fresh open batches is real but uneven: +18.9 points on D5 (227 points) and
++10.7 on B4 (140 points); pooled 58 more of 367 points served, +15.8. The rule asked for
++15.0 on B4 alone. Options: (a) accept the stop: no hidden look for the combination in
+M6; run the D5 answers once as an informative run that decides nothing (recommended);
+(b) amend the rule and let the combination go on to the D5 answers and the hidden look;
+(c) stop without the informative run. The hidden part (HP), the set T and its reading
+go on in every case. **T1** (the base of the supported-miss condition) only matters
+under (b).
+
+Still open from earlier milestones, none blocking:
 Nothing blocks the work now. Still open from earlier milestones, none blocking:
 
 - The laptop run (`agents/laptop-tests.md`); it also decides whether the footprint fits
@@ -188,3 +199,16 @@ candidate C becomes the default, after the look.
   With the reviewers' drops (h6-03, h6-04, h6-21, h6-41, h6-47) nine scenarios are
   being rewritten under the same ids by two sealed replacement writers who read all
   drafts first. One reply named an open scenario next to a dropped hidden id (h6-47).
+- 2026-11-22 23:57: **the B4 check failed**: r4g2 serves 65 of 140 points against the
+  frozen retrieval's 50, +10.7 percentage points (standard error 3.6), bar +15.0; nothing
+  lost. Y1 is not met and B4 is used. By the plan the combination stops and the Owner
+  sees it (U1). Not stopped: the hidden part, the set T, the fixes to the D5 answers
+  chain (it is needed for the informative run as well).
+- 2026-11-22 23:50: the review of the D5 answers chain found no code blocker; fixes
+  under way (more pins and a start check before every stage; commits allowed during the
+  run; the B4 gate cannot be skipped after a failed check; the 60-second condition uses
+  a measured whole retrieval; the supported-miss condition is also computed on the
+  frozen pack and put to the Owner as T1).
+- 2026-11-23 00:00, the hidden part: reviews of all six ranges in (50 of 60 drafts
+  kept; h6-20 dropped as well, ten replacements being written); set checks: C 33 of 40
+  points fully covered, A 26 of 33, E 32 of 35, F 38 of 44, D 31 of 41; B running.
