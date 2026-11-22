@@ -67,6 +67,7 @@ Speed work as such and the laptop run are not targets. The base model stays Qwen
 | G3 | Experiment: can the reranker's score tell supported from unsupported sentences, on the 56 errors of the B1 reading | implementer | CPU, reranker | after R0 (not on the critical path) |
 | R5 | The second reranker (Q8): licence and usage read directly; design of the offline test and its rule; download; build; run | researcher, complex-reviewer, job-operator, implementer | CPU, one download of about 1.2 GB | licence read, design and download done (2026-11-22 08:21); **done** 2026-11-22 11:44: **the rule says fail** (section "R5: the rule's verdict") |
 | R6 | Informative run, deciding nothing (Q11): the picked grounded variant answers B1 and the pilot on r4g2's packs; coverage (two judge passes), length, cut share, identifier check, against the same variant on the frozen packs | implementer, job-operator | server about 1 h | **done** 2026-11-22 15:19 (section "R6") |
+| GI | Informative reading (Q14): default against G2 on the 54 development scenarios, blind, deciding nothing | implementer (bundles), readers (fresh sessions), job-operator (totals) | CPU; about nine reader sessions | bundles being prepared |
 | H1 | Hidden look 3: r4 with the grounded mode against E2's stored default answers; ledger row and rule first | job-operator, sealed readers | server about 4 h | after R4 and G2 |
 
 Not in M5 (P7): dense retrieval; index changes (the
@@ -438,6 +439,24 @@ about 0.05 to 0.12 less judged coverage, for answers half as long that are not c
 35 s faster (under the 60 s goal), about half the invented identifiers, and 3 to 7 more
 mechanical points. Q14 for the Owner.
 
+## The informative reading (Q14; defined 2026-11-22 17:25, before any reader starts; decides nothing)
+
+Answers: the development check's own default answers and its G2 answers for B1 (30) and
+the pilot (24), on the same packs: 108 answers (`work/m5/gdev/`). No answer is generated.
+Protocol: `agents/m4-sealed-reading.md` (the blind reading of M4), through the same tools
+and the same sealed path, although the data is open: readers get bundles in which both
+answers of a scenario stand under blind names, and do not learn how an answer was made.
+Seven first-reader sessions cover all 108 answers; a second reader reads a quarter of the
+scenarios (14) in two sessions. Seed 20261122. Measures: non-minor wrong, invented and
+harmful statements per 10 answers, G2 minus default, paired over the 54 scenarios with a
+90 % bootstrap interval; harmful statements counted apart; omissions and supported
+omissions per 10; the two readers' totals on the shared answers (if they differ by more
+than 30 %, the reading is reported as not usable). Said beforehand: 54 pairs can show a
+change of about 4 to 5 per 10 (inferred from the spread of the B1 reading); the gap
+sentence of the grounded mode can give the mode away to a reader; these scenarios are
+development data, B1's default answers were read once before by other readers in M4, and
+the result changes no default and opens no gate.
+
 ## R6: the informative run (2026-11-22 15:19; decides nothing)
 
 `runs/m5/R6_R4_PACKS.md`. Variant G2 on r4g2's packs against G2 on the frozen packs, the
@@ -492,16 +511,12 @@ spent on the same 61 scenarios.
 | 2026-11-22 | Q11 | The stop of the second reranker is accepted: the ranking target ends for M5 with X1 not met; r4 and R5 stay in the code as experimental; after the development check the picked grounded variant answers B1 and the pilot once on r4g2's packs, without readers and deciding nothing |
 | 2026-11-22 | Q12 | In the development check the one judge row that cannot be judged (variant G2, b1-09, pass 1) is left out; that answer's judged measures rest on its one valid pass, named in the report; at most one such row per judged set; the chain resumes with its code change recorded |
 | 2026-11-22 | Q13 | A third grounded variant, G3, is checked on the development scenarios with the same seven conditions, reusing the development check's default reference after a repeat probe. Amendment to the plan recorded with it: G2 and G3 allow general knowledge on labelled lines, where `agents/m5-plan.md` worded the mode as "behaviour claims only where an excerpt supports them" |
+| 2026-11-22 | Q14 | The grounded mode's stop is accepted: no B2 reading and no hidden look for it; G1, G2 and G3 stay in the code as experimental modes. One informative reading, deciding nothing: fresh blind readers read the default and G2 answers already produced for the 54 development scenarios |
 | 2026-11-22 | Q9 | The conductor may unload any model from the model server ("you can unload all models from oMLX"), when no request is active or waiting |
 
 ## Waiting for the Owner
 
-- Q14 (asked 2026-11-22 17:20): the grounded mode stopped by its rule after three
-  variants. Recommended: accept the stop (no B2 reading, no hidden look for it), and make
-  one informative reading that spends nothing new: fresh blind readers read the default
-  and G2 answers already produced for the 54 development scenarios, to measure for the
-  first time whether a grounded mode makes fewer wrong statements. No server time; B2,
-  B4 and the hidden half stay untouched; it decides nothing. Then the closing of M5.
+Nothing is open for the Owner now.
 
 Still open from M4, none blocking:
 
@@ -661,3 +676,5 @@ Later in M5: whether candidate C becomes the default (after look 3).
 - 2026-11-22 17:14: G3's development check ended: not eligible (coverage −0.052 against
   −0.05; supported essential misses 2.50 against at most 2.0). The grounded mode stops by
   its rule. Q14 for the Owner.
+- 2026-11-22 17:22: the Owner agreed with Q14. The informative reading is defined
+  (section "The informative reading") and its bundles are being prepared.
