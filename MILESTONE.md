@@ -385,6 +385,29 @@ b1-02, b1-06, b1-11, b1-16, b1-20, b1-22, b1-23, b1-25). The reviewer's own esti
 coverage about −0.045 against the −0.05 bar, a pass in 50 to 60 % of cases; a narrow pass
 on these worn scenarios would not tell G3 from G2; B2 and the hidden half decide.
 
+## G3's development check: the rule, fixed before the run (2026-11-22 15:30)
+
+G3's text is the one in `runs/m5/reports/g_dev_analysis.md` (sha256 `a5a557712c52…`),
+unchanged. It answers the same 54 scenarios and the same 116 mechanical items on the
+stored packs. The reference is the development check's own default answers and their
+judge rows (`work/m5/gdev/`), reused only if a repeat probe passes: the first three B1
+default answers are answered again and must equal that run's answers byte for byte;
+otherwise default is answered and judged again in this run. The seven conditions are
+the same, with the same numbers and the weighted wrong-decline share: coverage not more
+than 0.05 under default; supported essential misses at most default + 1.0 per 10; at most
+5 of 54 answers cut; median at most 1,400 tokens; projected mechanical change not under
+−3.0 points (format failures at most the reference's + 2); wrong declines at most 10 % of
+covered items; nonexistent identifiers not above default. At most one unjudgeable judge
+row per judged set is left out and named (Q12). G3 is eligible only if all seven hold;
+then the B2 reading follows; otherwise the grounded mode stops and the Owner sees the
+trade-off. Reported and deciding nothing: wrong declines on the 20 a3 items; coverage on
+the 14 diagnostics scenarios; G1's and G2's numbers beside G3's.
+
+What a pass will and will not mean: G3's three changes were prompted by twelve named
+scenarios of these 54, chosen because they lost the most, so part of any recovery is
+regression to the mean; a narrow pass does not tell G3 from G2. B2 (unread) and the
+hidden half decide.
+
 ## R6: the informative run (2026-11-22 15:19; decides nothing)
 
 `runs/m5/R6_R4_PACKS.md`. Variant G2 on r4g2's packs against G2 on the frozen packs, the
@@ -438,18 +461,12 @@ spent on the same 61 scenarios.
 | 2026-11-22 | Q8 | Ranking continues in M5 with one reranker download, `Qwen/Qwen3-Reranker-0.6B`, for an offline re-score of the same scored candidates, with a rule fixed beforehand; if it does not clearly beat r4g2 it stops there |
 | 2026-11-22 | Q11 | The stop of the second reranker is accepted: the ranking target ends for M5 with X1 not met; r4 and R5 stay in the code as experimental; after the development check the picked grounded variant answers B1 and the pilot once on r4g2's packs, without readers and deciding nothing |
 | 2026-11-22 | Q12 | In the development check the one judge row that cannot be judged (variant G2, b1-09, pass 1) is left out; that answer's judged measures rest on its one valid pass, named in the report; at most one such row per judged set; the chain resumes with its code change recorded |
+| 2026-11-22 | Q13 | A third grounded variant, G3, is checked on the development scenarios with the same seven conditions, reusing the development check's default reference after a repeat probe. Amendment to the plan recorded with it: G2 and G3 allow general knowledge on labelled lines, where `agents/m5-plan.md` worded the mode as "behaviour claims only where an excerpt supports them" |
 | 2026-11-22 | Q9 | The conductor may unload any model from the model server ("you can unload all models from oMLX"), when no request is active or waiting |
 
 ## Waiting for the Owner
 
-- Q13 (asked 2026-11-22 13:50): the grounded mode after its failed development check.
-  Recommended: one more variant, G3 (G2 with three changes aimed at the diagnostics
-  scenarios, 700 words), checked with the same seven conditions, reusing this run's
-  default reference after a repeat probe; about 1.3 to 1.8 h of server time after R6. G3
-  keeps G2's labelled general-knowledge lines, which depart from the plan's wording
-  ("behaviour claims only where an excerpt supports them"); that is recorded as an
-  amendment if G3 goes ahead. Not recommended: accepting G2's coverage loss, which would
-  change a bar after seeing the result.
+Nothing is open for the Owner now.
 
 Still open from M4, none blocking:
 
@@ -598,3 +615,5 @@ Later in M5: whether candidate C becomes the default (after look 3).
 - 2026-11-22 14:34: R6 stopped in judging on the same unjudgeable row (G2 on the frozen
   packs, b1-09, pass 1); its chain got the same two options (`048aba8`) and the
   conductor applied the Owner's Q12 decision to it; resumed 15:07; done 15:19.
+- 2026-11-22 15:27: the Owner agreed with Q13: G3 is checked. Its rule is fixed (section
+  "G3's development check"); the build started.
