@@ -210,7 +210,7 @@ lost; a researcher is listing other rerankers with their licences (nothing is do
 Thirty scenarios written on 2026-11-22 by three writers blind to the assistant's results,
 assembled, and reviewed by three second reviewers (229 change records; 78 covering chunks
 added). After the review: 170 must points, 154 with chunks (285 chunk references), 16 not
-in the index. Files in `eval/m4/b4/`, not committed until the batch passes its gate.
+in the index. Files in `eval/m4/b4/`.
 
 **The independent chunk count (K1) failed, 2026-11-22 01:52.** The conductor set a
 stricter test for B4 than `agents/m4-evaluation.md` words it: every recorded chunk must
@@ -239,7 +239,8 @@ of them only through a set of two chunks; 216 sets of one, 48 of two); 14 with n
 covering set in the index; 16 not indexed. Not measured: how many covering sets the
 searches missed. For a later judged use of B4: b4-03, b4-10 and b4-18 have more than one
 weight-2 point that the index does not cover.
-Open for the Owner (Q5): which count decides X1 on B4.
+The Owner decided (Q5): the strict count decides X1 on B4. Committed on 2026-11-22 after
+the Owner's decision on Q6 (the batch stays as written).
 
 ## Hidden looks
 
@@ -261,26 +262,17 @@ spent on the same 61 scenarios.
 | 2026-11-22 | P6 | The grounded mode is added as a new prompt constant; the measured prompts stay as they are |
 | 2026-11-22 | P7 | Index changes are deferred |
 | 2026-11-22 | P8 | Exit criteria X1 to X5 as above |
+| 2026-11-22 | Q1 | "Wrong declines at most 1 in 10" is counted against the items whose excerpts cover the fact, as `GOAL.md` words it; the share of all declines is reported beside it |
+| 2026-11-22 | Q2 | The grounded variant G1 may answer a single name, value or verdict from memory after the gap sentence |
+| 2026-11-22 | Q3 | The development check of the grounded mode uses the mechanical sample of 116 open items |
+| 2026-11-22 | Q4 | The grounded mode asks for under about 600 words |
+| 2026-11-22 | Q5 | On B4 a point counts as served only when a whole covering set is in the pack; the looser count of B1 and B2 is reported beside it |
+| 2026-11-22 | Q6 | The three hidden judged items of the same family as a B4 scenario (b3-07, b3-17, b3-26) are tagged and every hidden judged result is reported with and without them; B4 stays as written |
 
 ## Waiting for the Owner
 
-Four points of the grounded-mode design differ from the plan; they are needed before the
-development check runs on the server (asked 2026-11-22 00:52):
+Open (none blocks code work):
 
-- Q1: "wrong declines at most 1 in 10" (X3) is counted against the items whose excerpts
-  cover the fact, as `GOAL.md` words it; the share of all declines is reported beside it.
-- Q2: G1 may answer a single name, value or verdict from memory after the gap sentence.
-- Q3: the development check uses the mechanical sample of 116 items, not all 339.
-- Q4: the length target is 600 words, not the plan's 700.
-- Q5 (asked 2026-11-22 01:58): on B4, a point counts as served only when a whole covering
-  set is in the pack (recommended; the looser count of B1 and B2 reported beside it), or
-  as in M4, when any recorded chunk is.
-- Q6 (asked 2026-11-22 02:13): a sealed session found three hidden judged items of the
-  same family as a B4 scenario (b3-07, b3-17, b3-26) and six near ones (b3-13, b3-18,
-  b3-31, b3-36, oq-004, oq-050). Recommended: tag the three in `eval/m4/HIDDEN_TAGS.json`
-  and report every hidden judged result with and without them; B4 stays as written (the
-  sealed session did not name the B4 scenarios, so nothing about the hidden items is
-  shown). B4 is not committed before the answer.
 - Q7 (asked 2026-11-22 04:51): r4 was stopped by its rule. Accept the stop and go on with
   the grounded mode on the frozen retrieval (recommended), and decide whether ranking
   continues with a different reranker (a download and a licence, deferred by P5).
@@ -288,6 +280,10 @@ development check runs on the server (asked 2026-11-22 00:52):
   after a direct read of its licence) for an offline re-score of the same 24 scored
   candidates, rule fixed beforehand; and a fresh open development batch for any further
   tuning (the 84 development scenarios are used up).
+- Q9 (asked 2026-11-22 08:13): the model server holds `DeepSeek-V4.1-Flash`, which this
+  session did not load. May the conductor unload models another client left loaded when
+  no request is active or waiting, for M5's measurement runs (the go of this kind ended
+  with M4)? Recommended: yes.
 
 Still open from M4, none blocking:
 
@@ -337,3 +333,10 @@ Later in M5: whether candidate C becomes the default (after look 3).
   (`a56289c`, `b799e4d`) after a clean full suite (1,832 tests).
 - 2026-11-22 04:49: the rule's verdict on r4: stop, no B4 (section "r4: the rule's
   verdict"). 04:50: R2 (reading of the result) and a survey of rerankers started.
+- 2026-11-22 04:56: R2 back: the verdict holds; the limit is the reranker's ordering. Q8
+  for the Owner.
+- 2026-11-22 08:10: the Owner agreed with the recommendations on Q1 to Q6; Q7 and Q8 are
+  open. B4 committed. Started: the tag for the three hidden items, and a review of the
+  development chain before its run on the model server. The server holds a model this
+  session did not load (`DeepSeek-V4.1-Flash`, no active request); the run cannot start
+  until the Owner unloads it or allows it (Q9).

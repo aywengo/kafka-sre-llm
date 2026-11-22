@@ -1,0 +1,168 @@
+{
+  "date": "2026-11-22",
+  "rule": "a set is recorded only if an independent checker found that its chunks together, and nothing else, state the point's whole fact; a point is served when one whole set is served",
+  "first_independent_count": {
+    "points_with_chunks": 154,
+    "ok": 98,
+    "partial": 56,
+    "wrong": 0,
+    "chunks": 285,
+    "chunks_ok": 202,
+    "chunks_partial": 83
+  },
+  "recount_after_completion": {
+    "points_with_sets": 146,
+    "ok": 135,
+    "partial": 11,
+    "sets": 281,
+    "sets_ok": 264,
+    "sets_partial": 17
+  },
+  "final_state": {
+    "must_points": 170,
+    "points_with_at_least_one_set": 140,
+    "points_served_only_through_sets_of_two_or_three": 14,
+    "points_no_covering_set": [
+      {
+        "id": "b4-03",
+        "point": "m1"
+      },
+      {
+        "id": "b4-03",
+        "point": "m3"
+      },
+      {
+        "id": "b4-08",
+        "point": "m3"
+      },
+      {
+        "id": "b4-10",
+        "point": "m3"
+      },
+      {
+        "id": "b4-10",
+        "point": "m5"
+      },
+      {
+        "id": "b4-11",
+        "point": "m1"
+      },
+      {
+        "id": "b4-17",
+        "point": "m1"
+      },
+      {
+        "id": "b4-18",
+        "point": "m1"
+      },
+      {
+        "id": "b4-18",
+        "point": "m4"
+      },
+      {
+        "id": "b4-23",
+        "point": "m1"
+      },
+      {
+        "id": "b4-25",
+        "point": "m6"
+      },
+      {
+        "id": "b4-26",
+        "point": "m4"
+      },
+      {
+        "id": "b4-27",
+        "point": "m2"
+      },
+      {
+        "id": "b4-27",
+        "point": "m5"
+      }
+    ],
+    "no_covering_set_count": 14,
+    "not_indexed_points": [
+      {
+        "id": "b4-09",
+        "point": "m5"
+      },
+      {
+        "id": "b4-09",
+        "point": "m6"
+      },
+      {
+        "id": "b4-10",
+        "point": "m1"
+      },
+      {
+        "id": "b4-10",
+        "point": "m7"
+      },
+      {
+        "id": "b4-11",
+        "point": "m4b"
+      },
+      {
+        "id": "b4-13",
+        "point": "m3"
+      },
+      {
+        "id": "b4-17",
+        "point": "m2b"
+      },
+      {
+        "id": "b4-18",
+        "point": "m2"
+      },
+      {
+        "id": "b4-18",
+        "point": "m3"
+      },
+      {
+        "id": "b4-20",
+        "point": "m6"
+      },
+      {
+        "id": "b4-27",
+        "point": "m7"
+      },
+      {
+        "id": "b4-29",
+        "point": "m2"
+      },
+      {
+        "id": "b4-29",
+        "point": "m6"
+      },
+      {
+        "id": "b4-29",
+        "point": "m7"
+      },
+      {
+        "id": "b4-30",
+        "point": "m6"
+      },
+      {
+        "id": "b4-30",
+        "point": "m7"
+      }
+    ],
+    "not_indexed_count": 16,
+    "sets_by_size": {
+      "1": 216,
+      "2": 48,
+      "3": 0
+    },
+    "chunk_references": 312,
+    "indexed_points_per_item": {
+      "min": 1,
+      "median": 5.0,
+      "max": 6,
+      "note": "points with at least one set, per rubric"
+    }
+  },
+  "sha256": {
+    "rubrics.jsonl": "10abc8422bd03cb09e5f8538725f6f7afa58d67039f0195256a21ded5705aa76",
+    "items.jsonl": "a0953d15013c6621c01b718f3050def8efdb15ea147007c61cb69575bb47dd9e"
+  }
+}
