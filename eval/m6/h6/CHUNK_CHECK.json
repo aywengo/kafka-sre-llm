@@ -1,0 +1,531 @@
+{
+ "date": "2026-11-23",
+ "rule": "a set is recorded only if an independent sealed checker found that its chunks, as the model receives them (each with its title line and its text), together and nothing else state the point's whole fact; a point is served when one whole set is served",
+ "sources": {
+  "ids_per_letter": {
+   "A": 8,
+   "R1": 5,
+   "B": 8,
+   "R2": 5,
+   "C": 9,
+   "D": 8,
+   "E": 8,
+   "F": 9
+  },
+  "first_round_rows_ignored": [
+   "h6-59"
+  ]
+ },
+ "first_independent_count": {
+  "A": {
+   "scenarios": 8,
+   "must_points": 40,
+   "points_with_recorded_sets": 33,
+   "points_all_recorded_sets_ok": 26,
+   "sets_ok": 29,
+   "sets_partial": 7,
+   "sets_wrong": 0
+  },
+  "B": {
+   "scenarios": 8,
+   "must_points": 38,
+   "points_with_recorded_sets": 34,
+   "points_all_recorded_sets_ok": 27,
+   "sets_ok": 44,
+   "sets_partial": 10,
+   "sets_wrong": 0
+  },
+  "C": {
+   "scenarios": 9,
+   "must_points": 46,
+   "points_with_recorded_sets": 40,
+   "points_all_recorded_sets_ok": 33,
+   "sets_ok": 47,
+   "sets_partial": 8,
+   "sets_wrong": 0
+  },
+  "D": {
+   "scenarios": 8,
+   "must_points": 46,
+   "points_with_recorded_sets": 41,
+   "points_all_recorded_sets_ok": 31,
+   "sets_ok": 86,
+   "sets_partial": 19,
+   "sets_wrong": 0
+  },
+  "E": {
+   "scenarios": 8,
+   "must_points": 43,
+   "points_with_recorded_sets": 35,
+   "points_all_recorded_sets_ok": 32,
+   "sets_ok": 44,
+   "sets_partial": 3,
+   "sets_wrong": 0
+  },
+  "F": {
+   "scenarios": 9,
+   "must_points": 49,
+   "points_with_recorded_sets": 40,
+   "points_all_recorded_sets_ok": 34,
+   "sets_ok": 40,
+   "sets_partial": 7,
+   "sets_wrong": 0
+  },
+  "R1": {
+   "scenarios": 5,
+   "must_points": 27,
+   "points_with_recorded_sets": 23,
+   "points_all_recorded_sets_ok": 22,
+   "sets_ok": 32,
+   "sets_partial": 3,
+   "sets_wrong": 0
+  },
+  "R2": {
+   "scenarios": 5,
+   "must_points": 31,
+   "points_with_recorded_sets": 27,
+   "points_all_recorded_sets_ok": 26,
+   "sets_ok": 28,
+   "sets_partial": 1,
+   "sets_wrong": 0
+  },
+  "total": {
+   "scenarios": 60,
+   "must_points": 320,
+   "points_with_recorded_sets": 273,
+   "points_all_recorded_sets_ok": 231,
+   "sets_ok": 350,
+   "sets_partial": 58,
+   "sets_wrong": 0
+  }
+ },
+ "first_independent_count_share_points_all_ok": 0.846,
+ "merge": {
+  "recorded_unrated_dropped": 0,
+  "sets_dropped_superset": 1,
+  "not_minimal_reduced": 0,
+  "no_covering_set_cleared": 0
+ },
+ "final_state": {
+  "scenarios": 60,
+  "must_points": 320,
+  "must_units": 299,
+  "weight2_units": 132,
+  "points_with_at_least_one_set": 256,
+  "points_served_only_through_sets_of_two_chunks": 24,
+  "only_two_chunk_points": [
+   [
+    "h6-02",
+    "m1"
+   ],
+   [
+    "h6-03",
+    "m2a"
+   ],
+   [
+    "h6-06",
+    "m3"
+   ],
+   [
+    "h6-09",
+    "m2a"
+   ],
+   [
+    "h6-11",
+    "m1"
+   ],
+   [
+    "h6-11",
+    "m3"
+   ],
+   [
+    "h6-18",
+    "m2b"
+   ],
+   [
+    "h6-23",
+    "m2"
+   ],
+   [
+    "h6-23",
+    "m3"
+   ],
+   [
+    "h6-27",
+    "m3"
+   ],
+   [
+    "h6-29",
+    "m4"
+   ],
+   [
+    "h6-31",
+    "m4b"
+   ],
+   [
+    "h6-35",
+    "m4b"
+   ],
+   [
+    "h6-38",
+    "m2"
+   ],
+   [
+    "h6-39",
+    "m1"
+   ],
+   [
+    "h6-40",
+    "m2a"
+   ],
+   [
+    "h6-43",
+    "m4"
+   ],
+   [
+    "h6-45",
+    "m6"
+   ],
+   [
+    "h6-50",
+    "m1"
+   ],
+   [
+    "h6-54",
+    "m3"
+   ],
+   [
+    "h6-55",
+    "m5"
+   ],
+   [
+    "h6-58",
+    "m1"
+   ],
+   [
+    "h6-58",
+    "m4"
+   ],
+   [
+    "h6-59",
+    "m3"
+   ]
+  ],
+  "sets_by_size": {
+   "1": 348,
+   "2": 39
+  },
+  "sets_total": 387,
+  "sets_from_checkers": 37,
+  "points_not_indexed": 37,
+  "not_indexed_points": [
+   [
+    "h6-01",
+    "m4"
+   ],
+   [
+    "h6-04",
+    "m2"
+   ],
+   [
+    "h6-07",
+    "m1"
+   ],
+   [
+    "h6-08",
+    "m1"
+   ],
+   [
+    "h6-08",
+    "m2"
+   ],
+   [
+    "h6-10",
+    "m5"
+   ],
+   [
+    "h6-10",
+    "m6"
+   ],
+   [
+    "h6-11",
+    "m4"
+   ],
+   [
+    "h6-28",
+    "m5"
+   ],
+   [
+    "h6-28",
+    "m4"
+   ],
+   [
+    "h6-29",
+    "m2"
+   ],
+   [
+    "h6-29",
+    "m6"
+   ],
+   [
+    "h6-30",
+    "m4"
+   ],
+   [
+    "h6-30",
+    "m6"
+   ],
+   [
+    "h6-32",
+    "m5"
+   ],
+   [
+    "h6-33",
+    "m5"
+   ],
+   [
+    "h6-37",
+    "m5"
+   ],
+   [
+    "h6-39",
+    "m5"
+   ],
+   [
+    "h6-39",
+    "m6"
+   ],
+   [
+    "h6-40",
+    "m4"
+   ],
+   [
+    "h6-40",
+    "m5"
+   ],
+   [
+    "h6-41",
+    "m4"
+   ],
+   [
+    "h6-43",
+    "m3a"
+   ],
+   [
+    "h6-46",
+    "m5"
+   ],
+   [
+    "h6-47",
+    "m2b"
+   ],
+   [
+    "h6-48",
+    "m5"
+   ],
+   [
+    "h6-49",
+    "m5"
+   ],
+   [
+    "h6-49",
+    "m6"
+   ],
+   [
+    "h6-50",
+    "m3"
+   ],
+   [
+    "h6-50",
+    "m5"
+   ],
+   [
+    "h6-50",
+    "m6"
+   ],
+   [
+    "h6-57",
+    "m1"
+   ],
+   [
+    "h6-57",
+    "m2"
+   ],
+   [
+    "h6-58",
+    "m2"
+   ],
+   [
+    "h6-58",
+    "m3"
+   ],
+   [
+    "h6-58",
+    "m6"
+   ],
+   [
+    "h6-60",
+    "m6"
+   ]
+  ],
+  "points_no_covering_set": 27,
+  "no_covering_set_points": [
+   [
+    "h6-01",
+    "m2"
+   ],
+   [
+    "h6-03",
+    "m2b"
+   ],
+   [
+    "h6-04",
+    "m1"
+   ],
+   [
+    "h6-06",
+    "m4"
+   ],
+   [
+    "h6-08",
+    "m3"
+   ],
+   [
+    "h6-08",
+    "m4"
+   ],
+   [
+    "h6-12",
+    "m1"
+   ],
+   [
+    "h6-12",
+    "m3"
+   ],
+   [
+    "h6-14",
+    "m2"
+   ],
+   [
+    "h6-17",
+    "m1"
+   ],
+   [
+    "h6-17",
+    "m3"
+   ],
+   [
+    "h6-18",
+    "m1"
+   ],
+   [
+    "h6-27",
+    "m1"
+   ],
+   [
+    "h6-30",
+    "m1"
+   ],
+   [
+    "h6-30",
+    "m2"
+   ],
+   [
+    "h6-33",
+    "m3"
+   ],
+   [
+    "h6-35",
+    "m2"
+   ],
+   [
+    "h6-35",
+    "m5"
+   ],
+   [
+    "h6-36",
+    "m4"
+   ],
+   [
+    "h6-36",
+    "m5b"
+   ],
+   [
+    "h6-37",
+    "m3"
+   ],
+   [
+    "h6-44",
+    "m2"
+   ],
+   [
+    "h6-51",
+    "m3"
+   ],
+   [
+    "h6-52",
+    "m4a"
+   ],
+   [
+    "h6-56",
+    "m3c"
+   ],
+   [
+    "h6-57",
+    "m4"
+   ],
+   [
+    "h6-60",
+    "m2"
+   ]
+  ],
+  "not_indexed_points_that_gained_a_set": []
+ },
+ "checks": {
+  "ids_h6_01_to_60_same_in_both": true,
+  "kinds_12_each": true,
+  "kind_counts": {
+   "diagnostics": 12,
+   "debugging": 12,
+   "configuration": 12,
+   "coding": 12,
+   "architecture": 12
+  },
+  "tier_B_failures": [],
+  "side_hidden_failures": [],
+  "weights_status_reviewed_failures": [],
+  "item_schema_field_failures": [],
+  "rubric_schema_field_failures": [],
+  "must_units_3_to_6_failures": [],
+  "any_of_member_failures": [],
+  "unknown_chunk_failures": [],
+  "set_size_over_two_failures": [],
+  "set_contains_set_failures": [],
+  "chunks_equal_union_failures": [],
+  "evidence_parallel_failures": [],
+  "rubrics_more_than_one_weight2_unit_without_set": {
+   "count": 2,
+   "ids": [
+    "h6-04",
+    "h6-08"
+   ]
+  },
+  "rubrics_without_servable_must_unit": {
+   "count": 0,
+   "ids": []
+  },
+  "ipv4_outside_doc_ranges": {
+   "count": 0,
+   "ids": []
+  },
+  "harness": {
+   "rubrics_pass": 60,
+   "of": 60,
+   "failures": []
+  }
+ },
+ "sha256": {
+  "eval/hidden/tier_b_h6_items_final.jsonl.enc": "df6b8fc3b1bd42b0847e03f87cbcf6ea40739095b239e2ff5d1d7cc4a990dc00",
+  "eval/hidden/tier_b_h6_rubrics_final.jsonl.enc": "14c57aac827534531b2f8bebfafc3c8609b3b35f075591eff647471284a3aa8f"
+ }
+}
