@@ -7,16 +7,18 @@ Pure CPU. Sub-commands (the chain calls them; each prints one line per item or a
                --decide, per-item rows as JSON. No default for --decide.
   expand       the 30 search-term expansions on the server (the measured call: prompts.expand_messages(question + Evidence),
                cfg["expansion"]["max_tokens"], temperature 0, thinking off), one line per item, resumable by the output file.
-  packs        frozen pack and r4 pack per item from the stored expansions (kafka_sre_rag.retrieval.select; the reranker), one line
-               per item, resumable; every r4 pack must start with the frozen pack.
-  gate-profile PROFILE_R4.json: chosen, not a placeholder, equal to candidate.json.
+  packs        frozen pack and the pack of the setting under check (profile r4 with that grid setting) per item from the stored
+               expansions (kafka_sre_rag.retrieval.select; the reranker), one line per item, resumable; every such pack must start
+               with the frozen pack.
+  gate-chosen  runs/m6/RETRIEVAL_CHOSEN.json (written by the D5 funnel chain, scripts/m6_d5_funnel.sh): the verdict is GO, the setting is
+               the one named by --setting, and its parameters and settings hash equal the grid setting in candidate.json.
   manifest     write this run's manifest once (pinned files, options, expansion settings, model).
   start-check  compare a stored manifest and the stage markers with the state now; exit 2 on any difference.
   mark         write a stage marker with the hash of its output files.
   report       the report runs/m5/B4_CHECK.md: header (before the expansions) or the finished report.
-  synth        the synthetic batch of a dry run (items, rubrics, chunk check, profile record) in a folder.
+  synth        the synthetic batch of a dry run (items, rubrics, chunk check, chosen-setting record) in a folder.
 
-Definitions (the Owner has not yet decided which count decides X1; the chain refuses to run without --decide):
+Definitions (the Owner decided that the strict count decides; the chain accepts --decide strict only, the loose count is still printed):
   A point is "indexed" when it has at least one covering set (chunk_sets); points with empty chunk_sets (not_indexed or
   no_covering_set) are outside both counts.
   strict: a point is served when at least one whole set of it is in the pack.
@@ -45,8 +47,9 @@ RULE_TEXT = (
     "Rule X1 (MILESTONE.md), on the indexed points of B4 (points with at least one covering set): (a) the share of points served by r4 "
     "minus the share served by the frozen retrieval is at least +15.0 percentage points; (b) at most 5 % of the points the frozen "
     "retrieval serves are not served by r4. PASS only if both hold. Two counts of served: strict (at least one whole covering set of the "
-    "point is in the pack) and loose (at least one chunk of the point's `chunks` is in the pack, as on B1 and B2). The count named by "
-    "--decide decides; the other is reported and decides nothing."
+    "point is in the pack) and loose (at least one chunk of the point's `chunks` is in the pack, as on B1 and B2). The Owner decided the "
+    "strict count; it decides, and the loose count is reported and decides nothing. In this text \"r4\" is the profile that carries the "
+    "setting under check (the one the D5 funnel let go on, named in the report)."
 )
 PINNED = ("kafka_sre_rag/candidate.json", "kafka_sre_rag/frozen.json", "kafka_sre_rag/profiles.py", "kafka_sre_rag/retrieval.py",
           "kafka_sre_rag/prompts.py", "kafka_sre_rag/config.py", "kafka_sre_rag/generators.py", "scripts/retrieve.py",
@@ -323,7 +326,8 @@ class StandInReranker:
 
 def cmd_packs(a):
     sys.path.insert(0, str(ROOT))
-    from kafka_sre_rag import retrieval
+    from kafka_sre_rag import profiles, retrieval
+    grid = profiles.grid_settings(json.load(open(a.chosen_record, encoding="utf-8"))["setting"])
     if a.stand_in:
         stand = StandInReranker()
         retrieval.RT.reranker = lambda: stand
@@ -341,7 +345,7 @@ def cmd_packs(a):
         t0 = time.monotonic()
         frozen = [c["id"] for c in retrieval.select(q, exp)]
         t1 = time.monotonic()
-        r4 = [c["id"] for c in retrieval.select(q, exp, profile="r4")]
+        r4 = [c["id"] for c in retrieval.select(q, exp, profile="r4", settings=grid)]
         t2 = time.monotonic()
         ok = r4[:len(frozen)] == frozen and len(set(r4)) == len(r4)
         if not ok:
@@ -355,68 +359,54 @@ def cmd_packs(a):
     return 0
 
 
-# ---------------------------------------------------------------- the gate on the profile record
-BAD_WORDS = ("placeholder", "not chosen", "candidate, not")
-
-
-def profile_problems(record_path, cand=None, settings=None, settings_hash=None):
-    """Problems with the record of the chosen r4 setting; [] when it is chosen, not a placeholder and equal to candidate.json."""
+# ---------------------------------------------------------------- the gate on the chosen setting
+def chosen_problems(record_path, setting, cand=None):
+    """Problems with runs/m6/RETRIEVAL_CHOSEN.json (the D5 funnel's record of the setting that goes on); [] when its verdict is GO,
+    it names `setting`, and its parameters and settings hash equal the grid setting in candidate.json."""
     sys.path.insert(0, str(ROOT))
     from kafka_sre_rag import profiles
-    problems = []
     try:
         rec = json.load(open(record_path, encoding="utf-8"))
     except (OSError, ValueError) as e:
-        return [f"{record_path} is unreadable: {type(e).__name__}"]
-    cand = cand or profiles.load_candidate()
-    status = str(rec.get("status", "")).lower()
-    entry_desc = str(cand["profiles"]["r4"].get("description", "")).lower()
-    if rec.get("profile") != "r4":
-        problems.append("the record is not for profile r4")
-    if any(w in status for w in BAD_WORDS):
-        problems.append(f"the record's status still says it is not chosen or a placeholder: {rec.get('status')!r}")
-    if any(w in entry_desc for w in BAD_WORDS):
-        problems.append("the r4 entry of candidate.json is still marked placeholder or not chosen")
-    chosen = rec.get("chosen")
-    if not chosen or not isinstance(chosen, str):
-        problems.append("the record has no 'chosen' field (the name of the chosen grid setting)")
-    else:
-        try:
-            grid = {k: v for k, v in profiles.grid_settings(chosen, cand).items() if k != "description"}
-            own = {k: v for k, v in cand["profiles"]["r4"].items() if k != "description"}
-            if grid != own:
-                problems.append(f"the r4 entry of candidate.json differs from the chosen grid setting {chosen}")
-        except ValueError as e:
-            problems.append(str(e))
-    want = settings_hash or profiles.settings_sha256("r4", cand)
+        return [f"{record_path} is missing or unreadable ({type(e).__name__}): run the D5 funnel first"]
+    problems = []
+    if str(rec.get("verdict", "")).upper() != "GO":
+        problems.append(f"the D5 funnel's verdict is not GO (it is {rec.get('verdict')!r}): no B4 check")
+    if rec.get("setting") != setting:
+        problems.append(f"the record names the setting {rec.get('setting')!r}, not {setting!r}")
+    try:
+        grid = profiles.grid_settings(setting, cand)
+    except ValueError as e:
+        return problems + [str(e)]
+    want = profiles.settings_sha256("r4", cand, grid=setting)
     if rec.get("settings_sha256") != want:
-        problems.append(f"the record's settings_sha256 {str(rec.get('settings_sha256'))[:12]} differs from candidate.json's r4 hash {want[:12]}")
-    if "settings" in rec and rec["settings"] != (settings or profiles.settings("r4", cand)):
-        problems.append("the record's settings differ from candidate.json")
+        problems.append(f"the record's settings_sha256 {str(rec.get('settings_sha256'))[:12]} differs from the grid setting {setting}'s {want[:12]}")
+    if "settings" in rec and rec["settings"] != profiles.settings("r4", cand, grid=setting):
+        problems.append(f"the record's parameters differ from the grid setting {setting} in candidate.json")
     return problems
 
 
-def cmd_gate_profile(a):
+def cmd_gate_chosen(a):
     cand = json.load(open(a.candidate, encoding="utf-8")) if a.candidate else None
-    pr = profile_problems(a.record, cand)
+    pr = chosen_problems(a.record, a.setting, cand)
     for p in pr:
         print(f"gate: {p}", file=sys.stderr)
     if not pr:
-        print("gate: PROFILE_R4 record: r4 is chosen (not a placeholder) and equals candidate.json")
+        print(f"gate: RETRIEVAL_CHOSEN record: the D5 funnel let {a.setting} go on to B4 and its parameters equal candidate.json")
     return 1 if pr else 0
 
 
 # ---------------------------------------------------------------- manifest and the start check
 def pinned_state(a):
     files = {p: sha256_file(ROOT / p) for p in PINNED}
-    for label, p in (("items", a.items), ("rubrics", a.rubrics), ("chunk_check", a.chunk_check), ("profile_record", a.profile_record)):
+    for label, p in (("items", a.items), ("rubrics", a.rubrics), ("chunk_check", a.chunk_check), ("chosen_record", a.chosen_record)):
         files[f"input:{label}"] = sha256_file(p)
     files["index:work/v3/chunks_s1.jsonl"] = sha256_file(ROOT / "work/v3/chunks_s1.jsonl")
     return {"files": files, "sha256": sha256_text(json.dumps(files, sort_keys=True))}
 
 
 def options_state(a):
-    return {"decide": a.decide, "dry_run": bool(a.dry_run), "model": a.model}
+    return {"decide": a.decide, "dry_run": bool(a.dry_run), "model": a.model, "setting": a.setting}
 
 
 def cmd_manifest(a):
@@ -437,8 +427,8 @@ def cmd_manifest(a):
             pass
     m = {"harness": "m5_b4_check", "created": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "options": options_state(a),
          "pinned": pinned_state(a), "rule": RULE_TEXT, "rule_sha256": sha256_text(RULE_TEXT),
-         "profile": {"record": str(a.profile_record), "settings_sha256": profiles.settings_sha256("r4"),
-                     "chosen": json.load(open(a.profile_record)).get("chosen")},
+         "profile": {"record": str(a.chosen_record), "settings_sha256": profiles.settings_sha256("r4", grid=a.setting),
+                     "setting": a.setting, "funnel_verdict": json.load(open(a.chosen_record)).get("verdict_line")},
          "expansion": {
              "same_as": "the development sets' expansions (scripts/eval2.py answer -> evalhooks.run_item; scripts/m4_b2_batch.sh)",
              "messages": "prompts.expand_messages(question + '\\n\\nEvidence:\\n' + evidence)",
@@ -513,12 +503,13 @@ def header_text(a, rubrics):
     n_pts = sum(len(r["must"]) for r in rubrics)
     idx = sum(1 for r in rubrics for p in r["must"] if point_sets(p))
     return "\n".join([
-        "# M5 B4: the one-time check of the chosen r4 setting (rule X1)",
+        "# M5 B4: the one-time check of the setting the D5 funnel let go on (rule X1)",
         "",
         f"Written by `scripts/m5_b4_check.sh` on {time.strftime('%Y-%m-%d')}{' (DRY RUN: synthetic batch, stub model, stand-in reranker; the numbers are not measurements)' if a.dry_run else ''}. "
         "This header is written before the expansions start.",
         "",
-        f"- Decision count (`--decide`): **{a.decide}**. The Owner has not yet decided which count decides; both counts are always printed.",
+        f"- Decision count (`--decide`): **{a.decide}** (the Owner decided the strict count); both counts are always printed.",
+        f"- Setting under check: **{a.setting}** (profile r4 with that grid setting), as the D5 funnel's record `{Path(a.chosen_record).name}` names it.",
         f"- Batch: {len(rubrics)} scenarios, {n_pts} must points, {idx} indexed points (at least one covering set).",
         f"- Items file sha256 {sha256_file(a.items)[:16]}..., rubrics sha256 {sha256_file(a.rubrics)[:16]}... (equal to the chunk check).",
         f"- Expansions: the 4-bit base model `{a.model}`, `prompts.EXPAND_SYSTEM`, the question plus its Evidence part, temperature 0, 300 tokens, "
@@ -566,7 +557,7 @@ def cmd_report(a):
 
 # ---------------------------------------------------------------- the synthetic batch of a dry run
 def cmd_synth(a):
-    """Items, rubrics, chunk check and profile record in a folder, from the real index (no B4 question is used)."""
+    """Items, rubrics, chunk check and the chosen-setting record in a folder, from the real index (no B4 question is used)."""
     sys.path.insert(0, str(ROOT))
     from kafka_sre_rag import profiles, retrieval
     d = Path(a.dir)
@@ -599,14 +590,12 @@ def cmd_synth(a):
     if flaw == "rubrics-hash":
         cc["sha256"]["rubrics.jsonl"] = "0" * 64
     (d / "CHUNK_CHECK.json").write_text(json.dumps(cc, indent=1) + "\n")
-    cand = profiles.load_candidate()
-    chosen = a.chosen
-    entry = cand["profiles"]["r4"]
-    entry["description"] = "chosen (synthetic candidate of a dry run, grid setting " + chosen + ")"
-    (d / "candidate.json").write_text(json.dumps(cand, indent=1) + "\n")
-    rec = {"profile": "r4", "status": "chosen (synthetic record of a dry run)" if flaw != "placeholder" else "candidate, not chosen; unmeasured; r4 entry is the G4 placeholder",
-           "chosen": chosen, "settings_sha256": profiles.settings_sha256("r4", cand), "settings_file": "candidate.json (synthetic)"}
-    (d / "PROFILE_R4.json").write_text(json.dumps(rec, indent=1) + "\n")
+    setting = a.setting
+    rec = {"setting": setting if flaw != "other-setting" else "r4g4", "profile": "r4",
+           "verdict": "GO" if flaw != "stop" else "STOP",
+           "verdict_line": "VERDICT: r4g2 GOES ON TO B4 (synthetic record of a dry run)" if flaw != "stop" else "VERDICT: STOP, NO B4 (synthetic record of a dry run)",
+           "settings_sha256": profiles.settings_sha256("r4", grid=setting), "settings": profiles.settings("r4", grid=setting)}
+    (d / "RETRIEVAL_CHOSEN.json").write_text(json.dumps(rec, indent=1) + "\n")
     print(f"synthetic batch in {d}: {len(items)} items, flaw={flaw}")
     return 0
 
@@ -635,7 +624,8 @@ def build_parser():
         s.add_argument("--items", required=True)
         s.add_argument("--rubrics", required=True)
         s.add_argument("--chunk-check", dest="chunk_check", required=True)
-        s.add_argument("--profile-record", dest="profile_record", required=True)
+        s.add_argument("--chosen-record", dest="chosen_record", required=True)
+        s.add_argument("--setting", required=True)
         s.add_argument("--work", required=True)
         s.add_argument("--decide", required=True, choices=COUNTS)
         s.add_argument("--model", default="Qwen3.8-27B-4bit")
@@ -658,10 +648,12 @@ def build_parser():
     s.add_argument("--items", required=True)
     s.add_argument("--expansions", required=True)
     s.add_argument("--out", required=True)
+    s.add_argument("--chosen-record", dest="chosen_record", required=True)
     s.add_argument("--stand-in", dest="stand_in", action="store_true")
-    s = sub.add_parser("gate-profile")
+    s = sub.add_parser("gate-chosen")
     s.add_argument("--record", required=True)
-    s.add_argument("--candidate", help="a candidate.json to check against (dry runs only; default kafka_sre_rag/candidate.json)")
+    s.add_argument("--setting", required=True)
+    s.add_argument("--candidate", help="a candidate.json to check against (tests only; default kafka_sre_rag/candidate.json)")
     s = sub.add_parser("gate-files")
     s.add_argument("--items", required=True)
     s.add_argument("--rubrics", required=True)
@@ -681,6 +673,8 @@ def build_parser():
     s.add_argument("--rubrics", required=True)
     s.add_argument("--decide", required=True, choices=COUNTS)
     s.add_argument("--model", default="Qwen3.8-27B-4bit")
+    s.add_argument("--setting", required=True)
+    s.add_argument("--chosen-record", dest="chosen_record", required=True)
     s.add_argument("--dry-run", dest="dry_run", action="store_true")
     s.add_argument("--out", required=True)
     s.add_argument("--expansions")
@@ -690,12 +684,12 @@ def build_parser():
     s = sub.add_parser("synth")
     s.add_argument("--dir", required=True)
     s.add_argument("--items", type=int, default=8)
-    s.add_argument("--flaw", choices=("none", "rubrics-hash", "placeholder"), default="none")
-    s.add_argument("--chosen", default="r4g4")
+    s.add_argument("--flaw", choices=("none", "rubrics-hash", "stop", "other-setting"), default="none")
+    s.add_argument("--setting", default="r4g2")
     return p
 
 
-COMMANDS = {"served": cmd_served, "expand": cmd_expand, "packs": cmd_packs, "gate-profile": cmd_gate_profile, "gate-files": cmd_gate_files,
+COMMANDS = {"served": cmd_served, "expand": cmd_expand, "packs": cmd_packs, "gate-chosen": cmd_gate_chosen, "gate-files": cmd_gate_files,
             "manifest": cmd_manifest, "start-check": cmd_start_check, "mark": cmd_mark, "report": cmd_report, "synth": cmd_synth}
 
 

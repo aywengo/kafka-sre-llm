@@ -1,5 +1,8 @@
 #!/bin/sh
-# M5 R4-chain: the one-time check of the chosen r4 setting on B4 (rule X1 of MILESTONE.md). B4 (eval/m4/b4) is used ONCE.
+# M5 R4-chain, changed in M6: the one-time check of the retrieval setting that the D5 funnel let go on, on B4 (rule X1 of MILESTONE.md).
+# B4 (eval/m4/b4) is used ONCE. The setting is an option (--setting r4g2); its name, parameters and settings hash are read from
+# runs/m6/RETRIEVAL_CHOSEN.json, which scripts/m6_d5_funnel.sh writes; the chain refuses if that file is missing, says STOP or names
+# another setting. There is no gate on runs/m5/PROFILE_R4.json any more.
 # Written for the later real run; the real run is a separate task. Nothing here starts a model by itself: the expansions are server calls
 # (the 4-bit base model, one request at a time) under scripts/run_guarded.py, the packs load the reranker under the guard.
 #
@@ -8,93 +11,94 @@
 #   strict  at least one whole set of the point is in the pack;
 #   loose   at least one chunk of the point's `chunks` is in the pack (the count used on B1 and B2).
 # The rule X1, on the indexed points: served by r4 minus served by frozen at least +15.0 percentage points, and at most 5 % of the
-# frozen-served points not served by r4. The Owner has not decided which count decides, so --decide strict|loose has NO default and the
-# chain refuses (exit 2) without it. Both counts are always printed; the one not named is labelled "reported, decides nothing".
+# frozen-served points not served by the setting. The Owner decided the strict count: --decide strict is the only accepted value (no
+# default; the chain refuses with exit 2 without it and for loose). Both counts are always printed; the loose one is labelled
+# "reported, decides nothing". "r4" in the output is the profile that carries the setting.
 #
 # Steps (each resumable by its output file; a line per item; a stage marker W/<stage>.passed with the hash of its output):
 #   1. Gate (CPU, refusal exit 2, nothing written outside the work folder in a dry run, nothing at all in a real run before it passes):
-#      --decide given; inputs present; runs/m5/B4_USED does not exist; sha256 of rubrics.jsonl and items.jsonl equal those in
-#      eval/m4/b4/CHUNK_CHECK.json; runs/m5/PROFILE_R4.json says r4 is CHOSEN (not "candidate, not chosen" or a placeholder) and its settings
-#      hash equals candidate.json's r4 hash; the frozen index hash (INDEX_FROZEN.json, frozen.json, the file) and `kafka_sre_rag verify`;
+#      --decide strict and --setting given; inputs present; runs/m6/B4_USED does not exist; sha256 of rubrics.jsonl and items.jsonl equal
+#      those in eval/m4/b4/CHUNK_CHECK.json; runs/m6/RETRIEVAL_CHOSEN.json has verdict GO for --setting and its parameters and settings
+#      hash equal the grid setting in candidate.json; the frozen index hash (INDEX_FROZEN.json, frozen.json, the file) and `kafka_sre_rag verify`;
 #      the start check of a stored manifest and markers (pinned files, options, outputs of finished stages); then the server: the 4-bit
 #      base model is the only model there (our own other builds are unloaded when no request is active or waiting, a model of another
 #      client is waited for up to 60 min, then REFUSED) and the server is idle.
-#   2. The report header (the rule's text and the --decide value) is written to runs/m5/B4_CHECK.md BEFORE the expansions start.
+#   2. The report header (the rule's text, the setting and the --decide value) is written to runs/m5/B4_CHECK.md BEFORE the expansions start.
 #   3. Expansions of the 30 questions on the server, guarded: the same call as on the development sets (scripts/eval2.py answer -> evalhooks.run_item;
 #      scripts/m4_b2_batch.sh): prompts.expand_messages(question + Evidence), 300 tokens, temperature 0, thinking off, the 4-bit build.
 #      The call, prompt hash and settings are recorded in the run's manifest. The 4-bit model is unloaded afterwards when this chain loaded it.
-#   4. Packs, guarded (reranker): per item the frozen pack and the r4 pack with the runtime's own code (kafka_sre_rag.retrieval.select);
-#      every r4 pack must start with the frozen pack (else the chain stops).
+#   4. Packs, guarded (reranker): per item the frozen pack and the setting's pack with the runtime's own code
+#      (kafka_sre_rag.retrieval.select, profile r4, the setting's grid values); every such pack must start with the frozen pack (else the chain stops).
 #   5. scripts/m5_b4_served.py: both counts, per-item rows (JSON), the rule's verdict for --decide.
-#   6. The report; then the marker runs/m5/B4_USED with the date and the verdict, so that a second run is refused.
+#   6. The report; then the marker runs/m6/B4_USED with the date and the verdict, so that a second run is refused.
 # Heartbeat lines for the job starts and ends go to runs/v3/HEARTBEAT.md. Markers: runs/m5/logs/m5_b4_check.done or .failed.
 #
 # Estimated duration of the real run (inferred, not measured on B4): about 0.2 to 0.5 h. 30 expansions at 7.0 s median and 10.4 s p90 (stored B2
 # runs on the 4-bit model: 3.5 to 5.5 min) plus the model load; 30 packs, each the frozen reranker call (about 4 s) and the r4 call (about 3 s at the
 # 512 window, 6 to 8 s at 1024; design R0, unmeasured), 3 to 8 min; checks and the report 1 min.
 #
-#   scripts/m5_b4_check.sh --decide strict|loose > runs/m5/logs/m5_b4_check.out 2>&1 &
-#   scripts/m5_b4_check.sh --decide strict|loose --dry-run [--work DIR]   # synthetic batch in a temporary folder, stub model, stand-in reranker,
-#                                                                         # fake server status; never touches B4, the real marker, report or heartbeat
-# Options: --decide, --dry-run, --work DIR, --report FILE, --used-marker FILE, --items F --rubrics F --chunk-check F --profile-record F.
-# Dry-run only: --synth-flaw none|rubrics-hash|placeholder, --stop-after expand|packs, --synth-stop-after-items N, --fake-loaded JSON.
+#   scripts/m5_b4_check.sh --decide strict --setting r4g2 > runs/m5/logs/m5_b4_check.out 2>&1 &
+#   scripts/m5_b4_check.sh --decide strict --setting r4g2 --dry-run [--work DIR]   # synthetic batch in a temporary folder, stub model, stand-in
+#                                                                         # reranker, fake server status; never touches B4, the real marker, report or heartbeat
+# Options: --decide, --setting, --dry-run, --work DIR, --report FILE, --used-marker FILE, --items F --rubrics F --chunk-check F --chosen-record F.
+# Dry-run only: --synth-flaw none|rubrics-hash|stop|other-setting, --stop-after expand|packs, --synth-stop-after-items N, --fake-loaded JSON.
 # The server address and key come from OMLX_URL and OMLX_API_KEY or ~/.config/kafka-sre-llm/ (never printed, never written).
 set -e
-DRY=no; DECIDE=""; WSET=no; W=work/m5/b4; REPORT=runs/m5/B4_CHECK.md; RSET=no; USED=runs/m5/B4_USED; USET=no
-ITEMS=eval/m4/b4/items.jsonl; RUBS=eval/m4/b4/rubrics.jsonl; CC=eval/m4/b4/CHUNK_CHECK.json; PREC=runs/m5/PROFILE_R4.json; INSET=no
+DRY=no; DECIDE=""; SETTING=""; WSET=no; W=work/m5/b4; REPORT=runs/m5/B4_CHECK.md; RSET=no; USED=runs/m6/B4_USED; USET=no
+ITEMS=eval/m4/b4/items.jsonl; RUBS=eval/m4/b4/rubrics.jsonl; CC=eval/m4/b4/CHUNK_CHECK.json; CHOSEN=runs/m6/RETRIEVAL_CHOSEN.json; INSET=no
 FLAW=none; STOP=""; STOPITEMS=0; FAKE_LOADED='[]'
-usage() { echo "usage: scripts/m5_b4_check.sh --decide strict|loose [--dry-run] [--work DIR] [--report FILE] [--used-marker FILE] [--items F --rubrics F --chunk-check F --profile-record F] (see the header)" >&2; exit 2; }
+usage() { echo "usage: scripts/m5_b4_check.sh --decide strict --setting NAME [--dry-run] [--work DIR] [--report FILE] [--used-marker FILE] [--items F --rubrics F --chunk-check F --chosen-record F] (see the header)" >&2; exit 2; }
 while [ $# -gt 0 ]; do case $1 in
-  --decide) DECIDE=${2-}; shift;; --dry-run) DRY=yes;;
+  --decide) DECIDE=${2-}; shift;; --setting) SETTING=${2-}; shift;; --dry-run) DRY=yes;;
   --work) W=${2:?}; WSET=yes; shift;; --report) REPORT=${2:?}; RSET=yes; shift;; --used-marker) USED=${2:?}; USET=yes; shift;;
   --items) ITEMS=${2:?}; INSET=yes; shift;; --rubrics) RUBS=${2:?}; INSET=yes; shift;; --chunk-check) CC=${2:?}; INSET=yes; shift;;
-  --profile-record) PREC=${2:?}; INSET=yes; shift;;
+  --chosen-record) CHOSEN=${2:?}; INSET=yes; shift;;
   --synth-flaw) FLAW=${2:?}; shift;; --stop-after) STOP=${2:?}; shift;; --synth-stop-after-items) STOPITEMS=${2:?}; shift;; --fake-loaded) FAKE_LOADED=${2:?}; shift;;
   *) usage;; esac; shift; done
 refuse() { echo "REFUSED: $1; nothing started" >&2; exit 2; }
-[ -n "$DECIDE" ] || refuse "--decide strict|loose is required and has no default (the Owner has not decided which count decides X1)"
-case $DECIDE in strict|loose) ;; *) refuse "--decide must be strict or loose, got '$DECIDE'";; esac
+[ -n "$DECIDE" ] || refuse "--decide strict is required and has no default"
+case $DECIDE in strict) ;; *) refuse "--decide accepts strict only (the Owner decided the strict count for B4), got '$DECIDE'";; esac
+[ -n "$SETTING" ] || refuse "--setting NAME is required (the setting the D5 funnel let go on, for example r4g2)"
 if [ $DRY = no ]; then
   { [ "$FLAW" = none ] && [ -z "$STOP" ] && [ "$STOPITEMS" = 0 ] && [ "$FAKE_LOADED" = '[]' ]; } || refuse "--synth-flaw, --stop-after, --synth-stop-after-items and --fake-loaded are for dry runs only"
 fi
-case $FLAW in none|rubrics-hash|placeholder) ;; *) usage;; esac
+case $FLAW in none|rubrics-hash|stop|other-setting) ;; *) usage;; esac
 case "$STOP" in ""|expand|packs) ;; *) usage;; esac
 
 PYS=".venv/bin/python scripts/m5_b4_served.py"
 L=runs/m5/logs; N=m5_b4_check; HB=runs/v3/HEARTBEAT.md; SLEEP=30; WAITN=120
-PHASE="M5 R4: one-time check of r4 on B4 (rule X1)"
+PHASE="M6 B4: one-time check of the setting the D5 funnel chose, on B4 (rule X1)"
 CHUNKS=work/v3/chunks_s1.jsonl; Q4=""
 DS=DeepSeek-V4.1-Flash-1017-oQ4e-mtp; GLM8=GLM-5.3-Flash-oQ8e-mtp; GLM4=GLM-5.3-Flash-oQ4e
-EXP_ARGS=""; PACK_ARGS=""; CAND_ARGS=""
+EXP_ARGS=""; PACK_ARGS=""
 if [ $DRY = yes ]; then
   [ $WSET = yes ] || W=$(mktemp -d "${TMPDIR:-/tmp}/m5_b4_dry.XXXXXX")
   mkdir -p $W
   L=$W/logs; HB=$W/HEARTBEAT.md; SLEEP=0; WAITN=1
   [ $RSET = yes ] || REPORT=$W/B4_CHECK.md
   [ $USET = yes ] || USED=$W/B4_USED
-  case "$USED $REPORT" in *runs/m5/B4_USED*|*runs/m5/B4_CHECK.md*) refuse "a dry run never uses the real marker or the real report";; esac
-  [ $INSET = no ] || case "$ITEMS $RUBS $CC $PREC" in *eval/m4/b4*|*runs/m5/PROFILE_R4.json*) refuse "a dry run never uses the real B4 files or the real profile record";; esac
+  case "$USED $REPORT" in *runs/m6/B4_USED*|*runs/m5/B4_CHECK.md*) refuse "a dry run never uses the real marker or the real report";; esac
+  [ $INSET = no ] || case "$ITEMS $RUBS $CC $CHOSEN" in *eval/m4/b4*|*runs/m6/RETRIEVAL_CHOSEN.json*) refuse "a dry run never uses the real B4 files or the real record of the chosen setting";; esac
   G="scripts/run_guarded.py --heartbeat $HB --other-retries 0"
   EXP_ARGS="--stub"; PACK_ARGS="--stand-in"
   if [ $INSET = no ]; then   # the synthetic batch of the dry run (made once, in the work folder)
     IN=$W/in
-    [ -s $IN/items.jsonl ] || $PYS synth --dir $IN --flaw $FLAW > /dev/null || refuse "the synthetic batch could not be made"
-    ITEMS=$IN/items.jsonl; RUBS=$IN/rubrics.jsonl; CC=$IN/CHUNK_CHECK.json; PREC=$IN/PROFILE_R4.json
+    [ -s $IN/items.jsonl ] || $PYS synth --dir $IN --flaw $FLAW --setting "$SETTING" > /dev/null || refuse "the synthetic batch could not be made"
+    ITEMS=$IN/items.jsonl; RUBS=$IN/rubrics.jsonl; CC=$IN/CHUNK_CHECK.json; CHOSEN=$IN/RETRIEVAL_CHOSEN.json
   fi
-  [ -s $W/in/candidate.json ] && CAND_ARGS="--candidate $W/in/candidate.json"   # the synthetic batch carries its own chosen-r4 candidate file (the real one is still a placeholder)
 else
   G="scripts/run_guarded.py --heartbeat $HB --other-retries 2"
 fi
 
 # ---------------------------------------------------------------- 1. the gate (CPU; refusal = exit 2)
-for f in $ITEMS $RUBS $CC $PREC kafka_sre_rag/candidate.json kafka_sre_rag/frozen.json runs/v3/INDEX_FROZEN.json $CHUNKS \
+for f in $ITEMS $RUBS $CC $CHOSEN kafka_sre_rag/candidate.json kafka_sre_rag/frozen.json runs/v3/INDEX_FROZEN.json $CHUNKS \
          scripts/run_guarded.py scripts/m5_b4_served.py scripts/eval2_compare.py; do
   [ -s $f ] || refuse "input $f is missing or empty"
 done
 [ ! -e $USED ] || refuse "$USED exists: B4 was used already (it is used once); a second run is refused"
 [ ! -e $REPORT ] || [ -e $W/B4_MANIFEST.json ] || refuse "$REPORT exists but $W/B4_MANIFEST.json does not; the report is not overwritten"
 $PYS gate-files --items $ITEMS --rubrics $RUBS --chunk-check $CC || refuse "the batch files differ from the hashes in the chunk check (the batch changed after its check)"
-$PYS gate-profile --record $PREC $CAND_ARGS || refuse "the record of the chosen r4 setting is not usable (still a placeholder or not chosen, or not equal to candidate.json)"
+$PYS gate-chosen --record $CHOSEN --setting "$SETTING" || refuse "the record of the chosen setting is not usable (missing, verdict STOP, another setting, or not equal to candidate.json); run scripts/m6_d5_funnel.sh first"
 .venv/bin/python - <<'PY' || refuse "the frozen index hash does not agree between INDEX_FROZEN.json, frozen.json and the index file"
 import hashlib, json
 a = json.load(open("runs/v3/INDEX_FROZEN.json"))["sha256"]
@@ -113,7 +117,7 @@ echo "gate: kafka_sre_rag verify passed"
 SC_MODEL=$([ -s $W/B4_MANIFEST.json ] && .venv/bin/python -c 'import json,sys; print(json.load(open(sys.argv[1]))["options"]["model"])' $W/B4_MANIFEST.json || echo "Qwen3.8-27B-4bit")
 SC_DRY=""; [ $DRY = no ] || SC_DRY="--dry-run"
 start_check() { # MODEL
-  $PYS start-check --items $ITEMS --rubrics $RUBS --chunk-check $CC --profile-record $PREC --work $W --decide $DECIDE --model "$1" $SC_DRY; }
+  $PYS start-check --items $ITEMS --rubrics $RUBS --chunk-check $CC --chosen-record $CHOSEN --setting "$SETTING" --work $W --decide $DECIDE --model "$1" $SC_DRY; }
 sc=0; start_check "$SC_MODEL" || sc=$?
 [ $sc = 0 ] || refuse "the start check failed (exit code $sc, see above)"
 
@@ -135,7 +139,7 @@ fail() { if [ $DRY = yes ]; then echo "DRY RUN FAILED: $1"; exit 1; fi
 stage_done() { [ -f $W/$1.passed ]; }
 rows() { [ -f "$1" ] && wc -l < "$1" | tr -d ' ' || echo 0; }
 NEED=$(grep -c . $ITEMS | tr -d ' ')
-echo "planned: $NEED expansions on the server (4-bit model), then $NEED frozen and r4 packs (reranker, CPU); about 0.2 to 0.5 h (inferred from B2's stored seconds; the packs' time is unmeasured on B4); --decide $DECIDE"
+echo "planned: $NEED expansions on the server (4-bit model), then $NEED frozen and $SETTING packs (reranker, CPU); about 0.2 to 0.5 h (inferred from B2's stored seconds; the packs' time is unmeasured on B4); --decide $DECIDE"
 [ $DRY = yes ] || rm -f $L/$N.failed $L/$N.done
 
 # ---------------------------------------------------------------- the server (real, or a fake status file in a dry run)
@@ -201,11 +205,11 @@ sc=0; start_check "$Q4" || sc=$?
 
 # ---------------------------------------------------------------- the manifest (written once) and the report header (before the expansions)
 NEWMAN=no; [ -s $W/B4_MANIFEST.json ] || NEWMAN=yes
-$PYS manifest --items $ITEMS --rubrics $RUBS --chunk-check $CC --profile-record $PREC --work $W --decide $DECIDE --model "$Q4" $SC_DRY --models-json $W/models.json \
+$PYS manifest --items $ITEMS --rubrics $RUBS --chunk-check $CC --chosen-record $CHOSEN --setting "$SETTING" --work $W --decide $DECIDE --model "$Q4" $SC_DRY --models-json $W/models.json \
   || fail "the manifest could not be written"
 if [ $NEWMAN = yes ]; then
   mkdir -p "$(dirname $REPORT)"
-  $PYS report --phase header --items $ITEMS --rubrics $RUBS --decide $DECIDE --model "$Q4" $SC_DRY --out $REPORT || fail "the report header could not be written"
+  $PYS report --phase header --items $ITEMS --rubrics $RUBS --decide $DECIDE --model "$Q4" --setting "$SETTING" --chosen-record $CHOSEN $SC_DRY --out $REPORT || fail "the report header could not be written"
 fi
 
 # ---------------------------------------------------------------- 3. expansions
@@ -213,7 +217,7 @@ EXPS=$W/expansions.jsonl
 if stage_done expand; then
   echo "skip expansions: passed earlier ($(rows $EXPS) rows)"
 else
-  hb "$N: expansions started ($NEED items, $Q4, --decide $DECIDE)"
+  hb "$N: expansions started ($NEED items, $Q4, setting $SETTING, --decide $DECIDE)"
   status RUNNING no "$N running: expansions; markers $L/$N.done / .failed"
   [ $DRY = no ] || fake_edit load "$Q4"
   $G --stall-min 40 --log $L/$N.expand.log -- .venv/bin/python scripts/m5_b4_served.py expand --items $ITEMS --out $EXPS --model "$Q4" $EXP_ARGS \
@@ -233,10 +237,10 @@ PACKS=$W/packs.jsonl
 if stage_done packs; then
   echo "skip packs: passed earlier ($(rows $PACKS) rows)"
 else
-  hb "$N: packs started (frozen and r4, reranker on the CPU)"
+  hb "$N: packs started (frozen and $SETTING, reranker on the CPU)"
   status RUNNING no "$N running: packs; markers $L/$N.done / .failed"
-  $G --stall-min 15 --log $L/$N.packs.log -- .venv/bin/python scripts/m5_b4_served.py packs --items $ITEMS --expansions $EXPS --out $PACKS $PACK_ARGS \
-      || fail "packs failed (see $L/$N.packs.log; an r4 pack that does not start with the frozen pack stops the chain)"
+  $G --stall-min 15 --log $L/$N.packs.log -- .venv/bin/python scripts/m5_b4_served.py packs --items $ITEMS --expansions $EXPS --out $PACKS --chosen-record $CHOSEN $PACK_ARGS \
+      || fail "packs failed (see $L/$N.packs.log; a pack that does not start with the frozen pack stops the chain)"
   [ "$(rows $PACKS)" = "$NEED" ] || fail "$PACKS has $(rows $PACKS) rows, not $NEED"
   $PYS mark --work $W --stage packs packs.jsonl
   hb "$N: packs done ($NEED rows)"
@@ -253,7 +257,7 @@ fi
 cat $W/served.txt
 
 # ---------------------------------------------------------------- 6. the report and the marker B4_USED
-$PYS report --phase final --items $ITEMS --rubrics $RUBS --decide $DECIDE --model "$Q4" $SC_DRY --out $REPORT --expansions $EXPS --packs $PACKS \
+$PYS report --phase final --items $ITEMS --rubrics $RUBS --decide $DECIDE --model "$Q4" --setting "$SETTING" --chosen-record $CHOSEN $SC_DRY --out $REPORT --expansions $EXPS --packs $PACKS \
   --served-json $W/served.json --served-text $W/served.txt || fail "the report could not be written"
 VERDICT=$(.venv/bin/python -c 'import json,sys; d=json.load(open(sys.argv[1])); print("PASS" if d["verdict"][d["decide"]]["pass"] else "FAIL")' $W/served.json)
 mkdir -p "$(dirname $USED)"

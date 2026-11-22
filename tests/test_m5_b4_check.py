@@ -165,35 +165,35 @@ class CommandLine(unittest.TestCase):
 
 
 @unittest.skipUnless(READY, READY_REASON)
-class ProfileGate(unittest.TestCase):
+class ChosenGate(unittest.TestCase):
     def setUp(self):
         from kafka_sre_rag import profiles
         self.profiles = profiles
         self.tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.tmp, True)
-        self.cand = copy.deepcopy(profiles.load_candidate())
-        grid = profiles.grid_settings("r4g2", self.cand)
-        self.cand["profiles"]["r4"] = {**grid, "description": "chosen: grid setting G2"}
-        self.rec = {"profile": "r4", "status": "chosen", "chosen": "r4g2", "settings_sha256": profiles.settings_sha256("r4", self.cand)}
+        self.rec = {"setting": "r4g2", "profile": "r4", "verdict": "GO", "settings_sha256": profiles.settings_sha256("r4", grid="r4g2"),
+                    "settings": profiles.settings("r4", grid="r4g2")}
 
-    def problems(self, rec=None, cand=None):
+    def problems(self, rec=None, setting="r4g2"):
         p = self.tmp / "rec.json"
         p.write_text(json.dumps(rec or self.rec))
-        return S.profile_problems(p, cand or self.cand)
+        return S.chosen_problems(p, setting)
 
-    def test_a_chosen_record_that_equals_the_candidate_file_has_no_problem(self):
+    def test_a_go_record_for_the_named_setting_has_no_problem(self):
         self.assertEqual(self.problems(), [])
 
-    def test_a_placeholder_or_not_chosen_record_is_refused(self):
-        self.assertTrue(self.problems({**self.rec, "status": "candidate, not chosen; unmeasured; r4 entry is the G4 placeholder"}))
-        c = copy.deepcopy(self.cand)
-        c["profiles"]["r4"]["description"] = "candidate, not chosen: placeholder, the same values as grid setting G4"
-        self.assertTrue(any("placeholder" in p for p in self.problems(cand=c)))
+    def test_a_stop_verdict_is_refused(self):
+        self.assertTrue(any("not GO" in p for p in self.problems({**self.rec, "verdict": "STOP"})))
 
-    def test_missing_chosen_a_wrong_hash_and_a_grid_mismatch_are_refused(self):
-        self.assertTrue(any("chosen" in p for p in self.problems({k: v for k, v in self.rec.items() if k != "chosen"})))
+    def test_another_setting_a_wrong_hash_and_changed_parameters_are_refused(self):
+        self.assertTrue(any("not 'r4g5'" in p for p in self.problems(setting="r4g5")))
         self.assertTrue(any("settings_sha256" in p for p in self.problems({**self.rec, "settings_sha256": "0" * 64})))
-        self.assertTrue(any("differs from the chosen grid" in p for p in self.problems({**self.rec, "chosen": "r4g5"})))
+        bad = copy.deepcopy(self.rec)
+        bad["settings"]["profile_settings"]["k"] = 99
+        self.assertTrue(any("parameters differ" in p for p in self.problems(bad)))
+
+    def test_a_missing_record_is_refused(self):
+        self.assertTrue(S.chosen_problems(self.tmp / "none.json", "r4g2"))
 
 
 class Static(unittest.TestCase):
@@ -208,13 +208,15 @@ class Static(unittest.TestCase):
 
     def test_order_of_the_steps_and_no_default_decide(self):
         t = SH.read_text()
-        i = [t.index("gate-files"), t.index("gate-profile"), t.index("start_check \"$SC_MODEL\""), t.index("report --phase header"),
+        i = [t.index("gate-files"), t.index("gate-chosen"), t.index("start_check \"$SC_MODEL\""), t.index("report --phase header"),
              t.index("m5_b4_served.py expand"), t.index("m5_b4_served.py packs"), t.index("$PYS served"), t.index("report --phase final"),
              t.index("set -C; printf 'used")]
         self.assertEqual(i, sorted(i))
         self.assertIn("is required and has no default", t)
         self.assertNotIn("DECIDE=strict", t)
         self.assertNotIn("DECIDE=loose", t)
+        self.assertNotIn("PROFILE_R4", t.replace("no gate on runs/m5/PROFILE_R4.json any more", ""))   # the old gate is gone
+        self.assertIn("runs/m6/B4_USED", t)
 
 
 def sh(*args, timeout=900, env=None):
@@ -229,7 +231,7 @@ def sh(*args, timeout=900, env=None):
 class Chain(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.real_marker_before = (ROOT / "runs/m5/B4_USED").exists()
+        cls.real_marker_before = (ROOT / "runs/m6/B4_USED").exists()
         cls.real_report_before = (ROOT / "runs/m5/B4_CHECK.md").exists()
 
     def setUp(self):
@@ -238,7 +240,7 @@ class Chain(unittest.TestCase):
         self.w = self.tmp / "w"
 
     def dry(self, *args, **kw):
-        return sh("--dry-run", "--work", str(self.w), "--decide", kw.pop("decide", "strict"), *args, **kw)
+        return sh("--dry-run", "--work", str(self.w), "--decide", kw.pop("decide", "strict"), "--setting", "r4g2", *args, **kw)
 
     def assertRefused(self, r, text):
         self.assertEqual(r.returncode, 2, r.stdout[-1200:] + r.stderr[-1200:])
@@ -246,16 +248,21 @@ class Chain(unittest.TestCase):
         self.assertIn(text, r.stderr)
 
     def tearDown(self):   # a dry run never touches the real marker or report
-        self.assertEqual((ROOT / "runs/m5/B4_USED").exists(), self.real_marker_before)
+        self.assertEqual((ROOT / "runs/m6/B4_USED").exists(), self.real_marker_before)
         self.assertEqual((ROOT / "runs/m5/B4_CHECK.md").exists(), self.real_report_before)
 
     # --- refusals, exit code 2
     def test_no_decide_is_refused_in_a_real_and_in_a_dry_run(self):
         for extra in ([], ["--dry-run", "--work", str(self.w)]):
-            r = sh(*extra)
+            r = sh(*extra, "--setting", "r4g2")
             self.assertRefused(r, "--decide")
         self.assertFalse(self.w.exists())
-        self.assertRefused(sh("--decide", "both"), "strict or loose")
+        self.assertRefused(sh("--decide", "both", "--setting", "r4g2"), "strict only")
+
+    def test_decide_loose_is_refused_and_so_is_a_missing_setting(self):
+        self.assertRefused(sh("--dry-run", "--work", str(self.w), "--decide", "loose", "--setting", "r4g2"), "strict only")
+        self.assertRefused(sh("--dry-run", "--work", str(self.w), "--decide", "strict"), "--setting")
+        self.assertFalse(self.w.exists())
 
     def test_a_rubrics_file_that_differs_from_the_chunk_check_is_refused(self):
         r = self.dry("--synth-flaw", "rubrics-hash")
@@ -263,17 +270,28 @@ class Chain(unittest.TestCase):
         self.assertFalse((self.w / "expansions.jsonl").exists())
         self.assertFalse((self.w / "B4_MANIFEST.json").exists())
 
-    def test_a_placeholder_record_is_refused_in_a_dry_run_and_in_a_real_run_before_any_server_call(self):
-        self.assertRefused(self.dry("--synth-flaw", "placeholder"), "not usable")
-        # real mode (no --dry-run) on synthetic files that carry a placeholder record: refused at the gate, nothing is written, no server is reached
+    def test_a_stop_record_or_another_setting_is_refused_in_a_dry_run_and_in_a_real_run_before_any_server_call(self):
+        self.assertRefused(self.dry("--synth-flaw", "stop"), "not usable")
+        self.assertRefused(self.dry("--synth-flaw", "other-setting", ), "not usable")
+        # real mode (no --dry-run) on synthetic files that carry a STOP record: refused at the gate, nothing is written, no server is reached
         syn = self.tmp / "syn"
-        subprocess.run([sys.executable, str(PY), "synth", "--dir", str(syn), "--flaw", "placeholder"], check=True, capture_output=True, cwd=ROOT)
+        subprocess.run([sys.executable, str(PY), "synth", "--dir", str(syn), "--flaw", "stop"], check=True, capture_output=True, cwd=ROOT)
         w2 = self.tmp / "realw"
-        r = sh("--decide", "loose", "--items", str(syn / "items.jsonl"), "--rubrics", str(syn / "rubrics.jsonl"), "--chunk-check", str(syn / "CHUNK_CHECK.json"),
-               "--profile-record", str(syn / "PROFILE_R4.json"), "--work", str(w2), "--report", str(self.tmp / "rep.md"), "--used-marker", str(self.tmp / "used"))
+        r = sh("--decide", "strict", "--setting", "r4g2", "--items", str(syn / "items.jsonl"), "--rubrics", str(syn / "rubrics.jsonl"),
+               "--chunk-check", str(syn / "CHUNK_CHECK.json"), "--chosen-record", str(syn / "RETRIEVAL_CHOSEN.json"), "--work", str(w2),
+               "--report", str(self.tmp / "rep.md"), "--used-marker", str(self.tmp / "used"))
         self.assertRefused(r, "not usable")
         self.assertFalse(w2.exists())
         self.assertFalse((self.tmp / "rep.md").exists() or (self.tmp / "used").exists())
+
+    def test_a_missing_chosen_record_is_refused_in_a_real_run(self):
+        syn = self.tmp / "syn"
+        subprocess.run([sys.executable, str(PY), "synth", "--dir", str(syn)], check=True, capture_output=True, cwd=ROOT)
+        r = sh("--decide", "strict", "--setting", "r4g2", "--items", str(syn / "items.jsonl"), "--rubrics", str(syn / "rubrics.jsonl"),
+               "--chunk-check", str(syn / "CHUNK_CHECK.json"), "--chosen-record", str(self.tmp / "absent.json"), "--work", str(self.tmp / "w3"),
+               "--report", str(self.tmp / "rep.md"), "--used-marker", str(self.tmp / "used"))
+        self.assertRefused(r, "absent.json is missing")
+        self.assertFalse((self.tmp / "w3").exists())
 
     def test_an_existing_b4_used_marker_is_refused(self):
         self.w.mkdir(parents=True)
@@ -281,11 +299,12 @@ class Chain(unittest.TestCase):
         self.assertRefused(self.dry(), "B4 was used already")
 
     def test_a_dry_run_never_takes_the_real_marker_or_real_files(self):
-        self.assertRefused(self.dry("--used-marker", "runs/m5/B4_USED"), "never uses the real marker")
+        self.assertRefused(self.dry("--used-marker", "runs/m6/B4_USED"), "never uses the real marker")
+        self.assertRefused(self.dry("--chosen-record", "runs/m6/RETRIEVAL_CHOSEN.json"), "never uses the real B4 files")
         self.assertRefused(self.dry("--items", "eval/m4/b4/items.jsonl"), "never uses the real B4 files")
 
     def test_options_for_dry_runs_only_are_refused_in_a_real_run(self):
-        self.assertRefused(sh("--decide", "strict", "--stop-after", "expand"), "dry runs only")
+        self.assertRefused(sh("--decide", "strict", "--setting", "r4g2", "--stop-after", "expand"), "dry runs only")
 
     def test_stage_markers_without_a_manifest_are_a_stale_marker(self):
         self.w.mkdir(parents=True)
@@ -303,6 +322,7 @@ class Chain(unittest.TestCase):
         self.assertEqual(len((self.w / "packs.jsonl").read_text().splitlines()), n)
         rep = (self.w / "B4_CHECK.md").read_text()
         self.assertIn("Decision count (`--decide`): **strict**", rep)
+        self.assertIn("Setting under check: **r4g2**", rep)
         self.assertIn("Rule X1", rep)
         self.assertIn("DRY RUN", rep)
         self.assertIn("strict count (decides)", rep)
@@ -323,13 +343,6 @@ class Chain(unittest.TestCase):
             row = json.loads(line)
             self.assertEqual(row["r4"][:len(row["frozen"])], row["frozen"])
         self.assertRefused(self.dry(), "B4 was used already")
-
-    def test_both_decide_values_give_a_verdict_and_label_the_other_count(self):
-        r = self.dry(decide="loose")
-        self.assertEqual(r.returncode, 0, r.stdout[-2000:] + r.stderr[-2000:])
-        rep = (self.w / "B4_CHECK.md").read_text()
-        self.assertIn("loose count (decides)", rep)
-        self.assertIn("strict count (reported, decides nothing)", rep)
 
     def test_the_header_is_written_before_the_expansions_and_a_stopped_run_resumes(self):
         r = self.dry("--synth-stop-after-items", "3")
@@ -358,13 +371,13 @@ class Chain(unittest.TestCase):
         r = self.dry()
         self.assertRefused(r, "changed since the stage passed")
         exp.write_text(keep)
-        rec = self.w / "in/PROFILE_R4.json"
+        rec = self.w / "in/RETRIEVAL_CHOSEN.json"
         old = rec.read_text()
         d = json.loads(old)
         d["note"] = "edited after the manifest"
         rec.write_text(json.dumps(d))
         r = self.dry()
-        self.assertRefused(r, "pinned file changed: input:profile_record")
+        self.assertRefused(r, "pinned file changed: input:chosen_record")
         rec.write_text(old)
         r = self.dry()
         self.assertEqual(r.returncode, 0, r.stdout[-2500:] + r.stderr[-2500:])
@@ -373,7 +386,7 @@ class Chain(unittest.TestCase):
 
     def test_a_changed_option_is_refused_on_resume(self):
         self.assertEqual(self.dry("--stop-after", "expand").returncode, 0)
-        self.assertRefused(self.dry(decide="loose"), "option differs: decide")
+        self.assertRefused(sh("--dry-run", "--work", str(self.w), "--decide", "strict", "--setting", "r4g1"), "not usable")
 
     # --- the server gate
     def test_a_model_of_another_client_refuses_and_our_own_build_is_unloaded(self):
@@ -381,7 +394,7 @@ class Chain(unittest.TestCase):
         self.assertRefused(r, "not free")
         self.assertFalse((self.w / "B4_MANIFEST.json").exists())
         w2 = self.tmp / "w2"
-        r = sh("--dry-run", "--work", str(w2), "--decide", "strict", "--fake-loaded", '["DeepSeek-V4.1-Flash-1017-oQ4e-mtp"]')
+        r = sh("--dry-run", "--work", str(w2), "--decide", "strict", "--setting", "r4g2", "--fake-loaded", '["DeepSeek-V4.1-Flash-1017-oQ4e-mtp"]')
         self.assertEqual(r.returncode, 0, r.stdout[-2000:] + r.stderr[-2000:])
         self.assertIn("unloaded DeepSeek-V4.1-Flash-1017-oQ4e-mtp", (w2 / "HEARTBEAT.md").read_text())
         self.assertIn("unloaded Qwen3.8-27B-4bit", (w2 / "HEARTBEAT.md").read_text())   # loaded by this chain, so unloaded after the expansions
