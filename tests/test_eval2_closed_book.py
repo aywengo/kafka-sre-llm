@@ -22,7 +22,7 @@ from test_eval2 import Base, Gen, item  # noqa: E402
 import test_eval2_hidden_judge as thj  # noqa: E402
 import test_eval2_score as tsc  # noqa: E402
 
-NEW_KEYS = {"m4_config", "model_listed", "m4_reference_model", "is_m4_reference"}
+NEW_KEYS = {"m4_config", "model_listed", "m4_reference_model", "is_m4_reference", "prompt_hash_form"}
 OLD_KEYS = {"harness", "config", "backend", "model_requested", "model_echoed", "model_build", "adapter", "mode", "k",
             "rerank", "extra_body", "max_tokens", "unmeasured_reasons", "index_sha256", "reranker_revision",
             "catalogue_sha256", "runtime_git_commit", "runtime_tree_dirty", "concurrency", "host_class",

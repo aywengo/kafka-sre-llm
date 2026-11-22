@@ -46,7 +46,12 @@ SMOKE_FILE = ROOT / "eval/m4/smoke_ids.json"
 MAGIC = b"EVAL2ENC1\n"
 TIERS = ("A", "B", "legacy")
 REQUIRED = ("id", "tier", "kind", "family", "domain", "question")
-MANIFEST_VOLATILE = ("started", "ended", "runtime_git_commits", "reloads")  # not compared on resume (the lists exist only after --allow-commit-change or a model reload)
+MANIFEST_VOLATILE = ("started", "ended", "runtime_git_commits", "reloads",
+                     "prompt_hash_form")  # not compared on resume (the lists exist only after --allow-commit-change or a model reload; the hash form is a description of the rows, not of the run, so older answer files stay resumable)
+# The form hashed into the rows' prompt_sha256 / search_terms_prompt_sha256 (M6 F-a): recorded in the manifest.
+PROMPT_HASH_FORM = ("sha256 of the UTF-8 bytes of json.dumps([{'role': ..., 'content': ...}, ...], sort_keys=True, "
+                    "ensure_ascii=False, separators=(',', ':')) over the exact messages sent to the model; "
+                    "prompt_chars is the sum of the characters of the contents")
 # What the server lists for a model (model_build): id, object, owned_by, model_type and max_model_len describe the model itself and are compared on
 # resume; "created" is the server's load stamp (it changes whenever the server reloads the same model) and is not compared: a change is recorded
 # in the manifest's "reloads" list and logged.
@@ -458,7 +463,7 @@ def build_manifest(a, gen, cfg, items_file, n_items, subset, replay_info):
         "runtime_git_commit": commit, "runtime_tree_dirty": dirty,
         "concurrency": 1, "host_class": a.host_class,
         "items_sha256": items_digest(items_file), "items_count": n_items, "subset": subset,
-        "replay": replay_info, "hidden": is_hidden(a.out),
+        "replay": replay_info, "hidden": is_hidden(a.out), "prompt_hash_form": PROMPT_HASH_FORM,
         "started": datetime.now(timezone.utc).isoformat(timespec="seconds"), "ended": None,
     }
     # The M4 label: pipeline.is_reference knows only the v3 in-process build and stays as it is (reasons above).
@@ -478,6 +483,66 @@ def build_manifest(a, gen, cfg, items_file, n_items, subset, replay_info):
     if rec is not None:
         m["items_files"] = rec
     return m
+
+
+def messages_fingerprint(messages):
+    """(sha256 hex, total characters of the contents) of a message list in the canonical form PROMPT_HASH_FORM."""
+    canon = [{"role": m["role"], "content": m["content"]} for m in messages]
+    blob = json.dumps(canon, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    return sha256_bytes(blob), sum(len(m["content"]) for m in canon)
+
+
+class RecordingGen:
+    """Wraps a generator and keeps the messages of the search-terms call (the one that starts with EXPAND_SYSTEM)."""
+
+    def __init__(self, gen):
+        self._gen = gen
+        self.expand_messages = None
+
+    def __getattr__(self, name):
+        return getattr(self._gen, name)
+
+    def chat(self, messages, *args, **kw):
+        from kafka_sre_rag import prompts
+        if messages and messages[0]["content"] == prompts.EXPAND_SYSTEM:
+            self.expand_messages = [dict(m) for m in messages]
+        return self._gen.chat(messages, *args, **kw)
+
+
+def prompt_hash_rows(a_rows):
+    """Per id: (answer prompt sha256 or None, search-terms prompt sha256 or None); None = not recorded."""
+    return {r["id"]: (r.get("prompt_sha256"), r.get("search_terms_prompt_sha256")) for r in a_rows}
+
+
+def compare_prompt_hashes(rows_a, rows_b):
+    """Compare two answer files by id. Returns dict: common, equal, differ (ids), not_recorded (ids lacking the field in
+    either file), only_a, only_b. The search-terms hash is compared too where both files have one."""
+    A, B = prompt_hash_rows(rows_a), prompt_hash_rows(rows_b)
+    res = {"common": 0, "equal": [], "differ": [], "not_recorded": [],
+           "only_a": sorted(set(A) - set(B)), "only_b": sorted(set(B) - set(A))}
+    for iid in sorted(set(A) & set(B)):
+        res["common"] += 1
+        (pa, sa), (pb, sb) = A[iid], B[iid]
+        if pa is None or pb is None:
+            res["not_recorded"].append(iid)
+        elif pa != pb or (sa is not None and sb is not None and sa != sb):
+            res["differ"].append(iid)
+        else:
+            res["equal"].append(iid)
+    return res
+
+
+def cmd_compare_prompts(a, out=None):
+    out = out or sys.stdout
+    if is_hidden(a.a) or is_hidden(a.b):
+        raise EvalError("compare-prompts reads open answer files only")
+    r = compare_prompt_hashes(read_jsonl(a.a), read_jsonl(a.b))
+    print(f"[compare-prompts] {r['common']} ids in both: {len(r['equal'])} equal, {len(r['differ'])} differ, "
+          f"{len(r['not_recorded'])} not recorded; only in A {len(r['only_a'])}, only in B {len(r['only_b'])}", file=out)
+    for key in ("differ", "not_recorded"):
+        for iid in r[key]:
+            print(f"  {key}: {iid}", file=out)
+    return 0
 
 
 def run_id(m):
@@ -752,12 +817,16 @@ def cmd_answer(a, out=sys.stdout):
         if closed:
             row["closed_book"] = True  # pack stays [] below: no retrieval was made
         t0 = time.monotonic()
+        rec = RecordingGen(gen)
         try:
-            r = evalhooks.run_item(full_question(it), gen, cfg, k=a.k, mode=a.mode, rerank=not a.no_rerank,
+            r = evalhooks.run_item(full_question(it), rec, cfg, k=a.k, mode=a.mode, rerank=not a.no_rerank,
                                    max_tokens=a.max_tokens, pack_ids=None if replay is None else replay[it["id"]],
                                    **({} if profile == "frozen" else {"profile": profile}))
             row.update(text=r["text"], tokens=r["tokens"] or None, truncated=r["truncated"],
                        seconds=r["seconds"], search_terms=r["search_terms"], pack=r["pack"])
+            row["prompt_sha256"], row["prompt_chars"] = messages_fingerprint(r["messages"])
+            if rec.expand_messages is not None:
+                row["search_terms_prompt_sha256"], row["search_terms_prompt_chars"] = messages_fingerprint(rec.expand_messages)
             consecutive = 0
         except Exception as e:  # recorded; the run continues
             row["error"] = one_line(e)
@@ -968,6 +1037,9 @@ def build_parser():
     an.add_argument("--rebuild-smoke", action="store_true")
     an.add_argument("--limit", type=int, default=None, help="first N items only (recorded in the manifest)")
     an.add_argument("--max-consecutive-errors", type=int, default=5, help="stop after N failures in a row (0: never)")
+    cp = sub.add_parser("compare-prompts", help="compare the prompt hashes of two open answer files by id")
+    cp.add_argument("a")
+    cp.add_argument("b")
     r = sub.add_parser("report")
     r.add_argument("answers", nargs="+")
     r.add_argument("--items", nargs="*", default=None,
@@ -1002,6 +1074,8 @@ def main(argv=None):
             print("hidden by tier/kind: " + json.dumps(hcells))
         elif a.cmd == "answer":
             return cmd_answer(a)
+        elif a.cmd == "compare-prompts":
+            return cmd_compare_prompts(a)
         elif a.cmd == "report":
             return cmd_report(a)
     except EvalError as e:

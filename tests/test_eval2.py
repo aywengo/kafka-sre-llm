@@ -108,7 +108,8 @@ class TestAnswer(Base):
         rows = eval2.read_jsonl(out)
         self.assertEqual([r["id"] for r in rows], ["i001", "i002"])
         r = rows[0]
-        self.assertEqual(set(r), {"id", "text", "tokens", "truncated", "seconds", "search_terms", "pack", "error", "run"})
+        self.assertEqual(set(r), {"id", "text", "tokens", "truncated", "seconds", "search_terms", "pack", "error", "run",
+                                  "prompt_sha256", "prompt_chars", "search_terms_prompt_sha256", "search_terms_prompt_chars"})
         self.assertEqual((r["text"], r["tokens"], r["search_terms"], r["pack"]), ("answer text", 11, "terms one, terms two", ["c1", "c2"]))
         m = json.loads(eval2.manifest_path(out).read_text())
         self.assertEqual(m["run"], r["run"])

@@ -274,7 +274,7 @@ if ! stage_done judge; then
   for set_ in b1 p2; do
     if [ $set_ = b1 ]; then items=$B1_ITEMS; rubs=$B1_RUBS; n=$NB1; else items=$P2_ITEMS; rubs=$P2_RUBS; n=$NP2; fi
     jout=$W/judge_$set_.jsonl; cache=$W/judge_cache_$set_.jsonl; calls=$((n * 2 * 2))
-    if judge_done $jout $calls; then echo "skip judging $set_: $jout has $calls valid rows"; continue; fi
+    if judge_done $jout $calls; then echo "skip judging $set_: $jout has $(.venv/bin/python -c 'import json,sys; r=[json.loads(l) for l in open(sys.argv[1]) if l.strip()]; v=sum(1 for x in r if x["valid_reply"]); print(f"{v} valid rows, {len(r) - v} unjudged of {len(r)} (expected {sys.argv[2]})")' $jout $calls)"; continue; fi
     hb "$N: judging $set_ started ($calls judge rows; the cache holds earlier replies)"
     for round in 1 2; do
       extra=""; [ $round = 2 ] && extra="--retry-invalid"

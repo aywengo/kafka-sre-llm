@@ -690,6 +690,10 @@ def result_row(item, pass_no, entry, coverage=False):
             "reasoning_chars": entry.get("reasoning_chars"), "finish_reason": entry.get("finish_reason"),
             "reply_chars": len(entry["reply"]) if isinstance(entry.get("reply"), str) else None}
     j = entry.get("j")
+    if not isinstance(j, dict) and isinstance(entry.get("reply"), str):
+        j, kind = repair_reply(entry["reply"], item["rubric"])   # only after the parse and the retry have failed
+        if j is not None:
+            base = {**base, "repaired": True, "repair_kind": kind}
     if not isinstance(j, dict):
         return {**base, "valid_reply": False, "judge_errors": ["invalid_json"]}
     ins = base["instruction"]
@@ -719,6 +723,57 @@ def parse_reply(content):
     except json.JSONDecodeError:
         return None
     return j if isinstance(j, dict) else None
+
+
+REPAIR_CLOSERS = "]}"
+REPAIR_KIND = "closing_sequence_removed"
+
+
+def _reply_ids_exact(rubric, j):
+    """True when the reply holds exactly the rubric's ids: every must point and every must-not point once, no other id."""
+    for key, points in (("must", rubric.get("must") or []), ("must_not", rubric.get("must_not") or [])):
+        entries = j.get(key)
+        if not isinstance(entries, list):
+            return False
+        ids = [e.get("id") if isinstance(e, dict) else None for e in entries]
+        if sorted(map(str, ids)) != sorted(p["id"] for p in points) or any(not isinstance(i, str) for i in ids):
+            return False
+    return True
+
+
+def repair_reply(content, rubric):
+    """-> (parsed reply, kind) or (None, None). Only for a reply that parse_reply refuses (so after the normal parse and the retry):
+    when the text parses up to a complete object followed by more text ("Extra data": a closing sequence closed the list or the
+    object too early) and removing the 1 to 3 closing brackets just before that point makes the whole text parse into a reply that
+    holds exactly the rubric's ids, that reply is returned. Anything else stays invalid. The reply's own text is not changed otherwise."""
+    if parse_reply(content) is not None:
+        return None, None
+    txt = re.sub(r"<think>.*?</think>", "", content or "", flags=re.S)
+    m = re.search(r"\{.*\}", txt, flags=re.S)
+    if not m or not rubric:
+        return None, None
+    s = m.group(0)
+    try:
+        json.loads(s)
+        return None, None
+    except json.JSONDecodeError as e:
+        if e.msg != "Extra data":
+            return None, None
+        pos = e.pos
+    found = []
+    for k in (1, 2, 3):
+        seg = s[pos - k:pos] if pos - k >= 0 else ""
+        if len(seg) != k or any(ch not in REPAIR_CLOSERS for ch in seg):
+            continue
+        try:
+            j = json.loads(s[:pos - k] + s[pos:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(j, dict) and _reply_ids_exact(rubric, j):
+            found.append((j, f"{REPAIR_KIND}:{seg}"))
+    if len(found) == 1:
+        return found[0]
+    return None, None
 
 
 class Judge:
@@ -1489,7 +1544,9 @@ def _main(argv=None):
                               a.concurrency, a.retry_invalid, calls=not a.rescore, setting=a.settings_name,
                               write_cache=(not a.stub) or a.stub_calls, instruction=a.instruction, excerpt_cap=a.excerpt_chars, coverage=a.coverage, hidden=hidden)
     invalid = sum(not r["valid_reply"] for r in rows)
-    print(f"{n_jobs} judgments, {n_new} called now, {len(rows) - invalid} valid replies, {invalid} unscored", flush=True)
+    repaired = sum(1 for r in rows if r.get("repaired"))
+    print(f"{n_jobs} judgments, {n_new} called now, {len(rows) - invalid - repaired} valid replies, "
+          f"{repaired} repaired replies (counted apart), {invalid} unscored", flush=True)
     if hidden:   # the per-item values are not printed during the run; their totals are, once
         ok = [r for r in rows if r["valid_reply"]]
         print(f"judge totals over {len(ok)} valid replies: quotes_failed {sum(r['quote_failed'] for r in ok)}"

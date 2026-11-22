@@ -375,7 +375,7 @@ if ! stage_done judge; then
   for set_ in b1 p2; do
     if [ $set_ = b1 ]; then items=$B1_ITEMS; rubs=$B1_RUBS; dans=$B1_ANS; n=$NB1; else items=$P2_ITEMS; rubs=$P2_RUBS; dans=$P2_ANS; n=$NP2; fi
     jout=$W/judge_$set_.jsonl; cache=$W/judge_cache_$set_.jsonl; calls=$((n * (NV + 1 - $([ $REFMODE = yes ] && echo 1 || echo 0)) * 2))
-    if judge_done $jout $calls; then echo "skip judging $set_: $jout has $calls valid rows"; continue; fi
+    if judge_done $jout $calls; then echo "skip judging $set_: $jout has $(.venv/bin/python -c 'import json,sys; r=[json.loads(l) for l in open(sys.argv[1]) if l.strip()]; v=sum(1 for x in r if x["valid_reply"]); print(f"{v} valid rows, {len(r) - v} unjudged of {len(r)} (expected {sys.argv[2]})")' $jout $calls)"; continue; fi
     hb "$N: judging $set_ started ($calls judge rows; the cache holds earlier replies)"
     for round in 1 2; do
       extra=""; [ $round = 2 ] && extra="--retry-invalid"
@@ -383,7 +383,8 @@ if ! stage_done judge; then
         grep -E '^(matched|instruction|items)' $W/judge_$set_.dry.out
       else jrun $set_ $items $rubs $dans $cache $jout $extra || fail "judging $set_ round $round failed (see $L/$N.judge_$set_.log)"; fi
       bad=$(.venv/bin/python -c 'import json,sys; print(sum(1 for l in open(sys.argv[1]) if l.strip() and not json.loads(l)["valid_reply"]))' $jout)
-      echo "judging $set_ round $round: $bad unscored"
+      rep=$(.venv/bin/python -c 'import json,sys; print(sum(1 for l in open(sys.argv[1]) if l.strip() and json.loads(l).get("repaired")))' $jout)
+      echo "judging $set_ round $round: $bad unscored, $rep repaired (valid, counted apart)"
       [ "$bad" = "0" ] && break
     done
     if [ $MAXU != 0 ]; then
