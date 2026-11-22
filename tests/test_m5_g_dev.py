@@ -478,6 +478,208 @@ class SmallChecks(unittest.TestCase):
             self.assertIn(c, o)
 
 
+# ---------------------------------------------------------------- a judge row that cannot be judged: --max-unjudged
+def judge_rows(invalid=(), sets=("default", "g1", "g2"), ids=("q1", "q2"), cut_all=()):
+    """Synthetic judge rows, two passes per answer; invalid = (set, id, pass) triples; cut_all = (set, id) pairs whose two passes are invalid."""
+    rows = []
+    for st in sets:
+        for i in ids:
+            for ps in (1, 2):
+                bad = (st, i, ps) in invalid or (st, i) in cut_all
+                rows.append({"set": st, "id": i, "pass": ps, "key": f"{st}-{i}-{ps}", "reference_given": False, "valid_reply": not bad,
+                             "judge_errors": ["invalid_json"] if bad else [], "Pval": 0.2 * ps + (0.1 if st == "g1" else 0.0)})
+    return rows
+
+
+class Unjudged(unittest.TestCase):
+    def setUp(self):
+        self._t = tempfile.TemporaryDirectory()
+        self.t = Path(self._t.name)
+        self.addCleanup(self._t.cleanup)
+
+    def file(self, rows, name="judge_b1.jsonl"):
+        R.wr(self.t / name, rows)
+        return self.t / name
+
+    def test_one_unjudged_row_goes_on_with_n1_and_the_coverage_is_the_valid_pass(self):
+        import unittest.mock
+        import eval2_judge as ej
+        f = self.file(judge_rows(invalid=[("g2", "q1", 1)]))
+        self.assertEqual(len(R.check_unjudged(f, 1)), 1)
+        code, o, e = run_rule(["judge-check", "--file", str(f), "--expect", "12", "--max-unjudged", "1"])
+        self.assertEqual(code, 0, o + e)
+        self.assertIn("1 unjudged", o)
+        self.assertIn("1 answers with one valid pass", o)
+        rub = self.t / "rub.jsonl"
+        R.wr(rub, [{"id": "q1"}, {"id": "q2"}])
+        with unittest.mock.patch.object(ej, "coverage_row", lambda r, rb: {"P": r["Pval"], "units": []}):
+            got = R.judged(str(f), str(rub), {"default", "g1", "g2"})
+        self.assertEqual(got[("g2", "q1")], (0.4, 0.0, 1))              # pass 2 alone: 0.2 * 2
+        self.assertAlmostEqual(got[("g2", "q2")][0], 0.3)               # two passes: mean of 0.2 and 0.4
+        self.assertEqual(got[("g2", "q2")][2], 2)
+
+    def test_the_same_with_n0_stops_as_today(self):
+        f = self.file(judge_rows(invalid=[("g2", "q1", 1)]))
+        with self.assertRaises(R.RuleError):
+            R.check_unjudged(f, 0)
+        code, o, e = run_rule(["judge-check", "--file", str(f), "--expect", "12"])
+        self.assertEqual(code, 1)
+        code, o, e = run_rule(["judge-check", "--file", str(f), "--expect", "12", "--max-unjudged", "0"])
+        self.assertEqual(code, 1)
+
+    def test_two_unjudged_rows_with_n1_stop(self):
+        f = self.file(judge_rows(invalid=[("g2", "q1", 1), ("g1", "q2", 2)]))
+        with self.assertRaises(R.RuleError):
+            R.check_unjudged(f, 1)
+        self.assertEqual(run_rule(["judge-check", "--file", str(f), "--expect", "12", "--max-unjudged", "1"])[0], 1)
+        self.assertEqual(run_rule(["judge-check", "--file", str(f), "--expect", "12", "--max-unjudged", "2"])[0], 0)
+
+    def test_an_answer_without_any_valid_pass_stops(self):
+        f = self.file(judge_rows(cut_all=[("g1", "q2")]))
+        with self.assertRaises(R.RuleError) as cm:
+            R.check_unjudged(f, 5)                # both rows of the answer are invalid: stops whatever N is
+        self.assertIn("without any valid judge pass", str(cm.exception))
+        self.assertEqual(run_rule(["judge-check", "--file", str(f), "--expect", "12", "--max-unjudged", "5"])[0], 1)
+
+    def test_a_short_file_does_not_pass_and_a_reference_row_is_not_counted(self):
+        rows = judge_rows()
+        f = self.file(rows[:-1])
+        self.assertEqual(run_rule(["judge-check", "--file", str(f), "--expect", "12", "--max-unjudged", "1"])[0], 1)
+        ref = dict(rows[0], reference_given=True, valid_reply=False)
+        self.assertEqual(R.check_unjudged(self.file(rows + [ref]), 0), [])
+
+    def test_the_report_block_names_the_option_the_row_the_parse_error_and_the_sentence(self):
+        w = self.t / "w"
+        R.wr(w / "judge_b1.jsonl", judge_rows(invalid=[("g2", "q1", 1)]))
+        R.wr(w / "judge_p2.jsonl", judge_rows())
+        R.wr(w / "judge_cache_b1.jsonl", [{"key": "g2-q1-1", "reply": '{"must": [1, 2,'}])
+        code, o, e = run_rule(["unjudged-note", "--work", str(w), "--max-unjudged", "1"])
+        self.assertEqual(code, 0, e)
+        self.assertIn("--max-unjudged 1", o)
+        self.assertIn("set of answers g2, id q1, pass 1", o)
+        self.assertIn("invalid_json: JSONDecodeError", o)
+        self.assertIn("attempts: 4", o)
+        self.assertIn("this answer's judged measures rest on one pass", o)
+        self.assertIn("pilot2: 0 unjudged", o)
+        code, o, e = run_rule(["unjudged-note", "--work", str(w), "--max-unjudged", "0"])
+        self.assertEqual((code, o), (0, ""))                  # off by default: nothing is printed
+
+    def test_the_rule_text_is_not_changed(self):
+        self.assertEqual(R.sha256_text(R.RULE_TEXT), "f1dc99a68170d0ca6c81c17a75d6732901351d3746ebdf31c2eb135162767683")
+
+
+# ---------------------------------------------------------------- --accept-code-change
+class AcceptCodeChange(unittest.TestCase):
+    def setUp(self):
+        self._t = tempfile.TemporaryDirectory()
+        self.t = Path(self._t.name)
+        self.addCleanup(self._t.cleanup)
+        (self.t / "scripts").mkdir()
+        self.w = self.t / "w"
+        self.w.mkdir()
+        self.rule, self.sh = self.t / "scripts/m5_g_rule.py", self.t / "scripts/m5_g_dev.sh"
+        self.other, self.ev = self.t / "items.jsonl", self.t / "scripts/eval2.py"
+        for f, txt in ((self.rule, "rule v1"), (self.sh, "sh v1"), (self.other, "items"), (self.ev, "eval2 v1")):
+            f.write_text(txt)
+        self.frozen = self.t / "frozen.json"
+        self.frozen.write_text(json.dumps({"prompts_sha256": {"A": "aa"}}))
+        R.main(self.args("manifest"))
+        self.old_manifest = (self.w / "MANIFEST.json").read_text()
+
+    def args(self, cmd, extra=()):
+        pins = [x for f in (self.rule, self.sh, self.other, self.ev) for x in ("--pin", str(f))]
+        return [cmd, "--manifest", str(self.w / "MANIFEST.json"), "--work", str(self.w), *pins, "--frozen", str(self.frozen),
+                "--mechanical", "sample", "--model", "m", "--dry", *extra]
+
+    def stage(self, name):
+        run_rule(["mark", "--work", str(self.w), "--stage", name, "--out", str(self.other)])
+
+    def done(self, *names):
+        for n in names:
+            self.stage(n)
+
+    def test_accepted_with_the_option_when_every_answering_stage_is_done(self):
+        self.done("header", "prepare", "reference", "determinism", "answers")
+        self.rule.write_text("rule v2")
+        self.sh.write_text("sh v2")
+        code, o, e = run_rule(self.args("start-check", ["--accept-code-change", "judge row policy"]))
+        self.assertEqual(code, 0, o + e)
+        self.assertIn("ACCEPTED change of the chain's own code", o)
+        m = json.load(open(self.w / "MANIFEST.json"))
+        ch = m["accepted_code_changes"]
+        self.assertEqual(len(ch), 1)
+        self.assertEqual(ch[0]["reason"], "judge row policy")
+        self.assertIn("T", ch[0]["time"])
+        self.assertEqual(set(ch[0]["files"]), {str(self.rule), str(self.sh)})
+        self.assertEqual(ch[0]["files"][str(self.rule)], {"old": R.sha256_text("rule v1"), "new": R.sha256_text("rule v2")})
+        self.assertEqual(m["pins"][str(self.rule)], R.sha256_text("rule v1"))          # the original pins stay as they were
+        # the markers are still valid, a start check without the option now passes, and a further change is refused again
+        self.assertEqual(run_rule(self.args("start-check"))[0], 0)
+        self.sh.write_text("sh v3")
+        self.assertEqual(run_rule(self.args("start-check"))[0], 2)
+        code, o, e = run_rule(self.args("start-check", ["--accept-code-change", "second"]))
+        self.assertEqual(code, 0, o + e)
+        ch = json.load(open(self.w / "MANIFEST.json"))["accepted_code_changes"]
+        self.assertEqual(ch[1]["files"][str(self.sh)]["old"], R.sha256_text("sh v2"))        # the old hash is the one in force before
+        code, o, e = run_rule(["code-change-note", "--manifest", str(self.w / "MANIFEST.json")])
+        self.assertIn(R.sha256_text("rule v1"), o)
+        self.assertIn(R.sha256_text("rule v2"), o)
+        self.assertIn("judge row policy", o)
+
+    def test_refused_without_the_option(self):
+        self.done("reference", "determinism", "answers")
+        self.rule.write_text("rule v2")
+        code, o, e = run_rule(self.args("start-check"))
+        self.assertEqual(code, 2)
+        self.assertIn("the stored manifest differs from the state now", e)
+        self.assertEqual((self.w / "MANIFEST.json").read_text(), self.old_manifest)
+
+    def test_refused_when_an_answering_stage_is_not_done(self):
+        for missing in ("reference", "determinism", "answers"):
+            for f in self.w.glob("stage_*.done"):
+                f.unlink()
+            self.done(*[s for s in ("reference", "determinism", "answers") if s != missing], "header")
+            self.rule.write_text("rule v2")
+            code, o, e = run_rule(self.args("start-check", ["--accept-code-change", "why"]))
+            self.assertEqual(code, 2, missing)
+            self.assertIn("not every answering stage is done", e)
+            self.assertEqual((self.w / "MANIFEST.json").read_text(), self.old_manifest)
+            self.rule.write_text("rule v1")
+
+    def test_refused_when_another_pinned_file_changed(self):
+        self.done("reference", "determinism", "answers")
+        self.rule.write_text("rule v2")
+        for f in (self.ev, self.other):
+            f.write_text(f.read_text() + " changed")
+            code, o, e = run_rule(self.args("start-check", ["--accept-code-change", "why"]))
+            self.assertEqual(code, 2, f)
+            self.assertIn("besides scripts/m5_g_rule.py and scripts/m5_g_dev.sh", e)
+            f.write_text(f.read_text().replace(" changed", ""))
+        self.frozen.write_text(json.dumps({"prompts_sha256": {"A": "bb"}}))
+        self.assertEqual(run_rule(self.args("start-check", ["--accept-code-change", "why"]))[0], 2)
+        self.assertEqual((self.w / "MANIFEST.json").read_text(), self.old_manifest)
+
+    def test_refused_with_an_empty_reason_and_with_a_stale_marker_and_nothing_to_accept_is_a_no_op(self):
+        self.done("reference", "determinism", "answers")
+        self.assertEqual(run_rule(self.args("start-check", ["--accept-code-change", "why"]))[0], 0)        # nothing differs: nothing to accept, nothing written
+        self.assertEqual((self.w / "MANIFEST.json").read_text(), self.old_manifest)
+        self.rule.write_text("rule v2")
+        self.assertEqual(run_rule(self.args("start-check", ["--accept-code-change", "  "]))[0], 2)
+        (self.w / "stage_answers.done").write_text(json.dumps({"stage": "answers", "manifest_sha256": "0" * 64, "outputs": {}}))
+        code, o, e = run_rule(self.args("start-check", ["--accept-code-change", "why"]))
+        self.assertEqual(code, 2)
+        self.assertIn("stale", e)
+        self.assertEqual((self.w / "MANIFEST.json").read_text(), self.old_manifest)       # nothing written
+
+    def test_no_note_without_an_accepted_change(self):
+        code, o, e = run_rule(["code-change-note", "--manifest", str(self.w / "MANIFEST.json")])
+        self.assertEqual((code, o), (0, ""))
+
+    def test_the_manifest_hash_ignores_the_audit_key(self):
+        m = json.loads(self.old_manifest)
+        self.assertEqual(R.manifest_hash(m), R.manifest_hash({**m, "accepted_code_changes": [{"x": 1}]}))
+
+
 # ---------------------------------------------------------------- the chain, dry (stub model, stub judge)
 @unittest.skipUnless(HAVE_WORK and IDS_FILE.exists(), "work/ inputs or eval/m4/g_dev_ids.json absent")
 class ChainDryRun(unittest.TestCase):
@@ -596,6 +798,24 @@ class ChainDryRun(unittest.TestCase):
             self.assertIn("pins.", r.stderr)
         finally:
             mp.write_text(good)
+
+    def test_5b_the_new_options_are_checked_before_anything_starts(self):
+        for bad in ("x", "-1", "1.5"):
+            r = self.chain("--max-unjudged", bad)
+            self.assertEqual(r.returncode, 2, bad)
+            self.assertIn("--max-unjudged is a whole number", r.stderr)
+
+    def test_5c_the_options_are_accepted_by_a_dry_resume_and_the_report_stays_as_it_is(self):
+        # all judge rows of the stub are valid: nothing is left out, the unjudged block says so, and the accepted-change block is absent
+        # (the code did not change here, so the option has nothing to accept and the dry start check goes on with the unchanged manifest)
+        before = (self.w / "G_DEV_from_stub_data.md").read_text()
+        r = self.chain("--max-unjudged", "1")
+        self.assertEqual(r.returncode, 0, r.stdout[-1500:] + r.stderr[-1500:])
+        rep = (self.w / "G_DEV_from_stub_data.md").read_text()
+        self.assertIn("Judge rows that could not be judged", rep)
+        self.assertIn("No row is unjudged.", rep)
+        self.assertNotIn("Accepted change of the chain's own code", rep)
+        self.assertNotIn("Judge rows that could not be judged", before)
 
     def test_6_a_changed_output_is_refused(self):
         f = self.w / "ans_b1_g1.jsonl"

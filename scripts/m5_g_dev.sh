@@ -31,16 +31,23 @@
 #   scripts/m5_g_dev.sh > runs/m5/logs/m5_g_dev.out 2>&1 &
 #   scripts/m5_g_dev.sh --dry-run [--work DIR] [--mechanical all]   # stub model, stub judge, no server, no markers outside DIR, no heartbeat, no
 #                                                                   # file written outside DIR (default: a temporary directory); the numbers are not measurements
-# Options: --mechanical sample|all, --ids FILE, --work DIR, --report FILE. Markers: runs/m5/logs/m5_g_dev.done or .failed (a dry run: in its own DIR).
+# Options: --mechanical sample|all, --ids FILE, --work DIR, --report FILE. Two options that are off unless given (the Owner decides):
+#   --max-unjudged N (default 0: a judge row that stays invalid after the judge rounds stops the chain): up to N such rows per judged set (B1, pilot2)
+#   are left out; an answer's judged measures are then the mean over its valid passes, an answer with no valid pass still stops the chain; the report
+#   lists every unjudged row under the rule's text. --accept-code-change "REASON": the start check accepts changed hashes of scripts/m5_g_rule.py and
+#   scripts/m5_g_dev.sh and of nothing else, only when the reference, determinism and answers stages are done; old and new hashes, the reason and the time
+#   go into the manifest and the report. Markers: runs/m5/logs/m5_g_dev.done or .failed (a dry run: in its own DIR).
 set -e
-DRY=no; MECH=sample; IDS=eval/m4/g_dev_ids.json; W=work/m5/gdev; REPORT=runs/m5/G_DEV.md; WSET=no; RSET=no
+DRY=no; MECH=sample; IDS=eval/m4/g_dev_ids.json; W=work/m5/gdev; REPORT=runs/m5/G_DEV.md; WSET=no; RSET=no; MAXU=0; ACCEPT=
 while [ $# -gt 0 ]; do case $1 in
   --dry-run) DRY=yes;;
   --mechanical) MECH=${2:?}; shift;; --ids) IDS=${2:?}; shift;;
   --work) W=${2:?}; WSET=yes; shift;; --report) REPORT=${2:?}; RSET=yes; shift;;
-  *) echo "usage: scripts/m5_g_dev.sh [--dry-run] [--mechanical sample|all] [--ids FILE] [--work DIR] [--report FILE]" >&2; exit 2;; esac
+  --max-unjudged) MAXU=${2:?}; shift;; --accept-code-change) ACCEPT=${2:?}; shift;;
+  *) echo "usage: scripts/m5_g_dev.sh [--dry-run] [--mechanical sample|all] [--ids FILE] [--work DIR] [--report FILE] [--max-unjudged N] [--accept-code-change REASON]" >&2; exit 2;; esac
   shift; done
 case $MECH in sample|all) ;; *) echo "REFUSED: --mechanical is sample or all; nothing started" >&2; exit 2;; esac
+case $MAXU in ''|*[!0-9]*) echo "REFUSED: --max-unjudged is a whole number (0 or more); nothing started" >&2; exit 2;; esac
 L=runs/m5/logs; N=m5_g_dev; R=scripts/m5_g_rule.py
 CATS=work/m4/catalogues; CHUNKS=work/v3/chunks_s1.jsonl; FROZEN=kafka_sre_rag/frozen.json
 B1_ITEMS=eval/m4/b1/items.jsonl; B1_RUBS=eval/m4/b1/rubrics.jsonl; P2_ITEMS=eval/m4/pilot2/items.jsonl; P2_RUBS=eval/m4/pilot2/rubrics.jsonl
@@ -134,11 +141,13 @@ PINS="--pin $B1_ITEMS --pin $B1_RUBS --pin $P2_ITEMS --pin $P2_RUBS --pin $TA_IT
 for f in scripts/m5_g_rule.py scripts/m5_g_dev.sh scripts/eval2.py scripts/eval2_score.py scripts/eval2_judge.py scripts/eval2_idcheck.py kafka_sre_rag/prompts.py $FROZEN; do
   PINS="$PINS --pin $f"; done
 GIT_HEAD=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)   # recorded for the reader, never compared
-gstate() { # SUBCOMMAND: the manifest and the start check take the same state; the judge's arguments contain spaces, so they are passed quoted
-  .venv/bin/python $R "$1" $STATE --info "git_head=$GIT_HEAD" --judge-arg "model=$DS" --judge-arg "setting=$SETTING" --judge-arg "extra_body=$JEB" \
-    --judge-arg "source_chars=$SRC" --judge-arg "instruction=v2" --judge-arg "passes=1 2" --judge-arg "role=coverage"; }
+gstate() { # SUBCOMMAND [EXTRA...]: the manifest and the start check take the same state; the judge's arguments contain spaces, so they are passed quoted
+  sub=$1; shift
+  .venv/bin/python $R "$sub" $STATE --info "git_head=$GIT_HEAD" --judge-arg "model=$DS" --judge-arg "setting=$SETTING" --judge-arg "extra_body=$JEB" \
+    --judge-arg "source_chars=$SRC" --judge-arg "instruction=v2" --judge-arg "passes=1 2" --judge-arg "role=coverage" "$@"; }
 STATE="--manifest $W/MANIFEST.json --work $W $PINS --frozen $FROZEN --mechanical $MECH --model $Q4 $DRYFLAG"
-gstate start-check || { moveaside; refuse "the start check failed (see above; nothing was moved or deleted)"; }
+if [ -n "$ACCEPT" ]; then gstate start-check --accept-code-change "$ACCEPT" || { moveaside; refuse "the start check failed (see above; nothing was moved or deleted)"; }
+else gstate start-check || { moveaside; refuse "the start check failed (see above; nothing was moved or deleted)"; }; fi
 .venv/bin/python $R draw-ids --tier-a $TA_ITEMS --tier-a3 $TA3_ITEMS --check $IDS || refuse "$IDS does not reproduce from its rule"
 for s in "$B1_ANS 30" "$P2_ANS 24" "$TA_ANS 251" "$TA3_ANS 88"; do
   set -- $s; .venv/bin/python $R check-answers --file $1 --expect $2 --mode default || refuse "the stored default answers $1 are incomplete, have errors or another mode"
@@ -283,7 +292,8 @@ fi
 # ---------------------------------------------------------------- judge: DeepSeek, coverage role, two passes, default included
 if ! stage_done judge; then
   if [ $DRY = no ]; then unload $Q4; hb "$N: answering finished, $Q4 unloaded; the judge $DS loads on the first request"; fi
-  judge_done() { [ -f "$1" ] && .venv/bin/python -c 'import json,sys; r=[json.loads(l) for l in open(sys.argv[1]) if l.strip()]; sys.exit(0 if len(r)==int(sys.argv[2]) and all(x["valid_reply"] for x in r) else 1)' "$1" "$2" 2>/dev/null; }
+  judge_done() { if [ $MAXU != 0 ]; then [ -f "$1" ] && .venv/bin/python $R judge-check --file "$1" --expect "$2" --max-unjudged $MAXU > /dev/null 2>&1; return; fi
+    [ -f "$1" ] && .venv/bin/python -c 'import json,sys; r=[json.loads(l) for l in open(sys.argv[1]) if l.strip()]; sys.exit(0 if len(r)==int(sys.argv[2]) and all(x["valid_reply"] for x in r) else 1)' "$1" "$2" 2>/dev/null; }
   jrun() { # SET ITEMS RUBRICS DEFAULT_ANS CACHE OUT EXTRA...
     set_=$1; items=$2; rubs=$3; dans=$4; cache=$5; jout=$6; shift 6
     SETS="default=$W/ans_${set_}_default.jsonl g1=$W/ans_${set_}_g1.jsonl g2=$W/ans_${set_}_g2.jsonl"
@@ -310,7 +320,9 @@ if ! stage_done judge; then
       echo "judging $set_ round $round: $bad unscored"
       [ "$bad" = "0" ] && break
     done
-    judge_done $jout $calls || fail "judging $set_: $jout does not hold $calls valid rows"
+    if [ $MAXU != 0 ]; then
+      .venv/bin/python $R judge-check --file $jout --expect $calls --max-unjudged $MAXU || fail "judging $set_: $jout does not hold $calls rows with at most $MAXU unjudged and a valid pass for every answer"
+    else judge_done $jout $calls || fail "judging $set_: $jout does not hold $calls valid rows"; fi
   done
   if [ $DRY = no ]; then unload $DS; hb "$N: judging finished, $DS unloaded"; fi
   mark judge $W/judge_b1.jsonl $W/judge_p2.jsonl
@@ -341,7 +353,7 @@ if ! stage_done checks; then
 fi
 
 # ---------------------------------------------------------------- measures, the rule, the report
-.venv/bin/python $R measures --work $W --ids $IDS --mechanical $MECH --stored-b1 $B1_ANS --stored-p2 $P2_ANS --rubrics-b1 $B1_RUBS --rubrics-p2 $P2_RUBS $([ $DRY = yes ] && echo --stub) \
+.venv/bin/python $R measures --work $W --ids $IDS --mechanical $MECH --stored-b1 $B1_ANS --stored-p2 $P2_ANS --rubrics-b1 $B1_RUBS --rubrics-p2 $P2_RUBS --max-unjudged $MAXU $([ $DRY = yes ] && echo --stub) \
   > $W/measures.out || fail "the measures could not be computed (a missing input is an error, see above)"
 RULE_RC=0; .venv/bin/python $R rule --measures $W/measures.json > $W/rule_out.txt 2> $W/rule_out.err || RULE_RC=$?
 [ $RULE_RC = 0 ] || { cat $W/rule_out.err >&2; fail "the rule could not be applied: $(head -1 $W/rule_out.err)"; }
@@ -350,6 +362,10 @@ CHOICE=$(sed -n 's/^CHOICE: \([A-Za-z0-9]*\).*/\1/p' $W/rule_out.txt)
 {
   cat $HEAD
   echo
+  for note in "unjudged-note --work $W --max-unjudged $MAXU" "code-change-note --manifest $W/MANIFEST.json"; do
+    txt=$(.venv/bin/python $R $note) || fail "the report block '${note%% *}' could not be written"
+    [ -z "$txt" ] || { echo "$txt"; echo; }
+  done
   echo "## Result$([ $DRY = yes ] && echo ' (from stub data: not a measurement)')"
   echo
   echo "**Choice by the rule: ${CHOICE:-unknown}.**"

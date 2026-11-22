@@ -11,6 +11,10 @@ Pure Python, CPU only; no model, no server. Used by scripts/m5_g_dev.sh and test
   manifest   ...                              write the chain's manifest once (pinned files by sha256, options, rule text hash)
   start-check ...                             compare the stored manifest and the stage markers with the state computed now; exit 2 on a difference
   mark       --work D --stage S [--out F ...] write the stage marker (manifest hash, sha256 of every output file)
+  judge-check --file F --expect N --max-unjudged K   a judge file: N rows, at most K invalid, every answer with a valid pass (exit 0 or 1)
+  unjudged-note --work D --max-unjudged K            the report block of the judge rows left out (printed only for K > 0)
+  code-change-note --manifest F                      the report block of an accepted change of the chain's own code (empty when none)
+  (start-check --accept-code-change REASON: resume after a change of m5_g_rule.py or m5_g_dev.sh only; see cmd_start_check)
   check-answers --file F --expect N [--mode M]   complete, no error, no empty text, a pack on every row, manifest ended
   determinism --stored F --new F --n N        measurement, never stops: the first N fresh default answers against the stored ones, byte for byte
   repeat      --first F --again F --n N       measurement, never stops: the first N default answers of this run against the same items answered a second time
@@ -26,6 +30,7 @@ Pure Python, CPU only; no model, no server. Used by scripts/m5_g_dev.sh and test
 Exit codes: 0 done; 1 a check failed; 2 refused or an input is missing (a missing input is never a pass).
 """
 import argparse
+import datetime
 import hashlib
 import json
 import math
@@ -245,14 +250,33 @@ def current_state(a):
             "pins": {p: sha256_file(p) for p in sorted(a.pin)}}
 
 
+AUDIT_KEY = "accepted_code_changes"     # the audit trail of --accept-code-change; not part of the manifest hash, so the stage markers stay valid
+CODE_FILES = ("m5_g_rule.py", "m5_g_dev.sh")       # the chain's own code: the only pins whose change can be accepted (in the directory scripts)
+ANSWER_STAGES = ("reference", "determinism", "answers")
+
+
 def manifest_hash(m):
-    return sha256_text(json.dumps(m, sort_keys=True))
+    return sha256_text(json.dumps({k: v for k, v in m.items() if k != AUDIT_KEY}, sort_keys=True))
+
+
+def is_code_pin(path):
+    parts = Path(path).parts
+    return len(parts) >= 2 and parts[-2] == "scripts" and parts[-1] in CODE_FILES
+
+
+def effective_pins(m):
+    """The pinned hashes in force: the manifest's, with the new hash of every accepted code change laid over them."""
+    pins = dict(m.get("pins") or {})
+    for ch in m.get(AUDIT_KEY) or []:
+        for f, hh in (ch.get("files") or {}).items():
+            pins[f] = hh["new"]
+    return pins
 
 
 def diff_state(old, new):
     out = []
     for k in sorted(set(old) | set(new)):
-        if k == "info" or old.get(k) == new.get(k):     # "info" (the git head) is recorded for the reader and never decides
+        if k in ("info", AUDIT_KEY) or old.get(k) == new.get(k):     # "info" (the git head) is recorded for the reader and never decides
             continue
         if isinstance(old.get(k), dict) and isinstance(new.get(k), dict):
             for kk in sorted(set(old[k]) | set(new[k])):
@@ -273,6 +297,8 @@ def add_state_args(p):
     p.add_argument("--dry", action="store_true")
     p.add_argument("--judge-arg", action="append", default=[], help="NAME=VALUE of the judge's arguments (setting, extra body, source characters); compared")
     p.add_argument("--info", action="append", default=[], help="NAME=VALUE recorded for the reader (the git head); never compared")
+    p.add_argument("--accept-code-change", default=None, metavar="REASON",
+                   help="start-check only: accept a changed hash of scripts/m5_g_rule.py or scripts/m5_g_dev.sh (nothing else), when every answering stage is done")
 
 
 def cmd_manifest(a):
@@ -307,7 +333,30 @@ def cmd_start_check(a):
     except (RuleError, ValueError, OSError) as e:
         print(f"REFUSED: {e}", file=sys.stderr)
         return 2
-    diffs = diff_state(old, new)
+    old_eff = {**old, "pins": effective_pins(old)}
+    diffs = diff_state(old_eff, new)
+    accepted = None
+    if diffs and a.accept_code_change is not None:
+        changed = [f for f in new["pins"] if is_code_pin(f) and old_eff["pins"].get(f) != new["pins"][f]]
+        rest = diff_state({**old_eff, "pins": {k: (new["pins"][k] if k in changed else v) for k, v in old_eff["pins"].items()}}, new)
+        names = {m.stem[6:] for m in mk}
+        if not a.accept_code_change.strip():
+            why = "the reason of --accept-code-change is empty"
+        elif not changed:
+            why = "no pinned hash of scripts/m5_g_rule.py or scripts/m5_g_dev.sh differs (only those two can be accepted)"
+        elif rest:
+            why = "something besides scripts/m5_g_rule.py and scripts/m5_g_dev.sh differs: " + "; ".join(rest[:6])
+        elif not all(st in names for st in ANSWER_STAGES):
+            why = "not every answering stage is done (needs " + ", ".join(ANSWER_STAGES) + "; done: " + (", ".join(sorted(names)) or "none") + ")"
+        else:
+            why = None
+            accepted = changed
+        if why:
+            print(f"REFUSED: --accept-code-change: {why} (nothing was moved, deleted or written):", file=sys.stderr)
+            for d in diffs[:12]:
+                print("  " + d, file=sys.stderr)
+            return 2
+        diffs = []
     if diffs:
         print("REFUSED: the stored manifest differs from the state now (nothing was moved or deleted):", file=sys.stderr)
         for d in diffs[:12]:
@@ -334,7 +383,31 @@ def cmd_start_check(a):
         for b in bad[:12]:
             print("  " + b, file=sys.stderr)
         return 2
+    if accepted:     # the markers are valid: record the change in the manifest (the audit key is outside the manifest hash) and tell the reader
+        rec = {"time": datetime.datetime.now().astimezone().isoformat(timespec="seconds"), "reason": a.accept_code_change.strip(),
+               "files": {f: {"old": old_eff["pins"][f], "new": new["pins"][f]} for f in accepted}}
+        out = {**old, AUDIT_KEY: (old.get(AUDIT_KEY) or []) + [rec]}
+        tmp = Path(str(mp) + ".tmp")
+        tmp.write_text(json.dumps(out, indent=1, sort_keys=True) + "\n", encoding="utf-8")
+        tmp.replace(mp)
+        for f in accepted:
+            print(f"ACCEPTED change of the chain's own code: {f}: {rec['files'][f]['old']} -> {rec['files'][f]['new']}; reason: {rec['reason']}")
     print(f"start check: manifest equal to the state now; {len(mk)} stage(s) done: {', '.join(m.stem[6:] for m in mk) or 'none'}")
+    return 0
+
+
+def cmd_code_change_note(a):
+    m = json.load(open(a.manifest, encoding="utf-8"))
+    ch = m.get(AUDIT_KEY) or []
+    if not ch:
+        return 0
+    print("### Accepted change of the chain's own code (`--accept-code-change`)\n")
+    print("Only `scripts/m5_g_rule.py` and `scripts/m5_g_dev.sh` can be accepted, and only when every answering stage was done: all answers were produced "
+          "under the old pins.\n")
+    for c in ch:
+        print(f"- {c['time']}: reason: {c['reason']}")
+        for f, hh in sorted(c["files"].items()):
+            print(f"  - `{f}`: old sha256 `{hh['old']}`, new sha256 `{hh['new']}`")
     return 0
 
 
@@ -468,6 +541,86 @@ def judged(results_path, rubrics, set_names):
         sm = sum(1 for u in c["units"] if u["status"] == "missed" and u.get("supported"))
         tmp.setdefault((r["set"], r["id"]), []).append((c["P"], sm))
     return {k: (sum(x[0] for x in v) / len(v), sum(x[1] for x in v) / len(v), len(v)) for k, v in tmp.items()}
+
+
+def unjudged_state(results_path, set_names=None):
+    """-> (rows, unjudged rows, answers without any valid pass). An unjudged row is a judge row of a non-reference answer whose reply stayed invalid.
+    An answer is (set, id); set_names None = every set in the file."""
+    rows = [r for r in rd(results_path) if not r.get("reference_given") and (set_names is None or r["set"] in set_names)]
+    bad = [r for r in rows if not r.get("valid_reply")]
+    valid = {(r["set"], r["id"]) for r in rows if r.get("valid_reply")}
+    nopass = sorted({(r["set"], r["id"]) for r in bad} - valid)
+    return rows, bad, nopass
+
+
+def check_unjudged(results_path, max_unjudged, set_names=None):
+    """The policy of --max-unjudged: raises RuleError when the file has more unjudged rows than allowed or an answer with no valid pass
+    (its scenario would have to leave the paired comparison for every set of answers, the reference included: the chain stops instead).
+    -> the unjudged rows."""
+    rows, bad, nopass = unjudged_state(results_path, set_names)
+    if nopass:
+        raise RuleError(f"{results_path}: {len(nopass)} answer(s) without any valid judge pass (first: {nopass[0][0]} {nopass[0][1]}); "
+                        "their scenarios would leave the comparison for every set of answers, so the chain stops")
+    if len(bad) > max_unjudged:
+        raise RuleError(f"{results_path}: {len(bad)} unjudged row(s), at most {max_unjudged} allowed (--max-unjudged)")
+    return bad
+
+
+def cmd_judge_check(a):
+    rows, bad, nopass = unjudged_state(a.file)
+    allrows = rd(a.file)
+    answers = {(r["set"], r["id"]) for r in rows}
+    one = sorted(k for k in answers if sum(1 for r in rows if (r["set"], r["id"]) == k and r.get("valid_reply")) == 1)
+    print(f"judge check {a.file}: {len(allrows)} of {a.expect} rows, {len(rows) - len(bad)} valid, {len(bad)} unjudged (at most {a.max_unjudged} allowed), "
+          f"{len(nopass)} answers without a valid pass, {len(one)} answers with one valid pass")
+    return 0 if len(allrows) == a.expect and len(bad) <= a.max_unjudged and not nopass else 1
+
+
+def parse_error(row, cache):
+    """The parse error of an unjudged row: the row's judge_errors and, when the cache holds the reply, what the JSON parser says about it."""
+    what = ",".join(map(str, row.get("judge_errors") or [])) or "invalid reply"
+    ent = cache.get(row.get("key"))
+    reply = ent.get("reply") if isinstance(ent, dict) else None
+    if isinstance(reply, str):
+        try:
+            json.loads(reply)
+            return what + " (the strict JSON parser accepts the stored reply; the judge's own parser did not)"
+        except ValueError as e:
+            return f"{what}: {type(e).__name__}: {e}"
+    return what
+
+
+def cmd_unjudged_note(a):
+    """The report block under the rule's text: the option's value, every unjudged row and the fixed sentence. Nothing is printed for K = 0."""
+    if a.max_unjudged <= 0:
+        return 0
+    W = Path(a.work)
+    names = {"b1": "B1", "p2": "pilot2"}
+    print("### Judge rows that could not be judged (`--max-unjudged`)\n")
+    print(f"Option `--max-unjudged {a.max_unjudged}` (default 0: the chain stops when a judge row stays invalid). After the chain's judge rounds a row that is "
+          "still invalid is left out; an answer's coverage and every other judged measure is the mean over its valid passes. An answer with no valid pass "
+          "stops the chain. The rule's text and thresholds are unchanged.\n")
+    total = 0
+    for s in ("b1", "p2"):
+        path = W / f"judge_{s}.jsonl"
+        if not path.is_file():
+            print(f"- {names[s]}: no judge file")
+            continue
+        rows, bad, nopass = unjudged_state(path)
+        print(f"- {names[s]}: {len(bad)} unjudged row(s) of {len(rows)} (at most {a.max_unjudged} allowed per set)")
+        cp = W / f"judge_cache_{s}.jsonl"
+        cache = {}
+        if cp.is_file():
+            for e in rd(cp):
+                if isinstance(e, dict) and e.get("key"):
+                    cache[e["key"]] = e
+        for r in bad:
+            total += 1
+            print(f"  - set of answers {r['set']}, id {r['id']}, pass {r['pass']}, parse error: {parse_error(r, cache)}; attempts: {a.rounds * 2} "
+                  f"({a.rounds} judge rounds, each call re-asked once at temperature 0); this answer's judged measures rest on one pass")
+    if not total:
+        print("\nNo row is unjudged.")
+    return 0
 
 
 META = re.compile(r"^\s*(based on|according to|from|using|looking at|the (retrieved )?(excerpts?|documentation|sources?|context)|"
@@ -618,7 +771,8 @@ def cmd_measures(a):
             ds = rd(stored[s])       # only for the search and retrieval seconds a replay skipped (h)
             rows_all += rows
             d_rows_all += ds
-            jr = judged(str(W / f"judge_{s}.jsonl"), rub[s], set(names.values()))
+            check_unjudged(W / f"judge_{s}.jsonl", a.max_unjudged, set(names.values()))     # more than allowed, or an answer without a valid pass: an error
+            jr = judged(str(W / f"judge_{s}.jsonl"), rub[s], set(names.values()))     # the mean over the valid passes of every answer
             for r in rows:
                 j = jr.get((v, r["id"]))
                 if j is None:
@@ -655,6 +809,8 @@ def cmd_measures(a):
                 rows = {r["id"]: r for r in rd(W / f"score_ma_{v}.jsonl")}
                 e["mech"]["m1_declines"] = sum(1 for i in ids["M1"] if rows[i].get("outcome") in ("correct_decline", "wrong_decline"))
         m["variants"][v] = e
+    if a.max_unjudged > 0:
+        m["unjudged"] = {"max_unjudged": a.max_unjudged, "rows": {s: len(unjudged_state(W / f"judge_{s}.jsonl", set(names.values()))[1]) for s in ("b1", "p2")}}
     (W / "measures.json").write_text(json.dumps(m, indent=1, sort_keys=True) + "\n", encoding="utf-8")
     (W / "measures.md").write_text(measures_md(m), encoding="utf-8")
     print(measures_md(m))
@@ -842,6 +998,16 @@ def main(argv=None):
     p.add_argument("--work", required=True)
     p.add_argument("--stage", required=True)
     p.add_argument("--out", nargs="*", default=[])
+    p = sub.add_parser("judge-check")
+    p.add_argument("--file", required=True)
+    p.add_argument("--expect", type=int, required=True)
+    p.add_argument("--max-unjudged", type=int, default=0)
+    p = sub.add_parser("unjudged-note")
+    p.add_argument("--work", required=True)
+    p.add_argument("--max-unjudged", type=int, default=0)
+    p.add_argument("--rounds", type=int, default=2)
+    p = sub.add_parser("code-change-note")
+    p.add_argument("--manifest", required=True)
     p = sub.add_parser("check-answers")
     p.add_argument("--file", required=True)
     p.add_argument("--expect", type=int, required=True)
@@ -867,6 +1033,7 @@ def main(argv=None):
     p.add_argument("--ids", required=True)
     p.add_argument("--mechanical", choices=["sample", "all"], default="sample")
     p.add_argument("--stub", action="store_true", help="dry run: a stub answer has no token count; length/4 stands in (not a measurement)")
+    p.add_argument("--max-unjudged", type=int, default=0, help="judge rows per judged set (B1, pilot2) that may stay invalid and be left out (default 0)")
     for k in ("stored-b1", "stored-p2", "rubrics-b1", "rubrics-p2"):
         p.add_argument("--" + k, required=True)
     p = sub.add_parser("rule")
@@ -891,6 +1058,7 @@ def main(argv=None):
             print(F_NOTE)
             return 0
         fn = {"f-estimate": cmd_f_estimate, "check-echo": cmd_check_echo, "judge-compare": cmd_judge_compare, "draw-ids": cmd_draw_ids, "verify-m1": cmd_verify_m1, "select": cmd_select, "harness-items": cmd_harness_items,
+              "judge-check": cmd_judge_check, "unjudged-note": cmd_unjudged_note, "code-change-note": cmd_code_change_note,
               "manifest": cmd_manifest, "start-check": cmd_start_check, "mark": cmd_mark, "check-answers": cmd_check_answers,
               "determinism": cmd_determinism, "repeat": cmd_repeat, "compare-stored": cmd_compare_stored, "packs-equal": cmd_packs_equal, "measures": cmd_measures, "rule": cmd_rule}[a.cmd]
         return fn(a)

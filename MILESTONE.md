@@ -357,7 +357,7 @@ spent on the same 61 scenarios.
 
 ## Waiting for the Owner
 
-- Q12 (asked 2026-11-22 13:05): the development check has all its answers and 179 of 180
+- Q12 (asked 2026-11-22 13:01): the development check has all its answers and 179 of 180
   valid judge rows on B1; one row (variant G2, b1-09, pass 1) is malformed JSON in four
   attempts, and the chain requires 180. Recommended: leave that one row out, so that this
   answer's judged measures rest on its one valid pass, stated in the report; at most one
