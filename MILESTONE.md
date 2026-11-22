@@ -353,16 +353,12 @@ spent on the same 61 scenarios.
 | 2026-11-22 | Q7 | The r4 stop is accepted: X1 is not met by r4, B4 stays unspent, and the grounded mode goes on with the frozen retrieval; the hidden look tests the grounded mode alone |
 | 2026-11-22 | Q8 | Ranking continues in M5 with one reranker download, `Qwen/Qwen3-Reranker-0.6B`, for an offline re-score of the same scored candidates, with a rule fixed beforehand; if it does not clearly beat r4g2 it stops there |
 | 2026-11-22 | Q11 | The stop of the second reranker is accepted: the ranking target ends for M5 with X1 not met; r4 and R5 stay in the code as experimental; after the development check the picked grounded variant answers B1 and the pilot once on r4g2's packs, without readers and deciding nothing |
+| 2026-11-22 | Q12 | In the development check the one judge row that cannot be judged (variant G2, b1-09, pass 1) is left out; that answer's judged measures rest on its one valid pass, named in the report; at most one such row per judged set; the chain resumes with its code change recorded |
 | 2026-11-22 | Q9 | The conductor may unload any model from the model server ("you can unload all models from oMLX"), when no request is active or waiting |
 
 ## Waiting for the Owner
 
-- Q12 (asked 2026-11-22 13:01): the development check has all its answers and 179 of 180
-  valid judge rows on B1; one row (variant G2, b1-09, pass 1) is malformed JSON in four
-  attempts, and the chain requires 180. Recommended: leave that one row out, so that this
-  answer's judged measures rest on its one valid pass, stated in the report; at most one
-  such row per judged set; the chain resumes with its code change recorded in the
-  manifest.
+Nothing is open for the Owner now.
 
 Still open from M4, none blocking:
 
@@ -497,3 +493,8 @@ Later in M5: whether candidate C becomes the default (after look 3).
   on the head passed at about 12:55 (1,899 tests, 57 skipped); the chain of the
   informative run R6 committed (`a5d111e`). Q12 for the Owner; the option it needs is
   being prepared, off by default.
+- 2026-11-22 13:08: the two options committed (`c0028c3`; the chain's 60 tests pass). The
+  malformed reply closes the list of must verdicts two characters early after the fourth
+  point; all rubric points are in it; it is not repaired.
+- 2026-11-22 13:12: the Owner agreed with Q12; the development check is resumed with
+  `--max-unjudged 1` and the recorded code change.
