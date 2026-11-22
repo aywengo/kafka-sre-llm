@@ -292,12 +292,22 @@ def cmd_measures(a):
     stored_all = []
     present = {}
     per_set = {}
+    unjudged_n = {}
     for s in ("b1", "p2"):
         jr = G.judged(str(W / f"judge_{s}.jsonl"), rub[s], set(names))
         vd, npass = verdicts(str(W / f"judge_{s}.jsonl"), set(names))
+        left_out = {}                       # (set, id) -> unjudged rows of that answer; only with --max-unjudged N > 0
+        if a.max_unjudged > 0:
+            try:                            # more than N unjudged rows in the set, or an answer with no valid pass: an error
+                bad = G.check_unjudged(W / f"judge_{s}.jsonl", a.max_unjudged, set(names))
+            except G.RuleError as e:
+                raise R6Error(str(e))
+            for r in bad:
+                left_out[(r["set"], r["id"])] = left_out.get((r["set"], r["id"]), 0) + 1
         for k, n in npass.items():
-            if n != 2:
-                raise R6Error(f"{k}: {n} valid judge passes, 2 expected")
+            if n != 2 - left_out.get(k, 0):
+                raise R6Error(f"{k}: {n} valid judge passes, {2 - left_out.get(k, 0)} expected")
+        unjudged_n[s] = sum(left_out.values())
         stored_rows = G.rd(stored[s])
         stored_all += stored_rows
         ids = [r["id"] for r in G.rd(rub[s])]
@@ -403,9 +413,54 @@ def cmd_measures(a):
     L.append(f"The loose count is by chunk id from the needs files (`{a.needs_b1}`, `{a.needs_dev}`), which are built from the rubrics; pilot2's rubrics name files, not chunks, so its chunk ids come from the needs file. "
              "Points are counted, not any-of units. An answer can state a point that its pack does not hold (from the question or from memory), so the present counts are not limited to served points.")
     (W / "measures.json").write_text(json.dumps({"mode": a.mode, "scenarios": len(alld), "P": {"frozen": pf_, "r4g2": pr_}, "diff": md, "se": se(alld),
-                                                 "served": served, "groups": groups, "supported_misses_per10": {"frozen": sf, "r4g2": sr}}, indent=1, sort_keys=True) + "\n", encoding="utf-8")
+                                                 "served": served, "groups": groups, "supported_misses_per10": {"frozen": sf, "r4g2": sr},
+                                                 **({"unjudged": {"max_unjudged": a.max_unjudged, "rows": unjudged_n}} if a.max_unjudged > 0 else {})}, indent=1, sort_keys=True) + "\n", encoding="utf-8")
     (W / "measures.md").write_text("\n".join(L) + "\n", encoding="utf-8")
     print("\n".join(L))
+    return 0
+
+
+# ---------------------------------------------------------------- the chain's own options (--max-unjudged, --accept-code-change)
+CODE_FILES = ("m5_r6_run.sh", "m5_r6_packs.py")       # the chain's own code: the only pins whose change --accept-code-change can accept
+ANSWER_STAGES = ("answers",)                          # the stage that makes the answers; the judge, checks and report stages come after it
+
+
+def cmd_start_check(a):
+    """The development chain's start check (m5_g_rule.cmd_start_check, called, not copied) with this chain's two code files and answering stage.
+    Its refusal text names the development chain's two files in the general sentence; the lines that follow name the pins that differ."""
+    import m5_g_rule as G
+    saved = G.CODE_FILES, G.ANSWER_STAGES
+    G.CODE_FILES, G.ANSWER_STAGES = CODE_FILES, ANSWER_STAGES
+    try:
+        return G.cmd_start_check(a)
+    finally:
+        G.CODE_FILES, G.ANSWER_STAGES = saved
+
+
+def cmd_unjudged_note(a):
+    """The rule script's block of the judge rows left out, then the sentence about the paired comparison. Nothing for N = 0."""
+    import m5_g_rule as G
+    if a.max_unjudged <= 0:
+        return 0
+    G.cmd_unjudged_note(a)
+    print("\nFor a scenario with an unjudged row the paired comparison (frozen packs against r4g2 packs) uses one pass on that side and two on the other; "
+          "the other measures of that answer are unchanged.")
+    return 0
+
+
+def cmd_code_change_note(a):
+    import m5_g_rule as G
+    m = json.load(open(a.manifest, encoding="utf-8"))
+    ch = m.get(G.AUDIT_KEY) or []
+    if not ch:
+        return 0
+    print("### Accepted change of the chain's own code (`--accept-code-change`)\n")
+    print("Only `scripts/m5_r6_run.sh` and `scripts/m5_r6_packs.py` can be accepted, and only when the answering stage was done: all answers were produced "
+          "under the old pins.\n")
+    for c in ch:
+        print(f"- {c['time']}: reason: {c['reason']}")
+        for f, hh in sorted(c["files"].items()):
+            print(f"  - `{f}`: old sha256 `{hh['old']}`, new sha256 `{hh['new']}`")
     return 0
 
 
@@ -438,11 +493,22 @@ def main(argv=None):
     p.add_argument("--needs-b1", default=NEEDS["b1"])
     p.add_argument("--needs-dev", default=NEEDS["p2"])
     p.add_argument("--stub", action="store_true")
+    p.add_argument("--max-unjudged", type=int, default=0, help="judge rows per judged set that may stay invalid and be left out (default 0)")
     for k in ("stored-b1", "stored-p2", "rubrics-b1", "rubrics-p2", "packs-b1", "packs-p2"):
         p.add_argument("--" + k, required=True)
+    p = sub.add_parser("start-check")
+    import m5_g_rule as G
+    G.add_state_args(p)
+    p = sub.add_parser("unjudged-note")
+    p.add_argument("--work", required=True)
+    p.add_argument("--max-unjudged", type=int, default=0)
+    p.add_argument("--rounds", type=int, default=2)
+    p = sub.add_parser("code-change-note")
+    p.add_argument("--manifest", required=True)
     a = ap.parse_args(argv)
     try:
-        return {"packs": cmd_packs, "check": cmd_check, "sha": cmd_sha, "measures": cmd_measures}[a.cmd](a)
+        return {"packs": cmd_packs, "check": cmd_check, "sha": cmd_sha, "measures": cmd_measures, "start-check": cmd_start_check,
+                "unjudged-note": cmd_unjudged_note, "code-change-note": cmd_code_change_note}[a.cmd](a)
     except (R6Error, OSError, KeyError, ValueError) as e:
         print(f"ERROR: {type(e).__name__}: {e}", file=sys.stderr)
         return 2

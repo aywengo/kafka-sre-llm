@@ -11,6 +11,12 @@
 #   scripts/m5_r6_run.sh --mode MODE --dry-run [--work DIR]   # stub model, stub judge, no server, no marker outside DIR, no heartbeat, no file written outside
 #                                                              # DIR (default: a temporary directory); the numbers are not measurements
 # --mode has no default: the conductor passes the picked variant. Options: --work DIR, --report FILE, --packs-b1 F, --packs-p2 F, --dev-dir DIR, --dev-done FILE.
+# Two options that are off unless given (the Owner's decision Q12 of 2026-11-22; the same meaning as in scripts/m5_g_dev.sh, the rule script's code is called):
+#   --max-unjudged N (default 0: a judge row that stays invalid after the judge rounds stops the chain): up to N such rows per judged set (B1, pilot2) are left
+#   out; an answer's judged measures are then the mean over its valid passes (the paired comparison of that scenario uses one pass on that side), an answer with
+#   no valid pass still stops the chain; the report names every unjudged row. --accept-code-change "REASON": the start check accepts changed hashes of
+#   scripts/m5_r6_run.sh and scripts/m5_r6_packs.py and of nothing else, only when the answers stage is done; old and new hashes, the reason and the time go
+#   into the manifest and the report.
 # Steps (each resumable, one line per item; a stage marker work/.../stage_NAME.done records the manifest hash and every output hash):
 #   0. Gate (CPU, refusal exit 2, nothing moved or deleted): the inputs; the pack files against the sha256 recorded when they were made; every pack starts with
 #      the stored frozen pack; the development check's done marker (and no failed marker); its comparison answers for this mode complete, on the frozen packs and
@@ -23,16 +29,18 @@
 #   A state left by a stopped run (work folder, manifest, report, failed marker) is refused by the start check; the refusal prints the mv lines.
 set -e
 DRY=no; MODE=""; W=""; WSET=no; REPORT=runs/m5/R6_R4_PACKS.md; RSET=no
-PB1=work/m5/r6/packs_b1.jsonl; PP2=work/m5/r6/packs_p2.jsonl; DEV=work/m5/gdev; DEVDONE=runs/m5/logs/m5_g_dev.done
-USAGE="usage: scripts/m5_r6_run.sh --mode grounded-g1|grounded-g2|default [--dry-run] [--work DIR] [--report FILE] [--packs-b1 F] [--packs-p2 F] [--dev-dir DIR] [--dev-done FILE]"
+PB1=work/m5/r6/packs_b1.jsonl; PP2=work/m5/r6/packs_p2.jsonl; DEV=work/m5/gdev; DEVDONE=runs/m5/logs/m5_g_dev.done; MAXU=0; ACCEPT=
+USAGE="usage: scripts/m5_r6_run.sh --mode grounded-g1|grounded-g2|default [--dry-run] [--work DIR] [--report FILE] [--packs-b1 F] [--packs-p2 F] [--dev-dir DIR] [--dev-done FILE] [--max-unjudged N] [--accept-code-change REASON]"
 while [ $# -gt 0 ]; do case $1 in
   --dry-run) DRY=yes;;
   --mode) MODE=${2:?$USAGE}; shift;;
   --work) W=${2:?}; WSET=yes; shift;; --report) REPORT=${2:?}; RSET=yes; shift;;
   --packs-b1) PB1=${2:?}; shift;; --packs-p2) PP2=${2:?}; shift;;
   --dev-dir) DEV=${2:?}; shift;; --dev-done) DEVDONE=${2:?}; shift;;
+  --max-unjudged) MAXU=${2:?}; shift;; --accept-code-change) ACCEPT=${2:?}; shift;;
   *) echo "$USAGE" >&2; exit 2;; esac
   shift; done
+case $MAXU in ''|*[!0-9]*) echo "REFUSED: --max-unjudged is a whole number (0 or more); nothing started" >&2; exit 2;; esac
 [ -n "$MODE" ] || { echo "REFUSED: --mode is required (grounded-g1, grounded-g2 or default); nothing started" >&2; echo "$USAGE" >&2; exit 2; }
 case $MODE in grounded-g1) VAR=g1;; grounded-g2) VAR=g2;; default) VAR=default;;
   *) echo "REFUSED: --mode is grounded-g1, grounded-g2 or default, not '$MODE'; nothing started" >&2; exit 2;; esac
@@ -144,11 +152,13 @@ fi
 for f in $PK $R scripts/m5_r6_run.sh scripts/eval2.py scripts/eval2_score.py scripts/eval2_judge.py scripts/eval2_idcheck.py kafka_sre_rag/prompts.py $FROZEN; do
   PINS="$PINS --pin $f"; done
 GIT_HEAD=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)   # recorded for the reader, never compared
-gstate() { # SUBCOMMAND: the manifest and the start check take the same state; the judge's arguments contain spaces, so they are passed quoted
-  .venv/bin/python $R "$1" $STATE --info "git_head=$GIT_HEAD" --judge-arg "model=$DS" --judge-arg "setting=$SETTING" --judge-arg "extra_body=$JEB" \
-    --judge-arg "source_chars=$SRC" --judge-arg "instruction=v2" --judge-arg "passes=1 2" --judge-arg "role=coverage" --judge-arg "mode=$MODE"; }
+gstate() { # SUBCOMMAND [EXTRA...] (script GS, default the rule script): the manifest and the start check take the same state; the judge's arguments contain spaces, so they are passed quoted
+  sub=$1; shift
+  .venv/bin/python ${GS:-$R} "$sub" $STATE --info "git_head=$GIT_HEAD" --judge-arg "model=$DS" --judge-arg "setting=$SETTING" --judge-arg "extra_body=$JEB" \
+    --judge-arg "source_chars=$SRC" --judge-arg "instruction=v2" --judge-arg "passes=1 2" --judge-arg "role=coverage" --judge-arg "mode=$MODE" "$@"; }
 STATE="--manifest $W/MANIFEST.json --work $W $PINS --frozen $FROZEN --mechanical sample --model $Q4 $DRYFLAG"
-gstate start-check || { moveaside; refuse "the start check failed (see above; nothing was moved or deleted)"; }
+if [ -n "$ACCEPT" ]; then GS=$PK; gstate start-check --accept-code-change "$ACCEPT" || { GS=; moveaside; refuse "the start check failed (see above; nothing was moved or deleted)"; }; GS=
+else gstate start-check || { moveaside; refuse "the start check failed (see above; nothing was moved or deleted)"; }; fi
 .venv/bin/python -m kafka_sre_rag verify > $W/verify.out 2>&1 || { cat $W/verify.out >&2; refuse "kafka_sre_rag verify failed (frozen index, prompts or reranker revision)"; }
 grep -E '^prompt ' $W/verify.out | head -8
 gstate manifest
@@ -248,7 +258,8 @@ fi
 # ---------------------------------------------------------------- judge: DeepSeek, coverage role, two passes, both pack sets
 if ! stage_done judge; then
   if [ $DRY = no ]; then unload $Q4; hb "$N: answering finished, $Q4 unloaded; the judge $DS loads on the first request"; fi
-  judge_done() { [ -f "$1" ] && .venv/bin/python -c 'import json,sys; r=[json.loads(l) for l in open(sys.argv[1]) if l.strip()]; sys.exit(0 if len(r)==int(sys.argv[2]) and all(x["valid_reply"] for x in r) else 1)' "$1" "$2" 2>/dev/null; }
+  judge_done() { if [ $MAXU != 0 ]; then [ -f "$1" ] && .venv/bin/python $R judge-check --file "$1" --expect "$2" --max-unjudged $MAXU > /dev/null 2>&1; return; fi
+    [ -f "$1" ] && .venv/bin/python -c 'import json,sys; r=[json.loads(l) for l in open(sys.argv[1]) if l.strip()]; sys.exit(0 if len(r)==int(sys.argv[2]) and all(x["valid_reply"] for x in r) else 1)' "$1" "$2" 2>/dev/null; }
   jrun() { # SET ITEMS RUBRICS CACHE OUT EXTRA...
     set_=$1; items=$2; rubs=$3; cache=$4; jout=$5; shift 5
     SETS="frozen=$DEV/ans_${set_}_$VAR.jsonl r4g2=$W/ans_${set_}_r4g2.jsonl"
@@ -274,7 +285,9 @@ if ! stage_done judge; then
       echo "judging $set_ round $round: $bad unscored"
       [ "$bad" = "0" ] && break
     done
-    judge_done $jout $calls || fail "judging $set_: $jout does not hold $calls valid rows"
+    if [ $MAXU != 0 ]; then
+      .venv/bin/python $R judge-check --file $jout --expect $calls --max-unjudged $MAXU || fail "judging $set_: $jout does not hold $calls rows with at most $MAXU unjudged and a valid pass for every answer"
+    else judge_done $jout $calls || fail "judging $set_: $jout does not hold $calls valid rows"; fi
   done
   if [ $DRY = no ]; then unload $DS; hb "$N: judging finished, $DS unloaded"; fi
   mark judge $W/judge_b1.jsonl $W/judge_p2.jsonl
@@ -296,11 +309,15 @@ fi
 
 # ---------------------------------------------------------------- measures and the report
 .venv/bin/python $PK measures --work $W --dev-dir $DEV --variant $VAR --mode $MODE --stored-b1 $B1_ANS --stored-p2 $P2_ANS --rubrics-b1 $B1_RUBS --rubrics-p2 $P2_RUBS \
-  --packs-b1 $PB1 --packs-p2 $PP2 --needs-b1 $NEEDS_B1 --needs-dev $NEEDS_DEV $([ $DRY = yes ] && echo --stub) > $W/measures.out \
+  --packs-b1 $PB1 --packs-p2 $PP2 --needs-b1 $NEEDS_B1 --needs-dev $NEEDS_DEV --max-unjudged $MAXU $([ $DRY = yes ] && echo --stub) > $W/measures.out \
   || fail "the measures could not be computed (a missing input is an error, see $W/measures.out)"
 {
   cat $HEAD
   echo
+  for note in "unjudged-note --work $W --max-unjudged $MAXU" "code-change-note --manifest $W/MANIFEST.json"; do
+    txt=$(.venv/bin/python $PK $note) || fail "the report block '${note%% *}' could not be written"
+    [ -z "$txt" ] || { echo "$txt"; echo; }
+  done
   echo "## Result$([ $DRY = yes ] && echo ' (from stub data: not a measurement)')"
   echo
   cat $W/measures.md

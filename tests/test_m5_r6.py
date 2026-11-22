@@ -255,6 +255,132 @@ class ChainDryRun(unittest.TestCase):
         self.assertEqual(r.returncode, 2, r.stdout[-1000:] + r.stderr[-1000:])
         self.assertIn("not the one recorded", r.stderr)
 
+    # ------------------------------------------------------------ --max-unjudged and --accept-code-change (copies of the dry run's work folder)
+    def copy_work(self, name):
+        d = self.t / name
+        shutil.copytree(self.w, d)
+        return d
+
+    def measures(self, d, n, rows_off=()):
+        """Leave out judge rows of the copy (valid_reply false; (file, set, id, pass) tuples), then run `measures` as the chain does."""
+        for f in ("b1", "p2"):
+            path = d / f"judge_{f}.jsonl"
+            rows = PK.rd(path)
+            for r in rows:
+                if (f, r["set"], r["id"], r["pass"]) in rows_off:
+                    r["valid_reply"] = False
+                    r["judge_errors"] = ["invalid_json"]
+            path.write_text("".join(json.dumps(r) + "\n" for r in rows))
+        a = ["measures", "--work", str(d), "--dev-dir", str(d / "dev_stub"), "--variant", "g1", "--mode", "grounded-g1",
+             "--stored-b1", "work/m4/b1/ans_default.jsonl", "--stored-p2", "work/m4/pilot2/ans_default.jsonl",
+             "--rubrics-b1", "eval/m4/b1/rubrics.jsonl", "--rubrics-p2", "eval/m4/pilot2/rubrics.jsonl", "--packs-b1", str(PACKS_B1), "--packs-p2", str(PACKS_P2),
+             "--needs-b1", "work/m5/b1_needs.jsonl", "--needs-dev", "eval/m4/retrieval_needs_dev.jsonl", "--stub", "--max-unjudged", str(n)]
+        os.chdir(ROOT)
+        return run_pk(a)
+
+    def first_ids(self):
+        rows = PK.rd(self.w / "judge_b1.jsonl")
+        ids = []
+        for r in rows:
+            if r["id"] not in ids:
+                ids.append(r["id"])
+        return ids
+
+    def test_8_one_unjudged_row_with_n1_goes_on_and_the_report_names_it(self):
+        d = self.copy_work("w_u1")
+        i = self.first_ids()[0]
+        code, out, err = self.measures(d, 1, {("b1", "r4g2", i, 1)})
+        self.assertEqual(code, 0, out[-800:] + err[-800:])
+        self.assertEqual(json.load(open(d / "measures.json"))["unjudged"], {"max_unjudged": 1, "rows": {"b1": 1, "p2": 0}})
+        code, out, err = run_pk(["unjudged-note", "--work", str(d), "--max-unjudged", "1"])
+        self.assertEqual(code, 0, err)
+        self.assertIn(f"set of answers r4g2, id {i}, pass 1", out)
+        self.assertIn("B1: 1 unjudged row(s)", out)
+        self.assertIn("paired comparison", out)
+        self.assertIn("one pass on that side", out)
+        self.assertIn("attempts: 4", out)
+
+    def test_9_the_same_with_n0_stops_as_today(self):
+        d = self.copy_work("w_u0")
+        i = self.first_ids()[0]
+        code, out, err = self.measures(d, 0, {("b1", "r4g2", i, 1)})
+        self.assertEqual(code, 2, out[-500:] + err[-500:])
+        self.assertIn("valid judge passes", err)
+        self.assertEqual(run_pk(["unjudged-note", "--work", str(d), "--max-unjudged", "0"])[1], "")      # nothing in the report for N = 0
+
+    def test_a_two_unjudged_rows_in_a_set_with_n1_stop(self):
+        d = self.copy_work("w_u2")
+        a, b = self.first_ids()[:2]
+        code, out, err = self.measures(d, 1, {("b1", "r4g2", a, 1), ("b1", "frozen", b, 2)})
+        self.assertEqual(code, 2, out[-500:] + err[-500:])
+        self.assertIn("at most 1 allowed", err)
+
+    def test_b_an_answer_with_no_valid_pass_stops(self):
+        d = self.copy_work("w_u3")
+        i = self.first_ids()[0]
+        code, out, err = self.measures(d, 5, {("b1", "r4g2", i, 1), ("b1", "r4g2", i, 2)})
+        self.assertEqual(code, 2, out[-500:] + err[-500:])
+        self.assertIn("without any valid judge pass", err)
+
+    def changed_copy(self, name, pin="scripts/m5_r6_run.sh"):
+        """A copy of the dry run's folder whose manifest pins another hash of `pin` (markers re-signed for that manifest, as if the chain's code
+        had changed after the answers were made)."""
+        import m5_g_rule as G
+        d = self.copy_work(name)
+        m = json.load(open(d / "MANIFEST.json"))
+        m["pins"][pin] = "0" * 64
+        (d / "MANIFEST.json").write_text(json.dumps(m, indent=1, sort_keys=True) + "\n")
+        for mk in d.glob("stage_*.done"):
+            rec = json.load(open(mk))
+            rec["manifest_sha256"] = G.manifest_hash(m)
+            mk.write_text(json.dumps(rec))
+        return d
+
+    def test_c_a_code_change_is_refused_without_the_option_and_accepted_with_it(self):
+        d = self.changed_copy("w_cc")
+        r = self.chain("--mode", "grounded-g1", "--work", str(d))
+        self.assertEqual(r.returncode, 2, r.stdout[-800:] + r.stderr[-800:])
+        self.assertIn("pins.scripts/m5_r6_run.sh", r.stderr)
+        self.assertEqual(json.load(open(d / "MANIFEST.json")).get("accepted_code_changes"), None)
+        r = self.chain("--mode", "grounded-g1", "--work", str(d), "--accept-code-change", "judge row cannot be judged")
+        self.assertEqual(r.returncode, 0, r.stdout[-1500:] + r.stderr[-1500:])
+        self.assertIn("ACCEPTED change of the chain's own code: scripts/m5_r6_run.sh", r.stdout)
+        ch = json.load(open(d / "MANIFEST.json"))["accepted_code_changes"]
+        self.assertEqual(ch[0]["reason"], "judge row cannot be judged")
+        self.assertEqual(ch[0]["files"]["scripts/m5_r6_run.sh"]["old"], "0" * 64)
+        self.assertEqual(len(ch[0]["files"]["scripts/m5_r6_run.sh"]["new"]), 64)
+        self.assertTrue(ch[0]["time"])
+        rep = (d / "R6_R4_PACKS_from_stub_data.md").read_text()
+        self.assertIn("Accepted change of the chain's own code", rep)
+        self.assertIn("judge row cannot be judged", rep)
+        self.assertIn("`" + "0" * 64 + "`", rep)
+
+    def test_d_a_code_change_is_refused_when_the_answers_stage_is_not_done(self):
+        d = self.changed_copy("w_cc2")
+        (d / "stage_answers.done").unlink()
+        r = self.chain("--mode", "grounded-g1", "--work", str(d), "--accept-code-change", "x")
+        self.assertEqual(r.returncode, 2, r.stdout[-800:] + r.stderr[-800:])
+        self.assertIn("not every answering stage is done", r.stderr)
+        self.assertEqual(json.load(open(d / "MANIFEST.json")).get("accepted_code_changes"), None)
+
+    def test_e_only_the_chains_own_two_files_can_be_accepted(self):
+        d = self.changed_copy("w_cc3", "scripts/m5_g_rule.py")
+        r = self.chain("--mode", "grounded-g1", "--work", str(d), "--accept-code-change", "x")
+        self.assertEqual(r.returncode, 2, r.stdout[-800:] + r.stderr[-800:])
+        self.assertIn("--accept-code-change", r.stderr)
+        d = self.changed_copy("w_cc4", "scripts/m5_r6_packs.py")
+        r = self.chain("--mode", "grounded-g1", "--work", str(d), "--accept-code-change", "x")
+        self.assertEqual(r.returncode, 0, r.stdout[-800:] + r.stderr[-800:])
+
+    def test_f_the_options_in_the_dry_chain(self):
+        d = self.copy_work("w_opt")
+        r = self.chain("--mode", "grounded-g1", "--work", str(d), "--max-unjudged", "1")
+        self.assertEqual(r.returncode, 0, r.stdout[-800:] + r.stderr[-800:])
+        self.assertIn("No row is unjudged.", (d / "R6_R4_PACKS_from_stub_data.md").read_text())
+        r = self.chain("--mode", "grounded-g1", "--work", str(d), "--max-unjudged", "x", dry=False)
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("whole number", r.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
