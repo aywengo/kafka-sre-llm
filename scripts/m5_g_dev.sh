@@ -37,18 +37,42 @@
 #   lists every unjudged row under the rule's text. --accept-code-change "REASON": the start check accepts changed hashes of scripts/m5_g_rule.py and
 #   scripts/m5_g_dev.sh and of nothing else, only when the reference, determinism and answers stages are done; old and new hashes, the reason and the time
 #   go into the manifest and the report. Markers: runs/m5/logs/m5_g_dev.done or .failed (a dry run: in its own DIR).
+# Reference-based check of other variants (the Owner's decision Q13; MILESTONE.md "G3's development check"):
+#   scripts/m5_g_dev.sh --variants g3 --reference-from work/m5/gdev --work work/m5/gdev3 --report runs/m5/G_DEV3.md --name m5_g_dev3 --max-unjudged 1
+#   --variants LIST (g1 g2 g3, default "g1 g2": the behaviour above, unchanged). --reference-from DIR: the finished run in DIR supplies the default answers, their
+#   judge rows, scores and identifier checks (pinned by sha256 in the new manifest, with that run's manifest hash); the stage "probe" answers the first 3 B1
+#   default answers again and they must equal the reference's byte for byte, else the chain stops (answer the reference again: run without --reference-from);
+#   only the listed variants are answered, scored and judged (two passes). --work, --report and --name (markers and logs runs/m5/logs/NAME.*) are then required
+#   in a real run, so that nothing of the finished run is overwritten. Stages: header, prepare, probe, answers, judge, checks.
 set -e
-DRY=no; MECH=sample; IDS=eval/m4/g_dev_ids.json; W=work/m5/gdev; REPORT=runs/m5/G_DEV.md; WSET=no; RSET=no; MAXU=0; ACCEPT=
+DRY=no; MECH=sample; IDS=eval/m4/g_dev_ids.json; W=work/m5/gdev; REPORT=runs/m5/G_DEV.md; WSET=no; RSET=no; MAXU=0; ACCEPT=; VARS="g1 g2"; REFFROM=; NAME=m5_g_dev; NSET=no
 while [ $# -gt 0 ]; do case $1 in
   --dry-run) DRY=yes;;
   --mechanical) MECH=${2:?}; shift;; --ids) IDS=${2:?}; shift;;
   --work) W=${2:?}; WSET=yes; shift;; --report) REPORT=${2:?}; RSET=yes; shift;;
   --max-unjudged) MAXU=${2:?}; shift;; --accept-code-change) ACCEPT=${2:?}; shift;;
-  *) echo "usage: scripts/m5_g_dev.sh [--dry-run] [--mechanical sample|all] [--ids FILE] [--work DIR] [--report FILE] [--max-unjudged N] [--accept-code-change REASON]" >&2; exit 2;; esac
+  --variants) VARS=$(printf '%s' "${2:?}" | tr ',' ' '); shift;; --reference-from) REFFROM=${2:?}; shift;; --name) NAME=${2:?}; NSET=yes; shift;;
+  *) echo "usage: scripts/m5_g_dev.sh [--dry-run] [--mechanical sample|all] [--ids FILE] [--work DIR] [--report FILE] [--max-unjudged N] [--accept-code-change REASON] [--variants g1,g2|g3] [--reference-from DIR --work DIR --report FILE --name NAME]" >&2; exit 2;; esac
   shift; done
 case $MECH in sample|all) ;; *) echo "REFUSED: --mechanical is sample or all; nothing started" >&2; exit 2;; esac
 case $MAXU in ''|*[!0-9]*) echo "REFUSED: --max-unjudged is a whole number (0 or more); nothing started" >&2; exit 2;; esac
-L=runs/m5/logs; N=m5_g_dev; R=scripts/m5_g_rule.py
+VCSV=$(printf '%s' "$VARS" | tr ' ' ',')
+L=runs/m5/logs; N=$NAME; R=scripts/m5_g_rule.py
+.venv/bin/python $R rule-text --variants "$VCSV" > /dev/null 2>&1 || { echo "REFUSED: --variants is a list of g1, g2, g3, each once; nothing started" >&2; exit 2; }
+REFMODE=no; REFARG=; REFEB=
+if [ -n "$REFFROM" ]; then
+  REFMODE=yes; REFARG="--reference-from $REFFROM"
+  [ -d "$REFFROM" ] || { echo "REFUSED: --reference-from $REFFROM is not a folder; nothing started" >&2; exit 2; }
+  if [ $DRY = no ]; then       # a real check never writes into the finished run's folder, report or markers
+    [ $WSET = yes ] && [ $RSET = yes ] && [ $NSET = yes ] || { echo "REFUSED: with --reference-from, --work, --report and --name are required; nothing started" >&2; exit 2; }
+    [ "$N" != m5_g_dev ] && [ "$REPORT" != runs/m5/G_DEV.md ] || { echo "REFUSED: --name and --report must differ from the finished run's (m5_g_dev, runs/m5/G_DEV.md); nothing started" >&2; exit 2; }
+  fi
+  if [ $WSET = yes ] || [ $DRY = no ]; then
+    [ "$W" != "$REFFROM" ] && ! [ "$W" -ef "$REFFROM" ] || { echo "REFUSED: --work is the reference run's folder; nothing started" >&2; exit 2; }
+  fi
+  REFEB=$REFFROM/ans_b1_default.jsonl.manifest.json
+fi
+CF=m5-$(printf '%s' "${N#m5_}" | tr -d '_')      # the config names of the answer runs: m5-gdev for the chain, m5-gdev3 for NAME m5_g_dev3
 CATS=work/m4/catalogues; CHUNKS=work/v3/chunks_s1.jsonl; FROZEN=kafka_sre_rag/frozen.json
 B1_ITEMS=eval/m4/b1/items.jsonl; B1_RUBS=eval/m4/b1/rubrics.jsonl; P2_ITEMS=eval/m4/pilot2/items.jsonl; P2_RUBS=eval/m4/pilot2/rubrics.jsonl
 B1_ANS=work/m4/b1/ans_default.jsonl; B1_JUDGED=work/m4/b1/judge_results.jsonl; P2_ANS=work/m4/pilot2/ans_default.jsonl
@@ -92,6 +116,13 @@ for f in $B1_ITEMS $B1_RUBS $P2_ITEMS $P2_RUBS $TA_ITEMS $TA3_ITEMS $B1_ANS $B1_
          scripts/eval2_idcheck.py scripts/eval2_score.py scripts/eval2_compare.py scripts/run_guarded.py kafka_sre_rag/prompts.py scripts/m5_g_dev.sh $R; do
   [ -s $f ] || refuse "input $f is missing or empty"
 done
+# the reference run's files a reference-based check reads (all pinned by sha256 below)
+REFFILES="MANIFEST.json measures.json items_b1_h.jsonl items_p2_h.jsonl items_ma.jsonl items_m3.jsonl judge_b1.jsonl judge_p2.jsonl idcheck_b1_default.txt idcheck_p2_default.txt
+  score_ma_default.jsonl score_m3_default.jsonl ans_b1_default.jsonl ans_b1_default.jsonl.manifest.json ans_p2_default.jsonl ans_p2_default.jsonl.manifest.json
+  ans_ma_default.jsonl ans_ma_default.jsonl.manifest.json ans_m3_default.jsonl ans_m3_default.jsonl.manifest.json"
+if [ $REFMODE = yes ]; then
+  for f in $REFFILES; do [ -s $REFFROM/$f ] || refuse "the reference run's file $REFFROM/$f is missing or empty"; done
+fi
 [ -s $IDS ] || refuse "the ids file $IDS is missing (python scripts/m5_g_rule.py draw-ids --tier-a $TA_ITEMS --tier-a3 $TA3_ITEMS --out $IDS)"
 if [ $DRY = no ]; then
   export OMLX_URL=${OMLX_URL:-$(cat "$HOME/.config/kafka-sre-llm/omlx_url" 2>/dev/null)}
@@ -134,9 +165,15 @@ else
   Q4=${M5_Q4_MODEL:-$(.venv/bin/python scripts/eval2_compare.py pick-model --kind q4 < $W/models.json)} || refuse "the 4-bit model is not listed by the server (or ambiguous)"
 fi
 DRYFLAG=""; DRYFLAG_ECHO=""; [ $DRY = yes ] && { DRYFLAG="--dry"; DRYFLAG_ECHO="--dry"; }
+if [ $REFMODE = yes ]; then       # the finished run is intact (manifest, stage markers, outputs), made on the same model and mechanical set, before anything is started
+  .venv/bin/python $R ref-check --reference-from $REFFROM --mechanical $MECH --model "$Q4" $DRYFLAG || refuse "the reference run $REFFROM is not intact or not comparable (see above)"
+fi
 PINS="--pin $B1_ITEMS --pin $B1_RUBS --pin $P2_ITEMS --pin $P2_RUBS --pin $TA_ITEMS --pin $TA3_ITEMS --pin $IDS --pin $B1_ANS --pin $B1_ANS.manifest.json \
   --pin $P2_ANS --pin $P2_ANS.manifest.json --pin $TA_ANS --pin $TA_ANS.manifest.json --pin $TA3_ANS --pin $TA3_ANS.manifest.json \
   --pin $CATS/CATALOGUES.json --pin runs/v3/INDEX_FROZEN.json --pin $B1_JUDGED"
+if [ $REFMODE = yes ]; then       # the reference run's files, by sha256 (the manifest records that run's manifest hash too)
+  for f in $REFFILES; do PINS="$PINS --pin $REFFROM/$f"; done
+fi
 # the code the run depends on is pinned too (frozen.json is pinned by --frozen below and here as a file)
 for f in scripts/m5_g_rule.py scripts/m5_g_dev.sh scripts/eval2.py scripts/eval2_score.py scripts/eval2_judge.py scripts/eval2_idcheck.py kafka_sre_rag/prompts.py $FROZEN; do
   PINS="$PINS --pin $f"; done
@@ -145,7 +182,7 @@ gstate() { # SUBCOMMAND [EXTRA...]: the manifest and the start check take the sa
   sub=$1; shift
   .venv/bin/python $R "$sub" $STATE --info "git_head=$GIT_HEAD" --judge-arg "model=$DS" --judge-arg "setting=$SETTING" --judge-arg "extra_body=$JEB" \
     --judge-arg "source_chars=$SRC" --judge-arg "instruction=v2" --judge-arg "passes=1 2" --judge-arg "role=coverage" "$@"; }
-STATE="--manifest $W/MANIFEST.json --work $W $PINS --frozen $FROZEN --mechanical $MECH --model $Q4 $DRYFLAG"
+STATE="--manifest $W/MANIFEST.json --work $W $PINS --frozen $FROZEN --mechanical $MECH --model $Q4 $DRYFLAG --variants $VCSV $REFARG"
 if [ -n "$ACCEPT" ]; then gstate start-check --accept-code-change "$ACCEPT" || { moveaside; refuse "the start check failed (see above; nothing was moved or deleted)"; }
 else gstate start-check || { moveaside; refuse "the start check failed (see above; nothing was moved or deleted)"; }; fi
 .venv/bin/python $R draw-ids --tier-a $TA_ITEMS --tier-a3 $TA3_ITEMS --check $IDS || refuse "$IDS does not reproduce from its rule"
@@ -173,29 +210,43 @@ if [ $MECH = all ]; then NMECH=339; else NMECH=116; fi
 # 3 modes now (default again, g1, g2): 54 judged answers and m mechanical answers each; 6 answers for the determinism measurement (3 in the reference
 # stage, 3 again); the upper rate 85 s is the measured one of the 3 B1 replays (74 to 84 s, 1,923 to 2,048 tokens)
 est() { awk -v m=$NMECH 'BEGIN{ lo=54*3*35+m*3*10+3*35+324*10+1200; hi=54*3*85+m*3*13+3*85+324*10+1800; printf "%.1f to %.1f", lo/3600, hi/3600 }'; }
+NV=$(printf '%s' "$VARS" | wc -w | tr -d ' ')
+if [ $REFMODE = yes ]; then
+  # the variants only: 54 judged answers and m mechanical answers each, 3 probe answers (default, the long ones: up to 85 s), 54 x 2 judge calls each; the variants' upper rate is 60 s
+  # (G3's answers are about 34 to 38 s by the analysis, the first check's grounded answers 30 to 60 s)
+  est() { awk -v m=$NMECH -v v=$NV 'BEGIN{ lo=54*v*35+m*v*10+3*35+108*v*10+1200; hi=54*v*60+m*v*13+3*85+108*v*10+1800; printf "%.1f to %.1f", lo/3600, hi/3600 }'; }
+  echo "planned (reference from $REFFROM): the repeat probe (3 default answers), then $VARS on 54 judged answers and $NMECH mechanical items each, $((108 * NV)) judge calls: $(est) h of model-server time"
+  echo "estimate basis: the first check's rates (35 to 60 s per judged answer of a grounded variant, 85 s for a default probe answer, 10 to 13 s per mechanical answer, about 10 s per judge call, loads 0.3 to 0.5 h); not measured on $VARS"
+else
 echo "planned: 54 judged answers and $NMECH mechanical items, each in 3 modes (default again, grounded-g1, grounded-g2), the determinism measurement (3 more answers), about 324 judge calls (the fresh default answers are judged too): $(est) h of model-server time"
 echo "estimate basis: the design's rates (35 to 85 s per judged answer, the upper end measured on 3 B1 replays, 10 to 13 s per mechanical answer, about 10 s per judge call, B1: 180 calls in 30.6 min, 324 calls now that B1 default is judged again, loads 0.3 to 0.5 h); not measured on the grounded modes"
+fi
 
 stage_done() { [ -f $W/stage_$1.done ]; }
 mark() { st=$1; shift; .venv/bin/python $R mark --work $W --stage $st --out "$@" > /dev/null; }
 ANS_FILES=""
-for v in g1 g2; do for s in b1 p2 ma m3; do ANS_FILES="$ANS_FILES $W/ans_${s}_$v.jsonl"; done; done
-REF_FILES=""
-for s in b1 p2 ma m3; do REF_FILES="$REF_FILES $W/ans_${s}_default.jsonl"; done
+for v in $VARS; do for s in b1 p2 ma m3; do ANS_FILES="$ANS_FILES $W/ans_${s}_$v.jsonl"; done; done
+REF_FILES=""; PROBE=$W/probe_default.jsonl; DET_FILES=$W/det_default.jsonl
+if [ $REFMODE = yes ]; then DET_FILES=$PROBE; STAGES_ANS="probe answers judge"
+else
+  for s in b1 p2 ma m3; do REF_FILES="$REF_FILES $W/ans_${s}_default.jsonl"; done
+  STAGES_ANS="reference determinism answers judge"
+fi
 SERVER_NEEDED=no
-for st in reference determinism answers judge; do stage_done $st || SERVER_NEEDED=yes; done
+for st in $STAGES_ANS; do stage_done $st || SERVER_NEEDED=yes; done
+TITLEV=$(printf '%s' "$VARS" | tr 'a-z' 'A-Z' | sed 's/ /, /g')
 
 # ---------------------------------------------------------------- 2. report header (before any answer exists)
 HEAD=$W/report_header.md
 if ! stage_done header; then
-  for f in $ANS_FILES $REF_FILES $W/det_default.jsonl; do [ ! -e $f ] || refuse "$f exists but the report header was not written yet; the rule text must come first"; done
+  for f in $ANS_FILES $REF_FILES $DET_FILES; do [ ! -e $f ] || refuse "$f exists but the report header was not written yet; the rule text must come first"; done
   [ $DRY = yes ] || [ ! -e $REPORT ] || { moveaside; refuse "$REPORT exists; it is not overwritten before the header of this run is written (move it away first)"; }
   {
-    echo "# M5 development check of the grounded modes (G1, G2)$([ $DRY = yes ] && echo ' (DRY RUN: stub model, stub judge; no number below is a measurement)')"
+    echo "# M5 development check of the grounded modes ($TITLEV)$([ $REFMODE = yes ] && echo ", against a stored reference")$([ $DRY = yes ] && echo ' (DRY RUN: stub model, stub judge; no number below is a measurement)')"
     echo
     echo "Written by \`scripts/$N.sh\` on $(date +%Y-%m-%d), mechanical set: $MECH ($NMECH items), 4-bit model \`$Q4\`. Manifest hash $(.venv/bin/python -c 'import hashlib,json,sys; print(hashlib.sha256(json.dumps(json.load(open(sys.argv[1])), sort_keys=True).encode()).hexdigest()[:16])' $W/MANIFEST.json). Ids: \`$IDS\`. Rule: \`scripts/m5_g_rule.py\`."
     echo
-    .venv/bin/python $R rule-text
+    .venv/bin/python $R rule-text --variants $VCSV $REFARG
     echo
     echo "This header, with the rule, was written before any answer of the run existed (stage marker \`$W/stage_header.done\`)."
   } > $HEAD
@@ -210,8 +261,9 @@ if [ $DRY = no ] && [ $SERVER_NEEDED = yes ]; then
   status RUNNING no "$N waiting for other chains to end; markers $L/$N.done / .failed"
   rm -f $L/$N.failed $L/$N.done
   n=0; until [ -z "$(others)" ]; do sleep 60; n=$((n+1)); [ $n -lt 720 ] || fail "another chain or guarded job still runs after 12 h: $(others | head -3)"; done
-  hb "$N: started; 4-bit model $Q4, default again, grounded-g1 and grounded-g2 on J (54) and the mechanical set ($NMECH); judge $DS (coverage role, instruction v2, $SETTING); mechanical: $MECH"
-  status RUNNING no "$N running: reference answers, determinism measurement, answers, judging, scoring; markers $L/$N.done / .failed"
+  if [ $REFMODE = yes ]; then hb "$N: started; 4-bit model $Q4, repeat probe, then $VARS on J (54) and the mechanical set ($NMECH), reference from $REFFROM; judge $DS (coverage role, instruction v2, $SETTING); mechanical: $MECH"
+  else hb "$N: started; 4-bit model $Q4, default again, grounded-g1 and grounded-g2 on J (54) and the mechanical set ($NMECH); judge $DS (coverage role, instruction v2, $SETTING); mechanical: $MECH"; fi
+  status RUNNING no "$N running: $([ $REFMODE = yes ] && echo 'repeat probe, answers' || echo 'reference answers, determinism measurement, answers'), judging, scoring; markers $L/$N.done / .failed"
   clear_server
   hb "$N: the server is idle and no model but $Q4 is loaded; the 4-bit model loads on the first request"
 fi
@@ -230,6 +282,9 @@ for i, r in ((1, 2), (3, 4)):
         sys.exit(f"{sys.argv[i]} and {sys.argv[r]}: ids differ or repeat")
     print(f"gate: {sys.argv[i]} and {sys.argv[r]}: {len(a)} items, same ids")
 PY
+  if [ $REFMODE = yes ]; then       # the same items as the reference run's, byte for byte
+    for f in items_b1_h items_p2_h items_ma items_m3; do cmp -s $W/$f.jsonl $REFFROM/$f.jsonl || fail "$W/$f.jsonl differs from the reference run's $f.jsonl (another item set or ids file)"; done
+  fi
   mark prepare $W/items_b1_h.jsonl $W/items_p2_h.jsonl $W/items_ma.jsonl $W/items_m3.jsonl $W/ref_ma.jsonl $W/ref_m3.jsonl
 fi
 NB1=$(grep -c . $W/items_b1_h.jsonl | tr -d ' '); NP2=$(grep -c . $W/items_p2_h.jsonl | tr -d ' ')
@@ -240,8 +295,8 @@ echo "sets: b1 $NB1, pilot2 $NP2, tier_a part $NMA, tier_a3 part $NM3"
 # ---------------------------------------------------------------- answers (one request at a time; the 4-bit model)
 if [ $DRY = yes ]; then GA="--backend stub --no-rerank"; else GA="--backend openai --model $Q4"; fi
 echo_check() { # the model the server echoed equals the stored runs' model_echoed (a difference stops the chain before the judge)
-  .venv/bin/python $R check-echo --stored $replay.manifest.json --new $out.manifest.json $DRYFLAG_ECHO \
-    || fail "answers $config: the server echoed another model than the stored default runs (the reference answers are not comparable)"; }
+  .venv/bin/python $R check-echo --stored $replay.manifest.json $REFEB --new $out.manifest.json $DRYFLAG_ECHO \
+    || fail "answers $config: the server echoed another model than the stored default runs$([ $REFMODE = yes ] && echo ' or the reference run') (the reference answers are not comparable)"; }
 answer_run() { # OUT ITEMS REPLAY EXPECT MODE CONFIG [--limit N]: all items, one request at a time
   out=$1; items=$2; replay=$3; expect=$4; mode=$5; config=$6; shift 6
   if .venv/bin/python $R check-answers --file $out --expect $expect --mode $mode > $W/check.out 2>&1; then
@@ -259,7 +314,16 @@ answer_run() { # OUT ITEMS REPLAY EXPECT MODE CONFIG [--limit N]: all items, one
   .venv/bin/python $R packs-equal --a $replay --b $out || fail "answers $config: the packs differ from the stored packs (replay failed)"
   echo_check
 }
-if ! stage_done reference; then
+if [ $REFMODE = yes ] && ! stage_done probe; then
+  # the repeat probe, before anything else is answered: the first 3 B1 default answers, again, on the stored packs; they must equal the reference run's byte for byte
+  answer_run $PROBE $W/items_b1_h.jsonl $B1_ANS 3 default $CF-probe --limit 3
+  .venv/bin/python $R probe --reference $REFFROM/ans_b1_default.jsonl --again $PROBE --n 3 \
+    || fail "the repeat probe differs from the reference run's answers: the reference must be answered again (run without --reference-from); nothing of the variants was answered"
+  .venv/bin/python $R check-echo --stored $REFEB --new $PROBE.manifest.json $DRYFLAG_ECHO || fail "the probe: the server echoed another model than the reference run (the reference is not comparable)"
+  mark probe $PROBE
+  hb "$N: the repeat probe passed (3 of 3 default answers equal the reference run's, byte for byte)"
+fi
+if [ $REFMODE = no ] && ! stage_done reference; then
   # the reference: default answered again on the stored packs, the same call as the variants except the mode
   answer_run $W/ans_b1_default.jsonl $W/items_b1_h.jsonl $B1_ANS $NB1 default m5-gdev-b1-default
   answer_run $W/ans_p2_default.jsonl $W/items_p2_h.jsonl $P2_ANS $NP2 default m5-gdev-p2-default
@@ -268,7 +332,7 @@ if ! stage_done reference; then
   mark reference $REF_FILES
   hb "$N: reference answers done (default again: B1 $NB1, pilot2 $NP2, tier_a part $NMA, tier_a3 part $NM3)"
 fi
-if ! stage_done determinism; then
+if [ $REFMODE = no ] && ! stage_done determinism; then
   # a measurement, not a gate: (i) stored against fresh is computed from the reference answers; (ii) the first 3 B1 answers a second time
   DET=$W/det_default.jsonl
   answer_run $DET $W/items_b1_h.jsonl $B1_ANS 3 default m5-gdev-det2 --limit 3
@@ -278,15 +342,15 @@ if ! stage_done determinism; then
   hb "$N: determinism measurement done (printed in the report; it stops nothing)"
 fi
 if ! stage_done answers; then
-  for v in g1 g2; do
+  for v in $VARS; do
     mode=grounded-$v
-    answer_run $W/ans_b1_$v.jsonl $W/items_b1_h.jsonl $B1_ANS $NB1 $mode m5-gdev-b1-$v
-    answer_run $W/ans_p2_$v.jsonl $W/items_p2_h.jsonl $P2_ANS $NP2 $mode m5-gdev-p2-$v
-    answer_run $W/ans_ma_$v.jsonl $W/items_ma.jsonl $TA_ANS $NMA $mode m5-gdev-ma-$v
-    answer_run $W/ans_m3_$v.jsonl $W/items_m3.jsonl $TA3_ANS $NM3 $mode m5-gdev-m3-$v
+    answer_run $W/ans_b1_$v.jsonl $W/items_b1_h.jsonl $B1_ANS $NB1 $mode $CF-b1-$v
+    answer_run $W/ans_p2_$v.jsonl $W/items_p2_h.jsonl $P2_ANS $NP2 $mode $CF-p2-$v
+    answer_run $W/ans_ma_$v.jsonl $W/items_ma.jsonl $TA_ANS $NMA $mode $CF-ma-$v
+    answer_run $W/ans_m3_$v.jsonl $W/items_m3.jsonl $TA3_ANS $NM3 $mode $CF-m3-$v
   done
   mark answers $ANS_FILES
-  hb "$N: all answers done (g1, g2: B1 $NB1, pilot2 $NP2, tier_a part $NMA, tier_a3 part $NM3)"
+  hb "$N: all answers done ($VARS: B1 $NB1, pilot2 $NP2, tier_a part $NMA, tier_a3 part $NM3)"
 fi
 
 # ---------------------------------------------------------------- judge: DeepSeek, coverage role, two passes, default included
@@ -296,7 +360,9 @@ if ! stage_done judge; then
     [ -f "$1" ] && .venv/bin/python -c 'import json,sys; r=[json.loads(l) for l in open(sys.argv[1]) if l.strip()]; sys.exit(0 if len(r)==int(sys.argv[2]) and all(x["valid_reply"] for x in r) else 1)' "$1" "$2" 2>/dev/null; }
   jrun() { # SET ITEMS RUBRICS DEFAULT_ANS CACHE OUT EXTRA...
     set_=$1; items=$2; rubs=$3; dans=$4; cache=$5; jout=$6; shift 6
-    SETS="default=$W/ans_${set_}_default.jsonl g1=$W/ans_${set_}_g1.jsonl g2=$W/ans_${set_}_g2.jsonl"
+    if [ $REFMODE = yes ]; then SETS=""; else SETS="default=$W/ans_${set_}_default.jsonl"; fi      # a reference-based run judges the variants only
+    for v in $VARS; do SETS="$SETS $v=$W/ans_${set_}_$v.jsonl"; done
+    SETS=${SETS# }
     if [ $DRY = yes ]; then
       .venv/bin/python scripts/eval2_judge.py run --rubrics $rubs --items $items --chunks $CHUNKS --source-chars $SRC --instruction v2 --coverage \
         --answers $SETS --judge-model $DS --judge-extra-body "$JEB" --settings-name $SETTING --concurrency 3 --stub --passes 1 2 --cache $cache --out $jout "$@"
@@ -308,7 +374,7 @@ if ! stage_done judge; then
   # no cache is taken over: this run's fresh default answers are judged with the same code, setting and time as the variants
   for set_ in b1 p2; do
     if [ $set_ = b1 ]; then items=$B1_ITEMS; rubs=$B1_RUBS; dans=$B1_ANS; n=$NB1; else items=$P2_ITEMS; rubs=$P2_RUBS; dans=$P2_ANS; n=$NP2; fi
-    jout=$W/judge_$set_.jsonl; cache=$W/judge_cache_$set_.jsonl; calls=$((n * 3 * 2))
+    jout=$W/judge_$set_.jsonl; cache=$W/judge_cache_$set_.jsonl; calls=$((n * (NV + 1 - $([ $REFMODE = yes ] && echo 1 || echo 0)) * 2))
     if judge_done $jout $calls; then echo "skip judging $set_: $jout has $calls valid rows"; continue; fi
     hb "$N: judging $set_ started ($calls judge rows; the cache holds earlier replies)"
     for round in 1 2; do
@@ -333,7 +399,8 @@ if ! stage_done checks; then
   OUTS=""
   for s in b1 p2; do
     if [ $s = b1 ]; then dans=$B1_ANS; else dans=$P2_ANS; fi
-    for v in stored default g1 g2; do
+    if [ $REFMODE = yes ]; then IDV="$VARS"; else IDV="stored default $VARS"; fi
+    for v in $IDV; do
       if [ $v = stored ]; then f=$dans; else f=$W/ans_${s}_$v.jsonl; fi
       .venv/bin/python scripts/eval2_idcheck.py --answers $f --catalogues $CATS --totals-only > $W/idcheck_${s}_$v.txt || fail "identifier check on $s $v failed"
       echo "idcheck $s $v: $(sed -n 4p $W/idcheck_${s}_$v.txt)"
@@ -341,7 +408,8 @@ if ! stage_done checks; then
     done
   done
   for grp in ma m3; do
-    for v in ref default g1 g2; do      # ref = the stored default answers (comparison only), default = this run's own
+    if [ $REFMODE = yes ]; then SCV="$VARS"; else SCV="ref default $VARS"; fi      # a reference-based run scores the variants only (the reference's scores are the finished run's)
+    for v in $SCV; do      # ref = the stored default answers (comparison only), default = this run's own
       if [ $v = ref ]; then f=$W/ref_$grp.jsonl; else f=$W/ans_${grp}_$v.jsonl; fi
       .venv/bin/python scripts/eval2_score.py --items $W/items_$grp.jsonl --answers $f --catalogues $CATS --scores $W/score_${grp}_$v.jsonl \
         --summary $W/score_${grp}_$v.summary.json > $W/score_${grp}_$v.out 2> $W/score_${grp}_$v.err || fail "scorer on $grp $v failed (see $W/score_${grp}_$v.err)"
@@ -353,7 +421,7 @@ if ! stage_done checks; then
 fi
 
 # ---------------------------------------------------------------- measures, the rule, the report
-.venv/bin/python $R measures --work $W --ids $IDS --mechanical $MECH --stored-b1 $B1_ANS --stored-p2 $P2_ANS --rubrics-b1 $B1_RUBS --rubrics-p2 $P2_RUBS --max-unjudged $MAXU $([ $DRY = yes ] && echo --stub) \
+.venv/bin/python $R measures --work $W --ids $IDS --mechanical $MECH --stored-b1 $B1_ANS --stored-p2 $P2_ANS --rubrics-b1 $B1_RUBS --rubrics-p2 $P2_RUBS --max-unjudged $MAXU --variants $VCSV $REFARG $([ $DRY = yes ] && echo --stub) \
   > $W/measures.out || fail "the measures could not be computed (a missing input is an error, see above)"
 RULE_RC=0; .venv/bin/python $R rule --measures $W/measures.json > $W/rule_out.txt 2> $W/rule_out.err || RULE_RC=$?
 [ $RULE_RC = 0 ] || { cat $W/rule_out.err >&2; fail "the rule could not be applied: $(head -1 $W/rule_out.err)"; }
@@ -378,6 +446,15 @@ CHOICE=$(sed -n 's/^CHOICE: \([A-Za-z0-9]*\).*/\1/p' $W/rule_out.txt)
   echo
   echo "Note on (f): $(.venv/bin/python $R f-note)"
   echo
+  if [ $REFMODE = yes ]; then
+  echo "### The repeat probe (stops the chain on a difference)"
+  echo
+  echo '```'; .venv/bin/python $R probe --reference $REFFROM/ans_b1_default.jsonl --again $PROBE --n 3 || true; echo '```'
+  echo
+  echo "### Files"
+  echo
+  echo "Reference: the finished run in \`$REFFROM\` (its default answers, judge rows, scores, identifier checks and measures, pinned by sha256 in \`$W/MANIFEST.json\`). Answers of the variants \`$W/ans_*_{$VCSV}.jsonl\`; the probe \`$PROBE\`; judge results \`$W/judge_b1.jsonl\`, \`judge_p2.jsonl\` (the variants' sets only); scores \`$W/score_*.jsonl\`; identifier checks \`$W/idcheck_*.txt\`; measures \`$W/measures.json\`. Open development data only: the result decides whether B2 is spent, and says nothing about the hidden part."
+  else
   echo "### The stored default answers beside the fresh ones"
   echo
   .venv/bin/python $R compare-stored --work $W --stored-b1 $B1_ANS --stored-p2 $P2_ANS $([ $DRY = yes ] && echo --stub) || fail "the comparison of the stored and the fresh default answers failed"
@@ -394,6 +471,7 @@ CHOICE=$(sed -n 's/^CHOICE: \([A-Za-z0-9]*\).*/\1/p' $W/rule_out.txt)
   echo "### Files"
   echo
   echo "Answers \`$W/ans_*_default.jsonl\` (the reference), \`ans_*_g1.jsonl\`, \`ans_*_g2.jsonl\`; judge results \`$W/judge_b1.jsonl\`, \`judge_p2.jsonl\`; scores \`$W/score_*.jsonl\`; identifier checks \`$W/idcheck_*.txt\`; measures \`$W/measures.json\`. Open development data only: the result decides whether B2 is spent, and says nothing about the hidden part."
+  fi
 } > $REPORT.tmp && mv $REPORT.tmp $REPORT
 if [ $DRY = yes ]; then
   echo M5_G_DEV_DRY_RUN_DONE >> $L/$N.done

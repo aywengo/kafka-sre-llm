@@ -230,9 +230,9 @@ class ChainDryRun(unittest.TestCase):
         self.assertIn("--mode is required", r.stderr)
         r = self.chain("--dry-run", dry=False)
         self.assertEqual(r.returncode, 2)
-        r = self.chain("--mode", "grounded-g3", dry=False)
+        r = self.chain("--mode", "grounded-g4", dry=False)
         self.assertEqual(r.returncode, 2)
-        self.assertIn("not 'grounded-g3'", r.stderr)
+        self.assertIn("not 'grounded-g4'", r.stderr)
 
     def test_6_a_missing_development_done_marker_is_refused_with_exit_code_2(self):
         w = self.t / "w_nomarker"

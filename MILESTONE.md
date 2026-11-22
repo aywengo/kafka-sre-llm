@@ -385,7 +385,7 @@ b1-02, b1-06, b1-11, b1-16, b1-20, b1-22, b1-23, b1-25). The reviewer's own esti
 coverage about −0.045 against the −0.05 bar, a pass in 50 to 60 % of cases; a narrow pass
 on these worn scenarios would not tell G3 from G2; B2 and the hidden half decide.
 
-## G3's development check: the rule, fixed before the run (2026-11-22 15:30)
+## G3's development check: the rule, fixed before the run (2026-11-22 15:32)
 
 G3's text is the one in `runs/m5/reports/g_dev_analysis.md` (sha256 `a5a557712c52…`),
 unchanged. It answers the same 54 scenarios and the same 116 mechanical items on the
@@ -615,5 +615,5 @@ Later in M5: whether candidate C becomes the default (after look 3).
 - 2026-11-22 14:34: R6 stopped in judging on the same unjudgeable row (G2 on the frozen
   packs, b1-09, pass 1); its chain got the same two options (`048aba8`) and the
   conductor applied the Owner's Q12 decision to it; resumed 15:07; done 15:19.
-- 2026-11-22 15:27: the Owner agreed with Q13: G3 is checked. Its rule is fixed (section
+- 2026-11-22 15:31: the Owner agreed with Q13: G3 is checked. Its rule is fixed (section
   "G3's development check"); the build started.

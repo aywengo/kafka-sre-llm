@@ -135,6 +135,25 @@ GROUNDED_G2 = (
 
 GROUNDED = {"grounded-g1": GROUNDED_G1, "grounded-g2": GROUNDED_G2}
 
+# G3 (EXPERIMENTAL), based on G2; text from runs/m5/reports/g_dev_analysis.md section 4. Registered below, after GROUNDED.
+GROUNDED_G3 = (
+    "Start with the direct answer in one to three sentences. When the question asks what is wrong, name the cause that "
+    "fits all the evidence the question gives, not only a cause one excerpt happens to describe. "
+    "Base every statement on the excerpts or the question, and write every command, flag, configuration key, field, "
+    "annotation, metric and error name as it appears there. "
+    "An excerpt counts when it states the fact in other words or shows it in an example. "
+    "Answer every part of the question: when it asks what is wrong, give the read-only checks that confirm the cause; "
+    "when it asks for a change, give the change and how to verify it; in a review, name every problem you find, not only the first. "
+    "If the excerpts do not cover something the question needs, answer what they do cover and add one sentence in "
+    "exactly this form: \"The retrieved documentation does not cover <what is missing>.\" "
+    "After that sentence you may add what you know from general knowledge, on lines that begin with "
+    "\"General knowledge (not in the excerpts):\"; name in them only things you are sure exist. "
+    "Never say that something does not exist or is not supported only because the excerpts do not mention it. "
+    "No background, no generic advice, no summary at the end; offer an alternative only when the question asks for one "
+    "or the evidence leaves the cause open. "
+    "Keep the answer under about 700 words, code included.")
+GROUNDED["grounded-g3"] = GROUNDED_G3
+
 
 def grounded_user_message(question, chunks, variant):
     """INSTRUCTION, the pack, the question, then the grounded text. Needs excerpts (no closed-book form)."""

@@ -25,7 +25,11 @@ Pure Python, CPU only; no model, no server. Used by scripts/m5_g_dev.sh and test
   check-echo --stored F... --new F [--dry]    the model the server echoed in the new run's manifest equals the stored runs' model_echoed
   judge-compare --stored F --new F --rubrics F --set NAME   stored judge results against this run's (count of answers whose mean differs)
   measures   --work D ...                     the measures (a) to (h) from the files of the chain; writes measures.json and measures.md
-  rule       --measures F                     the rule by code: PASS or FAIL per condition and variant, and the choice (G1, G2 or neither)
+  rule       --measures F                     the rule by code: PASS or FAIL per condition and variant, and the choice (G1, G2, G3 or neither)
+  ref-check  --reference-from D               the finished reference run's manifest, stage markers and their outputs are intact (exit 0 or 2)
+  probe      --reference F --again F --n N    the repeat probe of a reference-based run: the first N answers equal the reference's, byte for byte (exit 1 on a difference)
+  extras     --work D --reference-from D ...  reported, deciding nothing: a3 wrong declines and coverage on the diagnostics scenarios, per variant and for the reference
+  (rule-text, manifest, start-check and measures take --variants and --reference-from: check a given list of variants against a finished run's default; see MILESTONE.md "G3's development check")
 
 Exit codes: 0 done; 1 a check failed; 2 refused or an input is missing (a missing input is never a pass).
 """
@@ -46,7 +50,9 @@ sys.path.insert(0, str(HERE))
 SCHEMA = 1
 POP = {"M1": 56, "M2": 195, "M3": 88}          # the populations the mechanical samples stand for (339 open mechanical items)
 POP_ALL = sum(POP.values())
-VARIANTS = ("g1", "g2")
+VARIANTS = ("g1", "g2")                 # the first development check's variants (the default of --variants)
+ALL_VARIANTS = ("g1", "g2", "g3")
+REF_STAGES = ("reference", "determinism", "answers", "judge", "checks")   # the stages a finished reference run must have
 M2_SEED, M3_SEED, M2_N, M3_N = 20261122, 20261123, 40, 20
 M2_KINDS = {"name_setting": 21, "fix_manifest": 6, "connect_rest": 4, "write_resource": 4, "version_trap": 2, "error_name": 1,
             "is_real": 1, "write_command": 1}
@@ -95,6 +101,60 @@ A measure that is missing, not a number or not computed is an error, never a pas
 
 class RuleError(RuntimeError):
     pass
+
+
+def parse_variants(x):
+    """'g3' or 'g1 g2' or 'g1,g2' -> ('g3',) ...; None or '' -> the first check's ('g1', 'g2'). Unknown or repeated names are an error."""
+    vs = tuple(t for t in re.split(r"[\s,]+", x or "") if t)
+    if not vs:
+        return VARIANTS
+    bad = [v for v in vs if v not in ALL_VARIANTS]
+    if bad or len(set(vs)) != len(vs):
+        raise RuleError(f"--variants: {' '.join(vs)!r}: names are {', '.join(ALL_VARIANTS)}, each once")
+    return vs
+
+
+def reference_info(ref_dir):
+    """The finished run a reference-based check stands on: its folder and its manifest hash (the hash of the manifest without the audit key)."""
+    mp = Path(ref_dir) / "MANIFEST.json"
+    if not mp.is_file():
+        raise RuleError(f"--reference-from {ref_dir}: no MANIFEST.json there")
+    return {"dir": str(ref_dir), "manifest_sha256": manifest_hash(json.load(open(mp, encoding="utf-8")))}
+
+
+def rule_text(variants=None, reference=None):
+    """The rule's text. The first check's variants without a reference: RULE_TEXT, byte for byte. Otherwise the same seven conditions, thresholds and
+    weights (the lines from 1. (a) to the last line before Choice are copied from RULE_TEXT), with an introduction that names the variants and the
+    reference and a choice line for the listed variants. reference = reference_info() or None."""
+    vs = tuple(variants) if variants else VARIANTS
+    if vs == VARIANTS and not reference:
+        return RULE_TEXT
+    body = RULE_TEXT[RULE_TEXT.index("1. (a)"):RULE_TEXT.index("Choice:")]
+    names = ", ".join(f"{v.upper()} = grounded-{v}" for v in vs)
+    plural = len(vs) > 1
+    head = (f"## The rule of the development check of {'the variants' if plural else 'the variant'} {names} "
+            "(fixed before the first answer; MILESTONE.md \"G3's development check: the rule, fixed before the run\"; "
+            "same seven conditions, numbers and weights as runs/m5/reports/g0_grounded_design.md, section 3)\n\n"
+            f"Each variant answers the stored default packs (replayed) with the 4-bit model, thinking off, 2,048-token limit.\n")
+    if reference:
+        head += (f"Reference = the default answers and their judge rows, scores and identifier checks of the finished run in `{reference['dir']}` "
+                 f"(manifest hash {reference['manifest_sha256'][:16]}), pinned by sha256 in this run's manifest and used as they are. They are reused only if the "
+                 "repeat probe passes: the first three B1 default answers are answered again on the stored packs, before anything else is answered, and must "
+                 "equal that run's answers byte for byte; if any differs the chain stops and the reference must be answered again (run without "
+                 "--reference-from). The model the server echoes must equal that run's. The judge judges only the variants' answers (two passes). "
+                 "At most one unjudgeable judge row per judged set is left out and named (option --max-unjudged, the Owner's decision Q12 allows 1; an answer with no valid pass stops the chain). "
+                 "Not decided by the rule, reported: wrong declines on the 20 tier_a3 items per variant and for the reference; coverage on the diagnostics "
+                 "scenarios (the kind field of the items) per variant and for the reference; the rows of the first development check's variants beside "
+                 "the new one, labelled as from the first check.\n")
+    else:
+        head += "Reference = this run's own default answers, answered again in this run on the same stored packs and judged in the same run.\n"
+    head += "A variant is eligible only if all of these hold:\n"
+    if len(vs) == 1:
+        choice = f"Choice: {vs[0].upper()} if eligible (the B2 reading follows); otherwise neither (the grounded mode stops and the Owner sees the trade-off)."
+    else:
+        choice = "Choice: " + "; otherwise ".join(f"{v.upper()} if eligible" for v in vs) + "; otherwise neither (stop, back to design)."
+    tail = RULE_TEXT[RULE_TEXT.index("A measure that is missing"):]
+    return head + body + choice + "\n" + tail
 
 
 def sha256_file(p):
@@ -244,15 +304,23 @@ def current_state(a):
     missing = [p for p in a.pin if not Path(p).is_file()]
     if missing:
         raise RuleError(f"pinned file missing: {missing[0]}" + (f" (and {len(missing) - 1} more)" if len(missing) > 1 else ""))
-    return {"schema": SCHEMA, "kind": "dry" if a.dry else "real", "mechanical": a.mechanical, "model": a.model or None,
-            "rule_text_sha256": sha256_text(RULE_TEXT), "prompts_sha256": prompt_hashes(a.frozen),
-            "judge_args": kv(a.judge_arg), "info": kv(a.info),
-            "pins": {p: sha256_file(p) for p in sorted(a.pin)}}
+    vs = parse_variants(getattr(a, "variants", None))
+    ref = reference_info(a.reference_from) if getattr(a, "reference_from", None) else None
+    st = {"schema": SCHEMA, "kind": "dry" if a.dry else "real", "mechanical": a.mechanical, "model": a.model or None,
+          "rule_text_sha256": sha256_text(rule_text(vs, ref)), "prompts_sha256": prompt_hashes(a.frozen),
+          "judge_args": kv(a.judge_arg), "info": kv(a.info),
+          "pins": {p: sha256_file(p) for p in sorted(a.pin)}}
+    if vs != VARIANTS:          # keys of a reference-based or another-variant check; absent in the first check's manifest
+        st["variants"] = list(vs)
+    if ref:
+        st["reference"] = ref
+    return st
 
 
 AUDIT_KEY = "accepted_code_changes"     # the audit trail of --accept-code-change; not part of the manifest hash, so the stage markers stay valid
 CODE_FILES = ("m5_g_rule.py", "m5_g_dev.sh")       # the chain's own code: the only pins whose change can be accepted (in the directory scripts)
 ANSWER_STAGES = ("reference", "determinism", "answers")
+REF_ANSWER_STAGES = ("probe", "answers")       # a reference-based run answers the probe and the variants only
 
 
 def manifest_hash(m):
@@ -297,6 +365,9 @@ def add_state_args(p):
     p.add_argument("--dry", action="store_true")
     p.add_argument("--judge-arg", action="append", default=[], help="NAME=VALUE of the judge's arguments (setting, extra body, source characters); compared")
     p.add_argument("--info", action="append", default=[], help="NAME=VALUE recorded for the reader (the git head); never compared")
+    p.add_argument("--variants", default=None, help="the variants checked, g1 g2 g3 (default: g1 g2, the first development check's)")
+    p.add_argument("--reference-from", default=None, metavar="DIR",
+                   help="use the default answers, judge rows, scores and identifier checks of the finished run in DIR as the reference (its manifest hash is recorded)")
     p.add_argument("--accept-code-change", default=None, metavar="REASON",
                    help="start-check only: accept a changed hash of scripts/m5_g_rule.py or scripts/m5_g_dev.sh (nothing else), when every answering stage is done")
 
@@ -346,8 +417,9 @@ def cmd_start_check(a):
             why = "no pinned hash of scripts/m5_g_rule.py or scripts/m5_g_dev.sh differs (only those two can be accepted)"
         elif rest:
             why = "something besides scripts/m5_g_rule.py and scripts/m5_g_dev.sh differs: " + "; ".join(rest[:6])
-        elif not all(st in names for st in ANSWER_STAGES):
-            why = "not every answering stage is done (needs " + ", ".join(ANSWER_STAGES) + "; done: " + (", ".join(sorted(names)) or "none") + ")"
+        elif not all(st in names for st in (REF_ANSWER_STAGES if old.get("reference") else ANSWER_STAGES)):
+            why = ("not every answering stage is done (needs " + ", ".join(REF_ANSWER_STAGES if old.get("reference") else ANSWER_STAGES)
+                   + "; done: " + (", ".join(sorted(names)) or "none") + ")")
         else:
             why = None
             accepted = changed
@@ -417,6 +489,62 @@ def cmd_mark(a):
     rec = {"stage": a.stage, "manifest_sha256": mh, "outputs": {f: sha256_file(f) for f in a.out}}
     (Path(a.work) / f"stage_{a.stage}.done").write_text(json.dumps(rec, indent=1, sort_keys=True) + "\n", encoding="utf-8")
     print(f"stage {a.stage} done ({len(a.out)} output files hashed)")
+    return 0
+
+
+def cmd_ref_check(a):
+    """The finished reference run is intact: a manifest, every stage marker of a finished run, each marker written for that manifest, every output
+    it recorded present and unchanged. Exit 2 when not (a reference that moved after its run is not a reference)."""
+    d = Path(a.reference_from)
+    mp = d / "MANIFEST.json"
+    if not mp.is_file():
+        print(f"REFUSED: the reference run {d} has no MANIFEST.json", file=sys.stderr)
+        return 2
+    man = json.load(open(mp, encoding="utf-8"))
+    mh = manifest_hash(man)
+    bad = []
+    for st in REF_STAGES:
+        mk = d / f"stage_{st}.done"
+        if not mk.is_file():
+            bad.append(f"stage_{st}.done is missing (the reference run did not finish that stage)")
+            continue
+        rec = json.load(open(mk, encoding="utf-8"))
+        if rec.get("manifest_sha256") != mh:
+            bad.append(f"stage_{st}.done was written for another manifest")
+        for f, h in (rec.get("outputs") or {}).items():
+            if not Path(f).is_file():
+                bad.append(f"stage_{st}.done: output {f} is missing")
+            elif sha256_file(f) != h:
+                bad.append(f"stage_{st}.done: output {f} changed since the stage finished")
+    if man.get("kind") != ("dry" if a.dry else "real"):
+        bad.append(f"the reference run is a {man.get('kind')} run, this one is {'dry' if a.dry else 'real'}")
+    if man.get("mechanical") != a.mechanical:
+        bad.append(f"mechanical set of the reference run {man.get('mechanical')!r}, of this run {a.mechanical!r}")
+    if a.model is not None and man.get("model") != a.model:
+        bad.append(f"model of the reference run {man.get('model')!r}, of this run {a.model!r}")
+    if bad:
+        print(f"REFUSED: the reference run {d} is not intact (nothing was moved, deleted or written):", file=sys.stderr)
+        for b in bad[:12]:
+            print("  " + b, file=sys.stderr)
+        return 2
+    print(f"reference run {d}: manifest hash {mh[:16]}, stages {', '.join(REF_STAGES)} done, outputs unchanged")
+    return 0
+
+
+def cmd_probe(a):
+    """The repeat probe of a reference-based run: the first N answers, answered again, equal the reference run's answers byte for byte (and the same cut flag).
+    Exit 1 on any difference, with the sentence that the reference must be answered again."""
+    try:
+        lines, bad = compare_texts(rd(a.reference), rd(a.again), a.n, "reference", "again")
+    except RuleError as e:
+        print(f"probe: {e}")
+        return 1
+    for l in lines:
+        print("repeat probe, " + l)
+    print(f"repeat probe: {a.n - bad} of {a.n} answers equal the reference run's answers, byte for byte")
+    if bad:
+        print("PROBE FAILED: the reference must be answered again (run without --reference-from); the stored reference is not used")
+        return 1
     return 0
 
 
@@ -750,29 +878,39 @@ def cmd_measures(a):
         parts_3 = {"all": [r["id"] for r in items_m3]}
     else:
         parts_3 = {"M3": ids["M3"]}
+    V = parse_variants(a.variants)
+    refdir = Path(a.reference_from) if a.reference_from else None
     stored = {"b1": a.stored_b1, "p2": a.stored_p2}
     rub = {"b1": a.rubrics_b1, "p2": a.rubrics_p2}
     sets_n = {"b1": len(rd(rub["b1"])), "p2": len(rd(rub["p2"]))}
-    m = {"schema": SCHEMA, "reference": "this run's own default answers (stored default answers compared only)", "mechanical": a.mechanical, "sizes": {"J": sets_n["b1"] + sets_n["p2"], "J_b1": sets_n["b1"],
+    refw = lambda v: refdir if (refdir is not None and v == "default") else W      # noqa: E731  where the answers, judge rows, scores and checks of v are
+    refname = "this run's own default answers (stored default answers compared only)"
+    if refdir is not None:
+        refname = f"the default answers and judge rows of the finished run in {refdir} (manifest hash {reference_info(refdir)['manifest_sha256'][:16]}), reused as they are after the repeat probe"
+    m = {"schema": SCHEMA, "reference": refname, "mechanical": a.mechanical, "sizes": {"J": sets_n["b1"] + sets_n["p2"], "J_b1": sets_n["b1"],
                                                                "J_p2": sets_n["p2"]}, "variants": {}}
     m["sizes"]["mech"] = {k: len(parts_a.get(k, [])) + len(parts_3.get(k, [])) if k == "all" else len(v)
                           for k, v in {**parts_a, **parts_3}.items()}
     m["pop"] = POP if a.mechanical == "sample" else {"all": POP_ALL}
     fw = f_weights(ids, a.mechanical)
     # the reference is this run's own default answers (score_*_default); the stored default answers are only compared (compare-stored)
-    ref_scores = {"ma": score_stats(W / "score_ma_default.jsonl", parts_a), "m3": score_stats(W / "score_m3_default.jsonl", parts_3)}
-    names = {"default": "default", "g1": "g1", "g2": "g2"}
-    for v in ("default",) + VARIANTS:
+    ref_scores = {"ma": score_stats(refw("default") / "score_ma_default.jsonl", parts_a), "m3": score_stats(refw("default") / "score_m3_default.jsonl", parts_3)}
+    names = {v: v for v in ("default",) + V}
+    if V != VARIANTS:
+        m["variants_checked"] = list(V)
+    for v in ("default",) + V:
+        B = refw(v)
+        sets_v = {v} if refdir is not None else set(names.values())      # the judge file of the reference run holds the first check's sets too
         P, SM, nidc, kidc = [], [], 0, 0
         rows_all, d_rows_all = [], []
         stats = {}
         for s in ("b1", "p2"):
-            rows = rd(W / f"ans_{s}_{v}.jsonl")      # default included: this run's own default answers
+            rows = rd(B / f"ans_{s}_{v}.jsonl")      # default included: this run's own default answers (or the reference run's)
             ds = rd(stored[s])       # only for the search and retrieval seconds a replay skipped (h)
             rows_all += rows
             d_rows_all += ds
-            check_unjudged(W / f"judge_{s}.jsonl", a.max_unjudged, set(names.values()))     # more than allowed, or an answer without a valid pass: an error
-            jr = judged(str(W / f"judge_{s}.jsonl"), rub[s], set(names.values()))     # the mean over the valid passes of every answer
+            check_unjudged(B / f"judge_{s}.jsonl", a.max_unjudged, sets_v)     # more than allowed, or an answer without a valid pass: an error
+            jr = judged(str(B / f"judge_{s}.jsonl"), rub[s], sets_v)     # the mean over the valid passes of every answer
             for r in rows:
                 j = jr.get((v, r["id"]))
                 if j is None:
@@ -780,7 +918,7 @@ def cmd_measures(a):
                 P.append(j[0])
                 if s == "b1":
                     SM.append(j[1])
-            n_, k_ = parse_idcheck(W / f"idcheck_{s}_{v}.txt")
+            n_, k_ = parse_idcheck(B / f"idcheck_{s}_{v}.txt")
             nidc += n_
             kidc += k_
         stats = answer_stats(rows_all, d_rows_all, v == "default", a.stub)
@@ -790,8 +928,8 @@ def cmd_measures(a):
              "idents_per10": 10 * kidc / nidc if nidc else None, "idents": kidc, "idents_answers": nidc,
              "gap_sentences_per_answer": stats["gap_sentences"] / stats["n"], "meta_openers": stats["meta_openers"]}
         if v != "default":
-            sa = score_stats(W / f"score_ma_{v}.jsonl", parts_a)
-            s3 = score_stats(W / f"score_m3_{v}.jsonl", parts_3)
+            sa = score_stats(B / f"score_ma_{v}.jsonl", parts_a)
+            s3 = score_stats(B / f"score_m3_{v}.jsonl", parts_3)
             fe = f_estimate(sa["parts"], fw)
             d = {k: sa["all_pass"][k] - ref_scores["ma"]["all_pass"][k] for k in parts_a}
             for k in parts_3:       # in the one-part case ("all") the two files add up
@@ -806,15 +944,44 @@ def cmd_measures(a):
                          "outcomes_tier_a": sa["outcomes"], "outcomes_a3": s3["outcomes"],
                          "m1_declines": None}
             if a.mechanical == "sample":
-                rows = {r["id"]: r for r in rd(W / f"score_ma_{v}.jsonl")}
+                rows = {r["id"]: r for r in rd(B / f"score_ma_{v}.jsonl")}
                 e["mech"]["m1_declines"] = sum(1 for i in ids["M1"] if rows[i].get("outcome") in ("correct_decline", "wrong_decline"))
         m["variants"][v] = e
     if a.max_unjudged > 0:
-        m["unjudged"] = {"max_unjudged": a.max_unjudged, "rows": {s: len(unjudged_state(W / f"judge_{s}.jsonl", set(names.values()))[1]) for s in ("b1", "p2")}}
+        m["unjudged"] = {"max_unjudged": a.max_unjudged, "rows": {s: len(unjudged_state(W / f"judge_{s}.jsonl", set(V) if refdir is not None else set(names.values()))[1]) for s in ("b1", "p2")}}
+    if refdir is not None:
+        m["reference_from"] = reference_info(refdir)
+        first = json.load(open(refdir / "measures.json", encoding="utf-8")).get("variants", {})
+        m["first_check"] = {v: first[v] for v in VARIANTS if v in first and v not in V}      # the first check's rows, beside the new ones (reported only)
+        m["reported"] = reported_extras(W, refdir, V, a, ids, parts_3, rub)
     (W / "measures.json").write_text(json.dumps(m, indent=1, sort_keys=True) + "\n", encoding="utf-8")
     (W / "measures.md").write_text(measures_md(m), encoding="utf-8")
     print(measures_md(m))
     return 0
+
+
+def reported_extras(W, refdir, V, a, ids, parts_3, rub):
+    """Reported, deciding nothing (a reference-based check): per variant and for the reference, the wrong declines on the tier_a3 part (the 20 items of M3;
+    all 88 with --mechanical all) and the judged coverage on the diagnostics scenarios (the kind field of the items of B1 and pilot2)."""
+    out = {"a3": {}, "diagnostics": {}}
+    kind = {}
+    for s_, f in (("b1", W / "items_b1_h.jsonl"), ("p2", W / "items_p2_h.jsonl")):
+        for r in rd(f):
+            kind[(s_, r["id"])] = r.get("kind")
+    for v in ("default",) + tuple(V):
+        B = refdir if v == "default" else W
+        part = score_stats(B / f"score_m3_{v}.jsonl", parts_3)["parts"]
+        n = sum(x["n"] for x in part.values())
+        out["a3"][v] = {"items": n, "wrong_declines": sum(x["wrong_declines"] for x in part.values()),
+                        "covered": sum(x["covered"] for x in part.values()), "declines": sum(x["declines"] for x in part.values())}
+        ps = []
+        for s_ in ("b1", "p2"):
+            jr = judged(str(B / f"judge_{s_}.jsonl"), rub[s_], {v})
+            ps += [j[0] for (_, i), j in jr.items() if kind.get((s_, i)) == "diagnostics"]
+        if not ps:
+            raise RuleError(f"no judged diagnostics scenario for {v} (the kind field of the items)")
+        out["diagnostics"][v] = {"scenarios": len(ps), "P": sum(ps) / len(ps)}
+    return out
 
 
 def set_stats(rows, stub=False):
@@ -857,20 +1024,37 @@ def measures_md(m):
          "| variant | P (a) | supp. essential-miss per 10, B1 (b) | cut (c) | median tokens (d) | median s answer / with search | nonexistent ids per 10 (g) | gap sentences per answer | meta openers |",
          "|---|---|---|---|---|---|---|---|---|"]
     f = lambda x, d=2: "n/a" if x is None else f"{x:.{d}f}"  # noqa: E731
-    for v, e in m["variants"].items():
-        L.append(f"| {v} | {f(e['P'], 3)} (n {e['answers_judged']}) | {f(e['supp_miss_per10'], 2)} (n {e['supp_miss_answers']}) | {e['cut']} of {e['answers']} | "
+    first = m.get("first_check") or {}
+    label = lambda v: v if v not in first else f"{v} (from the first development check)"        # noqa: E731
+    rows1 = [(v, v, e) for v, e in m["variants"].items()]
+    if "reference_from" in m:
+        rows1[0] = ("default", "default (the reference run's)", m["variants"]["default"])
+    rows1 += [(v, label(v), e) for v, e in first.items()]
+    for v, lab, e in rows1:
+        L.append(f"| {lab} | {f(e['P'], 3)} (n {e['answers_judged']}) | {f(e['supp_miss_per10'], 2)} (n {e['supp_miss_answers']}) | {e['cut']} of {e['answers']} | "
                  f"{f(e['median_tokens'], 0)} | {f(e['median_answer_s'], 1)} / {f(e['median_total_s'], 1)} | {f(e['idents_per10'], 2)} ({e['idents']} in {e['idents_answers']}) | "
                  f"{f(e['gap_sentences_per_answer'], 2)} | {e['meta_openers']} |")
     L += ["", "| variant | all-pass change per part (e) | format failures (variant / reference) | wrong declines / covered, weighted (f) | wrong declines / covered, unweighted | declines (weighted / unweighted) | M1 declines |", "|---|---|---|---|---|---|---|"]
-    for v, e in m["variants"].items():
+    for v, lab, e in rows1:
         if "mech" in e:
             x = e["mech"]
-            L.append(f"| {v} | {x['d_all_pass']} (variant {x['all_pass']}, reference {x['ref_all_pass']}) | {x['format_failures']} / {x['ref_format_failures']} | "
+            L.append(f"| {lab} | {x['d_all_pass']} (variant {x['all_pass']}, reference {x['ref_all_pass']}) | {x['format_failures']} / {x['ref_format_failures']} | "
                      f"{x['wd_weighted']:.1f} / {x['covered_weighted']:.1f} | {x['wrong_declines']} / {x['covered']} | "
                      f"{x['declines_weighted']:.1f} / {x['declines']} | {x['m1_declines']} |")
-    for v, e in m["variants"].items():
+    for v, lab, e in rows1:
         if "mech" in e:
-            L.append(f"\nDecline outcomes of {v}: tier_a part {e['mech']['outcomes_tier_a']}; tier_a3 part {e['mech']['outcomes_a3']}")
+            L.append(f"\nDecline outcomes of {lab}: tier_a part {e['mech']['outcomes_tier_a']}; tier_a3 part {e['mech']['outcomes_a3']}")
+    if first:
+        L += ["", "The rows labelled \"from the first development check\" are read from that run's measures file (`measures.json` of the reference run); they are shown "
+              "beside the new variant and decide nothing here. Their reference was that run's default answers, the one used now."]
+    rep = m.get("reported")
+    if rep:
+        L += ["", "### Reported, deciding nothing", "",
+              "| answers | wrong declines on the tier_a3 part (of items; covering chunk in pack; all declines) | judged coverage on the diagnostics scenarios (B1 and pilot2) |", "|---|---|---|"]
+        for v in rep["a3"]:
+            x, y = rep["a3"][v], rep["diagnostics"][v]
+            L.append(f"| {'default (the reference run\'s)' if v == 'default' else v} | {x['wrong_declines']} of {x['items']} items; {x['covered']} covered; {x['declines']} declines | "
+                     f"{y['P']:.3f} over {y['scenarios']} scenarios |")
     return "\n".join(L) + "\n"
 
 
@@ -902,7 +1086,8 @@ def evaluate(m):
     if not isinstance(sizes, dict) or not sizes:
         raise RuleError("input missing: sizes.mech")
     L, elig = [], {}
-    for v in VARIANTS:
+    vs = tuple(m.get("variants_checked") or VARIANTS)
+    for v in vs:
         pre = ("variants", v)
         P = need(m, *pre, "P")
         S = need(m, *pre, "supp_miss_per10")
@@ -948,7 +1133,7 @@ def evaluate(m):
         elig[v] = all(x[0] for x in c.values())
         L.append(f"  => {v.upper()} is {'ELIGIBLE' if elig[v] else 'NOT eligible'}")
         L.append("")
-    choice = "G1" if elig["g1"] else ("G2" if elig["g2"] else "neither")
+    choice = next((v.upper() for v in vs if elig[v]), "neither")       # the listed order: G1 before G2, as before
     return L, elig, choice
 
 
@@ -964,7 +1149,8 @@ def cmd_rule(a):
         print(f"ERROR: {e}; a missing input is not a pass; no verdict", file=sys.stderr)
         return 2
     print("\n".join(L))
-    print(f"CHOICE: {choice}" + ("  (stop: back to design, B2 is not spent)" if choice == "neither" else ""))
+    print(f"CHOICE: {choice}" + ("  (stop: back to design, B2 is not spent)" if choice == "neither" and not m.get("variants_checked") else
+                                 ("  (the grounded mode stops; the Owner sees the trade-off)" if choice == "neither" else "")))
     return 0
 
 
@@ -972,7 +1158,9 @@ def cmd_rule(a):
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("rule-text")
+    p = sub.add_parser("rule-text")
+    p.add_argument("--variants", default=None)
+    p.add_argument("--reference-from", default=None)
     p = sub.add_parser("draw-ids")
     p.add_argument("--tier-a", required=True)
     p.add_argument("--tier-a3", required=True)
@@ -1034,10 +1222,21 @@ def main(argv=None):
     p.add_argument("--mechanical", choices=["sample", "all"], default="sample")
     p.add_argument("--stub", action="store_true", help="dry run: a stub answer has no token count; length/4 stands in (not a measurement)")
     p.add_argument("--max-unjudged", type=int, default=0, help="judge rows per judged set (B1, pilot2) that may stay invalid and be left out (default 0)")
+    p.add_argument("--variants", default=None)
+    p.add_argument("--reference-from", default=None, metavar="DIR")
     for k in ("stored-b1", "stored-p2", "rubrics-b1", "rubrics-p2"):
         p.add_argument("--" + k, required=True)
     p = sub.add_parser("rule")
     p.add_argument("--measures", required=True)
+    p = sub.add_parser("ref-check")
+    p.add_argument("--reference-from", required=True)
+    p.add_argument("--mechanical", choices=["sample", "all"], default="sample")
+    p.add_argument("--model", default=None)
+    p.add_argument("--dry", action="store_true")
+    p = sub.add_parser("probe")
+    p.add_argument("--reference", required=True)
+    p.add_argument("--again", required=True)
+    p.add_argument("--n", type=int, default=3)
     p = sub.add_parser("f-estimate")
     p.add_argument("--scores", required=True)
     p.add_argument("--ids", required=True)
@@ -1052,7 +1251,7 @@ def main(argv=None):
     a = ap.parse_args(argv)
     try:
         if a.cmd == "rule-text":
-            print(RULE_TEXT, end="")
+            print(rule_text(parse_variants(a.variants), reference_info(a.reference_from) if a.reference_from else None), end="")
             return 0
         if a.cmd == "f-note":
             print(F_NOTE)
@@ -1060,7 +1259,8 @@ def main(argv=None):
         fn = {"f-estimate": cmd_f_estimate, "check-echo": cmd_check_echo, "judge-compare": cmd_judge_compare, "draw-ids": cmd_draw_ids, "verify-m1": cmd_verify_m1, "select": cmd_select, "harness-items": cmd_harness_items,
               "judge-check": cmd_judge_check, "unjudged-note": cmd_unjudged_note, "code-change-note": cmd_code_change_note,
               "manifest": cmd_manifest, "start-check": cmd_start_check, "mark": cmd_mark, "check-answers": cmd_check_answers,
-              "determinism": cmd_determinism, "repeat": cmd_repeat, "compare-stored": cmd_compare_stored, "packs-equal": cmd_packs_equal, "measures": cmd_measures, "rule": cmd_rule}[a.cmd]
+              "determinism": cmd_determinism, "repeat": cmd_repeat, "compare-stored": cmd_compare_stored, "packs-equal": cmd_packs_equal, "measures": cmd_measures, "rule": cmd_rule,
+              "ref-check": cmd_ref_check, "probe": cmd_probe}[a.cmd]
         return fn(a)
     except (RuleError, OSError, KeyError, ValueError) as e:
         print(f"ERROR: {type(e).__name__}: {e}", file=sys.stderr)

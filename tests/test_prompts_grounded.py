@@ -30,20 +30,25 @@ class Constants(unittest.TestCase):
         gold = json.loads(GOLDEN.read_text())
         self.assertEqual(h(P.GROUNDED_G1), gold["GROUNDED_G1"])
         self.assertEqual(h(P.GROUNDED_G2), gold["GROUNDED_G2"])
+        self.assertEqual(h(P.GROUNDED_G3), gold["GROUNDED_G3"])
+        self.assertEqual(h(P.GROUNDED_G3), {"sha256": "a5a557712c52865b3ac91335fd69b2d1b4919940f401b534b2322b794f173c17", "len": 1383})
 
     def test_frozen_json(self):
         cfg = config.load()["prompts_sha256"]
         self.assertEqual(cfg["GROUNDED_G1"], h(P.GROUNDED_G1)["sha256"])
         self.assertEqual(cfg["GROUNDED_G2"], h(P.GROUNDED_G2)["sha256"])
+        self.assertEqual(cfg["GROUNDED_G3"], h(P.GROUNDED_G3)["sha256"])
         self.assertIn("GROUNDED_G1", config.PROMPT_NAMES)
         self.assertIn("GROUNDED_G2", config.PROMPT_NAMES)
+        self.assertIn("GROUNDED_G3", config.PROMPT_NAMES)
 
     def test_gap_sentence_literal(self):
-        for t in (P.GROUNDED_G1, P.GROUNDED_G2):
+        for t in (P.GROUNDED_G1, P.GROUNDED_G2, P.GROUNDED_G3):
             self.assertIn('"The retrieved documentation does not cover <what is missing>."', t)
 
     def test_registry(self):
-        self.assertEqual(P.GROUNDED, {"grounded-g1": P.GROUNDED_G1, "grounded-g2": P.GROUNDED_G2})
+        self.assertEqual(P.GROUNDED, {"grounded-g1": P.GROUNDED_G1, "grounded-g2": P.GROUNDED_G2,
+                                          "grounded-g3": P.GROUNDED_G3})
 
 
 class Messages(unittest.TestCase):
@@ -64,7 +69,7 @@ class Messages(unittest.TestCase):
 
     def test_unknown_variant(self):
         with self.assertRaises(ValueError):
-            P.grounded_user_message(Q, CHUNKS, "grounded-g3")
+            P.grounded_user_message(Q, CHUNKS, "grounded-g4")
 
     def test_default_and_strict_unchanged(self):
         self.assertEqual(P.user_message(Q, CHUNKS), HEAD + "\n\n" + P.pack_text(CHUNKS) + "\n\nQuestion: " + Q)
@@ -73,10 +78,10 @@ class Messages(unittest.TestCase):
         self.assertEqual(P.user_message(Q, None), Q)
 
     def test_modes_registered(self):
-        self.assertEqual(pipeline.GROUNDED_MODES, ("grounded-g1", "grounded-g2"))
-        self.assertEqual(evalhooks.GROUNDED_MODES, ("grounded-g1", "grounded-g2"))
+        self.assertEqual(pipeline.GROUNDED_MODES, ("grounded-g1", "grounded-g2", "grounded-g3"))
+        self.assertEqual(evalhooks.GROUNDED_MODES, ("grounded-g1", "grounded-g2", "grounded-g3"))
         with self.assertRaises(ValueError):
-            pipeline.ask(Q, None, mode="grounded-g3")
+            pipeline.ask(Q, None, mode="grounded-g4")
 
     def test_evalhooks_closed_book_grounded_refused(self):
         # a stored pack is required for a grounded mode without retrieval; no model is ever called here
@@ -86,7 +91,7 @@ class Messages(unittest.TestCase):
             def chat(self, *a, **k):
                 raise AssertionError("no model call expected")
         with self.assertRaises(ValueError):
-            evalhooks.run_item(Q, Gen(), mode="grounded-g3")
+            evalhooks.run_item(Q, Gen(), mode="grounded-g4")
 
 
 @unittest.skipUnless(PACKS.exists() and INDEX.exists(), "work/v3/rag_packs_base_exp.json or work/v2/chunks.jsonl absent (work/ is git-ignored)")
@@ -105,6 +110,7 @@ class LegacyPacks(unittest.TestCase):
             g = gold["questions"][str(i)]
             self.assertEqual(h(P.grounded_user_message(r["question"], k6, "grounded-g1")), g["user_k6_grounded_g1"], i)
             self.assertEqual(h(P.grounded_user_message(r["question"], k6, "grounded-g2")), g["user_k6_grounded_g2"], i)
+            self.assertEqual(h(P.grounded_user_message(r["question"], k6, "grounded-g3")), g["user_k6_grounded_g3"], i)
 
 
 class Cli(unittest.TestCase):
@@ -129,7 +135,7 @@ class Cli(unittest.TestCase):
         a = p.parse_args(["ask", "--mode", "grounded-g2", "q"])
         self.assertEqual(a.mode, "grounded-g2")
         with self.assertRaises(SystemExit):
-            p.parse_args(["ask", "--mode", "grounded-g3", "q"])
+            p.parse_args(["ask", "--mode", "grounded-g4", "q"])
         code, out, err = self.run_main(["ask", "--help"])
         self.assertIn("EXPERIMENTAL", out)
 

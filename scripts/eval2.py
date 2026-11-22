@@ -942,9 +942,9 @@ def build_parser():
     an.add_argument("--base-url", help="openai: server URL (default: OMLX_URL)")
     an.add_argument("--extra-body", type=json.loads, default=None, metavar="JSON")
     an.add_argument("--max-tokens", type=int, default=None)
-    an.add_argument("--mode", choices=["default", "strict", "closed", "grounded-g1", "grounded-g2"], default="default",
+    an.add_argument("--mode", choices=["default", "strict", "closed", "grounded-g1", "grounded-g2", "grounded-g3"], default="default",
                     help="closed: closed book (no retrieval, empty pack; the plain-base prompt); grounded-g1 and "
-                         "grounded-g2: EXPERIMENTAL grounded prompts (unmeasured, recorded in the manifest)")
+                         "grounded-g2 / grounded-g3: EXPERIMENTAL grounded prompts (unmeasured, recorded in the manifest)")
     an.add_argument("--k", choices=["k6", "k3"], default="k6")
     an.add_argument("--profile", choices=list(profiles.PROFILES), default="frozen",
                     help="retrieval profile (default frozen); the others (r1 to r4 and the r4 settings) are unmeasured candidates "

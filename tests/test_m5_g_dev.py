@@ -5,6 +5,7 @@ import contextlib
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -40,11 +41,11 @@ class GroundedModes(unittest.TestCase):
         import eval2
         from kafka_sre_rag import profiles
         p = eval2.build_parser()
-        for mode in ("default", "strict", "closed", "grounded-g1", "grounded-g2"):
+        for mode in ("default", "strict", "closed", "grounded-g1", "grounded-g2", "grounded-g3"):
             a = p.parse_args(["answer", "--items", "x", "--config", "c", "--mode", mode])
             self.assertEqual(a.mode, mode)
         with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
-            p.parse_args(["answer", "--items", "x", "--config", "c", "--mode", "grounded-g3"])
+            p.parse_args(["answer", "--items", "x", "--config", "c", "--mode", "grounded-g4"])
         for prof in profiles.PROFILES:       # the choices come from the profiles module, not from a second list
             self.assertEqual(p.parse_args(["answer", "--items", "x", "--config", "c", "--profile", prof]).profile, prof)
         self.assertIn("r4", profiles.PROFILES)
@@ -827,6 +828,341 @@ class ChainDryRun(unittest.TestCase):
             self.assertIn("changed since the stage finished", r.stderr)
         finally:
             f.write_text(good)
+
+
+# ---------------------------------------------------------------- the check of other variants against a stored reference (G3; the Owner's decision Q13)
+def variant_measures(variants, **kw):
+    m = measures()
+    m["variants"] = {"default": m["variants"]["default"], **{v: variant(**kw) for v in variants}}
+    m["variants_checked"] = list(variants)
+    return m
+
+
+class ReferenceRule(unittest.TestCase):
+    def verdict(self, m):
+        return Rule.verdict(self, m)
+
+    def test_the_first_checks_rule_text_is_byte_for_byte_the_old_one(self):
+        # sha256 of the rule text recorded in the first development check's manifest (work/m5/gdev/MANIFEST.json): the default invocation does not change it
+        self.assertEqual(R.sha256_text(R.RULE_TEXT), "f1dc99a68170d0ca6c81c17a75d6732901351d3746ebdf31c2eb135162767683")
+        self.assertEqual(R.rule_text(None, None), R.RULE_TEXT)
+        self.assertEqual(R.rule_text(("g1", "g2"), None), R.RULE_TEXT)
+        self.assertEqual(run_rule(["rule-text"])[1], R.RULE_TEXT)
+
+    def test_the_variants_rule_text_keeps_the_seven_conditions_and_names_the_reference(self):
+        ref = {"dir": "work/x", "manifest_sha256": "ab" * 32}
+        t = R.rule_text(("g3",), ref)
+        body = R.RULE_TEXT[R.RULE_TEXT.index("1. (a)"):R.RULE_TEXT.index("Choice:")]
+        self.assertIn(body, t)          # the seven conditions, the numbers and the weights, character for character
+        self.assertIn("A measure that is missing, not a number or not computed is an error, never a pass.", t)
+        self.assertIn("`work/x`", t)
+        self.assertIn("manifest hash " + "ab" * 8, t)
+        self.assertIn("repeat probe", t)
+        self.assertIn("byte for byte", t)
+        self.assertIn("run without --reference-from", t)
+        self.assertIn("Choice: G3 if eligible", t)
+        self.assertNotIn("G1", t)
+        self.assertIn("wrong declines on the 20 tier_a3 items", t)
+        self.assertIn("diagnostics", t)
+        self.assertNotEqual(t, R.RULE_TEXT)
+
+    def test_a_single_variant_reads_choice_g3_or_neither(self):
+        code, out, err = self.verdict(variant_measures(["g3"]))
+        self.assertEqual(code, 0, err)
+        self.assertIn("CHOICE: G3", out)
+        self.assertEqual(out.count("PASS"), 7)
+        self.assertNotIn("Variant G1", out)
+        code, out, err = self.verdict(variant_measures(["g3"], P=0.50))
+        self.assertIn("FAIL  (a) coverage P: g3 0.500", out)
+        self.assertIn("CHOICE: neither", out)
+        self.assertNotIn("CHOICE: G3", out)
+
+    def test_every_threshold_applies_to_the_listed_variant(self):
+        for name, kw in {"a": dict(P=0.569), "b": dict(S=5.5), "c": dict(cut=6), "d": dict(med=1401), "g": dict(ident=3.5),
+                         "e1": dict(d={"M1": 0, "M2": -3, "M3": 0}), "e2": dict(ff=6, ffr=3), "f": dict(wd=9, cov=80)}.items():
+            code, out, err = self.verdict(variant_measures(["g3"], **kw))
+            self.assertEqual(code, 0, err)
+            self.assertIn("CHOICE: neither", out, name)
+        code, out, err = self.verdict(variant_measures(["g3"], P=0.5701, S=5.0, cut=5, med=1400, ident=3.0, ff=5, ffr=3, wd=8, cov=80))
+        self.assertIn("CHOICE: G3", out)
+
+    def test_a_missing_listed_variant_is_an_error(self):
+        m = variant_measures(["g3"])
+        del m["variants"]["g3"]
+        code, out, err = self.verdict(m)
+        self.assertEqual(code, 2)
+        self.assertNotIn("CHOICE", out)
+
+    def test_parse_variants(self):
+        self.assertEqual(R.parse_variants(None), ("g1", "g2"))
+        self.assertEqual(R.parse_variants("g3"), ("g3",))
+        self.assertEqual(R.parse_variants("g1,g3"), ("g1", "g3"))
+        self.assertEqual(R.parse_variants("g1 g2"), ("g1", "g2"))
+        for bad in ("g4", "g3,g3", "default"):
+            with self.assertRaises(R.RuleError):
+                R.parse_variants(bad)
+
+    def test_the_probe_stops_on_any_difference_and_says_what_to_do(self):
+        with tempfile.TemporaryDirectory() as t:
+            ref, same, diff = Path(t) / "r.jsonl", Path(t) / "s.jsonl", Path(t) / "d.jsonl"
+            rows = [{"id": f"b1-0{i}", "text": f"answer {i}", "truncated": False} for i in range(1, 4)]
+            for f, rs in ((ref, rows), (same, rows), (diff, rows[:2] + [{**rows[2], "text": "answer 3 changed"}])):
+                f.write_text("".join(json.dumps(r) + "\n" for r in rs))
+            code, out, err = run_rule(["probe", "--reference", str(ref), "--again", str(same), "--n", "3"])
+            self.assertEqual(code, 0, out)
+            self.assertIn("3 of 3 answers equal", out)
+            code, out, err = run_rule(["probe", "--reference", str(ref), "--again", str(diff), "--n", "3"])
+            self.assertEqual(code, 1)
+            self.assertIn("b1-03: DIFFERENT", out)
+            self.assertIn("the reference must be answered again (run without --reference-from)", out)
+            code, out, err = run_rule(["probe", "--reference", str(ref), "--again", str(same), "--n", "4"])      # too few rows is not a pass
+            self.assertEqual(code, 1)
+
+    def test_ref_check_needs_an_intact_finished_run(self):
+        with tempfile.TemporaryDirectory() as t:
+            d = Path(t) / "ref"
+            d.mkdir()
+            (d / "MANIFEST.json").write_text(json.dumps({"kind": "dry", "mechanical": "sample", "model": "m", "rule_text_sha256": "x"}))
+            f = d / "out.txt"
+            f.write_text("one")
+            for st in R.REF_STAGES:
+                self.assertEqual(run_rule(["mark", "--work", str(d), "--stage", st, "--out", str(f)])[0], 0)
+            args = ["ref-check", "--reference-from", str(d), "--model", "m", "--dry"]
+            self.assertEqual(run_rule(args)[0], 0)
+            self.assertEqual(run_rule(args[:-1])[0], 2)                         # a dry reference is not a real one
+            self.assertEqual(run_rule(args[:-2] + ["--model", "other", "--dry"])[0], 2)
+            f.write_text("two")                                                 # an output changed since the stage finished
+            code, out, err = run_rule(args)
+            self.assertEqual(code, 2)
+            self.assertIn("changed since the stage finished", err)
+            f.write_text("one")
+            (d / "stage_judge.done").unlink()                                   # a stage missing
+            code, out, err = run_rule(args)
+            self.assertEqual(code, 2)
+            self.assertIn("stage_judge.done is missing", err)
+
+    def test_start_check_records_the_variants_and_the_reference_and_refuses_a_change(self):
+        with tempfile.TemporaryDirectory() as t:
+            t = Path(t)
+            ref = t / "ref"
+            ref.mkdir()
+            (ref / "MANIFEST.json").write_text(json.dumps({"kind": "dry", "x": 1}))
+            pin = t / "pin.txt"
+            pin.write_text("a")
+            frozen = t / "frozen.json"
+            frozen.write_text(json.dumps({"prompts_sha256": {"A": "1"}}))
+            base = ["--manifest", str(t / "w/MANIFEST.json"), "--work", str(t / "w"), "--pin", str(pin), "--frozen", str(frozen), "--dry"]
+            self.assertEqual(run_rule(["manifest", *base, "--variants", "g3", "--reference-from", str(ref)])[0], 0)
+            man = json.load(open(t / "w/MANIFEST.json"))
+            self.assertEqual(man["variants"], ["g3"])
+            self.assertEqual(man["reference"], R.reference_info(ref))
+            self.assertEqual(man["rule_text_sha256"], R.sha256_text(R.rule_text(("g3",), R.reference_info(ref))))
+            self.assertEqual(run_rule(["start-check", *base, "--variants", "g3", "--reference-from", str(ref)])[0], 0)
+            self.assertEqual(run_rule(["start-check", *base])[0], 2)                                            # other variants, no reference
+            self.assertEqual(run_rule(["start-check", *base, "--variants", "g2", "--reference-from", str(ref)])[0], 2)
+            (ref / "MANIFEST.json").write_text(json.dumps({"kind": "dry", "x": 2}))                             # the reference's manifest hash changed
+            code, out, err = run_rule(["start-check", *base, "--variants", "g3", "--reference-from", str(ref)])
+            self.assertEqual(code, 2)
+            self.assertIn("reference", err)
+            # the first check's manifest (no --variants, no --reference-from) has neither key
+            plain = ["--manifest", str(t / "w2/MANIFEST.json"), "--work", str(t / "w2"), "--pin", str(pin), "--frozen", str(frozen), "--dry"]
+            self.assertEqual(run_rule(["manifest", *plain])[0], 0)
+            man2 = json.load(open(t / "w2/MANIFEST.json"))
+            self.assertNotIn("variants", man2)
+            self.assertNotIn("reference", man2)
+            self.assertEqual(man2["rule_text_sha256"], R.sha256_text(R.RULE_TEXT))
+
+    def test_the_accepted_code_change_needs_the_probe_and_the_answers_in_a_reference_run(self):
+        with tempfile.TemporaryDirectory() as t:
+            t = Path(t)
+            ref = t / "ref"
+            ref.mkdir()
+            (ref / "MANIFEST.json").write_text(json.dumps({"kind": "dry"}))
+            (t / "scripts").mkdir()
+            code_f = t / "scripts" / "m5_g_rule.py"
+            code_f.write_text("one")
+            frozen = t / "frozen.json"
+            frozen.write_text(json.dumps({"prompts_sha256": {}}))
+            base = ["--manifest", str(t / "w/MANIFEST.json"), "--work", str(t / "w"), "--pin", str(code_f), "--frozen", str(frozen), "--dry",
+                    "--variants", "g3", "--reference-from", str(ref)]
+            self.assertEqual(run_rule(["manifest", *base])[0], 0)
+            code_f.write_text("two")
+            code, out, err = run_rule(["start-check", *base, "--accept-code-change", "why"])
+            self.assertEqual(code, 2)
+            self.assertIn("needs probe, answers", err)
+            for st in ("probe", "answers"):
+                self.assertEqual(run_rule(["mark", "--work", str(t / "w"), "--stage", st])[0], 0)
+            code, out, err = run_rule(["start-check", *base, "--accept-code-change", "why"])
+            self.assertEqual(code, 0, err)
+            self.assertIn("ACCEPTED change", out)
+
+
+@unittest.skipUnless(HAVE_WORK and IDS_FILE.exists(), "work/ inputs or eval/m4/g_dev_ids.json absent")
+class ChainDryRunReference(unittest.TestCase):
+    """The first check's chain is run dry once (the finished reference); then the chain checks g3 against it."""
+    @classmethod
+    def setUpClass(cls):
+        cls._t = tempfile.TemporaryDirectory()
+        cls.t = Path(cls._t.name)
+        cls.ref = cls.t / "ref"
+        r = cls.run_chain("--work", str(cls.ref))
+        assert r.returncode == 0, r.stdout[-1500:] + r.stderr[-1500:]
+        cls.ref_hashes = cls.tree(cls.ref)
+        cls.ref_copy = cls.t / "ref_copy"           # the check reads the copy, so that a test may change it
+        shutil.copytree(cls.ref, cls.ref_copy)
+        cls.w = cls.t / "g3"
+        cls.first = cls.chain(cls.w, cls.ref_copy)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._t.cleanup()
+
+    @staticmethod
+    def tree(d):
+        return {str(p.relative_to(d)): R.sha256_file(p) for p in sorted(Path(d).rglob("*")) if p.is_file()}
+
+    @staticmethod
+    def run_chain(*args):
+        env = {k: v for k, v in os.environ.items() if k not in ("OMLX_URL", "OMLX_API_KEY", "JUDGE_API_KEY")}
+        return subprocess.run(["sh", str(ROOT / "scripts/m5_g_dev.sh"), "--dry-run", *args], cwd=ROOT, env=env, capture_output=True, text=True, timeout=1800)
+
+    @classmethod
+    def chain(cls, w, ref, *extra):
+        return cls.run_chain("--work", str(w), "--variants", "g3", "--reference-from", str(ref), "--max-unjudged", "1", *extra)
+
+    def test_1_exits_0_checks_only_g3_and_leaves_the_reference_alone(self):
+        self.assertEqual(self.first.returncode, 0, self.first.stdout[-2000:] + self.first.stderr[-2000:])
+        w = self.w
+        man = json.load(open(w / "MANIFEST.json"))
+        self.assertEqual(man["variants"], ["g3"])
+        self.assertEqual(man["reference"], R.reference_info(self.ref_copy))
+        for f in ("MANIFEST.json", "judge_b1.jsonl", "judge_p2.jsonl", "ans_b1_default.jsonl", "score_ma_default.jsonl", "idcheck_b1_default.txt", "measures.json"):
+            self.assertIn(f"{self.ref_copy}/{f}", man["pins"])
+        self.assertEqual(man["pins"][f"{self.ref_copy}/judge_b1.jsonl"], R.sha256_file(self.ref_copy / "judge_b1.jsonl"))
+        for f in ("stage_header.done", "stage_prepare.done", "stage_probe.done", "stage_answers.done", "stage_judge.done", "stage_checks.done", "probe_default.jsonl"):
+            self.assertTrue((w / f).exists(), f)
+        for f in ("stage_reference.done", "stage_determinism.done", "ans_b1_default.jsonl", "ans_b1_g1.jsonl", "ans_b1_g2.jsonl"):
+            self.assertFalse((w / f).exists(), f)
+        for name, n in (("b1", 30), ("p2", 24), ("ma", 96), ("m3", 20)):
+            self.assertEqual(sum(1 for _ in open(w / f"ans_{name}_g3.jsonl")), n, name)
+        self.assertEqual(json.load(open(str(w / "ans_ma_g3.jsonl") + ".manifest.json"))["mode"], "grounded-g3")
+        self.assertEqual(sum(1 for _ in open(w / "probe_default.jsonl")), 3)
+        for s_, n in (("b1", 60), ("p2", 48)):         # two passes of the one variant: nothing of default, g1 or g2 is judged again
+            rows = R.rd(w / f"judge_{s_}.jsonl")
+            self.assertEqual(len(rows), n)
+            self.assertEqual({r["set"] for r in rows}, {"g3"})
+        self.assertEqual(self.tree(self.ref), self.ref_hashes)          # the finished run was not touched
+        out = (w / "rule_out.txt").read_text()
+        self.assertEqual(out.count("Variant "), 1)
+        self.assertRegex(out, r"CHOICE: (G3|neither)")
+        self.assertNotIn("G1", out.replace("first development check", ""))
+
+    def test_2_the_header_and_the_rule_come_first_and_say_which_reference(self):
+        rep = (self.w / "G_DEV_from_stub_data.md").read_text()
+        self.assertLess(rep.index("The rule of the development check"), rep.index("## Result"))
+        self.assertIn(f"`{self.ref_copy}`", rep[:rep.index("## Result")])
+        self.assertIn("manifest hash " + R.reference_info(self.ref_copy)["manifest_sha256"][:16], rep[:rep.index("## Result")])
+        h = (self.w / "stage_header.done").stat().st_mtime
+        for f in ("probe_default.jsonl", "ans_b1_g3.jsonl"):
+            self.assertLess(h, (self.w / f).stat().st_mtime, f)
+        self.assertLess((self.w / "stage_probe.done").stat().st_mtime, (self.w / "ans_b1_g3.jsonl").stat().st_mtime)
+
+    def test_3_the_report_has_the_reported_parts_and_the_first_checks_rows(self):
+        rep = (self.w / "G_DEV_from_stub_data.md").read_text()
+        self.assertIn("**Choice by the rule: ", rep)
+        self.assertIn("### Reported, deciding nothing", rep)
+        self.assertIn("wrong declines on the tier_a3 part", rep)
+        self.assertIn("judged coverage on the diagnostics scenarios", rep)
+        self.assertIn("over 14 scenarios", rep)
+        self.assertIn("| g1 (from the first development check) |", rep)
+        self.assertIn("| g2 (from the first development check) |", rep)
+        self.assertIn("| default (the reference run's) |", rep)
+        self.assertIn("The repeat probe", rep)
+        self.assertIn("3 of 3 answers equal the reference run's answers, byte for byte", rep)
+        m = json.load(open(self.w / "measures.json"))
+        self.assertEqual(m["variants_checked"], ["g3"])
+        self.assertEqual(set(m["variants"]), {"default", "g3"})
+        self.assertEqual(m["variants"]["default"], json.load(open(self.ref / "measures.json"))["variants"]["default"])      # the reference's numbers, as they are
+        self.assertEqual(set(m["reported"]["a3"]), {"default", "g3"})
+        self.assertEqual(m["reported"]["diagnostics"]["g3"]["scenarios"], 14)
+        self.assertEqual(set(m["first_check"]), {"g1", "g2"})
+
+    def test_4_resumes(self):
+        r = self.chain(self.w, self.ref_copy)
+        self.assertEqual(r.returncode, 0, r.stdout[-1500:] + r.stderr[-1500:])
+        self.assertIn("stage(s) done", r.stdout)
+        self.assertEqual(self.tree(self.ref), self.ref_hashes)
+
+    def test_5_a_changed_reference_file_is_refused_with_exit_code_2(self):
+        f = self.ref_copy / "judge_b1.jsonl"
+        good = f.read_bytes()
+        f.write_bytes(good + b"\n")
+        try:
+            r = self.chain(self.w, self.ref_copy)
+            self.assertEqual(r.returncode, 2, r.stdout[-1000:] + r.stderr[-1000:])
+            self.assertIn("REFUSED", r.stderr)
+            self.assertIn("pins.", r.stderr)
+        finally:
+            f.write_bytes(good)
+
+    def test_6_the_old_default_invocation_is_unchanged(self):
+        man = json.load(open(self.ref / "MANIFEST.json"))
+        self.assertNotIn("variants", man)
+        self.assertNotIn("reference", man)
+        self.assertEqual(man["rule_text_sha256"], R.sha256_text(R.RULE_TEXT))
+        for f in ("stage_reference.done", "stage_determinism.done", "ans_b1_g1.jsonl", "ans_b1_g2.jsonl", "ans_b1_default.jsonl", "det_default.jsonl"):
+            self.assertTrue((self.ref / f).exists(), f)
+        self.assertEqual({r["set"] for r in R.rd(self.ref / "judge_b1.jsonl")}, {"default", "g1", "g2"})
+        self.assertEqual(len(R.rd(self.ref / "judge_b1.jsonl")), 180)
+        self.assertRegex((self.ref / "rule_out.txt").read_text(), r"CHOICE: (G1|G2|neither)")
+
+    def test_7_the_probe_stops_the_chain_on_a_difference(self):
+        diff_ref = self.t / "ref_diff"
+        shutil.copytree(self.ref, diff_ref)
+        f = diff_ref / "ans_b1_default.jsonl"
+        rows = R.rd(f)
+        rows[0]["text"] = rows[0]["text"] + " (changed)"
+        R.wr(f, rows)           # the stage markers name the original files, so the reference still counts as intact; the pin and the probe see the change
+        w = self.t / "g3_diff"
+        r = self.chain(w, diff_ref)
+        self.assertEqual(r.returncode, 1, r.stdout[-1500:] + r.stderr[-1500:])
+        self.assertIn("DRY RUN FAILED", r.stdout)
+        self.assertIn("the reference must be answered again (run without --reference-from)", r.stdout)
+        self.assertIn("b1-01: DIFFERENT", r.stdout)
+        self.assertFalse((w / "stage_probe.done").exists())
+        self.assertFalse((w / "ans_b1_g3.jsonl").exists())        # nothing of the variants was answered
+        self.assertTrue((w / "stage_header.done").exists())
+
+    def test_8_a_reference_that_is_not_a_finished_run_is_refused(self):
+        w = self.t / "g3_bad"
+        bad = self.t / "ref_unfinished"
+        shutil.copytree(self.ref, bad)
+        (bad / "stage_judge.done").unlink()
+        r = self.chain(w, bad)
+        self.assertEqual(r.returncode, 2, r.stdout[-1000:] + r.stderr[-1000:])
+        self.assertIn("stage_judge.done is missing", r.stderr)
+        self.assertFalse((w / "MANIFEST.json").exists())
+
+    def test_9_options_are_checked_before_anything_starts(self):
+        r = self.run_chain("--variants", "g4")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("--variants is a list of g1, g2, g3", r.stderr)
+        r = self.run_chain("--work", str(self.t / "x"), "--variants", "g3", "--reference-from", str(self.t / "nowhere"))
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("is not a folder", r.stderr)
+        r = self.run_chain("--work", str(self.ref), "--variants", "g3", "--reference-from", str(self.ref))
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("--work is the reference run's folder", r.stderr)
+        # a real run needs its own work folder, report and marker name: nothing of the finished run is overwritten
+        env = {k: v for k, v in os.environ.items() if k not in ("OMLX_URL", "OMLX_API_KEY", "JUDGE_API_KEY")}
+        r = subprocess.run(["sh", str(ROOT / "scripts/m5_g_dev.sh"), "--variants", "g3", "--reference-from", str(self.ref)], cwd=ROOT, env=env,
+                           capture_output=True, text=True, timeout=120)
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("--work, --report and --name are required", r.stderr)
+        r = subprocess.run(["sh", str(ROOT / "scripts/m5_g_dev.sh"), "--variants", "g3", "--reference-from", str(self.ref), "--work", str(self.t / "n"),
+                            "--report", "runs/m5/G_DEV.md", "--name", "m5_g_dev3"], cwd=ROOT, env=env, capture_output=True, text=True, timeout=120)
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("must differ from the finished run's", r.stderr)
 
 
 if __name__ == "__main__":
