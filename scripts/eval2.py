@@ -916,6 +916,7 @@ def cmd_report(a, out=sys.stdout):
 # ---------------------------------------------------------------- cli
 
 def build_parser():
+    from kafka_sre_rag import profiles   # the profile choices come from the profiles module (kafka_sre_rag/candidate.json)
     ap = argparse.ArgumentParser(prog="eval2.py", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     c = sub.add_parser("convert-legacy")
@@ -941,11 +942,12 @@ def build_parser():
     an.add_argument("--base-url", help="openai: server URL (default: OMLX_URL)")
     an.add_argument("--extra-body", type=json.loads, default=None, metavar="JSON")
     an.add_argument("--max-tokens", type=int, default=None)
-    an.add_argument("--mode", choices=["default", "strict", "closed"], default="default",
-                    help="closed: closed book (no retrieval, empty pack; the plain-base prompt)")
+    an.add_argument("--mode", choices=["default", "strict", "closed", "grounded-g1", "grounded-g2"], default="default",
+                    help="closed: closed book (no retrieval, empty pack; the plain-base prompt); grounded-g1 and "
+                         "grounded-g2: EXPERIMENTAL grounded prompts (unmeasured, recorded in the manifest)")
     an.add_argument("--k", choices=["k6", "k3"], default="k6")
-    an.add_argument("--profile", choices=["frozen", "r1", "r2", "r3"], default="frozen",
-                    help="retrieval profile (default frozen); r1, r2 and r3 are unmeasured candidates "
+    an.add_argument("--profile", choices=list(profiles.PROFILES), default="frozen",
+                    help="retrieval profile (default frozen); the others (r1 to r4 and the r4 settings) are unmeasured candidates "
                          "(kafka_sre_rag/candidate.json) and are recorded in the manifest")
     an.add_argument("--no-rerank", action="store_true", help="BM25 order only (unmeasured)")
     an.add_argument("--catalogue", help="catalogue directory to hash into the manifest")

@@ -321,6 +321,10 @@ def main(argv=None):
               f"{'not found' if r['cached'] is None else ('match' if r['match'] else 'MISMATCH')}")
         print(config.catalogues_line(a.catalogues))
         return 0
+    if a.cmd == "serve" and a.mode.startswith("grounded"):
+        print(f"error: --mode {a.mode} cannot be used with serve: the service has no grounded mode "
+              "(a request would be answered in the default mode)", file=sys.stderr)
+        return 2
     if a.cmd == "ask" and a.service_url:
         if a.mode.startswith("grounded"):
             print(f"error: --mode {a.mode} cannot be used with --service-url: the service has no grounded mode "
