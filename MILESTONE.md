@@ -768,3 +768,17 @@ Later in M5: whether candidate C becomes the default (after look 3).
   10 (−6.85 to −0.56); readers 6 % apart.
 - 2026-11-22 17:45: the Owner agreed with Q15 to Q17: M5 is closed; `v3.2.0` is
   prepared; the plan of the next milestone is being drafted.
+- 2026-11-22 17:54: the plan of the next milestone (M6) is drafted
+  (`runs/m6/reports/m6_plan.md`). 18:00: the Owner agreed with its decisions S1 to S6:
+  S1 go for the plan, with a fresh development batch D5 (50 scenarios), a set T for
+  harmful statements (43), and the go to load the 4-bit base model for M6's measurement
+  runs; S2 the hidden look's rule states the trade beforehand (coverage point estimate
+  not under −0.04 and low end above −0.10, for a fall in wrong statements whose interval
+  excludes zero; harmful at most the reference's count plus 3), final wording in the
+  ledger before the look; S3 the second reranker may add at most 1.5 GB of resident
+  memory; S4 a download or install for it is decided after the memory measurement; S5 a
+  new hidden judged part is written during M6 and the existing 61 scenarios are used for
+  the look; S6 D5 is read blind before the look. M6's tracking document replaces this one
+  after the `v3.2.0` tag. Started meanwhile, on parts that do not touch the release: the
+  memory measurement of the second reranker (M0), the classification of the harmful
+  statements of the open readings (H0), five writers for D5.
