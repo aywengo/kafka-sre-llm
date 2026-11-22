@@ -62,7 +62,7 @@ Speed work as such and the laptop run are not targets. The base model stays Qwen
 | R4 | Expansions for B4, then the X1 rule applied once | job-operator | server 0.2 h | after R2 and R3 |
 | G0 | Design of the grounded mode: the prompt text (variants G1 and G2), the rule that separates them, the reading plan on B2 | complex-reviewer | CPU | **done** 2026-11-22 00:50 (`runs/m5/reports/g0_grounded_design.md`) |
 | G1 | The grounded mode as a new prompt constant with its own hashes; the default and the golden hashes unchanged | implementer | CPU | **done** 2026-11-22 01:38, commit `06dc7d5` (the `scripts/eval2.py` part and a refusal in `serve` follow F1) |
-| G2 | B2 answered in the grounded mode; a blind reading mixed with the stored default answers; judge; open mechanical 339 | job-operator, readers | server about 3 h | after G1 |
+| G2 | B2 answered in the grounded mode; a blind reading mixed with the stored default answers; judge; open mechanical 339 | job-operator, readers | server about 3 h | after the development check (GD), which is running since 2026-11-22 09:01 (4.5 to 6.5 h) |
 | G3 | Experiment: can the reranker's score tell supported from unsupported sentences, on the 56 errors of the B1 reading | implementer | CPU, reranker | after R0 (not on the critical path) |
 | R5 | The second reranker (Q8): licence and usage read directly; design of the offline test and its rule; download; build; run | researcher, complex-reviewer, job-operator, implementer | CPU, one download of about 1.2 GB | licence read, design and download done (2026-11-22 08:21); the build is running |
 | H1 | Hidden look 3: r4 with the grounded mode against E2's stored default answers; ledger row and rule first | job-operator, sealed readers | server about 4 h | after R4 and G2 |
@@ -389,9 +389,9 @@ Later in M5: whether candidate C becomes the default (after look 3).
 - 2026-11-22 08:23: the review of the development chain is back: one blocker (the
   wrong-decline share on a sample that over-represents declines) and five smaller
   points; the fixes are being made (section "Grounded mode"). The run follows them.
-- 2026-11-22 08:30: the fixes committed (`8533cf6`). 08:33: the development check was
+- 2026-11-22 08:30: the fixes committed (`8533cf6`). 08:31: the development check was
   started on the model server. Its gate passed, DeepSeek was unloaded and the 4-bit base
-  model loaded. **08:38: it stopped at its determinism check**: of three B1 default
+  model loaded. **08:36: it stopped at its determinism check**: of three B1 default
   answers replayed on the stored packs (model echo equal, packs equal 3 of 3), b1-01
   differed from the stored answer from character 129 on (7,787 against 8,376
   characters); b1-02 and b1-03 were identical. No variant answer was written. The M4
@@ -401,3 +401,12 @@ Later in M5: whether candidate C becomes the default (after look 3).
   default reference in the same run. Consequence to settle for look 3: E2's stored hidden
   default answers may not be reproducible either, so the look may have to answer its
   reference again.
+- 2026-11-22 08:47: the diagnostic: three fresh replays of b1-01 are identical to each
+  other and differ from the answer stored on 2026-11-19; b1-02 and b1-03 are identical
+  in all four runs. So the server repeats a long answer today, and the stored answer
+  drifted; the cause is not in the metadata (the conductor's guess, not tested: the
+  prompt cache's state, since a replay is not preceded by the search-terms request).
+- 2026-11-22 08:49: the chain answers its own default reference in the same run
+  (`0946515`). 09:01: the development check restarted (the stopped run moved aside with
+  the suffix `.stopped_20261122`); first nine reference answers 69 s each, 5 of 9 cut at
+  the limit; estimate 4.5 to 6.5 h.
