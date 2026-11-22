@@ -73,8 +73,9 @@ it. The Owner is whoever `CODEOWNERS` names.
 Loading and unloading the three models named below is covered by the Owner's standing go, when no
 other client is active.
 For M5 the Owner's go of 2026-11-22 also covers loading the 4-bit build of the base model
-for measurement runs. The wider go of M4 (the full-precision build, the bake-off
-candidates, unloading models another client left loaded) ended with M4.
+for measurement runs, and unloading any model from the server, also one that another
+client left loaded, when the server has no active or waiting request. The rest of M4's
+wider go (the full-precision build, the bake-off candidates) ended with M4.
 
 ## Repository map
 
@@ -133,7 +134,8 @@ Commands: `.venv/bin/python -m unittest discover -s tests` (offline, seconds);
   `GLM-5.3-Flash-oQ4e`, or `GLM-5.3-Flash-oQ8e-mtp` (judge). They do not fit in memory
   together. Local generation and training never overlap with server jobs.
 - Before a load or unload, check that the server has no active or waiting request; if
-  another client is active, wait for the Owner. Unload only what we loaded. Note every swap in
+  another client is active, wait for the Owner. Unload only what we loaded, unless the
+  Owner's go for the milestone says otherwise (it does for M5, see above). Note every swap in
   `HEARTBEAT.md`.
 - Keep `runs/v3/status.json` and `STATE.md` true at every milestone and whenever a job
   stops or waits for the Owner.

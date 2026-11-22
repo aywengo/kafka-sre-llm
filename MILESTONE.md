@@ -274,15 +274,11 @@ spent on the same 61 scenarios.
 | 2026-11-22 | Q6 | The three hidden judged items of the same family as a B4 scenario (b3-07, b3-17, b3-26) are tagged and every hidden judged result is reported with and without them; B4 stays as written |
 | 2026-11-22 | Q7 | The r4 stop is accepted: X1 is not met by r4, B4 stays unspent, and the grounded mode goes on with the frozen retrieval; the hidden look tests the grounded mode alone |
 | 2026-11-22 | Q8 | Ranking continues in M5 with one reranker download, `Qwen/Qwen3-Reranker-0.6B`, for an offline re-score of the same scored candidates, with a rule fixed beforehand; if it does not clearly beat r4g2 it stops there |
+| 2026-11-22 | Q9 | The conductor may unload any model from the model server ("you can unload all models from oMLX"), when no request is active or waiting |
 
 ## Waiting for the Owner
 
-Open (none blocks code work):
-
-- Q9 (asked 2026-11-22 08:13): the model server holds `DeepSeek-V4.1-Flash`, which this
-  session did not load. May the conductor unload models another client left loaded when
-  no request is active or waiting, for M5's measurement runs (the go of this kind ended
-  with M4)? Recommended: yes.
+Nothing is open for the Owner now.
 
 Still open from M4, none blocking:
 
@@ -342,6 +338,8 @@ Later in M5: whether candidate C becomes the default (after look 3).
 - 2026-11-22 08:15: the Owner agreed with Q8: try `Qwen/Qwen3-Reranker-0.6B`. Started: a
   direct read of its licence, files and usage (no weights fetched), and the design of the
   offline test with its rule (R5). The download follows the direct read of the licence.
-- 2026-11-22 08:17: the Owner accepted the r4 stop (Q7): the grounded mode goes on with
+- 2026-11-22 08:15: the Owner accepted the r4 stop (Q7): the grounded mode goes on with
   the frozen retrieval. Q9 (the model on the server that this session did not load) is
   the one open question and blocks the development check.
+- 2026-11-22 08:16: the Owner answered Q9: any model may be unloaded from the server.
+  `AGENTS.md` updated. The development check starts when the chain's review is back.
