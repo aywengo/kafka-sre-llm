@@ -72,6 +72,11 @@ def manifest_of(path):
     return json.loads(p.read_text()) if p.exists() else {}
 
 
+def reload_count(path):
+    """How many times the server reloaded the model while a run was resumed (the `reloads` list of the run's manifest, written by eval2.py)."""
+    return len(manifest_of(path).get("reloads") or [])
+
+
 def tree_files(rel_dir, patterns=("*.py", "*.json")):
     d = ROOT / rel_dir
     out = []
@@ -258,7 +263,8 @@ def cmd_runline(a):
     tk = [r["tokens"] for r in rows if num(r.get("tokens"))]
     print(f"run {a.name}: {c['rows']} answers, {c['errors']} errors, {c['empty']} empty, {c['reasoning']} with reasoning text or think tags, "
           f"{c['truncated']} cut at the limit, median {statistics.median(t) if t else 0:.1f} s per answer (max {max(t) if t else 0:.1f} s), "
-          f"median {statistics.median(tk) if tk else 0:.0f} tokens ({len(tk)} with a token count), total {sum(t) / 3600:.2f} h")
+          f"median {statistics.median(tk) if tk else 0:.0f} tokens ({len(tk)} with a token count), total {sum(t) / 3600:.2f} h, "
+          f"{reload_count(a.file)} model reloads")
     return 0
 
 
@@ -415,7 +421,7 @@ def run_row(path):
     tk = [r["tokens"] for r in rows if num(r.get("tokens"))]
     return (f"{c['rows']} answers, {c['errors']} errors, {c['empty']} empty, {c['reasoning']} with reasoning or think tags, "
             f"{c['truncated']} cut at the limit ({100 * c['truncated'] / max(1, c['rows']):.1f} %), median {statistics.median(t) if t else 0:.1f} s, "
-            f"median tokens {statistics.median(tk) if tk else 0:.0f}")
+            f"median tokens {statistics.median(tk) if tk else 0:.0f}, {reload_count(path)} model reloads")
 
 
 def cmd_report(a):

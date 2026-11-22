@@ -63,6 +63,14 @@ class Static(unittest.TestCase):
         self.assertLess(t.index("for k in $ALLK; do\n    case \" $SEL \""), t.index("prepare_server judge $DS"))
         self.assertEqual(t.count("scripts/eval2_judge.py run"), 1)
 
+    def test_every_step_is_checked_and_only_the_candidates_own_breakdown_is_a_result(self):
+        t = SH.read_text()
+        self.assertIn("step_fail()", t)
+        self.assertIn('step_fail "$k $name" $rc $lg $model', t)
+        self.assertIn('step_fail "judge round $round" $jrc', t)
+        # the exit-1 exception is bound to the guard's "stopping: N failed items in a row" line of this pass
+        self.assertIn("stopping: [0-9]* failed items in a row", t)
+
     def test_candidate_order_and_defaults(self):
         t = SH.read_text()
         self.assertIn('ALLK="gemma glm granite"', t)
@@ -286,6 +294,50 @@ class DryRuns(unittest.TestCase):
         self.assertNotIn("-- gemma:", cmp_txt)
         # a clean candidate has no S1 failure
         self.assertRegex(cmp_txt, r"S1 ok:")
+
+    # ---- M5 F1: every step's exit code is checked
+    def fresh_work(self, name):
+        w = Path(self.tmp) / name
+        shutil.copytree(self.w1 / "ref", w / "ref", copy_function=shutil.copy2)   # the scored reference, to keep the test short
+        return w
+
+    def test_a_step_that_exits_non_zero_stops_the_chain_with_the_failed_marker_and_runs_no_next_step(self):
+        w = self.fresh_work("w_fail")
+        (w / "gemma").mkdir()
+        # a stored answers file with rows and no manifest: eval2.py refuses to resume (exit code 1, "not resuming"), the situation of a refused resume
+        (w / "gemma/ans_smokeA.jsonl").write_text(json.dumps({"id": "x", "text": "a", "error": None}) + "\n")
+        r = sh("--dry-run", "--work", str(w), "--candidates", "gemma,glm")
+        out = r.stdout + r.stderr
+        self.assertNotEqual(r.returncode, 0, out[-2000:])
+        self.assertIn("STEP FAILED: gemma smokeA exited with code 1", out)
+        self.assertIn("not resuming", out)   # the step's last lines are printed
+        failed = (w / "logs/m4_e5_bakeoff.failed").read_text()
+        self.assertIn("step gemma smokeA exited with code 1", failed)
+        self.assertFalse((w / "logs/m4_e5_bakeoff.done").exists())
+        # the next step did not run: no second smoke run, no judged run, no other candidate, no judge, no report
+        self.assertFalse((w / "gemma/ans_smokeB.jsonl").exists())
+        self.assertFalse((w / "gemma/cand.done").exists())
+        self.assertFalse((w / "glm/ans_smokeA.jsonl").exists())
+        self.assertFalse((w / "judge_results.jsonl").exists())
+        self.assertFalse((w / "report_from_stub_data.md").exists())
+        # the model the chain loaded for the step is unloaded, and nothing else was touched
+        self.assertNotIn(CAND_IDS["gemma"], json.loads((w / "fake_status.json").read_text())["loaded_models"])
+        self.assertIn(f"unloaded {CAND_IDS['gemma']}", (w / "HEARTBEAT.md").read_text())
+
+    def test_a_dropped_candidate_is_a_result_and_the_next_candidate_runs(self):
+        w = self.fresh_work("w_drop")
+        r = sh("--dry-run", "--work", str(w), "--candidates", "gemma,glm", env={"M4_E5_DRY_EMPTY": "gemma"})
+        self.assertEqual(r.returncode, 0, r.stdout[-2000:] + r.stderr[-2000:])
+        cmp_txt = (w / "screen_compare.txt").read_text()
+        self.assertEqual(re.search(r"^-- gemma: (\w+)", cmp_txt, re.M).group(1), "DROP", cmp_txt)
+        self.assertTrue((w / "gemma/cand.done").exists())
+        self.assertTrue((w / "glm/cand.done").exists())
+        self.assertFalse((w / "logs/m4_e5_bakeoff.failed").exists())
+
+    def test_the_report_prints_the_number_of_model_reloads_per_run(self):
+        rep = (self.w1 / "report_from_stub_data.md").read_text()
+        self.assertIn("0 model reloads", rep)
+        self.assertIn("model reloads", (self.w1 / "HEARTBEAT.md").read_text())   # the heartbeat line of every run
 
 
 if __name__ == "__main__":

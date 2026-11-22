@@ -153,7 +153,8 @@ class Static(unittest.TestCase):
     def test_the_tag_file_goes_to_the_three_report_tools(self):
         t = SH.read_text()
         # the coverage report, the sealed reading's totals, eval2_compare.py e2, and the sentence of the report that names the totals command
-        self.assertEqual(t.count("--tag-file $TAGF"), 4)
+        # (M5 F1 added the start check and PREPARE, which record the tag file's hash in the manifest's options: 4 + 2)
+        self.assertEqual(t.count("--tag-file $TAGF"), 6)
         self.assertIn("--by-kind --tag-file $TAGF --title", t)
         self.assertIn("eval2_sealed_reading.py totals --dir $H/bundles --tag-file $TAGF --json-out", t)
         self.assertIn("--judged-items $JI $RD --tag-file $TAGF --resamples", t)
@@ -1133,8 +1134,10 @@ class DryRun(unittest.TestCase):
         bad = self.tmp / "m_changed.json"
         bad.write_text(json.dumps(m))
         r = sh("--dry-run", "--work", str(self.w), "--allow-dirty", "--synth-marker", MARK, "--stages", "H1", "--manifest", str(bad))
-        self.assertEqual(r.returncode, 1)
-        self.assertIn("gate FAIL: manifest hashes (differs in: checker.version)", r.stdout)
+        self.assertEqual(r.returncode, 2)   # since M5 F1 the start check refuses a changed manifest before any stage; the gate's own check is tested in HiddenGate
+        self.assertIn("start check REFUSED", r.stdout)
+        self.assertIn("differs: checker.version", r.stdout)
+        self.assertNotIn("[answer] run", r.stdout)
 
 
 @unittest.skipUnless(READY, "needs the open files, the index, the catalogues and the venv")
@@ -1385,6 +1388,237 @@ class RehearsalDryRun(unittest.TestCase):
             self.assertIn(need, out)
         self.assertNotIn("[answer] run", out)
         self.assertIn("rehearsal-findings: 0 findings file(s) written", out)
+
+
+def tree_state(*roots):
+    """name -> sha256 of every file under the roots (a refusal must change nothing)."""
+    import hashlib
+    out = {}
+    for r in roots:
+        r = Path(r)
+        for f in ([r] if r.is_file() else sorted(r.rglob("*"))):
+            if f.is_file():
+                out[str(f)] = hashlib.sha256(f.read_bytes()).hexdigest()
+    return out
+
+
+@unittest.skipUnless(READY, "needs the open files, the index, the catalogues and the venv")
+class StartCheck(unittest.TestCase):
+    """M5 F1: the check at the start of every launch (helper `start-check`) on synthetic hidden files, a temporary key and a manifest written by `prepare`."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = Path(tempfile.mkdtemp(prefix="e2_start_"))
+        cls.repo = make_repo(cls.tmp)
+        cls.env = {"EVAL_HIDDEN_KEY": str(cls.tmp / "k.key")}
+        subprocess.run([str(PY), str(ROOT / "scripts/eval2.py"), "keygen", "--path", cls.env["EVAL_HIDDEN_KEY"]], cwd=ROOT, check=True, capture_output=True)
+        cls.sd = cls.tmp / "syn"
+        assert helper("synth", "--dir", str(cls.sd), "--marker", MARK, env=cls.env).returncode == 0
+        cls.models = cls.tmp / "models.json"
+        cls.models.write_text(json.dumps({"data": [{"id": "Qwen3.8-27B-4bit"}, {"id": "mlx-community--Qwen3.8-27B-bf16"},
+                                                   {"id": "DeepSeek-V4.1-Flash-1017-oQ4e-mtp"}, {"id": "GLM-5.3-Flash-oQ8e-mtp"}]}))
+        (cls.tmp / "server.json").write_text(json.dumps({"loaded_models": [], "version": "0.0-test"}))
+        cls.tags = cls.tmp / "TAGS.json"
+        cls.tags.write_text(json.dumps({"schema": 1, "tags": {"conductor_exposed": {"ids": ["synthetic-1"]}}}))
+        cls.hidden = HiddenGate.hargs(cls.sd)
+        cls.manifest = cls.tmp / "m.json"
+        r = helper("prepare", "--repo", str(cls.repo), "--out", str(cls.manifest), "--server-json", str(cls.tmp / "server.json"), "--models-json", str(cls.models),
+                   "--mode", "real", "--tag-file", str(cls.tags), "--hidden", *cls.hidden, env=cls.env)
+        assert r.returncode == 0, r.stdout + r.stderr
+        cls.pin = json.loads(cls.manifest.read_text())["pinned"]["sha256"]
+        cls.base = tgit(cls.repo, "rev-parse", "HEAD")
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def setUp(self):
+        tgit(self.repo, "reset", "-q", "--hard", self.base)
+        tgit(self.repo, "clean", "-fdq")
+        self.work = self.tmp / "work"
+        shutil.rmtree(self.work, ignore_errors=True)
+        self.work.mkdir()
+        (self.work / "ans.txt").write_text("answers\n")
+        self.write_marker("G", {"ans.txt": __import__("hashlib").sha256(b"answers\n").hexdigest()})
+
+    def write_marker(self, stage, outputs=None, pin=None):
+        d = {"stage": stage, "passed": True, "pin": pin or self.pin, "commit": "c"}
+        if outputs is not None:
+            d["outputs"] = outputs
+        (self.work / f"{stage}.passed").write_text(json.dumps(d))
+
+    def check(self, *, manifest=None, models=None, mode="real", tags=None, extra=()):
+        r = helper("start-check", "--repo", str(self.repo), "--manifest", str(manifest or self.manifest), "--work-dir", str(self.work),
+                   "--models-json", str(models or self.models), "--mode", mode, "--tag-file", str(tags or self.tags), *extra, "--hidden", *self.hidden,
+                   env=self.env, timeout=300)
+        return r.returncode, r.stdout + r.stderr
+
+    def refused(self, out, *fields):
+        self.assertIn("start check REFUSED", out)
+        for f in fields:
+            self.assertIn(f"differs: {f}", out)
+        self.assertNotIn(MARK, out)
+
+    def test_an_unchanged_restart_resumes_and_says_how_many_stages_are_done(self):
+        rc, out = self.check()
+        self.assertEqual(rc, 0, out)
+        self.assertIn("resuming; 1 stage(s) already done (G)", out)
+        self.assertEqual(len(out.strip().splitlines()), 1, "one line")
+
+    def test_a_fresh_work_folder_starts(self):
+        shutil.rmtree(self.work)
+        rc, out = self.check(manifest=self.tmp / "none.json")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("a fresh run", out)
+
+    def test_a_changed_pinned_file_is_refused_with_its_name(self):
+        f = self.repo / "scripts/eval2_score.py"
+        f.write_text(f.read_text() + "\n# changed\n")
+        rc, out = self.check()
+        self.assertEqual(rc, 2, out)
+        self.refused(out, "pinned.files.scripts/eval2_score.py", "pinned.sha256", "scorer.sha256")
+        self.assertRegex(out, r"pinned\.files\.scripts/eval2_score\.py: [0-9a-f]{8} -> [0-9a-f]{8}\n")   # short hashes only
+
+    def test_a_changed_option_is_refused_with_the_option_named(self):
+        for extra, field in ((("--r2",), "options.r2"), (("--f-judged",), "options.f_judged"), (("--no-cross-judge",), "options.cross_judge")):
+            rc, out = self.check(extra=extra)
+            self.assertEqual(rc, 2, out)
+            self.refused(out, field)
+
+    def test_a_changed_tag_file_is_refused(self):
+        other = self.tmp / "TAGS2.json"
+        other.write_text(json.dumps({"schema": 1, "tags": {"conductor_exposed": {"ids": ["synthetic-1", "synthetic-2"]}}}))
+        rc, out = self.check(tags=other)
+        self.assertEqual(rc, 2, out)
+        self.refused(out, "options.tag_file.name", "options.tag_file.sha256")
+        self.assertNotIn("synthetic-", out)   # names and short hashes only, never content
+        self.tags.write_text(self.tags.read_text())
+        self.tags.write_text(json.dumps({"schema": 1, "tags": {"conductor_exposed": {"ids": ["synthetic-9"]}}}))
+        try:
+            rc, out = self.check()
+            self.assertEqual(rc, 2, out)
+            self.refused(out, "options.tag_file.sha256")
+        finally:
+            self.tags.write_text(json.dumps({"schema": 1, "tags": {"conductor_exposed": {"ids": ["synthetic-1"]}}}))
+
+    def test_a_changed_model_id_and_a_changed_mode_are_refused(self):
+        m2 = self.tmp / "models2.json"
+        m2.write_text(json.dumps({"data": [{"id": "Qwen3.8-27B-4bit-b"}, {"id": "mlx-community--Qwen3.8-27B-bf16"},
+                                           {"id": "DeepSeek-V4.1-Flash-1017-oQ4e-mtp"}, {"id": "GLM-5.3-Flash-oQ8e-mtp"}]}))
+        rc, out = self.check(models=m2)
+        self.assertEqual(rc, 2, out)
+        self.refused(out, "server.q4")
+        rc, out = self.check(mode="rehearsal")
+        self.assertEqual(rc, 2, out)
+        self.refused(out, "options.mode")
+
+    def test_a_changed_hidden_file_is_refused(self):
+        other = [h.replace("tier_a3.jsonl.enc", "tier_a3.jsonl.enc") for h in self.hidden]
+        shutil.copy(self.sd / "tier_a.jsonl.enc", self.tmp / "copy.enc")
+        (self.tmp / "copy.enc").write_bytes((self.tmp / "copy.enc").read_bytes() + b"x")
+        other[0] = f"tier_a={self.tmp}/copy.enc"
+        r = helper("start-check", "--repo", str(self.repo), "--manifest", str(self.manifest), "--work-dir", str(self.work), "--models-json", str(self.models),
+                   "--mode", "real", "--tag-file", str(self.tags), "--hidden", *other, env=self.env, timeout=300)
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.refused(r.stdout, "hidden_files.tier_a.sha256")
+
+    def test_a_marker_without_a_manifest_is_refused(self):
+        rc, out = self.check(manifest=self.tmp / "absent.json")
+        self.assertEqual(rc, 2, out)
+        self.assertIn("start check REFUSED", out)
+        self.assertIn("differs: stage marker(s) without a manifest: G.passed", out)
+
+    def test_a_done_marker_whose_output_changed_or_is_missing_is_refused(self):
+        (self.work / "ans.txt").write_text("answers, edited\n")
+        rc, out = self.check()
+        self.assertEqual(rc, 2, out)
+        self.assertRegex(out, r"differs: marker G\.passed: output ans\.txt changed \([0-9a-f]{8} -> [0-9a-f]{8}\)")
+        (self.work / "ans.txt").unlink()
+        rc, out = self.check()
+        self.assertEqual(rc, 2, out)
+        self.assertIn("differs: marker G.passed: output ans.txt is missing", out)
+
+    def test_a_marker_of_another_manifest_is_refused(self):
+        self.write_marker("O", {"ans.txt": __import__("hashlib").sha256(b"answers\n").hexdigest()}, pin="0" * 64)
+        rc, out = self.check()
+        self.assertEqual(rc, 2, out)
+        self.assertIn("marker O.passed: written under another manifest (pin 00000000 against", out)
+
+    def test_a_marker_without_recorded_outputs_resumes_with_a_note(self):
+        self.write_marker("G")   # a marker of an older chain
+        rc, out = self.check()
+        self.assertEqual(rc, 0, out)
+        self.assertIn("marker G.passed records no output hashes", out)
+
+    def test_a_refusal_moves_and_deletes_nothing_and_prints_the_mv_lines(self):
+        before = tree_state(self.work, self.manifest)
+        (self.work / "ans.txt").write_text("answers, edited\n")
+        before = tree_state(self.work, self.manifest)
+        rc, out = self.check(extra=("--r2",))
+        self.assertEqual(rc, 2, out)
+        self.assertEqual(before, tree_state(self.work, self.manifest))
+        self.assertTrue(self.work.exists() and self.manifest.exists())
+        mv = [l.strip() for l in out.splitlines() if l.strip().startswith("mv ")]
+        self.assertEqual(len(mv), 2, out)
+        self.assertRegex(mv[0], rf"^mv {re.escape(str(self.work))} {re.escape(str(self.work))}\.aside-\d{{8}}-\d{{6}}$")
+        self.assertRegex(mv[1], rf"^mv {re.escape(str(self.manifest))} {re.escape(str(self.manifest))}\.aside-\d{{8}}-\d{{6}}$")
+
+
+@unittest.skipUnless(READY, "needs the open files, the index, the catalogues and the venv")
+class StartCheckInTheChain(unittest.TestCase):
+    """M5 F1 through the chain itself (stub backend, fake server): the check runs before any stage and a refusal exits with code 2."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = Path(tempfile.mkdtemp(prefix="e2_startchain_"))
+        cls.w = cls.tmp / "run"
+        cls.r1 = sh("--dry-run", "--work", str(cls.w), "--allow-dirty", "--stages", "G")
+        cls.out_sha = __import__("hashlib").sha256((cls.w / "ans_G.jsonl").read_bytes()).hexdigest() if (cls.w / "ans_G.jsonl").exists() else None   # before any test edits it
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def test_the_first_launch_is_fresh_and_the_marker_records_its_output_hashes(self):
+        self.assertEqual(self.r1.returncode, 0, self.r1.stdout[-2000:])
+        self.assertIn("start check: no manifest and no stage marker: a fresh run", self.r1.stdout)
+        d = json.loads((self.w / "G.passed").read_text())
+        self.assertEqual(list(d["outputs"]), ["ans_G.jsonl"])
+        self.assertEqual(d["outputs"]["ans_G.jsonl"], self.out_sha)
+        m = json.loads((self.w / "E2_MANIFEST.json").read_text())
+        self.assertEqual(m["options"]["mode"], "real")
+        self.assertEqual(m["options"]["tag_file"]["name"], "HIDDEN_TAGS.json")
+
+    def test_an_unchanged_restart_resumes_and_a_changed_option_or_output_is_refused_with_code_2(self):
+        r = sh("--dry-run", "--work", str(self.w), "--allow-dirty", "--stages", "G")
+        self.assertEqual(r.returncode, 0, r.stdout[-2000:])
+        self.assertIn("start check: the stored manifest agrees with this launch; resuming; 1 stage(s) already done (G)", r.stdout)
+        self.assertIn("skip G: passed earlier", r.stdout)
+        before = tree_state(self.w)
+        r = sh("--dry-run", "--work", str(self.w), "--allow-dirty", "--stages", "G", "--r2")
+        out = r.stdout + r.stderr
+        self.assertEqual(r.returncode, 2, out)
+        self.assertIn("differs: options.r2: False -> True", out)
+        self.assertIn(f"mv {self.w} {self.w}.aside-", out)
+        self.assertNotIn("[answer] run", out)
+        self.assertNotIn("skip G", out)
+        self.assertEqual(before, tree_state(self.w), "a refusal changes nothing")
+        # a changed output of a done stage
+        (self.w / "ans_G.jsonl").write_text((self.w / "ans_G.jsonl").read_text() + "\n")
+        r = sh("--dry-run", "--work", str(self.w), "--allow-dirty", "--stages", "G")
+        self.assertEqual(r.returncode, 2, r.stdout[-1500:])
+        self.assertIn("differs: marker G.passed: output ans_G.jsonl changed", r.stdout)
+        # a marker without a manifest
+        (self.w / "E2_MANIFEST.json").rename(self.tmp / "manifest.moved")
+        r = sh("--dry-run", "--work", str(self.w), "--allow-dirty", "--stages", "G")
+        self.assertEqual(r.returncode, 2, r.stdout[-1500:])
+        self.assertIn("stage marker(s) without a manifest: G.passed", r.stdout)
+        (self.tmp / "manifest.moved").rename(self.w / "E2_MANIFEST.json")
+
+    def test_the_inline_marks_step_takes_allow_commit_change(self):
+        t = SH.read_text()
+        i = t.index("--revise-from $H/ans_Q4D_judged.jsonl.enc")
+        self.assertIn("--allow-commit-change", t[i:i + 400])
 
 
 if __name__ == "__main__":

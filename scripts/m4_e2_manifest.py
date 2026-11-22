@@ -162,8 +162,9 @@ def compute(a):
     cat3 = repo / "work/m4/catalogues_a3/CATALOGUES.json"
     rc, head = git("rev-parse", "HEAD", cwd=repo)
     srv = rjson(a.server_json) if a.server_json else {}
-    q4, bf = pick(a.models_json, "q4"), pick(a.models_json, "bf16")
-    lm = listed_models(a.models_json)
+    have_models = bool(a.models_json) and Path(a.models_json).is_file()   # the start check of a stage that needs no server may have no listing
+    q4, bf = (pick(a.models_json, "q4"), pick(a.models_json, "bf16")) if have_models else (None, None)
+    lm = listed_models(a.models_json) if have_models else []
     hidden = {}
     for spec in a.hidden or []:
         name, _, path = spec.partition("=")
@@ -212,6 +213,18 @@ def diff_names(want, have):
     return sorted(k for k in set(fw) | set(fh) if fw.get(k) != fh.get(k))
 
 
+def current_options(a):
+    """The options of a launch that decide what the run is: R2, the reading, the full-precision judged run, the cross-check, the mode (real or
+    rehearsal) and the tag file (name and hash; the file names ids, so only its hash is stored)."""
+    o = {"r2": bool(a.r2), "reading": a.reading, "f_judged": bool(a.f_judged), "cross_judge": not a.no_cross_judge}
+    if getattr(a, "mode", None):
+        o["mode"] = a.mode
+    tf = getattr(a, "tag_file", None)
+    if tf:
+        o["tag_file"] = {"name": Path(tf).name, "sha256": sha(tf) if Path(tf).is_file() else "missing"}
+    return o
+
+
 def cmd_prepare(a):
     out = Path(a.out)
     if out.exists():
@@ -241,7 +254,7 @@ def cmd_prepare(a):
         for p in problems:
             print(f"prepare: {p}", file=sys.stderr)
         return 1
-    m["options"] = {"r2": bool(a.r2), "reading": a.reading, "f_judged": bool(a.f_judged), "cross_judge": not a.no_cross_judge}
+    m["options"] = current_options(a)
     out.parent.mkdir(parents=True, exist_ok=True)
     tmp = out.with_name(out.name + ".tmp")
     tmp.write_text(json.dumps(m, indent=1, sort_keys=True) + "\n")
@@ -306,6 +319,109 @@ def cmd_verify_manifest(a):
         return 1
     print("manifest: every hash matches")
     return 0
+
+
+# ---------------------------------------------------------------- the check at the start of every launch
+
+def short(v):
+    """A value for a message: a hash shortened to 8 characters, a short scalar as it is, anything else only as 'differs'. Never content."""
+    if v is None or isinstance(v, (bool, int, float)):
+        return str(v)
+    if isinstance(v, str):
+        if re.fullmatch(r"[0-9a-f]{64}", v):
+            return v[:8]
+        return v if len(v) <= 48 and "\n" not in v else "(text)"
+    return "(structure)"
+
+
+def start_markers(work):
+    work = Path(work)
+    found = sorted(work.glob("*.passed"))
+    if (work / "GATE.opened").exists():
+        found.append(work / "GATE.opened")
+    return found
+
+
+def start_problems(a, want, markers):
+    """-> (problems, notes). Problems name fields and files with short hashes only."""
+    problems, notes = [], []
+    if want is None:
+        if markers:
+            problems.append("stage marker(s) without a manifest: " + ", ".join(m.name for m in markers))
+        return problems, notes
+    have = compute(a)
+    for d in (want, have):   # the head commit is information only; the server's version and the list of everything it lists are checked by the gate
+        d.pop("commit", None)
+        (d.get("server") or {}).pop("models_listed", None)
+        (d.get("server") or {}).pop("version", None)
+    wopt = want.pop("options", None) or {}
+    hopt = current_options(a)
+    have.pop("options", None)
+    if not (a.models_json and Path(a.models_json).is_file()):   # no listing in hand (a stage that needs no server): the model ids are not compared
+        want.pop("server", None)
+        have.pop("server", None)
+    fw, fh = flat(want), flat(have)
+    for k in sorted(set(fw) | set(fh)):
+        if fw.get(k) != fh.get(k):
+            problems.append(f"{k}: {short(fw.get(k, 'absent'))} -> {short(fh.get(k, 'absent'))}")
+    fw, fh = flat(wopt, "options."), flat(hopt, "options.")
+    legacy = []
+    for k in sorted(set(fw) | set(fh)):
+        if k in fh and k not in fw:
+            legacy.append(k)   # an older manifest did not record this option: nothing to compare
+        elif fw.get(k) != fh.get(k):
+            problems.append(f"{k}: {short(fw.get(k, 'absent'))} -> {short(fh.get(k, 'absent'))}")
+    if legacy:
+        notes.append("not recorded by the manifest: " + ", ".join(legacy))
+    pin = (want.get("pinned") or {}).get("sha256")
+    work = Path(a.work_dir)
+    for mk in markers:
+        try:
+            d = json.loads(mk.read_text())
+        except Exception:   # noqa: BLE001
+            problems.append(f"marker {mk.name}: not readable")
+            continue
+        if d.get("pin") and d.get("pin") != pin:
+            problems.append(f"marker {mk.name}: written under another manifest (pin {short(d['pin'])} against {short(pin)})")
+        outs = d.get("outputs")
+        if outs is None and mk.suffix == ".passed":
+            notes.append(f"marker {mk.name} records no output hashes")
+        for rel, digest in sorted((outs or {}).items()):
+            f = work / rel
+            if not f.is_file():
+                problems.append(f"marker {mk.name}: output {rel} is missing")
+            elif sha(f) != digest:
+                problems.append(f"marker {mk.name}: output {rel} changed ({short(digest)} -> {short(sha(f))})")
+    return problems, notes
+
+
+def cmd_start_check(a):
+    """Exit 0: a fresh work folder, or the stored manifest and the markers agree with this launch (resume). Exit 2: refused, with the fields and the
+    mv lines. Reads only; moves and deletes nothing."""
+    work, man = Path(a.work_dir), Path(a.manifest)
+    markers = start_markers(work) if work.is_dir() else []
+    if not man.exists() and not markers:
+        print("start check: no manifest and no stage marker: a fresh run")
+        return 0
+    problems, notes = start_problems(a, rjson(man) if man.exists() else None, markers)
+    if not problems:
+        done = [m.stem for m in markers if m.suffix == ".passed"]
+        print(f"start check: the stored manifest agrees with this launch; resuming; {len(done)} stage(s) already done"
+              + (f" ({', '.join(done)})" if done else "") + (f"; note: {'; '.join(notes)}" if notes else ""))
+        return 0
+    stamp = __import__("time").strftime("%Y%m%d-%H%M%S")
+    print("start check REFUSED: the work folder holds a manifest or stage markers that do not agree with this launch; nothing was started, moved or deleted")
+    for p in problems:
+        print(f"  differs: {p}")
+    print("  To start again under changed inputs, move the old run aside (this chain never moves or deletes), then start it again:")
+    print(f"    mv {work} {work}.aside-{stamp}")
+    try:
+        inside = man.resolve().is_relative_to(work.resolve())
+    except OSError:
+        inside = False
+    if man.exists() and not inside:
+        print(f"    mv {man} {man}.aside-{stamp}")
+    return 2
 
 
 # ---------------------------------------------------------------- ledger
@@ -1095,7 +1211,8 @@ def cmd_runline(a):
     cut = sum(1 for r in rows if r.get("truncated"))
     print(f"run {a.name}: {len(rows)} answers, {sum(1 for r in rows if r.get('error'))} errors, "
           f"median {statistics.median(t) if t else 0:.1f} s per answer, max {max(t) if t else 0:.1f} s, "
-          f"median {statistics.median(tk) if tk else 0:.0f} tokens, {cut} cut at the limit")
+          f"median {statistics.median(tk) if tk else 0:.0f} tokens, {cut} cut at the limit, "
+          f"{len((eval2.read_manifest(a.file) or {}).get('reloads') or [])} model reloads")
     return 0
 
 
@@ -1478,6 +1595,20 @@ def build_parser():
             p.add_argument("--reading", default="both")
             p.add_argument("--f-judged", action="store_true")
             p.add_argument("--no-cross-judge", action="store_true")
+    for n in ("prepare", "start-check"):
+        if n == "start-check":
+            p = sub.add_parser(n)
+            common(p)
+            p.add_argument("--manifest", required=True)
+            p.add_argument("--work-dir", required=True)
+            p.add_argument("--r2", action="store_true")
+            p.add_argument("--reading", default="both")
+            p.add_argument("--f-judged", action="store_true")
+            p.add_argument("--no-cross-judge", action="store_true")
+        else:
+            p = sub.choices[n]
+        p.add_argument("--mode", choices=["real", "rehearsal"], default=None)
+        p.add_argument("--tag-file", default=None)
     pc = sub.add_parser("pin-check")
     pc.add_argument("--repo", default=str(ROOT))
     pc.add_argument("--manifest", required=True)
@@ -1587,7 +1718,7 @@ def build_parser():
     return ap
 
 
-CMDS = {"prepare": cmd_prepare, "verify-manifest": cmd_verify_manifest, "gate": cmd_gate, "pin-check": cmd_pin_check, "ledger": cmd_ledger, "counts": cmd_counts, "rehearsal-prepare": cmd_rehearsal_prepare, "rehearsal-findings": cmd_rehearsal_findings, "shape": cmd_shape,
+CMDS = {"prepare": cmd_prepare, "start-check": cmd_start_check, "verify-manifest": cmd_verify_manifest, "gate": cmd_gate, "pin-check": cmd_pin_check, "ledger": cmd_ledger, "counts": cmd_counts, "rehearsal-prepare": cmd_rehearsal_prepare, "rehearsal-findings": cmd_rehearsal_findings, "shape": cmd_shape,
         "scan": cmd_scan, "gate-g": cmd_gate_g, "check-answers": cmd_check_answers, "runline": cmd_runline, "judge-done": cmd_judge_done,
         "merge": cmd_merge, "subset": cmd_subset, "items-for": cmd_items_for, "empty-enc": cmd_empty_enc, "agreement": cmd_agreement,
         "fake-status": cmd_fake_status, "packs-equal": cmd_packs_equal, "patched": cmd_patched, "verdict": cmd_verdict, "synth": cmd_synth, "tags-synth": cmd_tags_synth}

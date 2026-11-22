@@ -46,7 +46,11 @@ SMOKE_FILE = ROOT / "eval/m4/smoke_ids.json"
 MAGIC = b"EVAL2ENC1\n"
 TIERS = ("A", "B", "legacy")
 REQUIRED = ("id", "tier", "kind", "family", "domain", "question")
-MANIFEST_VOLATILE = ("started", "ended", "runtime_git_commits")  # not compared on resume (the list exists only after --allow-commit-change)
+MANIFEST_VOLATILE = ("started", "ended", "runtime_git_commits", "reloads")  # not compared on resume (the lists exist only after --allow-commit-change or a model reload)
+# What the server lists for a model (model_build): id, object, owned_by, model_type and max_model_len describe the model itself and are compared on
+# resume; "created" is the server's load stamp (it changes whenever the server reloads the same model) and is not compared: a change is recorded
+# in the manifest's "reloads" list and logged.
+LOAD_STAMP_FIELDS = ("created",)
 # The M4 reference configuration (MILESTONE.md "Decisions", 2026-11-18): the 4-bit build on the server path. A run is
 # labelled as on the reference when the server lists exactly this model (the manifest records both, see build_manifest).
 M4_REFERENCE_BACKEND = "openai"
@@ -362,7 +366,30 @@ def catalogue_hash(directory):
 
 
 def comparable(manifest):
-    return {k: v for k, v in manifest.items() if k not in MANIFEST_VOLATILE and k != "run"}
+    out = {k: v for k, v in manifest.items() if k not in MANIFEST_VOLATILE and k != "run"}
+    if isinstance(out.get("model_build"), dict):   # the load stamp is not part of the model's identity
+        out["model_build"] = {k: v for k, v in out["model_build"].items() if k not in LOAD_STAMP_FIELDS}
+    return out
+
+
+def load_stamp(manifest):
+    """The server's load stamp of the model a run used (None when the run recorded no server listing)."""
+    b = manifest.get("model_build")
+    if not isinstance(b, dict):
+        return None
+    st = {k: b[k] for k in LOAD_STAMP_FIELDS if k in b}
+    return json.dumps(st, sort_keys=True) if st else None
+
+
+def note_reload(old, manifest, out):
+    """On a resume: when only the load stamp of the same model differs, say so in the log and keep a `reloads` list in the manifest."""
+    reloads = list(old.get("reloads") or [])
+    o, n = load_stamp(old), load_stamp(manifest)
+    if o != n:
+        print(f"model reloaded: {o or 'none'} -> {n or 'none'}", file=out, flush=True)
+        reloads.append({"old": o, "new": n, "at": datetime.now(timezone.utc).isoformat(timespec="seconds")})
+    if reloads:
+        manifest["reloads"] = reloads
 
 
 def manifest_path(answers):
@@ -593,7 +620,15 @@ def cmd_revise(a, out=sys.stdout):
     old = read_manifest(a.out)
     if old is not None:
         if comparable(old) != comparable(manifest):
-            raise EvalError("manifest differs from the existing records file; not resuming")
+            diff = sorted(k for k in set(comparable(old)) | set(comparable(manifest)) if comparable(old).get(k) != comparable(manifest).get(k))
+            if getattr(a, "allow_commit_change", False) and diff == ["runtime_git_commit"]:   # as in cmd_answer: the caller vouches for the code
+                first = old.get("runtime_git_commits") or [old.get("runtime_git_commit")]
+                manifest["runtime_git_commits"] = first + [manifest["runtime_git_commit"]]
+            else:
+                raise EvalError("manifest differs from the existing records file; not resuming")
+        elif old.get("runtime_git_commits"):
+            manifest["runtime_git_commits"] = old["runtime_git_commits"]
+        manifest["run"] = old["run"]
         manifest["started"] = old["started"]
     elif store.rows:
         raise EvalError("records file has rows but no manifest; not resuming")
@@ -696,6 +731,8 @@ def cmd_answer(a, out=sys.stdout):
                 raise EvalError(f"manifest differs from the existing run in {diff}; not resuming")
         elif old.get("runtime_git_commits"):
             manifest["runtime_git_commits"] = old["runtime_git_commits"]
+        manifest["run"] = old["run"]   # the run keeps its identity across a resume (a model reload does not change it)
+        note_reload(old, manifest, out)
         manifest["started"] = old["started"]
     elif store.rows:
         raise EvalError("answers file has rows but no manifest; not resuming")

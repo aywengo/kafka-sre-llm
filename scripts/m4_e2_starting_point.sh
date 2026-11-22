@@ -47,7 +47,10 @@
 #   own step and not in this figure. Corrected when a rate is known.
 #
 # A restart after a crash and a re-run of the scoring stage are the same look: every stage resumes from its output files, nothing already
-# answered or judged is regenerated, and no further look at the hidden half is taken.
+# answered or judged is regenerated, and no further look at the hidden half is taken. At the start of every launch (before any stage) a stored
+# manifest and the stage markers are checked against the state computed now (pinned files, options, tag file, model ids, mode): equal, it resumes
+# and prints the number of stages done; different (or a marker without a manifest, or a done marker whose outputs are missing or changed against
+# the hashes it recorded), it exits 2, names the fields and prints the mv lines; the chain itself never moves or deletes anything.
 #
 #   scripts/m4_e2_starting_point.sh [options] > runs/m4/logs/m4_e2_starting_point.out 2>&1 &
 # Options (defaults):
@@ -281,12 +284,21 @@ if want G || want O || want H1 || want H2 || want H3 || want H4 || want H5 || wa
 fi
 rows() { [ -f "$1" ] && wc -l < "$1" | tr -d ' ' || echo 0; }
 
+# ---------------------------------------------------------------- the check at the start of every launch (before any stage)
+# A manifest or a stage marker in this work folder is compared with the manifest computed now (pinned files, options, tag file, model ids, mode):
+# equal: resume; different, or a marker without a manifest, or a done marker whose outputs are missing or changed: refuse with exit code 2.
+# The chain never moves or deletes: the refusal prints the mv lines.
+MODE=real; [ $REH = no ] || MODE=rehearsal
+PA=""; [ $R2 = yes ] && PA="$PA --r2"; [ $FJ = yes ] && PA="$PA --f-judged"; [ $CROSS = yes ] || PA="$PA --no-cross-judge"
+sc=0
+$PYH start-check --manifest $MANIFEST --work-dir $W --models-json $W/models.json --reading $READING $PA --mode $MODE --tag-file $TAGF --hidden $HIDDEN_ARGS || sc=$?
+[ $sc = 0 ] || { echo "REFUSED: the start check failed (exit code $sc, see above); nothing started" >&2; exit 2; }
+
 # ---------------------------------------------------------------- PREPARE: the manifest (written once)
 if want G || want O || want H1 || want H2 || want H3 || want H4 || want H5; then
   if [ ! -s $MANIFEST ]; then
     snapshot $W/server_now.json
-    PA=""; [ $R2 = yes ] && PA="$PA --r2"; [ $FJ = yes ] && PA="$PA --f-judged"; [ $CROSS = yes ] || PA="$PA --no-cross-judge"
-    $PYH prepare --out $MANIFEST --server-json $W/server_now.json --models-json $W/models.json --reading $READING $PA --hidden $HIDDEN_ARGS \
+    $PYH prepare --out $MANIFEST --server-json $W/server_now.json --models-json $W/models.json --reading $READING $PA --mode $MODE --tag-file $TAGF --hidden $HIDDEN_ARGS \
       || fail "PREPARE: the manifest could not be written"
     hb "$N: manifest written ($MANIFEST)"
   else
@@ -341,11 +353,13 @@ judge_run() { # TAG MODEL SETTING EXTRA_BODY SRCCHARS PASSES CONCURRENCY RUBRICS
   done
   [ $bad = 0 ] || fail "judging $tag: $jout does not hold $jexp valid rows after two rounds"
   hb "$N: judge $tag finished ($jexp rows, all valid)"; }
-mark_passed() { # STAGE
-  .venv/bin/python - "$1" $MANIFEST $W <<'PY'
-import json, sys
+mark_passed() { # STAGE [OUTPUT_FILE ...]: the marker records the pin and the hash of every output file of the stage (the start check compares them)
+  st=$1; shift
+  .venv/bin/python - "$st" $MANIFEST $W "$@" <<'PY'
+import hashlib, json, os, sys
 m = json.load(open(sys.argv[2]))
-json.dump({"stage": sys.argv[1], "passed": True, "pin": m["pinned"]["sha256"], "commit": m["commit"]}, open(f"{sys.argv[3]}/{sys.argv[1]}.passed", "w"))
+outs = {os.path.relpath(f, sys.argv[3]): hashlib.sha256(open(f, "rb").read()).hexdigest() for f in sys.argv[4:]}
+json.dump({"stage": sys.argv[1], "passed": True, "pin": m["pinned"]["sha256"], "commit": m["commit"], "outputs": outs}, open(f"{sys.argv[3]}/{sys.argv[1]}.passed", "w"))
 PY
 }
 pin_check() { # STAGE: the pinned files and the hidden .enc files against the manifest, before every hidden stage (the head commit is information only)
@@ -374,7 +388,7 @@ PY
     answer_run G $Q4 default $W/ans_G.jsonl $NG $G_ITEMS $G_SUB
     $PYH gate-g --answers $W/ans_G.jsonl --stored $REF --expect $NG > $W/gate_g.txt || { cat $W/gate_g.txt; fail "gate G failed: the answers are not byte-identical to the stored run ($W/gate_g.txt); the chain stops"; }
     cat $W/gate_g.txt
-    mark_passed G
+    mark_passed G $W/ans_G.jsonl
     hb "$N: gate G passed ($(cat $W/gate_g.txt))"
   fi
 fi
@@ -398,7 +412,7 @@ if want O; then
     [ $DRY = yes ] || unload $Q4
     judge_run O_P0_judged $DS $JSET "$JEB" $SRC "1 2" 3 $PIL_RUBS $PIL_ITEMS "P0=$W/ans_O_P0_judged.jsonl" $W/O_judge_cache.jsonl $W/O_judge_results.jsonl $((NP0J * 2))
     [ $DRY = yes ] || unload $DS
-    mark_passed O
+    mark_passed O $W/ans_O_Q4D_a3.jsonl $W/ans_O_P0_smoke.jsonl $W/ans_O_P0_judged.jsonl $W/O_judge_results.jsonl
     hb "$N: rehearsal O passed (all runs complete, scored, identifier check run, $((NP0J * 2)) judge rows valid)"
   fi
 fi
@@ -446,7 +460,7 @@ if want H1; then
   if $PYH check-answers --file $REV --expect $NJ --no-text > /dev/null 2>&1; then echo "skip revise: finished"; else
     RA=""; if [ $R2 = yes ]; then if [ $DRY = yes ]; then RA="--r2 --backend stub"; else RA="--r2 --backend openai --model $Q4"; fi; prepare_server revise $Q4; fi
     $G --stall-min 40 --log $L/$N.revise.log -- .venv/bin/python scripts/eval2.py answer --items $JI --revise-from $H/ans_Q4D_judged.jsonl.enc \
-      --out $REV --config e2-revise $RA --extra-body "$EB" --catalogue $CATS || fail "revise failed (see $L/$N.revise.log)"
+      --out $REV --config e2-revise $RA --extra-body "$EB" --catalogue $CATS --allow-commit-change || fail "revise failed (see $L/$N.revise.log)"
     $PYH check-answers --file $REV --expect $NJ --no-text || fail "revise: records incomplete or with errors"
   fi
   hb "$N: revise R1$([ $R2 = yes ] && echo ' and R2') done ($NJ records)"

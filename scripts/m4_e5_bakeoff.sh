@@ -55,6 +55,10 @@
 #                            in full); nothing real is started; the real heartbeat, status and markers are not touched. Dry-run test hooks (environment):
 #                            M4_E5_DRY_NONDET=KEY changes one answer of that candidate's repeat run, M4_E5_DRY_EMPTY=KEY blanks two of its mechanical answers.
 # Markers: runs/m4/logs/m4_e5_bakeoff.done or .failed.   Work folder: work/m4/e5/ (git-ignored).
+# Every step's exit code is checked. A step that exits non-zero (a refused resume, a failed check, a crash) stops the chain: the failed marker names the
+# step and the code, the step's last log lines are printed, the model the chain loaded for it is unloaded, the exit code is 1; the next step does not run.
+# The only exception is the candidate's own breakdown (exit 1 after "stopping: N failed items in a row"), a result that rule S1 counts; a candidate the
+# screen's rule drops does not stop the chain either, the next candidate runs.
 set -e
 # open files only: refuse any argument that is a hidden-side path
 for a in "$@"; do case $a in *.enc|*/hidden/*|hidden/*|*/hidden) echo "REFUSED: $a is a hidden-side path; the screen uses open files only; nothing started" >&2; exit 2;; esac; done
@@ -110,12 +114,25 @@ json.dump({"ts": datetime.datetime.now().astimezone().isoformat(timespec="second
 PY
 }
 MONPID=""
-cleanup() { [ -z "$MONPID" ] || kill $MONPID 2>/dev/null || true; }
+cleanup() { # on every exit: stop the background sampler; a non-zero exit that no step reported (a command outside a checked step failed under set -e) still leaves the failed marker
+  rc=$?
+  [ -z "$MONPID" ] || kill $MONPID 2>/dev/null || true
+  if [ $rc != 0 ] && [ $rc != 2 ] && [ $DRY = no ] && [ ! -f $L/$N.failed ]; then echo "exit code $rc outside a checked step (the chain stopped under set -e)" >> $L/$N.failed; fi
+}
 trap cleanup EXIT
 fail() { if [ $DRY = yes ]; then echo "DRY RUN FAILED: $1"; exit 1; fi
   hb "$N: STOPPED: $1" yes; echo "$1" >> $L/$N.failed
   status STOPPED yes "$N stopped: $1; marker $L/$N.failed; models loaded by this chain may still be loaded"; echo "STOPPED: $1"; exit 1; }
 refuse() { echo "REFUSED: $1; nothing started" >&2; exit 2; }
+step_fail() { # STEP_NAME CODE LOGFILE MODEL: a step exited non-zero and that is not a candidate's result: the failed marker names the step and the code, the step's last
+  # lines are printed, the model this chain loaded for the step is unloaded (nothing else), and the chain stops; the next step is not run
+  echo "step $1 exited with code $2 (see $3)" >> $L/$N.failed
+  echo "STEP FAILED: $1 exited with code $2; last lines of its log:"
+  [ ! -f $3 ] || tail -n 12 $3 | cut -c1-300
+  [ $DRY = yes ] || { hb "$N: STOPPED: step $1 exited with code $2" yes
+    status STOPPED yes "$N stopped: step $1 exited with code $2; marker $L/$N.failed; the model of the step is unloaded"; }
+  [ -z "$4" ] || unload "$4"
+  echo "STOPPED: step $1 exited with code $2"; exit 1; }
 tick() { date +%s; }
 timed() { # KEY STEP START   one line "key step start end" in the work folder
   echo "$1 $2 $3 $(tick)" >> $W/times.tsv; }
@@ -252,15 +269,21 @@ cand_run() { # KEY NAME MODEL EXPECTED "ITEMS" [more harness arguments]: one ans
   tries=0; t0=$(tick)
   while :; do
     prepare_server ${k}_$name $model
-    rc=0
+    rc=0; lg=$L/$N.${k}_$name.log
+    nlog=0; [ ! -f $lg ] || nlog=$(wc -l < $lg | tr -d ' ')   # the lines of this pass start after these
     $G --stall-min 40 --log $L/$N.${k}_$name.log -- .venv/bin/python scripts/eval2.py answer --items $items --out $out \
       --config e5-$k-$name $GA --extra-body "$EB" --mode default --catalogue $CATS --host-class "Mac Studio" --allow-commit-change \
       --max-consecutive-errors 25 "$@" || rc=$?
     simulate_load $model
     [ $rc != 130 ] || fail "$k $name: stopped by a signal (an operator stop); the run resumes from its output file"
     if [ $rc != 0 ]; then
-      echo "$k $name: the run ended with exit code $rc (see $L/$N.${k}_$name.log); its missing answers are counted as errors by rule S1"
-      touch $out.gaveup; break
+      # Exit 1 after "stopping: N failed items in a row" is the candidate breaking down: a result, counted by rule S1 (the candidate is dropped by the rule,
+      # the next one runs). Any other non-zero exit (a refused resume, a failed check, a crash) is a failure of the step: the chain stops.
+      if [ $rc = 1 ] && tail -n +$((nlog + 1)) $lg 2>/dev/null | grep -q '^\[answer\] stopping: [0-9]* failed items in a row'; then
+        echo "$k $name: the run stopped after consecutive failed items (exit code $rc, see $lg); its missing answers are counted as errors by rule S1"
+        touch $out.gaveup; break
+      fi
+      step_fail "$k $name" $rc $lg $model
     fi
     st=0; $PYE answers-state --file $out --expect $want_n > $W/$k/state_$name.out 2>&1 || st=$?
     cat $W/$k/state_$name.out
@@ -354,10 +377,12 @@ if want SCREEN; then
       extra=""; [ $round = 2 ] && extra="--retry-invalid"
       prepare_server judge $DS
       if [ $DRY = yes ]; then JA="--stub-calls --settings-name stub-$JSET"; else JA="--settings-name $JSET"; fi
+      jrc=0
       $G --stall-min 60 --log $L/$N.judge.log -- .venv/bin/python scripts/eval2_judge.py run --rubrics $W/rubrics_judged.jsonl --items $W/items_judged.jsonl \
         --chunks $CHUNKS --source-chars $SRC --instruction v2 --coverage --answers $SETS --judge-model $DS --judge-extra-body "$JEB" \
-        --concurrency 3 --passes 1 2 --cache $W/judge_cache.jsonl --out $JOUT $JA $extra || fail "judging, round $round, failed (see $L/$N.judge.log)"
+        --concurrency 3 --passes 1 2 --cache $W/judge_cache.jsonl --out $JOUT $JA $extra || jrc=$?
       simulate_load $DS
+      [ $jrc = 0 ] || step_fail "judge round $round" $jrc $L/$N.judge.log $DS
       if $PYE judge-done --file $JOUT --expect $EXP; then echo "judging, round $round: all $EXP rows valid"; break; else echo "judging, round $round: rows missing or invalid"; fi
     done
     $PYE judge-done --file $JOUT --expect $EXP || fail "judging: $JOUT does not hold $EXP valid rows after two rounds"
