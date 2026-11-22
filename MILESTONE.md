@@ -31,7 +31,7 @@ Speed work as such and the laptop run are not targets. The base model stays Qwen
 
 | # | Criterion | Bar | State |
 |---|---|---|---|
-| X1 | Ranking (not met by r4, stopped by its rule on 2026-11-22; B4 not spent; a second reranker is being tested, R5) | On B4 (30 new open scenarios, used once): indexed must points served at least +15 percentage points over the frozen retrieval, and at most 5 % of the frozen-served points lost; the same direction in the hidden funnel totals | open |
+| X1 | Ranking (not met: r4 and the second reranker R5 were each stopped by their rules on 2026-11-22; B4 not spent) | On B4 (30 new open scenarios, used once): indexed must points served at least +15 percentage points over the frozen retrieval, and at most 5 % of the frozen-served points lost; the same direction in the hidden funnel totals | open |
 | X2 | Wrong statements | On the hidden half, candidate minus reference in one blind mixed reading: upper end of the 90 % interval below 0 and beyond the readers' disagreement; aim 12 or fewer per 10; harmful at most 13 | open |
 | X3 | No loss | Coverage not down by more than 0.08; mechanical not down by more than 3 points; wrong declines at most 1 in 10 | open |
 | X4 | Length and time | At most 10 % of judged answers cut at the limit; the median time reported | open |
@@ -65,7 +65,7 @@ Speed work as such and the laptop run are not targets. The base model stays Qwen
 | G1 | The grounded mode as a new prompt constant with its own hashes; the default and the golden hashes unchanged | implementer | CPU | **done** 2026-11-22 01:38, commit `06dc7d5` (the `scripts/eval2.py` part and a refusal in `serve` follow F1) |
 | G2 | B2 answered in the grounded mode; a blind reading mixed with the stored default answers; judge; open mechanical 339 | job-operator, readers | server about 3 h | after the development check (GD), which is running since 2026-11-22 09:01 (4.5 to 6.5 h) |
 | G3 | Experiment: can the reranker's score tell supported from unsupported sentences, on the 56 errors of the B1 reading | implementer | CPU, reranker | after R0 (not on the critical path) |
-| R5 | The second reranker (Q8): licence and usage read directly; design of the offline test and its rule; download; build; run | researcher, complex-reviewer, job-operator, implementer | CPU, one download of about 1.2 GB | licence read, design and download done (2026-11-22 08:21); build done (`c5a3f42`); the runs started 2026-11-22 09:19 |
+| R5 | The second reranker (Q8): licence and usage read directly; design of the offline test and its rule; download; build; run | researcher, complex-reviewer, job-operator, implementer | CPU, one download of about 1.2 GB | licence read, design and download done (2026-11-22 08:21); **done** 2026-11-22 11:44: **the rule says fail** (section "R5: the rule's verdict") |
 | H1 | Hidden look 3: r4 with the grounded mode against E2's stored default answers; ledger row and rule first | job-operator, sealed readers | server about 4 h | after R4 and G2 |
 
 Not in M5 (P7): dense retrieval; index changes (the
@@ -256,6 +256,36 @@ Correction of an earlier figure: the reading of the r4 result called 8 points "t
 standard errors"; its standard errors were in percentage points, and 8 points is about
 one. The bar above is the corrected one.
 
+## R5: the rule's verdict (2026-11-22 11:44)
+
+`VERDICT: FAIL, R5 ENDS WITH NO PROFILE AND NO B4: no setting is eligible`
+
+Conditions: added memory 6,706 MB against at most 3,500 for all four settings (4,041 MB
+with the current reranker alone, 10,747 MB with Qwen3 loaded); the new call's median
+6.0, 6.1, 5.9 and 6.2 s against at most 6.0 (the current reranker in the same pass:
+4.7 s), measured on a busy machine, so the three timing failures are provisional and the
+memory failure is not; no frozen-served point lost; added characters within the limits.
+The two question-head settings truncated one pair each in the timing pass.
+
+The gains, which the rule did not evaluate because no setting was eligible (development
+scenarios, loose count; frozen serves 60 of 202 on S and 65 of 219 on C; r4g2 108 and
+102):
+
+| Setting | S served | against r4g2 (SE) | C served | against r4g2 (SE) | 140 facts served |
+|---|---|---|---|---|---|
+| r5a (terms query, default instruction) | 111 | +3 (5.8) | 124 | +22 (7.5) | 119 |
+| r5b (terms query, task instruction) | 111 | +3 (7.8) | 117 | +15 (6.2) | 115 |
+| r5c (question head, default instruction) | 107 | −1 (8.7) | 112 | +10 (9.4) | 124 |
+| r5d (question head, task instruction) | 94 | −14 (8.8) | 117 | +15 (9.4) | 126 |
+
+So the gain bars would have failed too: the best setting on S is +3 points over r4g2
+against the +20 needed. On C, r5a serves 22 points more than r4g2 (about three standard
+errors) and clears the frozen bar (124 against 120). S is the half r4g2 was chosen on,
+which flatters r4g2 there (inferred). Over both halves r5a serves 235 of 421 indexed
+points, r4g2 210, frozen 125. Nothing was measured on answers.
+
+X1 is not met by R5. B4 stays unspent. Q11 for the Owner.
+
 ## B4 (the out-of-sample batch)
 
 Thirty scenarios written on 2026-11-22 by three writers blind to the assistant's results,
@@ -325,7 +355,12 @@ spent on the same 61 scenarios.
 
 ## Waiting for the Owner
 
-Nothing is open for the Owner now.
+- Q11 (asked 2026-11-22 11:50): the second reranker was stopped by its rule. Recommended:
+  accept the stop, end the ranking target for M5 with X1 not met, keep both candidates
+  in the code as experimental, and after the development check answer B1 and the pilot
+  once on r4g2's packs in the picked grounded variant, without readers and deciding
+  nothing, to see whether more excerpts served turns into more points covered. A further
+  ranking round would need a fresh development batch first.
 
 Still open from M4, none blocking:
 
@@ -437,3 +472,11 @@ Later in M5: whether candidate C becomes the default (after look 3).
   v3.1.1 and that the fork prepares it on its own branch and worktree. F3 is therefore
   not started here. Its test runs may load the CPU during the R5 timing pass; the
   timing's reading for a busy machine (section "R5") covers that.
+- 2026-11-22 09:41: the full suite on the committed state (the R5 builder's run): 1,886
+  tests, 1 failure, in the tag work pushed by the fork (a test pinned the old rule for a
+  tagged id absent from the data). Fixed and pushed 09:46 (`e036bad`; the four affected
+  modules pass, 173 tests; the full suite not yet rerun).
+- 2026-11-22 10:48: the development check's reference stage done (54 judged and 116
+  mechanical default answers); 10:52 to 11:08: G1 answered B1's 30 scenarios in 16.5 min.
+- 2026-11-22 11:44: the R5 chain ended: timing (busy machine), funnel (224 questions),
+  rule: fail (section "R5: the rule's verdict"). Q11 for the Owner.
