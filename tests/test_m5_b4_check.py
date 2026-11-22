@@ -16,8 +16,10 @@ PY = ROOT / "scripts/m5_b4_served.py"
 sys.path.insert(0, str(ROOT / "scripts"))
 import m5_b4_served as S  # noqa: E402
 
-READY = all(p.exists() for p in (ROOT / "work/v3/chunks_s1.jsonl", ROOT / ".venv/bin/python", ROOT / "runs/v3/INDEX_FROZEN.json",
-                                 ROOT / "scripts/eval2_compare.py"))
+NEED = (ROOT / "work/v3/chunks_s1.jsonl", ROOT / ".venv/bin/python", ROOT / "runs/v3/INDEX_FROZEN.json", ROOT / "scripts/eval2_compare.py")
+READY = all(p.exists() for p in NEED)
+READY_REASON = "files not in a clone (work/ and runs/ are git-ignored; the chain script starts .venv/bin/python, made by python3 -m venv .venv); missing: " + \
+    (", ".join(str(p.relative_to(ROOT)) for p in NEED if not p.exists()) or "none")
 
 
 def pt(pid, sets, weight=1, chunks=None, **kw):
@@ -162,7 +164,7 @@ class CommandLine(unittest.TestCase):
             self.assertEqual(r.returncode, 1)
 
 
-@unittest.skipUnless(READY, "generated inputs not on this machine")
+@unittest.skipUnless(READY, READY_REASON)
 class ProfileGate(unittest.TestCase):
     def setUp(self):
         from kafka_sre_rag import profiles
@@ -223,7 +225,7 @@ def sh(*args, timeout=900, env=None):
     return subprocess.run(["sh", str(SH), *args], cwd=ROOT, capture_output=True, text=True, timeout=timeout, env=e)
 
 
-@unittest.skipUnless(READY, "generated inputs not on this machine")
+@unittest.skipUnless(READY, READY_REASON)
 class Chain(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

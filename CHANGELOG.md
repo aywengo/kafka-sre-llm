@@ -3,6 +3,53 @@
 Numbers are given with their size. "Hidden half" means items of the new evaluation that were never used to build or
 tune the assistant; the harness prints totals only. The longer description is in `README.md` ("Status").
 
+## v3.2.0 (2026-11-22)
+
+Milestone M5: retrieval ranking and fewer wrong statements. Both criteria were **not met**; each candidate was stopped by a
+rule fixed before its result existed. The release carries the candidates as experimental options, off by default, and
+the repairs. The default answer path is that of `v3.1.0`: `scripts/retrieve.py` and the existing golden files are
+unchanged, `prompts.py` only gained lines, `frozen.json` only gained the three hashes of the new prompts, and `verify`
+matches. The fixes of `v3.1.1` are included. All numbers below are development data (open scenarios), not the hidden
+half; no hidden run was used in M5 (4 of 6 remain).
+
+### Added
+
+- `--mode grounded-g2` (`ask`, `chat`, `scripts/eval2.py answer`): an experimental grounded prompt. On 54 development
+  scenarios against default: judged coverage 0.476 against 0.545; 15.7 against 19.6 non-minor wrong, invented or
+  harmful statements per 10 answers in a blind reading of 108 answers (paired difference -3.89, 90 % interval -6.85
+  to -0.56); harmful statements 6 against 5 in total; nonexistent identifiers 2.22 against 5.37 per 10 answers;
+  median 902 tokens and 42.4 s with search against 2,048 tokens and 75.6 s. It failed the gate to become the default.
+- `--mode grounded-g1` and `--mode grounded-g3`, checked on the same 54 scenarios (judged coverage 0.423 and 0.493;
+  G3 also failed on supported essential misses, 2.50 against 1.00 per 10 on 30 scenarios).
+- `--profile r4`, an experimental retrieval profile (the frozen six chunks, then up to four more ordered by a second
+  reranker call), with its eight grid settings in `kafka_sre_rag/candidate.json`. On 84 development scenarios the best
+  setting gained 48 of 202 points on half S (+23.8 percentage points; bar +25) and 37 of 219 on half C (+16.9; bar
+  +18), with no point lost.
+- `scripts/r5_qwen.py`, an offline test of a second reranker (Qwen3-Reranker-0.6B), not a runtime option: +3 points over
+  the best `r4` setting on S (bar +20), +22 on C, 6.7 GB of added memory against a limit of 3.5.
+- The open batch B4 (`eval/m4/b4/`): 30 scenarios with covering sets for each must point (170 must points, 140 with a
+  covering set), for one out-of-sample check of a retrieval candidate. It was not spent.
+- The mechanical development sample `eval/m4/g_dev_ids.json`, and the development check chain for the grounded variants.
+
+### Changed
+
+- Help texts of `ask`, `serve` and `scripts/eval2.py answer` mark the grounded modes and the retrieval candidates
+  EXPERIMENTAL.
+- Tests that need built or git-ignored files (the index file, `runs/` pins, `work/` answers and packs) skip with the name
+  of the missing file; the tests added in M5 now do this too.
+
+### Fixed
+
+- The E2 chain checks a stored manifest and markers at its start; the E5 chain stops when a step refuses; a resume
+  survives a reload of the same model; the inline-marks step takes `--allow-commit-change`.
+
+### Not met
+
+- Ranking: both candidates (`r4`, the second reranker) were stopped by their rules; the batch B4 was not spent.
+- Fewer wrong statements: all three grounded variants failed the development check on judged coverage (bar: not more
+  than 0.05 under default); none reached the hidden half. Harmful statements were not reduced.
+- Repairs not done: the answer checker still misses names in prose and comments; the scorer's index-aware declines.
+
 ## v3.1.1 (2026-11-22)
 
 A patch release: the published setup now works from a fresh clone. Nothing that was measured changed: the prompts,

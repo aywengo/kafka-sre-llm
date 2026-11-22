@@ -21,8 +21,11 @@ import m5_g_rule as R  # noqa: E402
 TIER_A, TIER_A3 = ROOT / "eval/m4/open/tier_a.jsonl", ROOT / "eval/m4/open/tier_a3.jsonl"
 IDS_FILE = ROOT / "eval/m4/g_dev_ids.json"
 B1_DEFAULT = ROOT / "work/m4/b1/ans_default.jsonl"
-HAVE_WORK = all(p.exists() for p in (B1_DEFAULT, ROOT / "work/m4/b1/judge_results.jsonl", ROOT / "work/m4/pilot2/ans_default.jsonl", ROOT / "work/m4/s6/ans_A1.jsonl",
-                                     ROOT / "work/m4/e2/ans_O_Q4D_a3.jsonl", ROOT / "work/v3/chunks_s1.jsonl", TIER_A, TIER_A3))
+NEED_WORK = (B1_DEFAULT, ROOT / "work/m4/b1/judge_results.jsonl", ROOT / "work/m4/pilot2/ans_default.jsonl", ROOT / "work/m4/s6/ans_A1.jsonl",
+             ROOT / "work/m4/e2/ans_O_Q4D_a3.jsonl", ROOT / "work/v3/chunks_s1.jsonl", TIER_A, TIER_A3)
+HAVE_WORK = all(p.exists() for p in NEED_WORK)
+WORK_REASON = "generated files not in a clone (git-ignored work/ and eval/m4 files; no command makes the answers); missing: " + \
+    (", ".join(str(p.relative_to(ROOT)) for p in NEED_WORK + (ROOT / "eval/m4/g_dev_ids.json",) if not p.exists()) or "none")
 
 
 def run_rule(argv):
@@ -50,7 +53,7 @@ class GroundedModes(unittest.TestCase):
             self.assertEqual(p.parse_args(["answer", "--items", "x", "--config", "c", "--profile", prof]).profile, prof)
         self.assertIn("r4", profiles.PROFILES)
 
-    @unittest.skipUnless(B1_DEFAULT.exists() and (ROOT / "work/v3/chunks_s1.jsonl").exists(), "work/ files absent")
+    @unittest.skipUnless(B1_DEFAULT.exists() and (ROOT / "work/v3/chunks_s1.jsonl").exists(), "work/v3/chunks_s1.jsonl or work/m4/b1/ans_default.jsonl absent (git-ignored; no command makes the answers)")
     def test_stub_replay_writes_the_mode_in_the_manifest(self):
         import eval2
         for mode in ("grounded-g1", "grounded-g2"):
@@ -279,7 +282,7 @@ class Ids(unittest.TestCase):
         self.assertEqual(len(R.M1_IDS), 56)
         self.assertEqual(len(set(R.M1_IDS)), 56)
 
-    @unittest.skipUnless(TIER_A.exists() and TIER_A3.exists(), "open item files absent")
+    @unittest.skipUnless(TIER_A.exists() and TIER_A3.exists(), "open item files absent (build them with scripts/build_catalogues.py then scripts/eval2_items_a1.py)")
     def test_real_ids_file_reproduces_from_its_rule_with_the_design_counts(self):
         d = R.draw(TIER_A, TIER_A3)
         self.assertEqual((len(d["M1"]), len(d["M2"]), len(d["M3"])), (56, 40, 20))
@@ -682,7 +685,7 @@ class AcceptCodeChange(unittest.TestCase):
 
 
 # ---------------------------------------------------------------- the chain, dry (stub model, stub judge)
-@unittest.skipUnless(HAVE_WORK and IDS_FILE.exists(), "work/ inputs or eval/m4/g_dev_ids.json absent")
+@unittest.skipUnless(HAVE_WORK and IDS_FILE.exists(), WORK_REASON)
 class ChainDryRun(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -997,7 +1000,7 @@ class ReferenceRule(unittest.TestCase):
             self.assertIn("ACCEPTED change", out)
 
 
-@unittest.skipUnless(HAVE_WORK and IDS_FILE.exists(), "work/ inputs or eval/m4/g_dev_ids.json absent")
+@unittest.skipUnless(HAVE_WORK and IDS_FILE.exists(), WORK_REASON)
 class ChainDryRunReference(unittest.TestCase):
     """The first check's chain is run dry once (the finished reference); then the chain checks g3 against it."""
     @classmethod

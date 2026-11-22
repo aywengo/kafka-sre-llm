@@ -3,12 +3,13 @@
 A Kafka / Strimzi / Kubernetes / Argo CD SRE assistant on an open-weight 27B model
 (Qwen3.8-27B), on Apple Silicon with mlx-lm. This repository holds two things:
 
-- the **retrieval runtime** `kafka_sre_rag/` (v3.1.0), which is what currently works;
+- the **retrieval runtime** `kafka_sre_rag/` (v3.2.0), which is what currently works;
 - the **fine-tuning pipeline** that produced the v1 and v2 adapters (described at the end).
 
 ## Status
 
-**v3.1.0** is the retrieval runtime on the unmodified base model, with an answer checker and a streaming
+**v3.2.0** (2026-11-22) is `v3.1.1` plus the experimental options of milestone M5, which are off by default
+(see "M5: what was tried and what was not met" below). **v3.1.0** is the retrieval runtime on the unmodified base model, with an answer checker and a streaming
 service. The measured reference configuration is Qwen3.8-27B at 4-bit (`mlx-community/Qwen3.8-27B-4bit`),
 served through a local OpenAI-compatible server, default mode, thinking off, on one Apple Silicon machine
 (a Mac Studio, not a laptop). The default answer path (prompts, retrieval, index) did not change after the
@@ -51,8 +52,58 @@ What is **not met** (the goals are in `GOAL.md`):
 - **Laptop.** Everything above is from a Mac Studio. The measurements on a 32 to 36 GB laptop (memory,
   speed, offline use) are not done yet; `agents/laptop-tests.md` is the plan.
 
-What comes next, in one line: retrieval ranking (the needed excerpt is often found but ranked below the six
-that are used) and fewer wrong statements.
+What comes next, in one line: a combined candidate (the grounded mode together with better ranking), chosen on
+a fresh development batch, checked once on the batch B4 and then on the hidden half; harmful statements, which
+the grounded mode did not reduce; the leftover repairs.
+
+### M5: what was tried and what was not met
+
+Milestone M5 (2026-11-22) aimed at two things: a better ranking of the retrieved excerpts, and fewer wrong
+statements. **Both criteria were not met.** Each candidate was stopped by a rule that was fixed before its result
+existed, and no hidden run was used (4 of 6 remain). The numbers below are development data (open scenarios used
+to build and tune), not the hidden half. Nothing here replaces the v3.1.0 headline numbers above.
+
+- **Ranking, not met.** On 84 development scenarios (loose count of served points) two candidates were stopped.
+  `r4` (the frozen six chunks, then up to four more ordered by a second call of the same reranker): the best
+  setting gained 48 of 202 points on half S (+23.8 percentage points; bar +25) and 37 of 219 on half C (+16.9;
+  bar +18), with no point lost. A second reranker, Qwen3-Reranker-0.6B, on the same candidates: +3 points over
+  the best `r4` setting on S (bar +20) and +22 on C (about three standard errors), and it added 6.7 GB of memory
+  against a limit of 3.5. The out-of-sample batch B4 was not spent. Of 421 indexed development points, the frozen
+  retrieval serves 125 and the best `r4` setting 210; a perfect ordering of the same 24 scored candidates would
+  serve 103 more (the milestone's count; no model was run for it).
+- **Fewer wrong statements, not met.** Three grounded prompt variants failed the development check on judged
+  coverage (54 scenarios, two judge passes; the bar was not more than 0.05 under default). G3 also failed on
+  supported essential misses (2.50 per 10 on 30 scenarios against 1.00 for default; the bar was at most 2.0) and
+  missed the coverage bar by 0.002. None went on to the reading that this check gates (on the unread batch B2) or
+  to the hidden half.
+
+| 54 development scenarios | default | G1 | G2 | G3 |
+|---|---|---|---|---|
+| Judged coverage | 0.545 | 0.423 | 0.476 | 0.493 |
+| Supported essential misses per 10 (30 scenarios) | 1.00 | 1.50 | 2.00 | 2.50 |
+| Median answer tokens | 2,048 | 789 | 902 | 1,139 |
+| Answers cut at 2,048 tokens | 29 of 54 | 1 of 54 | 1 of 54 | 1 of 54 |
+| Median seconds with search | 75.6 | 41.0 | 42.4 | 51.1 |
+
+- **A reading of G2 (informative, it decided nothing).** A blind reading of 108 existing answers (54 development
+  scenarios, nine reader sessions, readers 6 % apart): G2 made 15.7 non-minor wrong, invented or harmful
+  statements per 10 answers against 19.6 for default, paired difference -3.89 (90 % interval -6.85 to -0.56).
+  Harmful statements were not reduced (6 against 5 in total), and omissions rose (31.3 against 26.9 per 10).
+  Nonexistent identifiers fell from 5.37 to 2.22 per 10 answers; judged coverage fell by 0.069.
+- **More excerpts served gave some coverage back.** G2 on `r4`'s packs against G2 on the frozen packs, same 54
+  scenarios: 146 against 88 of 272 points served, judged coverage 0.513 against 0.473 (+0.040, standard error
+  0.025).
+- **Repairs.** The chain defects found in M4 are fixed (the E2 chain checks a stored manifest and markers at its
+  start, the E5 chain stops on a refused step, a resume survives a reload of the same model, the inline-marks
+  step takes `--allow-commit-change`). Not done: the answer checker still misses names in prose and comments, and
+  the scorer's index-aware declines (needed only for an index change).
+
+**The default answer path is unchanged since v3.1.0.** Checked on 2026-11-22 by comparing with the tag `v3.1.0`:
+`scripts/retrieve.py` and the existing golden files of the measured prompts in `tests/golden/` are unchanged;
+`kafka_sre_rag/prompts.py` only gained lines (68 added, none removed: the grounded variants); `frozen.json` only
+gained the three hashes of those variants, and the hashes of the default and strict prompts are the same;
+`python -m kafka_sre_rag verify` reports the index, the prompts, the reranker and the catalogues as matching; the
+golden tests pass. This checks the prompts and the retrieval settings. No answer was regenerated for it.
 
 History, on a **legacy** question set (the 40 real questions of v3, reused many times; it is no longer a
 gate and nothing is tuned on it):
@@ -416,6 +467,29 @@ that no step is missing.** The price of strict is that when retrieval misses the
 Default stays the default because it is the mode every headline number was measured in. Sources: `runs/v3/reports/`
 (`strict_mode_invention_reading.md`, `strict_holdout_reading.md`) and `runs/v3/STRICT_HOLDOUT_CHECK.md`.
 
+### Experimental options (off by default)
+
+These came out of milestone M5. None of them is the default and every answer from them is marked unmeasured.
+
+- **`--mode grounded-g2`.** It replaces the answer instruction with one that asks the model to base every statement
+  on the excerpts or the question, to write names as they appear there, and to say in one fixed sentence what the
+  excerpts do not cover; general knowledge may follow only on lines marked as such. It needs excerpts and does not
+  work with `--service-url` or `serve`. The measured trade on 54 development scenarios (development data, not the
+  hidden half): about 0.07 less judged coverage (0.476 against 0.545); 3.9 fewer non-minor wrong, invented or
+  harmful statements per 10 answers (90 % interval -6.85 to -0.56, from a blind reading of 108 answers); about half
+  the invented identifiers (2.22 against 5.37 per 10); answers of about 900 tokens (median 902) in about 42 s with
+  search, against 2,048 tokens and 76 s; harmful statements were not reduced (6 against 5 in total). **It failed the
+  gate to become the default** (coverage more than 0.05 under default) and is not the default.
+- **`--mode grounded-g1`, `--mode grounded-g3`.** Two other variants that were also checked on the same 54
+  scenarios: G1 lost 0.122 coverage, G3 lost 0.052 and also failed on supported essential misses (2.50 per 10 against 1.00 for default).
+- **`--profile r4`.** An experimental retrieval profile: the frozen six chunks, then up to four more ordered by a
+  second reranker call (10 chunks, up to 24,000 characters). It failed its rule fixed beforehand (see M5 above), so
+  `frozen` stays the default. `--profile r4` runs the placeholder values (grid setting G4 in
+  `kafka_sre_rag/candidate.json`); the best grid setting of the development run, `r4g2`, is in the same file under
+  `r4_grid` and is used by the funnel scripts.
+- **The second reranker's offline test** is a script, `scripts/r5_qwen.py`, not a runtime option; it needs the
+  Qwen3-Reranker-0.6B model, which is not part of the install.
+
 ### Sources
 
 `--sources` prints the retrieved chunks under the answer: source, title, file path, BM25 rank
@@ -511,6 +585,14 @@ In the repository:
   (judged scenarios and the decision rules; the judge needs a second, stronger model on a server and is not
   covered here), `scripts/eval2_first_words.py` (timing through the service).
 
+- **Open batch B4:** `eval/m4/b4/` holds 30 new judged scenarios with items and rubrics, written for one
+  out-of-sample check of a retrieval candidate; it was not used in M5. Each must point records its covering sets: one
+  or two chunks that together state the whole fact (170 must points: 140 with at least one covering set, 14 with no
+  covering set in the index, 16 not indexed). The strict count calls a point served only when a whole covering set
+  is in the pack; the loose count of the earlier batches B1 and B2 calls it served when any recorded chunk is, so
+  it overstates (on B4 an independent chunk-by-chunk check found 98 of 154 points fully covered by each recorded
+  chunk, which is why the sets were added). Its rule is fixed beforehand and it is used once.
+
 To run the mechanical open half on your own setup (needs the index, the catalogues and a model server as above; the
 answers file must be a new path, an existing one is resumed):
 
@@ -529,10 +611,10 @@ The first command writes one line per answer as it goes and can be stopped and r
 second prints the share of items where every check passes. The commands were checked against the scripts' options
 with the stub backend on three items (no model); a full run with a model was not repeated for this README.
 
-**Retrieval profiles.** `--profile r1`, `r2` and `r3` (on `ask`, `chat`, `serve` and `eval2.py answer`) select
+**Retrieval profiles.** `--profile r1`, `r2`, `r3` and `r4` (on `ask`, `chat`, `serve` and `eval2.py answer`) select
 candidate retrieval settings (`kafka_sre_rag/candidate.json`). They are **experimental**: none passed its
-acceptance rule fixed in advance (R3 gained 7.4 points on one open batch against the 15 required, and the earlier
-check of R2 failed), so `frozen` stays the default and every answer with a candidate profile is marked unmeasured.
+acceptance rule fixed in advance (R3 gained 7.4 points on one open batch against the 15 required, the earlier
+check of R2 failed, and R4 stopped short of its bars on both development halves, see "M5" above), so `frozen` stays the default and every answer with a candidate profile is marked unmeasured.
 
 ### Other base models tried
 

@@ -22,9 +22,12 @@ import retrieval_funnel as F  # noqa: E402
 from test_profiles_drift import QUESTIONS, StubReranker, make_rows  # noqa: E402
 
 PACKS_B1, PACKS_P2 = ROOT / "work/m5/r6/packs_b1.jsonl", ROOT / "work/m5/r6/packs_p2.jsonl"
-HAVE_WORK = all(p.exists() for p in (ROOT / "work/m4/b1/ans_default.jsonl", ROOT / "work/m4/pilot2/ans_default.jsonl", ROOT / "work/v3/chunks_s1.jsonl",
-                                     ROOT / "work/m5/b1_needs.jsonl", PACKS_B1, PACKS_P2, Path(str(PACKS_B1) + ".manifest.json"),
-                                     Path(str(PACKS_P2) + ".manifest.json"), ROOT / "runs/v3/INDEX_FROZEN.json"))
+NEED_WORK = (ROOT / "work/m4/b1/ans_default.jsonl", ROOT / "work/m4/pilot2/ans_default.jsonl", ROOT / "work/v3/chunks_s1.jsonl",
+             ROOT / "work/m5/b1_needs.jsonl", PACKS_B1, PACKS_P2, Path(str(PACKS_B1) + ".manifest.json"),
+             Path(str(PACKS_P2) + ".manifest.json"), ROOT / "runs/v3/INDEX_FROZEN.json")
+HAVE_WORK = all(p.exists() for p in NEED_WORK)
+WORK_REASON = "generated or untracked files not in a clone (git-ignored work/ and runs/; no command makes them); missing: " + \
+    (", ".join(str(p.relative_to(ROOT)) for p in NEED_WORK if not p.exists()) or "none")
 
 
 def run_pk(argv):
@@ -149,7 +152,7 @@ class PackWriter(unittest.TestCase):
         self.assertIn("2 of 3 packs start", out)
 
 
-@unittest.skipUnless(HAVE_WORK, "work/ inputs or the pack files of work/m5/r6 absent")
+@unittest.skipUnless(HAVE_WORK, WORK_REASON)
 class ChainDryRun(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

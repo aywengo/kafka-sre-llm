@@ -947,7 +947,7 @@ def build_parser():
                          "grounded-g2 / grounded-g3: EXPERIMENTAL grounded prompts (unmeasured, recorded in the manifest)")
     an.add_argument("--k", choices=["k6", "k3"], default="k6")
     an.add_argument("--profile", choices=list(profiles.PROFILES), default="frozen",
-                    help="retrieval profile (default frozen); the others (r1 to r4 and the r4 settings) are unmeasured candidates "
+                    help="retrieval profile (default frozen); the others (r1 to r4 and the r4 settings) are EXPERIMENTAL, unmeasured candidates "
                          "(kafka_sre_rag/candidate.json) and are recorded in the manifest")
     an.add_argument("--no-rerank", action="store_true", help="BM25 order only (unmeasured)")
     an.add_argument("--catalogue", help="catalogue directory to hash into the manifest")

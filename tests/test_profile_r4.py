@@ -274,6 +274,8 @@ class TestSplit(unittest.TestCase):
 
 class TestRuntimeEqualsSimulation(unittest.TestCase):
     def setUp(self):
+        if not (ROOT / "runs/v3/INDEX_FROZEN.json").is_file():
+            self.skipTest("runs/v3/INDEX_FROZEN.json is not in the repository (it is kept with the run files; no command makes it)")
         self.tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.tmp, True)
         p = self.tmp / "idx.jsonl"
@@ -378,6 +380,8 @@ class TestTablesOnSyntheticIndex(unittest.TestCase):
     """evaluate -> r4_tables -> r4_table -> choose_report -> cmd_choose_r4 on the synthetic index, made-up needs."""
 
     def setUp(self):
+        if not (ROOT / "runs/v3/INDEX_FROZEN.json").is_file():
+            self.skipTest("runs/v3/INDEX_FROZEN.json is not in the repository (it is kept with the run files; no command makes it)")
         self.tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.tmp, True)
         p = self.tmp / "idx.jsonl"

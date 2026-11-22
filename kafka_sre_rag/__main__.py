@@ -36,12 +36,13 @@ def build_parser():
     def common(p):
         p.add_argument("--k", choices=["k6", "k3"], default="k6")
         p.add_argument("--profile", choices=list(profiles.PROFILES), default="frozen",
-                       help="retrieval profile: frozen (default, the measured one) or the candidates r1, r2 and r3 "
+                       help="retrieval profile: frozen (default, the measured one) or the candidates r1, r2, r3 and r4 "
                             "(kafka_sre_rag/candidate.json; every answer is marked unmeasured). "
-                            "EXPERIMENTAL: none of them passed its acceptance rule, so frozen stays the default")
+                            "EXPERIMENTAL: r1 to r4 are candidates; none of them passed its acceptance rule, so frozen stays the default")
         p.add_argument("--mode", choices=["default", "strict", "grounded-g1", "grounded-g2", "grounded-g3"], default="default",
                        help="default (the measured prompt), strict, or grounded-g1 / grounded-g2 / grounded-g3. "
-                            "EXPERIMENTAL: the grounded modes are not measured; every answer is marked unmeasured; "
+                            "EXPERIMENTAL: the grounded modes were checked on development data only and failed the gate to become the default; "
+                            "every answer is marked unmeasured; "
                             "they need excerpts and cannot be used with --service-url")
         p.add_argument("--backend", choices=["mlx", "openai"], default="mlx")
         p.add_argument("--model", help="mlx: model directory; openai: model name sent to the server")
