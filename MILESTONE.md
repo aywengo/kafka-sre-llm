@@ -617,3 +617,8 @@ Later in M5: whether candidate C becomes the default (after look 3).
   conductor applied the Owner's Q12 decision to it; resumed 15:07; done 15:19.
 - 2026-11-22 15:31: the Owner agreed with Q13: G3 is checked. Its rule is fixed (section
   "G3's development check"); the build started.
+- 2026-11-22 15:51: G3 and the chain's support for a stored reference committed
+  (`dc6f712`). 15:52: G3's development check started; the repeat probe passed (3 of 3
+  default answers byte-identical to the reference run's); first ten G3 answers 39 s and
+  1,112 tokens each, none cut; estimate 1.5 to 2.0 h. The user asked the Orca bot
+  M3U-512 to look after the task; it watches the machine and the run and touches nothing.
