@@ -408,6 +408,36 @@ scenarios of these 54, chosen because they lost the most, so part of any recover
 regression to the mean; a narrow pass does not tell G3 from G2. B2 (unread) and the
 hidden half decide.
 
+## G3's development check: the verdict (2026-11-22 17:14)
+
+`CHOICE: neither  (the grounded mode stops; the Owner sees the trade-off)` (`runs/m5/G_DEV3.md`)
+
+The repeat probe passed (3 of 3 default answers byte-identical to the reference run's),
+so the reference was reused; no judge row was unjudgeable (60 and 48 rows).
+
+| | default | G1 | G2 | G3 | the rule needs |
+|---|---|---|---|---|---|
+| Judged coverage (54) | 0.545 | 0.423 | 0.476 | 0.493 (−0.052) | not more than 0.05 under default: **G3 fails by 0.002** |
+| Supported essential misses per 10, B1 (30) | 1.00 | 1.50 | 2.00 | 2.50 | at most 2.0: **G3 fails** |
+| Answers cut at 2,048 tokens | 29 of 54 | 1 | 1 | 1 | at most 5: pass |
+| Median tokens | 2,048 | 789 | 902 | 1,139 | at most 1,400: pass |
+| Median seconds with search | 75.6 | 41.0 | 42.4 | 51.1 | reported |
+| Nonexistent identifiers per 10 | 5.37 | 2.22 | 2.22 | 2.96 | not above default: pass |
+| Projected mechanical change, points | | +3.29 | +7.06 | +2.85 | not under −3.0: pass |
+| Wrong declines of covered items | | 0.7 % | 0.7 % | 0.7 % | at most 10 %: pass |
+| Coverage on the 14 diagnostics scenarios (reported) | 0.550 | | | 0.447 | |
+
+G3 recovered part of G2's coverage loss, as designed, and lost on supported essential
+misses and on the mechanical gain. By the rule fixed beforehand the grounded mode stops
+here: B2 is not spent and no hidden look is used for it. The three variants stay in the
+code as experimental modes. What none of the checks measured: wrong statements, the
+thing the mode was built to reduce; that needs readers.
+
+The trade the three variants show, on 54 development scenarios and 116 mechanical items:
+about 0.05 to 0.12 less judged coverage, for answers half as long that are not cut, 25 to
+35 s faster (under the 60 s goal), about half the invented identifiers, and 3 to 7 more
+mechanical points. Q14 for the Owner.
+
 ## R6: the informative run (2026-11-22 15:19; decides nothing)
 
 `runs/m5/R6_R4_PACKS.md`. Variant G2 on r4g2's packs against G2 on the frozen packs, the
@@ -466,7 +496,12 @@ spent on the same 61 scenarios.
 
 ## Waiting for the Owner
 
-Nothing is open for the Owner now.
+- Q14 (asked 2026-11-22 17:20): the grounded mode stopped by its rule after three
+  variants. Recommended: accept the stop (no B2 reading, no hidden look for it), and make
+  one informative reading that spends nothing new: fresh blind readers read the default
+  and G2 answers already produced for the 54 development scenarios, to measure for the
+  first time whether a grounded mode makes fewer wrong statements. No server time; B2,
+  B4 and the hidden half stay untouched; it decides nothing. Then the closing of M5.
 
 Still open from M4, none blocking:
 
@@ -622,3 +657,7 @@ Later in M5: whether candidate C becomes the default (after look 3).
   default answers byte-identical to the reference run's); first ten G3 answers 39 s and
   1,112 tokens each, none cut; estimate 1.5 to 2.0 h. The user asked the Orca bot
   M3U-512 to look after the task; it watches the machine and the run and touches nothing.
+- 2026-11-22 16:34: the full suite on the head with G3: OK, 57 skipped.
+- 2026-11-22 17:14: G3's development check ended: not eligible (coverage −0.052 against
+  −0.05; supported essential misses 2.50 against at most 2.0). The grounded mode stops by
+  its rule. Q14 for the Owner.
