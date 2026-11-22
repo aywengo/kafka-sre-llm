@@ -64,10 +64,10 @@ Speed work as such and the laptop run are not targets. The base model stays Qwen
 | G1 | The grounded mode as a new prompt constant with its own hashes; the default and the golden hashes unchanged | implementer | CPU | **done** 2026-11-22 01:38, commit `06dc7d5` (the `scripts/eval2.py` part and a refusal in `serve` follow F1) |
 | G2 | B2 answered in the grounded mode; a blind reading mixed with the stored default answers; judge; open mechanical 339 | job-operator, readers | server about 3 h | after G1 |
 | G3 | Experiment: can the reranker's score tell supported from unsupported sentences, on the 56 errors of the B1 reading | implementer | CPU, reranker | after R0 (not on the critical path) |
-| R5 | The second reranker (Q8): licence and usage read directly; design of the offline test and its rule; download; build; run | researcher, complex-reviewer, job-operator, implementer | CPU, one download of about 1.2 GB | the direct read and the design are running since 2026-11-22 08:15 |
+| R5 | The second reranker (Q8): licence and usage read directly; design of the offline test and its rule; download; build; run | researcher, complex-reviewer, job-operator, implementer | CPU, one download of about 1.2 GB | licence read, design and download done (2026-11-22 08:25); the build is running |
 | H1 | Hidden look 3: r4 with the grounded mode against E2's stored default answers; ledger row and rule first | job-operator, sealed readers | server about 4 h | after R4 and G2 |
 
-Not in M5 (P5, P7): a second reranker or dense retrieval (a download); index changes (the
+Not in M5 (P7): dense retrieval; index changes (the
 Argo CD command pages, new chunking or titles); training.
 
 ## The rule for hidden look 3 (proposed in the plan; fixed in the ledger before the run)
@@ -209,6 +209,37 @@ The stage stops here until the Owner has seen it (Q7). B4 is not spent and no r4
 is recorded as chosen. A reviewer is checking the verdict and where the points are still
 lost; a researcher is listing other rerankers with their licences (nothing is downloaded).
 
+## R5: the second reranker (design of 2026-11-22 08:25, before any score)
+
+`Qwen/Qwen3-Reranker-0.6B`, revision `e61197ed…`, licence field `apache-2.0` on its model
+card and in the hub's metadata (no licence file in the repository; the card's text calls
+the series "proprietary"; the Owner knows both). Downloaded on 2026-11-22 08:17 (1.21 GB,
+hashes equal the hub's, no token sent); an offline smoke test on the CPU scored the
+card's two example pairs 7.75 and −12.25 (card: 7.625 and −11.375).
+
+The test (`runs/m5/reports/r5_design.md`): the new model replaces only r4g2's second
+reranker call and scores the same 24 candidates per question; the frozen six and the pack
+rule stay. Four settings: the terms-only query or the first 800 characters of the
+question, each with the card's default instruction or one task instruction fixed in the
+design. No runtime profile is built before a pass.
+
+**The rule, fixed before any score.** Counted like r4 (served indexed points, loose
+count; S 202 points, C 219), each setting paired with r4g2 on the same items. The setting
+with the largest gain on S is chosen (near-tie: the smaller pack, then the faster). It
+passes only if all hold: at least +20 points over r4g2 on S (served at least 128 of 202)
+and at least +15 on C (at least 117 of 219), each at least twice its paired standard
+error; over the frozen retrieval at least +25 percentage points on S (51 points) and, for
+this test, also +25 on C (55 points, so served at least 120 of 219; r4's bar on C was
++18); no frozen-served point lost; the new call at most 6.0 s median and 9.0 s at the
+90th percentile on the 20 timing questions; added memory at most 3.5 GB; added characters
+within r4's limits. Otherwise R5 stops with no profile and no B4. The C bar is raised
+because B4 decides on the strict count and C has now been read point by point; a pass on
+these worn items means "it orders better on items we have studied", and only B4 is clean.
+
+Correction of an earlier figure: the reading of the r4 result called 8 points "two
+standard errors"; its standard errors were in percentage points, and 8 points is about
+one. The bar above is the corrected one.
+
 ## B4 (the out-of-sample batch)
 
 Thirty scenarios written on 2026-11-22 by three writers blind to the assistant's results,
@@ -343,3 +374,6 @@ Later in M5: whether candidate C becomes the default (after look 3).
   the one open question and blocks the development check.
 - 2026-11-22 08:16: the Owner answered Q9: any model may be unloaded from the server.
   `AGENTS.md` updated. The development check starts when the chain's review is back.
+- 2026-11-22 08:17: the direct read of the Qwen3 reranker's card is back (licence field
+  apache-2.0, no licence file); the download ran and passed its checks. 08:25: the design
+  of the offline test is back and its rule is fixed (section "R5"). The build started.
