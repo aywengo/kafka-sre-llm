@@ -477,5 +477,5 @@ Later in M5: whether candidate C becomes the default (after look 3).
   mechanical default answers); 10:52 to 11:08: G1 answered B1's 30 scenarios in 16.5 min.
 - 2026-11-22 11:44: the R5 chain ended: timing (busy machine), funnel (224 questions),
   rule: fail (section "R5: the rule's verdict"). Q11 for the Owner.
-- 2026-11-22 11:50: the Owner agreed with Q11. The chain of the informative run on
+- 2026-11-22 12:10: the Owner agreed with Q11. The chain of the informative run on
   r4g2's packs (R6) is being built.
