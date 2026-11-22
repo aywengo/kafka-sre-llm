@@ -56,8 +56,8 @@ Speed work as such and the laptop run are not targets. The base model stays Qwen
 | F2 | The scorer's decline outcomes and not-covered items made aware of the index in use; a guard on the default index path of `scripts/retrieve.py` | implementer | CPU | after F1 (shared files); not needed for r4, which keeps the index (the scorer's declines depend on the index and on the answer's own pack) |
 | R0 | Design of profile r4: the exact settings to try, the rule that picks one on the development pool, what the simulation prints, the expansion leak | complex-reviewer | CPU | **done** 2026-11-22 00:46 (`runs/m5/reports/r0_r4_design.md`) |
 | R1 | Profile r4 and its funnel preset, next to the frozen profile | implementer | CPU, reranker | **done** 2026-11-22 01:50 (`runs/m5/reports/r1_r4_build.md`): frozen replay 423 of 423, runtime equals simulation 423 of 423 for all eight settings, live check 8 of 8; no r4 result on S or C looked at; commit `4e89031` |
-| R1b | The timing screen, the funnel over the eight settings, the rule (`choose-r4`) | job-operator | CPU, reranker; server idle | **done** 2026-11-22 04:52: **the rule says stop** (`runs/m5/reports/r1b_r4_choice.md`) |
-| R2 | The reviewer confirms the rule's verdict and records the chosen setting's hash; the verdict "stop" goes to the Owner | complex-reviewer | CPU | running since 2026-11-22 04:55 (confirms the verdict; where the points are still lost) |
+| R1b | The timing screen, the funnel over the eight settings, the rule (`choose-r4`) | job-operator | CPU, reranker; server idle | **done** 2026-11-22 04:49: **the rule says stop** (`runs/m5/reports/r1b_r4_choice.md`) |
+| R2 | The reviewer confirms the rule's verdict and records the chosen setting's hash; the verdict "stop" goes to the Owner | complex-reviewer | CPU | running since 2026-11-22 04:50 (confirms the verdict; where the points are still lost) |
 | R3 | B4: 30 new open scenarios with covering chunks; independent chunk count at least 95 % before any answer; family check against the hidden items in a sealed session | writers, reviewers | Claude workers | second review applied (229 records); **the independent chunk count failed** (98 of 154 points, section "B4"); completed and recounted: 140 points with independently verified covering sets (02:08); the sealed family check and the chain of the one-time check are running |
 | R4 | Expansions for B4, then the X1 rule applied once | job-operator | server 0.2 h | after R2 and R3 |
 | G0 | Design of the grounded mode: the prompt text (variants G1 and G2), the rule that separates them, the reading plan on B2 | complex-reviewer | CPU | **done** 2026-11-22 00:50 (`runs/m5/reports/g0_grounded_design.md`) |
@@ -90,9 +90,9 @@ scores a capped set of them in a second call, with a query that carries the term
 some settings, a 1,024-token window. Eight settings are tried.
 
 Measured in the design (BM25 only, no model): if the best four candidates were added, the
-served points would rise by 61 points on the pilot (106 points), 55 on B1 (166) and 54 on
-B2 (149). The room is there; the limit is the ordering. R3, which filled the slots in the
-frozen order, gained 7.8 and 7.4. In the reranker's 512-token window a median B2 question
+served share would rise by 61.3 percentage points on the pilot (+65 of 106 points), 55.4
+on B1 (+92 of 166) and 54.4 on B2 (+81 of 149). The room is there; the limit is the ordering. R3, which filled the slots in the
+frozen order, gained 7.8 and 7.4 percentage points. In the reranker's 512-token window a median B2 question
 leaves about 970 characters per chunk, not the 1,500 assumed (inferred from token counts).
 
 **The rule, fixed before any result (the conductor's decision, 2026-11-22).** The
@@ -100,9 +100,10 @@ development scenarios are split in two halves by a hash of their ids (42 items e
 and 219 indexed points; frozen serves 29.7 % on both). Settings that add more than 6.0 s
 median or 9.0 s at the 90th percentile of reranker time are dropped first. The setting
 with the largest gain on half S is chosen, a near-tie going to the smaller pack. It goes
-to B4 only if it gains at least +25 points on S and +18 on C, loses nothing, and stays
+to B4 only if it gains at least +25 percentage points on S (51 of 202 points) and +18 on
+C (40 of 219), loses nothing, and stays
 within the size limits. Otherwise r4 stops, B4 is not spent, and the Owner sees the
-result. The reviewer's own expectation is a gain of +10 to +20 on development data, so
+result. The reviewer's own expectation is a gain of +10 to +20 percentage points on development data, so
 the stop may well fire (inferred).
 
 Also decided by the conductor: the leak of answer-format instructions into the search
@@ -161,7 +162,7 @@ Disclosure: the designer loaded the stored B2 answer files while measuring lengt
 printed their token counts and cut flags only (default 21 of 30 cut; strict 11 of 30).
 No B2 text was read; the prompt text was written from B1 and the mechanical half.
 
-## r4: the rule's verdict (2026-11-22 04:52)
+## r4: the rule's verdict (2026-11-22 04:49)
 
 `VERDICT: STOP AND REPORT, NO B4: gain on S 48 of 202 points (+23.8 pp) is under +25 pp;
 gain on C 37 of 219 points (+16.9 pp) is under +18 pp`
@@ -175,6 +176,30 @@ with the 1,024-token window): +38 on S (+18.8) and +39 on C (+17.8). No setting 
 point. Ratio of the gain on C to the gain on S for r4g2: 0.77; projected gain on a fresh
 batch +10.1 to +16.9 points, against the +15 that X1 needs. The earlier candidate R3
 gained 7.4 to 7.8 points.
+
+The verdict was recomputed independently by a reviewer (`runs/m5/reports/r2_r4_reading.md`)
+and holds under every reading of the design: the best gain on S is 48 points against the
+51 needed (r4g2), the best on C is 39 against 40 (r4g6). An earlier wording of the bar in
+this document ("+25 points on S and +18 on C") was loose: the bars are percentage points,
+51 of 202 and 40 of 219 points, as the design states; it is corrected above.
+
+Where the 421 indexed development points stand under r4g2: 210 served (frozen: 125); 100
+scored by the reranker but ranked below the four added places, and 4 cut by the character
+limit; 92 among the candidates but outside the 24 scored; 15 never a candidate. A perfect
+ordering of the same 24 scored candidates would serve 103 more points than r4g2; a scored
+set of 40 another 22; only a better search the last 15. So the limit is the reranker's
+ordering, not the search. What separates the settings: the terms-only query (+44 points
+over the question as query, standard error 2.8 percentage points); the 512 against the
+1,024-token window does not (+8, noise). The pilot carries the gain (+34.9 percentage
+points; it shaped the terms-only query); on B1 and B2 alone r4g2 gains +15.2 (standard
+error 3.0), which is the B4 bar before any shrinkage. By kind on B1 and B2: configuration
++22.7, debugging +22.2, coding +11.3, diagnostics +10.3, architecture +7.1.
+
+A survey of rerankers (`runs/m5/reports/reranker_research.md`; publishers' own numbers,
+no download): Qwen3-Reranker-0.6B (Apache-2.0 on its page, about 1.2 GB), an Ettin
+cross-encoder (Apache-2.0, 596 MB), mxbai-rerank-base-v2 (Apache-2.0, 988 MB); the Jina
+v3 rerankers are non-commercial. No benchmark covers long questions over technical
+documentation.
 
 The stage stops here until the Owner has seen it (Q7). B4 is not spent and no r4 setting
 is recorded as chosen. A reviewer is checking the verdict and where the points are still
@@ -256,9 +281,13 @@ development check runs on the server (asked 2026-11-22 00:52):
   and report every hidden judged result with and without them; B4 stays as written (the
   sealed session did not name the B4 scenarios, so nothing about the hidden items is
   shown). B4 is not committed before the answer.
-- Q7 (asked 2026-11-22 04:58): r4 was stopped by its rule. Accept the stop and go on with
+- Q7 (asked 2026-11-22 04:51): r4 was stopped by its rule. Accept the stop and go on with
   the grounded mode on the frozen retrieval (recommended), and decide whether ranking
   continues with a different reranker (a download and a licence, deferred by P5).
+- Q8 (asked 2026-11-22 04:56): one reranker download (recommended: Qwen3-Reranker-0.6B,
+  after a direct read of its licence) for an offline re-score of the same 24 scored
+  candidates, rule fixed beforehand; and a fresh open development batch for any further
+  tuning (the 84 development scenarios are used up).
 
 Still open from M4, none blocking:
 
@@ -306,5 +335,5 @@ Later in M5: whether candidate C becomes the default (after look 3).
 - 2026-11-22 02:21 to 04:48: the funnel over the eight r4 settings (224 questions, 2 h 27
   min, slowed by test suites running beside it). 03:46: the two chains committed
   (`a56289c`, `b799e4d`) after a clean full suite (1,832 tests).
-- 2026-11-22 04:52: the rule's verdict on r4: stop, no B4 (section "r4: the rule's
-  verdict"). 04:55: R2 (reading of the result) and a survey of rerankers started.
+- 2026-11-22 04:49: the rule's verdict on r4: stop, no B4 (section "r4: the rule's
+  verdict"). 04:50: R2 (reading of the result) and a survey of rerankers started.
