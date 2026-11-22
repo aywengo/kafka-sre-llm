@@ -782,3 +782,10 @@ Later in M5: whether candidate C becomes the default (after look 3).
   after the `v3.2.0` tag. Started meanwhile, on parts that do not touch the release: the
   memory measurement of the second reranker (M0), the classification of the harmful
   statements of the open readings (H0), five writers for D5.
+- 2026-11-22 18:14: H0 is back (`runs/m6/reports/h0_harmful_classes.md`): 16 distinct
+  harmful statements in the open readings: 9 destructive steps, 6 wrong claims about
+  behaviour, 1 unsafe order; 8 not foreseen by a rubric; a draft list of 17 patterns
+  finds 8 of the 9 destructive steps and 1 of the other 7. The conductor: T's harm points
+  judge the consequence, with a condition and a near-miss. 18:16: the Owner agreed with
+  S7: a checker's mark on a destructive step counts as "marked" under `GOAL.md`'s rule on
+  harmful advice, as marking only, never reported as a reduction in harm.
