@@ -67,7 +67,7 @@ Speed work as such and the laptop run are not targets. The base model stays Qwen
 | G3 | Experiment: can the reranker's score tell supported from unsupported sentences, on the 56 errors of the B1 reading | implementer | CPU, reranker | after R0 (not on the critical path) |
 | R5 | The second reranker (Q8): licence and usage read directly; design of the offline test and its rule; download; build; run | researcher, complex-reviewer, job-operator, implementer | CPU, one download of about 1.2 GB | licence read, design and download done (2026-11-22 08:21); **done** 2026-11-22 11:44: **the rule says fail** (section "R5: the rule's verdict") |
 | R6 | Informative run, deciding nothing (Q11): the picked grounded variant answers B1 and the pilot on r4g2's packs; coverage (two judge passes), length, cut share, identifier check, against the same variant on the frozen packs | implementer, job-operator | server about 1 h | **done** 2026-11-22 15:19 (section "R6") |
-| GI | Informative reading (Q14): default against G2 on the 54 development scenarios, blind, deciding nothing | implementer (bundles), readers (fresh sessions), job-operator (totals) | CPU; about nine reader sessions | bundles being prepared |
+| GI | Informative reading (Q14): default against G2 on the 54 development scenarios, blind, deciding nothing | implementer (bundles), readers (fresh sessions), job-operator (totals) | CPU; nine reader sessions | **done** 2026-11-22 17:39 (section "The informative reading: result") |
 | H1 | Hidden look 3: r4 with the grounded mode against E2's stored default answers; ledger row and rule first | job-operator, sealed readers | server about 4 h | after R4 and G2 |
 
 Not in M5 (P7): dense retrieval; index changes (the
@@ -439,7 +439,7 @@ about 0.05 to 0.12 less judged coverage, for answers half as long that are not c
 35 s faster (under the 60 s goal), about half the invented identifiers, and 3 to 7 more
 mechanical points. Q14 for the Owner.
 
-## The informative reading (Q14; defined 2026-11-22 17:25, before any reader starts; decides nothing)
+## The informative reading (Q14; defined 2026-11-22 17:19, before any reader starts; decides nothing)
 
 Answers: the development check's own default answers and its G2 answers for B1 (30) and
 the pilot (24), on the same packs: 108 answers (`work/m5/gdev/`). No answer is generated.
@@ -456,6 +456,30 @@ change of about 4 to 5 per 10 (inferred from the spread of the B1 reading); the 
 sentence of the grounded mode can give the mode away to a reader; these scenarios are
 development data, B1's default answers were read once before by other readers in M4, and
 the result changes no default and opens no gate.
+
+## The informative reading: result (2026-11-22 17:39; decides nothing)
+
+`runs/m5/reports/reading_g2_totals.txt`. Nine blind reader sessions (seven first, two
+second) read the 108 answers; 737 findings rows; 1 row not counted, 1 quote not found.
+
+| Per 10 answers (54 answers per set) | default | G2 |
+|---|---|---|
+| Non-minor wrong, invented or harmful statements | 19.63 (106; 90 % interval 16.67 to 22.59) | 15.74 (85; 12.41 to 19.44) |
+| Minor ones | 9.44 (51) | 3.89 (21) |
+| Harmful statements (count) | 5 | 6 |
+| Omissions; of them supported by the excerpts (count) | 26.85; 30 | 31.30; 39 |
+
+Paired, G2 minus default, non-minor: **−3.89 per 10 (90 % interval −6.85 to −0.56)**.
+The two readers on the 28 shared answers: 77 and 82 statements, 6 % apart (limit 30 %):
+usable; their disagreement is 1.07 per 10, well under the difference.
+
+So on these development scenarios the grounded variant makes about a fifth fewer
+non-minor wrong statements and well under half the minor ones, omits more (in line with
+its lower judged coverage), and does not reduce harmful statements. The rate stays far
+from `GOAL.md`'s 2 per 10. Limits as stated beforehand: development data, the mode can
+show through to a reader (length, the gap sentence), no gate. A plain-text copy of two
+over-long bundle rows was saved by the harness in the session's tool-results folder
+(open development data).
 
 ## R6: the informative run (2026-11-22 15:19; decides nothing)
 
@@ -676,5 +700,8 @@ Later in M5: whether candidate C becomes the default (after look 3).
 - 2026-11-22 17:14: G3's development check ended: not eligible (coverage −0.052 against
   −0.05; supported essential misses 2.50 against at most 2.0). The grounded mode stops by
   its rule. Q14 for the Owner.
-- 2026-11-22 17:22: the Owner agreed with Q14. The informative reading is defined
+- 2026-11-22 17:18: the Owner agreed with Q14. The informative reading is defined
   (section "The informative reading") and its bundles are being prepared.
+- 2026-11-22 17:21: nine bundles ready (108 answers once, 28 twice); 17:22 to 17:38: nine
+  reader sessions. 17:39: totals: G2 minus default −3.89 non-minor wrong statements per
+  10 (−6.85 to −0.56); readers 6 % apart.
