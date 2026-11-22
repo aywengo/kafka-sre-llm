@@ -16,7 +16,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SH = ROOT / "scripts/m4_e2_starting_point.sh"
 HELP = ROOT / "scripts/m4_e2_manifest.py"
-PY = ROOT / ".venv/bin/python"
+PY = Path(sys.executable)   # the interpreter that runs the tests (a fresh clone has no .venv)
 NEED = [ROOT / "eval/m4/open/tier_a.jsonl", ROOT / "eval/m4/open/tier_a3.jsonl", ROOT / "eval/m4/b1/items.jsonl", ROOT / "eval/m4/b2/items.jsonl",
         ROOT / "eval/m4/b1/rubrics.jsonl", ROOT / "eval/m4/b2/rubrics.jsonl", ROOT / "eval/m4/pilot2/items.jsonl",
         ROOT / "eval/m4/pilot2/rubrics.jsonl", ROOT / "work/v3/chunks_s1.jsonl", ROOT / "work/m4/s6/ans_A1.jsonl", ROOT / "work/m4/catalogues/CATALOGUES.json",
@@ -384,7 +384,7 @@ class HelperUnits(unittest.TestCase):
         self.assertIn("two-sided reading: FAIL", helper("verdict", "--compare-out", str(f), "--reading", "two-sided").stdout)
 
 
-@unittest.skipUnless(READY, "needs the open files, the index, the catalogues and the venv")
+@unittest.skipUnless(READY, "needs generated or untracked files: the open files of eval/m4, work/v3/chunks_s1.jsonl, work/m4/s6/ans_A1.jsonl, work/m4/catalogues (python scripts/build_catalogues.py), runs/v3/INDEX_FROZEN.json")
 class HiddenGate(unittest.TestCase):
     """The helper's gate on synthetic hidden files, a temporary key and a manifest written by `prepare`."""
 
@@ -993,7 +993,7 @@ class HiddenGate(unittest.TestCase):
         self.assertEqual(m["revise"]["prompt_sha256"], __import__("kafka_sre_rag.revise", fromlist=["x"]).prompt_sha256())
 
 
-@unittest.skipUnless(READY, "needs the open files, the index, the catalogues and the venv")
+@unittest.skipUnless(READY, "needs generated or untracked files: the open files of eval/m4, work/v3/chunks_s1.jsonl, work/m4/s6/ans_A1.jsonl, work/m4/catalogues (python scripts/build_catalogues.py), runs/v3/INDEX_FROZEN.json")
 class DryRun(unittest.TestCase):
     """The whole chain with the stub backend: open stages on open files, hidden stages on synthetic hidden files (temporary key)."""
 
@@ -1137,7 +1137,7 @@ class DryRun(unittest.TestCase):
         self.assertIn("gate FAIL: manifest hashes (differs in: checker.version)", r.stdout)
 
 
-@unittest.skipUnless(READY, "needs the open files, the index, the catalogues and the venv")
+@unittest.skipUnless(READY, "needs generated or untracked files: the open files of eval/m4, work/v3/chunks_s1.jsonl, work/m4/s6/ans_A1.jsonl, work/m4/catalogues (python scripts/build_catalogues.py), runs/v3/INDEX_FROZEN.json")
 class DryRunRefusals(unittest.TestCase):
     """Refusals that show early: a wrong row count, a failed G, the server not free."""
 
@@ -1179,7 +1179,7 @@ class DryRunRefusals(unittest.TestCase):
         self.assertTrue((d / "run/G.passed").exists())
 
 
-@unittest.skipUnless(READY, "needs the open files, the index, the catalogues and the venv")
+@unittest.skipUnless(READY, "needs generated or untracked files: the open files of eval/m4, work/v3/chunks_s1.jsonl, work/m4/s6/ans_A1.jsonl, work/m4/catalogues (python scripts/build_catalogues.py), runs/v3/INDEX_FROZEN.json")
 class RehearsalPrepare(unittest.TestCase):
     """rehearsal-prepare: encrypted copies of open items, plain input files, the ledger; and its refusals."""
 
@@ -1271,7 +1271,7 @@ class RehearsalPrepare(unittest.TestCase):
         self.assertEqual(r.returncode, 0)
 
 
-@unittest.skipUnless(READY, "needs the open files, the index, the catalogues and the venv")
+@unittest.skipUnless(READY, "needs generated or untracked files: the open files of eval/m4, work/v3/chunks_s1.jsonl, work/m4/s6/ans_A1.jsonl, work/m4/catalogues (python scripts/build_catalogues.py), runs/v3/INDEX_FROZEN.json")
 class RehearsalDryRun(unittest.TestCase):
     """The chain in rehearsal mode with the stub backend: every stage, the fake findings, the totals, the JSON hand-over; refusals; resume."""
 

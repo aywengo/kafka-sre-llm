@@ -43,6 +43,8 @@ def make_index(d, n=12):
 
 class Base(unittest.TestCase):
     def setUp(self):
+        if not (ROOT / "runs/v3/INDEX_FROZEN.json").is_file():
+            self.skipTest("runs/v3/INDEX_FROZEN.json is not in the repository (it is kept with the run files; no command makes it)")
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.path = make_index(self.tmp.name)

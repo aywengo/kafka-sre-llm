@@ -17,7 +17,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SH = ROOT / "scripts/m4_e5_bakeoff.sh"
 HELP = ROOT / "scripts/m4_e5_screen_helper.py"
-PY = ROOT / ".venv/bin/python"
+PY = Path(sys.executable)   # the interpreter that runs the tests (a fresh clone has no .venv)
 NEED = [ROOT / "eval/m4/open/tier_a.jsonl", ROOT / "eval/m4/open/tier_a3.jsonl", ROOT / "eval/m4/b1/items.jsonl", ROOT / "eval/m4/b2/items.jsonl",
         ROOT / "eval/m4/b1/rubrics.jsonl", ROOT / "eval/m4/b2/rubrics.jsonl", ROOT / "work/v3/chunks_s1.jsonl", ROOT / "work/m4/s6/ans_A1.jsonl",
         ROOT / "work/m4/e2/ans_O_Q4D_a3.jsonl", ROOT / "work/m4/b1/ans_default.jsonl", ROOT / "work/m4/b2/ans_default.jsonl",

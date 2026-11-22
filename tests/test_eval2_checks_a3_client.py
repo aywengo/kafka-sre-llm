@@ -248,6 +248,7 @@ class JavaCallsTests(unittest.TestCase):
         self.assertTrue(ok, d)
 
     # ---- T2b: calls through the interface or superclass a required class implements
+    @unittest.skipUnless(HAVE_API, "work/m4/catalogues_a3/java_api.json not built: run scripts/build_catalogues_a3.py")
     def test_interface_typed_consumer_passes(self):
         code = CONSUMER.replace("KafkaConsumer<String, String> consumer", "Consumer<String, String> consumer") \
                        .replace("import org.apache.kafka.clients.consumer.KafkaConsumer;",
@@ -261,6 +262,7 @@ class JavaCallsTests(unittest.TestCase):
         bad = code.replace("consumer.commitSync();", "consumer.commitSync(Duration.ofSeconds(5));")
         self.assertFalse(cc.check_java_calls({"required": [POLL, COMMIT]}, jb(bad), {})[0])
 
+    @unittest.skipUnless(HAVE_API, "work/m4/catalogues_a3/java_api.json not built: run scripts/build_catalogues_a3.py")
     def test_interface_typed_producer_and_admin_pass(self):
         prod = """
 import org.apache.kafka.clients.producer.*;
@@ -397,6 +399,7 @@ public class A {
                                                     {"class": "org.apache.kafka.clients.admin.Admin", "method": "close"}]}, jb(code), {})
         self.assertTrue(ok, d)
 
+    @unittest.skipUnless(HAVE_API, "work/m4/catalogues_a3/java_api.json not built: run scripts/build_catalogues_a3.py")
     def test_two_resources_close_in_reverse_order_and_an_interface_typed_resource_matches(self):
         code = """
 import org.apache.kafka.clients.admin.Admin;
@@ -818,6 +821,7 @@ class PythonRound2Tests(unittest.TestCase):
 
 
 class PythonRealSymbolsTests(unittest.TestCase):
+    @unittest.skipUnless(HAVE_PYSYM, "work/m4/catalogues_a3/python_symbols.json not built: run scripts/build_catalogues_a3.py")
     def test_a_realistic_consumer_passes_every_python_check(self):
         text = pb(PY_OK)
         self.assertTrue(cc.check_py_syntax({}, text, {})[0])
@@ -832,6 +836,7 @@ class PythonRealSymbolsTests(unittest.TestCase):
         self.assertFalse(cc.check_py_calls({}, pb(PY_OK.replace("consumer.close()", "consumer.shutdown()")), {})[0])
         self.assertFalse(cc.check_py_config({}, pb(PY_OK.replace("enable.auto.commit", "enable.auto.commits")), {})[0])
 
+    @unittest.skipUnless(HAVE_PYSYM, "work/m4/catalogues_a3/python_symbols.json not built: run scripts/build_catalogues_a3.py")
     def test_admin_and_producer_calls(self):
         code = """
 from confluent_kafka import Producer

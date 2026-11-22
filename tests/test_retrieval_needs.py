@@ -89,6 +89,9 @@ class BuiltFileTests(unittest.TestCase):
 
 
 class B1Tests(unittest.TestCase):
+    def setUp(self):
+        if not (ROOT / "runs/v3/INDEX_FROZEN.json").is_file():
+            self.skipTest("runs/v3/INDEX_FROZEN.json is not in the repository (it is kept with the run files; no command makes it)")
     def test_build_b1_counts(self):
         rows = RN.build_b1()
         self.assertEqual(len(rows), 184)
