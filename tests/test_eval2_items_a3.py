@@ -21,6 +21,8 @@ import eval2  # noqa: E402
 import eval2_items_a3 as asm  # noqa: E402
 
 HAVE = all(p.exists() for p in (ROOT / "work/m4/catalogues", ROOT / "work/m4/catalogues_a3", asm.OPEN_A1, asm.SPLIT_A1))
+HAVE_A3_RULES = (ROOT / "work/m4/catalogues_a3/semantic_rules.json").is_file()
+SKIP_A3_RULES = "work/m4/catalogues_a3/semantic_rules.json not built: run scripts/build_catalogues_a3.py"
 SKIP = "the catalogues, the a3 catalogues or the 496 files are not on this machine"
 GAP_PRESENT = (ROOT / "scripts" / "eval2_items_a3_gap.py").exists()
 ALLOW = () if GAP_PRESENT else ("gap",)   # the build allows a module to be missing only while it is
@@ -389,6 +391,7 @@ class PublishedOpenFiles(unittest.TestCase):
         self.assertEqual((ROOT / asm.PUBLISHED_PATH).read_text(), asm.record_text(asm.published_record()))   # the file is what the code writes
         self.assertNotIn(str(Path.home()), (ROOT / asm.PUBLISHED_PATH).read_text())
 
+    @unittest.skipUnless(HAVE_A3_RULES, SKIP_A3_RULES)
     def test_no_hidden_item_equals_or_nearly_equals_a_published_open_item_counts_only(self):
         rows = self.git_rows()
         r = built()
@@ -406,6 +409,7 @@ class PublishedOpenFiles(unittest.TestCase):
         self.assertEqual(len(r["hidden"]), 60)
         self.assertEqual([i for i in r["hidden"] if r["published"].match(i)], [])
 
+    @unittest.skipUnless(HAVE_A3_RULES, SKIP_A3_RULES)
     def test_every_published_item_that_is_built_again_is_open_with_its_whole_group(self):
         rows = self.git_rows()
         r = built()
@@ -420,6 +424,7 @@ class PublishedOpenFiles(unittest.TestCase):
             by.setdefault(asm.group_of(i), set()).add(side[i["id"]])
         self.assertTrue(all(len(v) == 1 for v in by.values()))
 
+    @unittest.skipUnless(HAVE_A3_RULES, SKIP_A3_RULES)
     def test_unchanged_open_items_of_version_2_keep_their_id_and_text(self):
         rows = self.git_rows()
         by = {i["id"]: i for i in built()["items"]}
@@ -428,6 +433,7 @@ class PublishedOpenFiles(unittest.TestCase):
                 self.assertEqual(by[x["id"]]["question"], x["question"], x["id"])
         self.assertGreaterEqual(sum(1 for x in rows[1] if x["id"] in by), 50)
 
+    @unittest.skipUnless(HAVE_A3_RULES, SKIP_A3_RULES)
     def test_a_changed_question_under_an_old_id_is_refused(self):
         r = built()
         pub = r["published"]
@@ -470,6 +476,7 @@ class PublishedOpenFiles(unittest.TestCase):
             self.assertEqual(asm.main(["--write-published"]), 2)         # the record exists
         self.assertEqual((ROOT / asm.PUBLISHED_PATH).read_text(), asm.record_text(asm.published_record()))
 
+    @unittest.skipUnless(HAVE_A3_RULES, SKIP_A3_RULES)
     def test_the_split_has_the_counts_and_sides_the_plan_asks_for(self):
         r = built()
         self.assertEqual(asm.hidden_count_problems(r["hidden"], ALLOW), [])
@@ -481,6 +488,7 @@ class PublishedOpenFiles(unittest.TestCase):
         self.assertEqual(asm.pair_problems(r["open"], r["hidden"]), [])
         self.assertEqual(r["problems"], [])
 
+    @unittest.skipUnless(HAVE_A3_RULES, SKIP_A3_RULES)
     def test_every_valid_but_wrong_template_has_a_works_control_on_each_side_n2(self):
         r = built()
         self.assertEqual(asm.control_sides(r["open"], r["hidden"]), [])
@@ -496,6 +504,7 @@ class PublishedOpenFiles(unittest.TestCase):
         self.assertTrue(any(x.startswith("safe_order: 0 hidden") for x in asm.hidden_count_problems([], ())))
         self.assertFalse(any("not_covered" in x for x in asm.hidden_count_problems([], ("gap",))))
 
+    @unittest.skipUnless(HAVE_A3_RULES, SKIP_A3_RULES)
     def test_the_report_gives_counts_of_moved_and_new_items_and_the_maxima_and_no_text(self):
         r = built()
         text = asm.report(r, ALLOW)

@@ -48,6 +48,8 @@ QUESTIONS = [
 
 class TestProfileDrift(unittest.TestCase):
     def setUp(self):
+        if not (ROOT / "runs/v3/INDEX_FROZEN.json").is_file():
+            self.skipTest("runs/v3/INDEX_FROZEN.json is not in the repository (it is kept with the run files; no command makes it)")
         self.tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.tmp, True)
         p = self.tmp / "idx.jsonl"

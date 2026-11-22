@@ -216,6 +216,8 @@ class HeaderSupertypesTests(unittest.TestCase):
                          ["java.io.Closeable", "java.lang.AutoCloseable"])
 
 
+@unittest.skipUnless(JAVA.is_file() and (REAL / "MANIFEST.json").is_file(),
+                     "work/m4/catalogues_a3/java_api.json and MANIFEST.json not built: run scripts/build_catalogues_a3.py")
 class JavaApiTests(unittest.TestCase):
     def test_manifest_covers_java_api(self):
         self.assertIn("java_api.json", a3.manifest(REAL)["files"])
