@@ -386,6 +386,18 @@ Later in M5: whether candidate C becomes the default (after look 3).
 - 2026-11-22 08:17: the direct read of the Qwen3 reranker's card is back (licence field
   apache-2.0, no licence file); the download ran and passed its checks. 08:21: the design
   of the offline test is back and its rule is fixed (section "R5"). The build started.
-- 2026-11-22 08:30: the review of the development chain is back: one blocker (the
+- 2026-11-22 08:23: the review of the development chain is back: one blocker (the
   wrong-decline share on a sample that over-represents declines) and five smaller
   points; the fixes are being made (section "Grounded mode"). The run follows them.
+- 2026-11-22 08:30: the fixes committed (`8533cf6`). 08:33: the development check was
+  started on the model server. Its gate passed, DeepSeek was unloaded and the 4-bit base
+  model loaded. **08:38: it stopped at its determinism check**: of three B1 default
+  answers replayed on the stored packs (model echo equal, packs equal 3 of 3), b1-01
+  differed from the stored answer from character 129 on (7,787 against 8,376
+  characters); b1-02 and b1-03 were identical. No variant answer was written. The M4
+  identity check (60 of 60) had covered short answers only. Started: a diagnostic (the
+  same replay twice more, to tell a drift since the stored run from a server that does
+  not repeat a long answer), and the change the design foresaw: the chain answers its own
+  default reference in the same run. Consequence to settle for look 3: E2's stored hidden
+  default answers may not be reproducible either, so the look may have to answer its
+  reference again.
