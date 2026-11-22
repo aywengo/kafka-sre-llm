@@ -64,6 +64,7 @@ Speed work as such and the laptop run are not targets. The base model stays Qwen
 | G1 | The grounded mode as a new prompt constant with its own hashes; the default and the golden hashes unchanged | implementer | CPU | **done** 2026-11-22 01:38, commit `06dc7d5` (the `scripts/eval2.py` part and a refusal in `serve` follow F1) |
 | G2 | B2 answered in the grounded mode; a blind reading mixed with the stored default answers; judge; open mechanical 339 | job-operator, readers | server about 3 h | after G1 |
 | G3 | Experiment: can the reranker's score tell supported from unsupported sentences, on the 56 errors of the B1 reading | implementer | CPU, reranker | after R0 (not on the critical path) |
+| R5 | The second reranker (Q8): licence and usage read directly; design of the offline test and its rule; download; build; run | researcher, complex-reviewer, job-operator, implementer | CPU, one download of about 1.2 GB | the direct read and the design are running since 2026-11-22 08:20 |
 | H1 | Hidden look 3: r4 with the grounded mode against E2's stored default answers; ledger row and rule first | job-operator, sealed readers | server about 4 h | after R4 and G2 |
 
 Not in M5 (P5, P7): a second reranker or dense retrieval (a download); index changes (the
@@ -268,6 +269,7 @@ spent on the same 61 scenarios.
 | 2026-11-22 | Q4 | The grounded mode asks for under about 600 words |
 | 2026-11-22 | Q5 | On B4 a point counts as served only when a whole covering set is in the pack; the looser count of B1 and B2 is reported beside it |
 | 2026-11-22 | Q6 | The three hidden judged items of the same family as a B4 scenario (b3-07, b3-17, b3-26) are tagged and every hidden judged result is reported with and without them; B4 stays as written |
+| 2026-11-22 | Q8 | Ranking continues in M5 with one reranker download, `Qwen/Qwen3-Reranker-0.6B`, for an offline re-score of the same scored candidates, with a rule fixed beforehand; if it does not clearly beat r4g2 it stops there |
 
 ## Waiting for the Owner
 
@@ -276,10 +278,6 @@ Open (none blocks code work):
 - Q7 (asked 2026-11-22 04:51): r4 was stopped by its rule. Accept the stop and go on with
   the grounded mode on the frozen retrieval (recommended), and decide whether ranking
   continues with a different reranker (a download and a licence, deferred by P5).
-- Q8 (asked 2026-11-22 04:56): one reranker download (recommended: Qwen3-Reranker-0.6B,
-  after a direct read of its licence) for an offline re-score of the same 24 scored
-  candidates, rule fixed beforehand; and a fresh open development batch for any further
-  tuning (the 84 development scenarios are used up).
 - Q9 (asked 2026-11-22 08:13): the model server holds `DeepSeek-V4.1-Flash`, which this
   session did not load. May the conductor unload models another client left loaded when
   no request is active or waiting, for M5's measurement runs (the go of this kind ended
@@ -340,3 +338,6 @@ Later in M5: whether candidate C becomes the default (after look 3).
   development chain before its run on the model server. The server holds a model this
   session did not load (`DeepSeek-V4.1-Flash`, no active request); the run cannot start
   until the Owner unloads it or allows it (Q9).
+- 2026-11-22 08:19: the Owner agreed with Q8: try `Qwen/Qwen3-Reranker-0.6B`. Started: a
+  direct read of its licence, files and usage (no weights fetched), and the design of the
+  offline test with its rule (R5). The download follows the direct read of the licence.
