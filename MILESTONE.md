@@ -211,3 +211,15 @@ candidate C becomes the default, after the look.
 - 2026-11-22 23:59, the hidden part: reviews of all six ranges in (50 of 60 drafts
   kept; h6-20 dropped as well, ten replacements being written); set checks: C 33 of 40
   points fully covered, A 26 of 33, E 32 of 35, F 38 of 44, D 31 of 41; B running.
+- 2026-11-23 00:05: the D5 answers chain committed (`a20f97b`), reviewed and fixed, not
+  run: its gate refuses after the failed B4 check, as the plan wants.
+- 2026-11-23 00:17: **the T answers run started** (chain `scripts/m6_t_answers.sh`,
+  commits `9d92e80`, `8091992`; a focused review found no blocker): default with the
+  frozen retrieval on the 41 scenarios, then grounded-g2 on the same packs, the
+  destructive-step marks as post-processing, two judge passes; 1.6 to 3 hours. The
+  blind reading (RT) follows from its answer files.
+- 2026-11-23 00:17, the hidden part: all six first-round set checks are in: 187 of 227
+  points with sets fully covered (82.4 %; B 27 of 34), no set rated wrong. Replacements:
+  the five architecture ones (R2) reviewed (no family repeated) and set-checked (26 of
+  27 points); the other five (R1) written and in review. Then the assembly.
+
