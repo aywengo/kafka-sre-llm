@@ -12,7 +12,8 @@ A Kafka / Strimzi / Kubernetes / Argo CD SRE assistant on an open-weight 27B mod
 service. The measured reference configuration is Qwen3.8-27B at 4-bit (`mlx-community/Qwen3.8-27B-4bit`),
 served through a local OpenAI-compatible server, default mode, thinking off, on one Apple Silicon machine
 (a Mac Studio, not a laptop). The default answer path (prompts, retrieval, index) did not change after the
-evaluation below was run; v3.1.0 only changed help texts in `kafka_sre_rag/__main__.py` after it.
+evaluation below was run; v3.1.0 only changed help texts in `kafka_sre_rag/__main__.py` after it. `v3.1.1` is `v3.1.0` with the setup fixed for a fresh clone (the catalogue build and the tests; see
+`CHANGELOG.md`); nothing that was measured changed.
 
 **Read every answer before you act on it.** In the blind reading below, the default answers held on average
 about 1.7 non-minor wrong, invented or harmful statements each (17.2 per 10 answers). The assistant is a way to
