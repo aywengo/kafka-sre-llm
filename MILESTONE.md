@@ -85,7 +85,7 @@ under this test before B4 is used (task B4R).
 | T | The set for harmful statements: scenarios where a destructive shortcut is tempting and wrong, and scenarios where a destructive step is right; harm points judge the consequence, with a condition and a near-miss | writers, reviewers | Claude workers | **written and reviewed** 2026-11-22 22:52 (`eval/m6/t/`, commit `228456c`): 41 scenarios (33 tempting and wrong, 8 destructive and right) after four second reviews against the pinned sources, 136 change records; t-05 and t-30 rejected as repeats of another family and not replaced; 98 must-nots, 89 of them harmful; of 88 harm points in the kept scenarios the reviewers confirmed 72, corrected 15, dropped 1 and added 2. Answers and the blind reading (RT) are still to come |
 | H1 | Marking of destructive steps in the checker (marking only, S7), experimental and off by default | implementer | CPU | **done** 2026-11-22 23:18 (commit `098c00f`, `runs/m6/reports/h1_destructive_marking.md`): `--mark-destructive` on `ask` and `chat`, refused with `--stream` and `--service-url`; 19 destructive steps in 25 pattern entries, with a negation rule. In-sample on the 108 answers read in M5: all 9 destructive-step statements marked, none of the 7 other harmful statements (wrong claims about behaviour stay invisible to it); 18 answers carry a mark (56 marks), 8 of them with a harmful statement. No model run; the default output is unchanged; full suite 2,002 tests pass |
 | HP | The new hidden judged part (ids `h6-NN`): 60 scenarios, twelve per task type, with covering sets under the corrected test; written, reviewed and set-checked in sealed sessions, with a family check against every open batch (pilot2, B1, B2, B4, D5, T) and the existing hidden items | sealed writers, reviewers, checkers | Claude workers | six sealed writers running since 2026-11-22 22:56 (ten scenarios each, by domain); then sealed second reviews, an independent sealed set check (95 % rule), a sealed family check, assembly |
-| DF | D5 funnel, strict count: r4g2 (within the memory limit) and, for information only, the Qwen reranker at full precision | job-operator | CPU, reranker | after F |
+| DF | D5 funnel, strict count: r4g2 (within the memory limit) and, for information only, the Qwen reranker at full precision | job-operator | CPU, reranker | **done** 2026-11-22 23:46 (`runs/m6/D5_FUNNEL.md`, `runs/m6/RETRIEVAL_CHOSEN.json`): **r4g2 goes on to B4**. Strict count over 227 points with a covering set: frozen 69 (30.4 %), r4g2 112 (49.3 %), gain +18.9 percentage points (standard error 3.4; needed +15.0); no frozen-served point lost; second call 2.25 s median, 2.37 s at the 90th percentile (20 questions). For information: the Qwen reranker serves 120 (+22.5 over frozen; +3.5 over r4g2 with standard error 3.1, gained 18 and lost 10), second call 4.76 s median |
 | B4 | The one-time check of the chosen retrieval setting on B4 | job-operator | server 0.2 to 0.5 h | after DF and B4R |
 | DA | D5 answers: default on the frozen packs as the reference in the same run; G2 and G3 on the chosen packs; two judge passes; the 116 mechanical items | job-operator | server 4 to 5.5 h | after DF |
 | RD, RT | Blind readings of D5 (S6) and of T | readers | about 8 and 5 sessions; server 2 to 2.5 h for T's answers | after DA |
@@ -174,3 +174,17 @@ candidate C becomes the default, after the look.
   and off by default; in-sample numbers only, so the set T is its first fair test.
   23:20: the D5 funnel's real run handed to a job-operator; the D5 answers chain (DA)
   is being built and rehearsed with stubs.
+- 2026-11-22 23:18 to 23:46: the D5 funnel ran (the first model-server run of M6; the
+  chain unloaded an idle DeepSeek and loaded the 4-bit base model): **r4g2 goes on**,
+  +18.9 percentage points on the strict count (112 against 69 of 227), nothing lost.
+  The Qwen reranker's advantage over r4g2 on fresh data is 3.5 points with a standard
+  error of 3.1, so nothing supports asking the Owner for a quantised build (S4): the
+  conductor's recommendation is to leave it. 23:48: the one-time B4 check started.
+- 2026-11-22, the hidden part so far: all six writers done (60 drafts); reviews of A, C,
+  E and F in, B and D running; set checks of C (33 of 40 points fully covered) and A (26
+  of 33) in; the family check found no draft of the same family as an existing hidden
+  item, two of the same family as a B4 scenario (h6-40, h6-59, also one family with each
+  other) and three architecture drafts of one family (h6-10, h6-19, h6-39; h6-10 stays).
+  With the reviewers' drops (h6-03, h6-04, h6-21, h6-41, h6-47) nine scenarios are
+  being rewritten under the same ids by two sealed replacement writers who read all
+  drafts first. One reply named an open scenario next to a dropped hidden id (h6-47).
