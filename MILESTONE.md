@@ -84,7 +84,7 @@ under this test before B4 is used (task B4R).
 | B4R | Recount of B4's dropped chunks under the covering test with title lines | independent checkers | CPU | **done** 2026-11-22 21:06: the three checkers re-rated 92 chunk verdicts and 17 sets they had rated partial; none changed to ok, no point gains a set; B4's files stand as released (one possible pair for b4-26 m4, outside the pass's scope, was not added) |
 | T | The set for harmful statements: scenarios where a destructive shortcut is tempting and wrong, and scenarios where a destructive step is right; harm points judge the consequence, with a condition and a near-miss | writers, reviewers | Claude workers | **written and reviewed** 2026-11-22 22:52 (`eval/m6/t/`, commit `228456c`): 41 scenarios (33 tempting and wrong, 8 destructive and right) after four second reviews against the pinned sources, 136 change records; t-05 and t-30 rejected as repeats of another family and not replaced; 98 must-nots, 89 of them harmful; of 88 harm points in the kept scenarios the reviewers confirmed 72, corrected 15, dropped 1 and added 2. Answers and the blind reading (RT) are still to come |
 | H1 | Marking of destructive steps in the checker (marking only, S7), experimental and off by default | implementer | CPU | **done** 2026-11-22 23:18 (commit `098c00f`, `runs/m6/reports/h1_destructive_marking.md`): `--mark-destructive` on `ask` and `chat`, refused with `--stream` and `--service-url`; 19 destructive steps in 25 pattern entries, with a negation rule. In-sample on the 108 answers read in M5: all 9 destructive-step statements marked, none of the 7 other harmful statements (wrong claims about behaviour stay invisible to it); 18 answers carry a mark (56 marks), 8 of them with a harmful statement. No model run; the default output is unchanged; full suite 2,002 tests pass |
-| HP | The new hidden judged part (ids `h6-NN`): 60 scenarios, twelve per task type, with covering sets under the corrected test; written, reviewed and set-checked in sealed sessions, with a family check against every open batch (pilot2, B1, B2, B4, D5, T) and the existing hidden items | sealed writers, reviewers, checkers | Claude workers | six sealed writers running since 2026-11-22 22:56 (ten scenarios each, by domain); then sealed second reviews, an independent sealed set check (95 % rule), a sealed family check, assembly |
+| HP | The new hidden judged part (ids `h6-NN`): 60 scenarios, twelve per task type, with covering sets under the corrected test; written, reviewed and set-checked in sealed sessions, with family checks against every open batch (pilot2, B1, B2, B4, D5, T), the existing hidden items and within the part | sealed writers, reviewers, checkers | Claude workers | **done** 2026-11-23 00:50 (commit `689e1ad`: `eval/hidden/tier_b_h6_{items,rubrics}_final.jsonl.enc`, counts in `eval/m6/h6/CHUNK_CHECK.json`): 320 must points in 299 units (132 of weight 2); 256 points with at least one covering set rated ok by an independent sealed checker (387 sets, 39 of two chunks, 37 found by the checkers), 37 not indexed, 27 with no covering set; first independent count 231 of 273 points with sets (84.6 %), no set rated wrong; ten scenarios replaced and put through the same review and check; the harness accepts all 60 rubrics. Two rubrics (h6-04, h6-08) have more than one weight-2 unit without a covering set |
 | DF | D5 funnel, strict count: r4g2 (within the memory limit) and, for information only, the Qwen reranker at full precision | job-operator | CPU, reranker | **done** 2026-11-22 23:46 (`runs/m6/D5_FUNNEL.md`, `runs/m6/RETRIEVAL_CHOSEN.json`): **r4g2 goes on to B4**. Strict count over 227 points with a covering set: frozen 69 (30.4 %), r4g2 112 (49.3 %), gain +18.9 percentage points (standard error 3.4; needed +15.0); no frozen-served point lost; second call 2.25 s median, 2.37 s at the 90th percentile (20 questions). For information: the Qwen reranker serves 120 (+22.5 over frozen; +3.5 over r4g2 with standard error 3.1, gained 18 and lost 10), second call 4.76 s median |
 | B4 | The one-time check of the chosen retrieval setting on B4 | job-operator | server 0.2 to 0.5 h | **done, FAIL** 2026-11-22 23:47 to 23:57 (`runs/m5/B4_CHECK.md`, marker `runs/m6/B4_USED`): strict count over 140 points with a covering set: frozen 50 (35.7 %), r4g2 65 (46.4 %), gain +10.7 percentage points (standard error 3.6; needed +15.0), gained 15, lost 0 (part (b) holds); weight-2 points +12.8 (34 against 24 of 78); loose count +10.0. **The combination stops here until the Owner has seen it** |
 | DA | D5 answers: default on the frozen packs as the reference in the same run; G2 and G3 on the chosen packs; two judge passes; the 116 mechanical items | job-operator | server 4 to 5.5 h | after DF |
@@ -130,6 +130,12 @@ M6; run the D5 answers once as an informative run that decides nothing (recommen
 (c) stop without the informative run. The hidden part (HP), the set T and its reading
 go on in every case. **T1** (the base of the supported-miss condition) only matters
 under (b).
+
+**U2 (2026-11-23): the sealed sessions' transcripts of the hidden part's writing** (about
+25 sessions, plain text of hidden items in the session's task-output folder outside the
+repository). In M4 the Owner had them deleted after the hidden runs. Recommended: delete
+them now; the encrypted files hold everything a later sealed session needs. Until then
+nobody opens them.
 
 Still open from earlier milestones, none blocking:
 
@@ -222,4 +228,13 @@ candidate C becomes the default, after the look.
   points with sets fully covered (82.4 %; B 27 of 34), no set rated wrong. Replacements:
   the five architecture ones (R2) reviewed (no family repeated) and set-checked (26 of
   27 points); the other five (R1) written and in review. Then the assembly.
+- 2026-11-23 00:50: **the new hidden judged part is final** (`689e1ad`): 60 scenarios
+  (50 of the first 60 drafts and ten replacements: h6-03, h6-04, h6-19, h6-20, h6-21,
+  h6-39, h6-40, h6-41, h6-47, h6-59). The independent family check of the replacements
+  found none of the same family as anything else (one near, h6-21). 25 sealed sessions
+  in all: 8 writers, 8 reviews, 8 set checks, 2 family checks, the assembly (it wrote
+  only ids and counts in plain). Slips recorded: two replies named an open scenario
+  next to a hidden id (both ids were dropped drafts); two sessions listed the hidden
+  folder once (counts only). The architecture rubrics (12) had no review beyond the
+  sealed second review, so the look's totals are also given without them.
 
