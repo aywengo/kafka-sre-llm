@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 
 from . import config, profiles, prompts
 
+GROUNDED_MODES = tuple(prompts.GROUNDED)  # EXPERIMENTAL: grounded-g1, grounded-g2
+
 
 @dataclass
 class Answer:
@@ -32,8 +34,8 @@ def ask(question, gen, cfg=None, *, k="k6", mode="default", index_path=None, on_
         max_tokens=None, profile="frozen"):
     cfg = cfg or config.load()
     profiles.check(profile)
-    if mode not in ("default", "strict"):
-        raise ValueError(f"mode must be 'default' or 'strict', got {mode!r}")
+    if mode not in ("default", "strict") + GROUNDED_MODES:
+        raise ValueError(f"mode must be 'default', 'strict' or a grounded mode, got {mode!r}")
     from . import retrieval  # lazy: pulls in scripts/retrieve.py
     reasons = []
     if mode != "default":
@@ -56,7 +58,10 @@ def ask(question, gen, cfg=None, *, k="k6", mode="default", index_path=None, on_
     sel_kw = {} if profile == "frozen" else {"profile": profile}  # frozen call stays exactly as it was
     chunks = retrieval.select(question, exp, k=k, index_path=index_path, rerank=rerank, **sel_kw)
     t2 = time.monotonic()
-    msgs = prompts.answer_messages(question, chunks, strict=(mode == "strict"))
+    if mode in GROUNDED_MODES:
+        msgs = prompts.grounded_answer_messages(question, chunks, mode)
+    else:
+        msgs = prompts.answer_messages(question, chunks, strict=(mode == "strict"))
     text, toks, trunc = gen.chat(msgs, max_tokens or cfg["answer"]["max_tokens"], on_token)
     t3 = time.monotonic()
     sources = [{"source": c["source"], "title": c["title"], "path": c["path"],

@@ -39,7 +39,10 @@ def build_parser():
                        help="retrieval profile: frozen (default, the measured one) or the candidates r1, r2 and r3 "
                             "(kafka_sre_rag/candidate.json; every answer is marked unmeasured). "
                             "EXPERIMENTAL: none of them passed its acceptance rule, so frozen stays the default")
-        p.add_argument("--mode", choices=["default", "strict"], default="default")
+        p.add_argument("--mode", choices=["default", "strict", "grounded-g1", "grounded-g2"], default="default",
+                       help="default (the measured prompt), strict, or grounded-g1 / grounded-g2. "
+                            "EXPERIMENTAL: the grounded modes are not measured; every answer is marked unmeasured; "
+                            "they need excerpts and cannot be used with --service-url")
         p.add_argument("--backend", choices=["mlx", "openai"], default="mlx")
         p.add_argument("--model", help="mlx: model directory; openai: model name sent to the server")
         p.add_argument("--adapter", help="mlx only: LoRA adapter directory")
@@ -319,6 +322,10 @@ def main(argv=None):
         print(config.catalogues_line(a.catalogues))
         return 0
     if a.cmd == "ask" and a.service_url:
+        if a.mode.startswith("grounded"):
+            print(f"error: --mode {a.mode} cannot be used with --service-url: the service has no grounded mode "
+                  "and would answer in the default mode", file=sys.stderr)
+            return 2
         if a.profile != "frozen":
             print("error: with --service-url the retrieval profile is that of the service (serve --profile ...)",
                   file=sys.stderr)

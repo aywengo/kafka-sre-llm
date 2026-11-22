@@ -5,6 +5,8 @@ import time
 
 from . import config, prompts
 
+GROUNDED_MODES = tuple(prompts.GROUNDED)  # EXPERIMENTAL: grounded-g1, grounded-g2
+
 
 def chunks_by_ids(ids, index_path=None):
     """Full chunk dicts for the given ids, in the given order. Raises KeyError for an id the index lacks."""
@@ -22,8 +24,8 @@ def run_item(question, gen, cfg=None, *, k="k6", mode="default", rerank=True, ma
     cfg = cfg or config.load()
     if pack_ids is not None and profile != "frozen":
         raise ValueError("a stored pack (pack_ids) is replayed as it is; it is not made by a retrieval profile")
-    if mode not in ("default", "strict", "closed"):
-        raise ValueError(f"mode must be 'default', 'strict' or 'closed', got {mode!r}")
+    if mode not in ("default", "strict", "closed") + GROUNDED_MODES:
+        raise ValueError(f"mode must be 'default', 'strict', 'closed' or a grounded mode, got {mode!r}")
     t0 = time.monotonic()
     if mode == "closed":
         # Closed book (configuration P0): no search-terms call, no retrieval, no pack. The model gets SYSTEM_PROMPT and
@@ -47,7 +49,10 @@ def run_item(question, gen, cfg=None, *, k="k6", mode="default", rerank=True, ma
         t1 = time.monotonic()
         chunks = chunks_by_ids(pack_ids, index_path)
     t2 = time.monotonic()
-    msgs = prompts.answer_messages(question, chunks, strict=(mode == "strict"))
+    if mode in GROUNDED_MODES:
+        msgs = prompts.grounded_answer_messages(question, chunks, mode)
+    else:
+        msgs = prompts.answer_messages(question, chunks, strict=(mode == "strict"))
     text, toks, trunc = gen.chat(msgs, max_tokens or cfg["answer"]["max_tokens"], None)
     t3 = time.monotonic()
     return {"text": text, "tokens": toks, "truncated": bool(trunc), "search_terms": exp,

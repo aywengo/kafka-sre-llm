@@ -6,7 +6,7 @@ from pathlib import Path
 PKG = Path(__file__).resolve().parent
 ROOT = PKG.parent
 FROZEN = PKG / "frozen.json"
-PROMPT_NAMES = ("SYSTEM_PROMPT", "EXPAND_SYSTEM", "INSTRUCTION", "STRICT")
+PROMPT_NAMES = ("SYSTEM_PROMPT", "EXPAND_SYSTEM", "INSTRUCTION", "STRICT", "GROUNDED_G1", "GROUNDED_G2")
 
 
 class ConfigError(RuntimeError):

@@ -99,3 +99,52 @@ REVISE_PROMPT = (
     "Answer with numbered lines:\n\n<<ANSWER>>\n\n"
     "Findings, one JSON object per line:\n\n<<FINDINGS>>\n"
 )
+
+
+# M5 G1 (EXPERIMENTAL): the grounded modes. Added after the measured prompts above; nothing above it changed.
+# The text goes after the question (INSTRUCTION, the pack, the question, then GROUNDED_Gx). The two variants differ
+# in one rule: what happens when the excerpts lack a fact (G1: not from memory, except a single name, value or
+# verdict; G2: labelled general-knowledge lines). The sha256 of each constant is in frozen.json (prompts_sha256).
+# The gap sentence contains the literal characters <what is missing>.
+GROUNDED_G1 = (
+    "Start with the direct answer in one to three sentences. "
+    "Every command, flag, configuration key, field, annotation, metric and error name you write must appear in the "
+    "excerpts or in the question, written as it appears there, and so must every statement of what a setting, command "
+    "or component does and what its default is. "
+    "An excerpt counts when it states the fact in other words or shows it in an example. "
+    "If the excerpts do not cover something the question needs, answer what they do cover and add one sentence in "
+    "exactly this form: \"The retrieved documentation does not cover <what is missing>.\" "
+    "Do not fill that gap from memory, with one exception: if the question asks for a single name, value or verdict "
+    "that the excerpts do not give, still give your best answer after that sentence, in the form the question asks for. "
+    "Never say that something does not exist or is not supported only because the excerpts do not mention it. "
+    "No background, no options or alternatives the question did not ask for, no generic advice, no summary at the end. "
+    "Keep the answer under about 600 words, code included.")
+
+GROUNDED_G2 = (
+    "Start with the direct answer in one to three sentences. "
+    "Base every statement on the excerpts or the question, and write every command, flag, configuration key, field, "
+    "annotation, metric and error name as it appears there. "
+    "An excerpt counts when it states the fact in other words or shows it in an example. "
+    "If the excerpts do not cover something the question needs, answer what they do cover and add one sentence in "
+    "exactly this form: \"The retrieved documentation does not cover <what is missing>.\" "
+    "After that sentence you may add what you know from general knowledge, on lines that begin with "
+    "\"General knowledge (not in the excerpts):\"; name in them only things you are sure exist. "
+    "Never say that something does not exist or is not supported only because the excerpts do not mention it. "
+    "No background, no options or alternatives the question did not ask for, no generic advice, no summary at the end. "
+    "Keep the answer under about 600 words, code included.")
+
+GROUNDED = {"grounded-g1": GROUNDED_G1, "grounded-g2": GROUNDED_G2}
+
+
+def grounded_user_message(question, chunks, variant):
+    """INSTRUCTION, the pack, the question, then the grounded text. Needs excerpts (no closed-book form)."""
+    if chunks is None:
+        raise ValueError("a grounded mode needs excerpts; it has no closed-book form")
+    if variant not in GROUNDED:
+        raise ValueError(f"variant must be one of {sorted(GROUNDED)}, got {variant!r}")
+    return (INSTRUCTION + "\n\n" + pack_text(chunks) + f"\n\nQuestion: {question}" + "\n\n" + GROUNDED[variant])
+
+
+def grounded_answer_messages(question, chunks, variant):
+    return [{"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": grounded_user_message(question, chunks, variant)}]
