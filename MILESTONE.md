@@ -66,7 +66,7 @@ Speed work as such and the laptop run are not targets. The base model stays Qwen
 | G2 | B2 answered in the grounded mode; a blind reading mixed with the stored default answers; judge; open mechanical 339 | job-operator, readers | server about 3 h | not started: the development check (GD) ended 2026-11-22 13:38 with the choice "neither"; B2 is not spent |
 | G3 | Experiment: can the reranker's score tell supported from unsupported sentences, on the 56 errors of the B1 reading | implementer | CPU, reranker | after R0 (not on the critical path) |
 | R5 | The second reranker (Q8): licence and usage read directly; design of the offline test and its rule; download; build; run | researcher, complex-reviewer, job-operator, implementer | CPU, one download of about 1.2 GB | licence read, design and download done (2026-11-22 08:21); **done** 2026-11-22 11:44: **the rule says fail** (section "R5: the rule's verdict") |
-| R6 | Informative run, deciding nothing (Q11): the picked grounded variant answers B1 and the pilot on r4g2's packs; coverage (two judge passes), length, cut share, identifier check, against the same variant on the frozen packs | implementer, job-operator | server about 1 h | chain committed (`a5d111e`); started 2026-11-22 13:41 with `grounded-g2` |
+| R6 | Informative run, deciding nothing (Q11): the picked grounded variant answers B1 and the pilot on r4g2's packs; coverage (two judge passes), length, cut share, identifier check, against the same variant on the frozen packs | implementer, job-operator | server about 1 h | **done** 2026-11-22 15:19 (section "R6") |
 | H1 | Hidden look 3: r4 with the grounded mode against E2's stored default answers; ledger row and rule first | job-operator, sealed readers | server about 4 h | after R4 and G2 |
 
 Not in M5 (P7): dense retrieval; index changes (the
@@ -385,6 +385,29 @@ b1-02, b1-06, b1-11, b1-16, b1-20, b1-22, b1-23, b1-25). The reviewer's own esti
 coverage about −0.045 against the −0.05 bar, a pass in 50 to 60 % of cases; a narrow pass
 on these worn scenarios would not tell G3 from G2; B2 and the hidden half decide.
 
+## R6: the informative run (2026-11-22 15:19; decides nothing)
+
+`runs/m5/R6_R4_PACKS.md`. Variant G2 on r4g2's packs against G2 on the frozen packs, the
+same 54 development scenarios, both judged afresh in two passes (one row left out as in
+Q12: frozen packs, b1-09, pass 1).
+
+| | frozen packs | r4g2 packs |
+|---|---|---|
+| Indexed must points served (272; loose count) | 88 (32.4 %) | 146 (53.7 %) |
+| Judged coverage (54 answers) | 0.473 | 0.513: +0.040, standard error 0.025; higher on 21 scenarios, lower on 15, equal on 18 |
+| of which B1 (30) / the pilot (24) | 0.520 / 0.415 | 0.538 / 0.482: +0.018 (0.034) / +0.067 (0.039) |
+| The 58 points only r4g2 serves: found present by the judge | 22.5 | 31.0 |
+| The 88 points both serve / the 126 neither serves: found present | 52.5 / 40.5 | 56.0 / 36.5 |
+| Median tokens; median answer seconds | 902; 29.9 | 997; 35.8 (r4g2's second reranker call, about 3 s, not included) |
+| Answers cut; nonexistent identifiers per 10 | 1 of 54; 2.22 | 2 of 54; 1.67 |
+| Pack: chunks, characters (median) | 5; 14,621 | 10; 24,857 |
+
+So 21 points more served out of 100 gave 0.04 more coverage, within about one and a half
+standard errors of zero; a point that is newly served is found present about 53 % of the
+time against 39 % without its excerpt. The plan had inferred about 0.05 per 15. Answers
+get about 10 % longer and 6 s slower; invented identifiers do not rise. These are worn
+development scenarios, the pilot shaped r4g2's query, and nothing here is a gate.
+
 ## Hidden looks
 
 Six looks on the hidden part in total. M4 used two (E2, E3). The Owner carried the
@@ -572,3 +595,6 @@ Later in M5: whether candidate C becomes the default (after look 3).
   analysis of the coverage loss with a proposal for a third variant, and R6 with G2.
 - 2026-11-22 13:48: the analysis is back (section "Grounded mode: where the coverage is
   lost"). Q13 for the Owner. G3 cannot be built while R6 runs (it changes files R6 pins).
+- 2026-11-22 14:34: R6 stopped in judging on the same unjudgeable row (G2 on the frozen
+  packs, b1-09, pass 1); its chain got the same two options (`048aba8`) and the
+  conductor applied the Owner's Q12 decision to it; resumed 15:07; done 15:19.
