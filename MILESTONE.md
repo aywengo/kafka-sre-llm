@@ -35,7 +35,7 @@ Speed work as such and the laptop run are not targets. The base model stays Qwen
 | X2 | Wrong statements | On the hidden half, candidate minus reference in one blind mixed reading: upper end of the 90 % interval below 0 and beyond the readers' disagreement; aim 12 or fewer per 10; harmful at most 13 | open |
 | X3 | No loss | Coverage not down by more than 0.08; mechanical not down by more than 3 points; wrong declines at most 1 in 10 | open |
 | X4 | Length and time | At most 10 % of judged answers cut at the limit; the median time reported | open |
-| X5 | Repairs | Defects 1 to 4 of the plan fixed, with tests, before any hidden run | F1 running |
+| X5 | Repairs | Defects 1 to 4 of the plan fixed, with tests, before any hidden run | F1 done (not yet committed); F2 open |
 
 **What M5 cannot reach, said beforehand.**
 
@@ -52,15 +52,16 @@ Speed work as such and the laptop run are not targets. The base model stays Qwen
 
 | Task | What | Role | Needs | State |
 |---|---|---|---|---|
-| F1 | Chain repairs: the E2 chain checks a stored manifest and markers at the start; the E5 chain stops when a step refuses; a resume survives a reload of the same model; the inline-marks step takes `--allow-commit-change` | implementer | CPU | running since 2026-11-22 00:28 |
-| F2 | The scorer's decline outcomes and not-covered items made aware of the index in use; a guard on the default index path of `scripts/retrieve.py` | implementer | CPU | after F1 (shared files) |
-| R0 | Design of profile r4: the exact settings to try, the rule that picks one on the development pool, what the simulation prints, the expansion leak | complex-reviewer | CPU | next |
-| R1 | Profile r4 and its funnel preset, next to the frozen profile | implementer | CPU, reranker | after R0 |
-| R2 | r4 settings chosen on the development pool (pilot 24, B1, B2, open mechanical 339) by the rule of R0; hash recorded | complex-reviewer | CPU | after R1 |
-| R3 | B4: 30 new open scenarios with covering chunks; independent chunk count at least 95 % before any answer; family check against the hidden items in a sealed session | writers, reviewers | Claude workers | next |
+| F1 | Chain repairs: the E2 chain checks a stored manifest and markers at the start; the E5 chain stops when a step refuses; a resume survives a reload of the same model; the inline-marks step takes `--allow-commit-change` | implementer | CPU | **done** 2026-11-22 01:45 (`runs/m5/reports/f1_chain_repairs.md`); commit after the test run |
+| F2 | The scorer's decline outcomes and not-covered items made aware of the index in use; a guard on the default index path of `scripts/retrieve.py` | implementer | CPU | after F1 (shared files); not needed for r4, which keeps the index (the scorer's declines depend on the index and on the answer's own pack) |
+| R0 | Design of profile r4: the exact settings to try, the rule that picks one on the development pool, what the simulation prints, the expansion leak | complex-reviewer | CPU | **done** 2026-11-22 00:46 (`runs/m5/reports/r0_r4_design.md`) |
+| R1 | Profile r4 and its funnel preset, next to the frozen profile | implementer | CPU, reranker | **done** 2026-11-22 01:50 (`runs/m5/reports/r1_r4_build.md`): frozen replay 423 of 423, runtime equals simulation 423 of 423 for all eight settings, live check 8 of 8; no r4 result on S or C looked at; commit after the test run |
+| R1b | The timing screen, the funnel over the eight settings, the rule (`choose-r4`) | job-operator | CPU, reranker; server idle | after R1 |
+| R2 | The reviewer confirms the rule's verdict and records the chosen setting's hash; the verdict "stop" goes to the Owner | complex-reviewer | CPU | after R1b |
+| R3 | B4: 30 new open scenarios with covering chunks; independent chunk count at least 95 % before any answer; family check against the hidden items in a sealed session | writers, reviewers | Claude workers | second review applied (229 records); **the independent chunk count failed** (98 of 154 points, section "B4"); completion running since 2026-11-22 01:55 |
 | R4 | Expansions for B4, then the X1 rule applied once | job-operator | server 0.2 h | after R2 and R3 |
-| G0 | Design of the grounded mode: the prompt text (variants G1 and G2), the rule that separates them, the reading plan on B2 | complex-reviewer | CPU | next |
-| G1 | The grounded mode as a new prompt constant with its own hashes; the default and the golden hashes unchanged | implementer | CPU | after G0 |
+| G0 | Design of the grounded mode: the prompt text (variants G1 and G2), the rule that separates them, the reading plan on B2 | complex-reviewer | CPU | **done** 2026-11-22 00:50 (`runs/m5/reports/g0_grounded_design.md`) |
+| G1 | The grounded mode as a new prompt constant with its own hashes; the default and the golden hashes unchanged | implementer | CPU | **done** 2026-11-22 01:38, commit `06dc7d5` (the `scripts/eval2.py` part and a refusal in `serve` follow F1) |
 | G2 | B2 answered in the grounded mode; a blind reading mixed with the stored default answers; judge; open mechanical 339 | job-operator, readers | server about 3 h | after G1 |
 | G3 | Experiment: can the reranker's score tell supported from unsupported sentences, on the 56 errors of the B1 reading | implementer | CPU, reranker | after R0 (not on the critical path) |
 | H1 | Hidden look 3: r4 with the grounded mode against E2's stored default answers; ledger row and rule first | job-operator, sealed readers | server about 4 h | after R4 and G2 |
@@ -79,6 +80,114 @@ points; wrong declines at most 1 in 10; median judged answer at most 81.8 s. Rep
 deciding nothing: funnel totals on the hidden 61, the share of cut answers, the identifier
 check, totals without the 11 tagged items. Switching the default changes the golden packs
 and `frozen.json` and is the Owner's decision after the look.
+
+## Profile r4 (design R0, 2026-11-22)
+
+r4 adds to the frozen pack and cannot lose a point: the six frozen chunks come first,
+unchanged, then up to four more (10 chunks, 24,000 characters). The candidates are the 40
+of the search plus the top 3 BM25 hits of each cleaned search term; the same reranker
+scores a capped set of them in a second call, with a query that carries the terms and, in
+some settings, a 1,024-token window. Eight settings are tried.
+
+Measured in the design (BM25 only, no model): if the best four candidates were added, the
+served points would rise by 61 points on the pilot (106 points), 55 on B1 (166) and 54 on
+B2 (149). The room is there; the limit is the ordering. R3, which filled the slots in the
+frozen order, gained 7.8 and 7.4. In the reranker's 512-token window a median B2 question
+leaves about 970 characters per chunk, not the 1,500 assumed (inferred from token counts).
+
+**The rule, fixed before any result (the conductor's decision, 2026-11-22).** The
+development scenarios are split in two halves by a hash of their ids (42 items each; 202
+and 219 indexed points; frozen serves 29.7 % on both). Settings that add more than 6.0 s
+median or 9.0 s at the 90th percentile of reranker time are dropped first. The setting
+with the largest gain on half S is chosen, a near-tie going to the smaller pack. It goes
+to B4 only if it gains at least +25 points on S and +18 on C, loses nothing, and stays
+within the size limits. Otherwise r4 stops, B4 is not spent, and the Owner sees the
+result. The reviewer's own expectation is a gain of +10 to +20 on development data, so
+the stop may well fire (inferred).
+
+Also decided by the conductor: the leak of answer-format instructions into the search
+expansion is not cured at the source now (that would change the frozen six or add a model
+call of 5.6 to 8.7 s); r4 cleans the terms itself. A second instance of the same reranker
+is allowed (about 2.3 GB of memory, no download). The 81.8 s cap of look 3 stays, although
+r4 adds about 10 s per answer (inferred); it holds only if the grounded mode shortens
+answers.
+
+## Grounded mode (design G0, 2026-11-22)
+
+Two variants that differ in one rule: what the answer does when the excerpts lack a fact.
+Both put the direct answer first, take names and claims about what a setting or command
+does from the excerpts or the question, name a gap in one fixed sentence, never say that
+something does not exist only because the excerpts are silent, drop background,
+unasked alternatives and closing summaries, and ask for under about 600 words. **G1**
+does not fill a gap from memory, except when the question asks for a single name, value
+or verdict. **G2** allows general knowledge on labelled lines. The text goes after the
+question. The exact text and its hashes are in the design.
+
+What the design measured on open data (no model run):
+
+- Of the 56 errors of the B1 reading (30 default answers, one classifier), a prompt can
+  plausibly act on 36 (names 9, facts stated in prose 6, claims the excerpts are silent
+  on 21), not on the 7 that contradict the answer's own excerpts or the 13 the excerpts
+  seem to support.
+- B1 default answers: 1,030 words and 2,048 tokens median, 19 of 30 cut; the length is in
+  the body (numbered causes, whole programs), 8 % in closing sections, 1 % repeated
+  excerpts.
+- Strict on the open mechanical half (251 items): 174 passes against 194; 41 correct
+  declines, 10 wrong declines, 5 abstentions. The 56 items it declined or abstained on
+  hold 25 of default's passes. A mode that declines whenever the pack lacks the fact
+  loses about 10 points on this scorer (inferred), hence G1's exception.
+
+**The development check, rule fixed before the run.** Both variants answer B1 (30) and
+the pilot (24) on the stored packs, and a fixed mechanical sample of 116 open items (the
+56 that strict declined, 40 drawn from the other 195, 20 from the 88 a3 items). A variant
+is eligible only if: judged coverage not more than 0.05 under default; supported essential
+misses not more than default + 1.0 per 10; at most 5 of 54 answers cut; median at most
+1,400 tokens; projected mechanical change not under −3.0 points; wrong declines at most
+10 % of the items whose covering chunk is in the pack; nonexistent identifiers not above
+default. G1 if eligible, else G2 if eligible, else stop without spending B2. Server time
+2.6 to 4 h (inferred).
+
+**The B2 check, rule fixed before the run.** The picked variant answers B2 on the stored
+packs; a blind reading of the 60 answers mixed, second reader on a quarter. Go on to the
+hidden look only if: the readers' totals differ by at most 30 %; wrong statements per 10,
+grounded minus default, at most −2.0 and larger than the readers' disagreement; harmful
+not above default; coverage not more than 0.05 under default; supported essential misses
+not more than default + 1.0 per 10; at most 3 of 30 answers cut; the mechanical conditions
+of the development check held. Thirty pairs can show a change of about 5.8 per 10, so
+this is a screen and look 3 decides. After r4 exists, the picked variant is run once on
+r4's packs without readers (about 1 h of server time).
+
+Disclosure: the designer loaded the stored B2 answer files while measuring lengths and
+printed their token counts and cut flags only (default 21 of 30 cut; strict 11 of 30).
+No B2 text was read; the prompt text was written from B1 and the mechanical half.
+
+## B4 (the out-of-sample batch)
+
+Thirty scenarios written on 2026-11-22 by three writers blind to the assistant's results,
+assembled, and reviewed by three second reviewers (229 change records; 78 covering chunks
+added). After the review: 170 must points, 154 with chunks (285 chunk references), 16 not
+in the index. Files in `eval/m4/b4/`, not committed until the batch passes its gate.
+
+**The independent chunk count (K1) failed, 2026-11-22 01:52.** The conductor set a
+stricter test for B4 than `agents/m4-evaluation.md` words it: every recorded chunk must
+hold the point's fact by itself, because the funnel counts a point as served when any one
+of its chunks is served. On that test three independent checkers found 98 of 154 points
+ok (63.6 %; by range 34 of 48, 24 of 50, 40 of 56), 56 partial, 0 wrong; of 285 recorded
+chunks 202 ok, 83 partial, 0 wrong. Of the 56 partial points, 27 have at least one chunk
+that holds the whole fact alone and 29 have none (24 of those 29 are weight-2 points):
+the fact is spread over several chunks or one named part of it is in no recorded chunk.
+The reviewers' own counts had been 100 %. The checkers found 18 covering chunks the
+reviewers had missed. The count under the rule as M4 worded it (the recorded chunks
+together) was not made.
+
+What this shows about the earlier batches (inferred): B1 and B2 passed K1 with "the
+recorded chunks together" while the funnel credited any one chunk, so their served counts
+include points of which only a part reached the model. The development numbers of r4
+carry the same looseness.
+
+Repair, running: per point, covering sets (one to three chunks that together state the
+whole fact; a point is served when one whole set is served), then an independent recount.
+Open for the Owner (Q5): which count decides X1 on B4.
 
 ## Hidden looks
 
@@ -103,7 +212,19 @@ spent on the same 61 scenarios.
 
 ## Waiting for the Owner
 
-Nothing blocks the work now. Still open from M4, none blocking:
+Four points of the grounded-mode design differ from the plan; they are needed before the
+development check runs on the server (asked 2026-11-22 00:52):
+
+- Q1: "wrong declines at most 1 in 10" (X3) is counted against the items whose excerpts
+  cover the fact, as `GOAL.md` words it; the share of all declines is reported beside it.
+- Q2: G1 may answer a single name, value or verdict from memory after the gap sentence.
+- Q3: the development check uses the mechanical sample of 116 items, not all 339.
+- Q4: the length target is 600 words, not the plan's 700.
+- Q5 (asked 2026-11-22 01:58): on B4, a point counts as served only when a whole covering
+  set is in the pack (recommended; the looser count of B1 and B2 reported beside it), or
+  as in M4, when any recorded chunk is.
+
+Still open from M4, none blocking:
 
 - The laptop run (`agents/laptop-tests.md`); the results are processed when they arrive.
 - The Owner's review of the architecture rubrics of the open batches (b1-10, 18, 19, 20,
@@ -124,3 +245,18 @@ Later in M5: whether candidate C becomes the default (after look 3).
 - 2026-11-22 00:28: F1 (chain repairs) started, CPU only.
 - 2026-11-22 00:30: the Owner agreed with P1 to P8. This document replaces M4's, which
   moved to `milestones/M4.md`.
+- 2026-11-22 00:35: started the design of r4 (R0), the design of the grounded mode (G0)
+  and three writers for B4 (R3).
+- 2026-11-22 00:46: R0 done; the rule for choosing an r4 setting and the stop bar are
+  fixed (section "Profile r4"). 00:48: the build of r4 (R1) started.
+- 2026-11-22 00:50: G0 done; the prompt text of both variants and the rules of the
+  development check and of the B2 check are fixed (section "Grounded mode"). Q1 to Q4
+  wait for the Owner. 00:53: the build (G1) started, without `scripts/eval2.py`, which
+  F1 still holds.
+- 2026-11-22 01:17 to 01:45: B4 assembled (30 drafts), reviewed (three reviewers) and the
+  229 change records applied. 01:38: G1 done and committed (`06dc7d5`).
+- 2026-11-22 01:45: F1 done. The conductor's decision on its open point: a resume goes on
+  after a reload of the same model id and records the reload; the chain of look 3 must
+  also re-answer a few stored answers after a reload and compare them byte for byte.
+- 2026-11-22 01:50: R1 done. 01:52: the independent chunk count of B4 failed on the
+  stricter per-chunk test (section "B4"). 01:55: completion started.
