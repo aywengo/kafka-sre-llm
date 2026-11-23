@@ -223,7 +223,7 @@ if [ $DRY = no ] && [ $SERVER_NEEDED = yes ]; then
   hb "$N: the server is idle and no model but $Q4 is loaded; the 4-bit model was loaded at the start: $(cat $W/q4_loaded_at_start)"
 fi
 
-if [ $DRY = yes ]; then GA="--backend stub --no-rerank"; VGA="--dry-run"; else GA="--backend openai --model $Q4"; VGA="--backend openai --model $Q4 --extra-body $EB"; fi
+if [ $DRY = yes ]; then GA="--backend stub --no-rerank"; VGA="--dry-run"; EBV=""; else GA="--backend openai --model $Q4"; VGA="--backend openai --model $Q4"; EBV=$EB; fi   # the extra body is passed quoted on its own (a JSON value with spaces must not be word-split)
 
 # ---------------------------------------------------------------- the checking runs (one output file per set, arm and variant; resumable by id)
 verify_run() { # NAME ANSWERS ITEMS OUT EXPECT CARDS
@@ -234,7 +234,7 @@ verify_run() { # NAME ANSWERS ITEMS OUT EXPECT CARDS
   while :; do
     [ $DRY = yes ] || idle
     hb "$N: checking pass $name started ($expect answers)"
-    $G --stall-min 20 --log $L/$N.$name.log -- .venv/bin/python -m kafka_sre_rag.verify_pass run --answers $ans --items $items --out $out $CF --catalogues $CATS $VGA </dev/null \
+    $G --stall-min 20 --log $L/$N.$name.log -- .venv/bin/python -m kafka_sre_rag.verify_pass run --answers $ans --items $items --out $out $CF --catalogues $CATS $VGA ${EBV:+--extra-body} ${EBV:+"$EBV"} </dev/null \
       || fail "checking pass $name: failed (see $L/$N.$name.log)"
     .venv/bin/python $R check-verify --file $out --expect $expect && break
     tries=$((tries+1)); [ $tries -lt 3 ] || fail "checking pass $name: incomplete, with failed rows, or too many rows without a usable reply from the server after $tries passes ($out)"

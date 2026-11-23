@@ -350,3 +350,29 @@ class Fix1Tests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ExtraBodyQuoting(unittest.TestCase):
+    """The real run passes the JSON extra body to verify_pass quoted on its own (2026-11-23: inside an unquoted variable it was
+    word-split at its first space and verify_pass refused it; the dry run passes no extra body, so it could not show this)."""
+
+    def test_extra_body_is_never_inside_an_unquoted_variable(self):
+        import re
+        text = (Path(__file__).resolve().parent.parent / "scripts" / "m7_pilot.sh").read_text()
+        for line in text.splitlines():
+            if line.lstrip().startswith("#"):
+                continue
+            for m in re.finditer(r'(\w+)="([^"]*)"', line):
+                self.assertNotIn("$EB", m.group(2), f"{m.group(1)} holds the extra body: {line.strip()}")
+        self.assertIn('${EBV:+--extra-body} ${EBV:+"$EBV"}', text)
+        self.assertIn('--extra-body "$EB"', text)
+
+    def test_the_expansion_keeps_the_json_whole(self):
+        import subprocess
+        eb = '{"chat_template_kwargs": {"enable_thinking": false}}'
+        r = subprocess.run(["sh", "-c", 'set -- ${EBV:+--extra-body} ${EBV:+"$EBV"}; printf "%s\\n" "$#" "$@"'],
+                           env={"EBV": eb, "PATH": "/usr/bin:/bin"}, capture_output=True, text=True)
+        self.assertEqual(r.stdout.splitlines(), ["2", "--extra-body", eb])
+        r = subprocess.run(["sh", "-c", 'set -- ${EBV:+--extra-body} ${EBV:+"$EBV"}; printf "%s\\n" "$#"'],
+                           env={"EBV": "", "PATH": "/usr/bin:/bin"}, capture_output=True, text=True)
+        self.assertEqual(r.stdout.strip(), "0")
