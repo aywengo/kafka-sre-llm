@@ -160,6 +160,7 @@ goes to G2.
 | 2026-11-23 | U1 | After the failed B4 check the stop is accepted: no hidden look for the combination in M6 (four looks stay unspent). The D5 answers are run once as an informative run that decides nothing |
 | 2026-11-23 | U2 | The sealed sessions' transcripts of the hidden part's writing are deleted |
 | 2026-11-23 | V1 to V9 | **M7 is agreed** (plan `agents/m7-plan.md`): the go for the plan and for loading the 4-bit base model in M7's measurement runs (V1); the thorough profile's time bar (median at most 180 s, 90th percentile at most 300 s) is recorded in `GOAL.md` as proposed and becomes agreed only after it is measured (V2); the test on D5 has six arms (V3); the perfect pack is padded with the frozen pack to the same length (V4); the thorough profile is built on the default prompt, on the grounded one only if time fails (V5); B4 is used once more, as the out-of-sample answer check, its scenarios never having been answered (V6); the runtime may use the catalogues at answer time, the mechanical tier then reported with and without the lookup (V7); who writes model-written fact entries, and their licences, is decided only if the test supports them (V8); one hidden look on the new hidden part after B4, at least two looks kept (V9) |
+| 2026-11-23 | W1 | Two sessions: this conductor session finishes M6 (the D5 result, its reading, the closing) and merges M7's two branches into main once M6's chain has ended; a second session, started by the Owner for M7, takes M7 from that merge on (the pilot run onward) with its own tracking document. Before the merge only this session touches the main tree and the model server |
 | 2026-11-22 | conductor | The covering test reads a chunk as the model receives it, with its title line |
 | 2026-11-22 | conductor | After M0: S3's limit stands; the Qwen reranker at full precision is measured on D5's funnel for information only; only a setting within the limit goes on to B4 and the hidden look |
 | 2026-11-22 | conductor | The decline detector stays as it is: counting a gap sentence followed by a concrete answer as an answer would change six stored M4 outcomes (five strict answers and one a3 answer would turn from declines into wrong answers) and turn most grounded correct declines into wrong answers. Stored and new runs stay comparable; reports keep the sentence on the detector's bias, and a reader checks the answers counted as wrong declines before a failure of that condition is acted on |
@@ -362,4 +363,13 @@ candidate C becomes the default, after the look.
   90th percentile at most 45 s. The variant with more net catches among those clearing
   every bar goes into the six-arm test (a tie goes to the one without cards); if none
   clears them, the pass does not go into the test and its arms are dropped.
+- 2026-11-23 12:01: a second session, which the Owner started in Orca for M7, re-dispatched
+  the pilot chain's builder after an API overload stopped mine (commit `b736ad0` on the
+  thorough profile's branch: the pilot chain, 31 tests) and built the six-arm test chain
+  in its own worktree (branch `m7-k4-six-arm`, commit `388182a`; a review of it is
+  running there). Nothing of either is merged, pushed or run. **The Owner decided W1**:
+  this session finishes M6 and makes the merge after M6's chain ends, with a full test
+  run; the other session then owns M7. At the merge this document moves to
+  `milestones/M6.md` (kept by this session until M6 is closed) and a new `MILESTONE.md`
+  for M7 is handed over.
 
