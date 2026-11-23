@@ -305,7 +305,7 @@ candidate C becomes the default, after the look.
   session's scratch folder; nothing matching the 27 ids is left. Not deleted, because
   outside U2's wording: the transcripts of the two earlier sealed family checks of this
   milestone and of M5 (B4 and D5 against the existing hidden items).
-- 2026-11-23 09:15: **the Owner agreed with V1 to V9: M7 is planned and agreed**
+- 2026-11-23 09:14: **the Owner agreed with V1 to V9: M7 is planned and agreed**
   (`agents/m7-plan.md`, commit `be56c47`), from his two ideas of the morning (a longer
   time budget; a knowledge base in place of classic retrieval) and the conductor's
   answer (the time for checking, not for length; the knowledge base beside the index;
