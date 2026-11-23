@@ -34,7 +34,7 @@ The base model stays Qwen3.8-27B at 4-bit.
 |---|---|---|---|
 | Y1 | Ranking | On B4, strict count, once: served must points at least +15.0 percentage points over the frozen retrieval, at most 5 % of the frozen-served points lost | **not met** (2026-11-22 23:57, `runs/m5/B4_CHECK.md`): +10.7 percentage points (65 against 50 of 140 points with a covering set; standard error 3.6), nothing lost; the bar was +15.0. B4 is used |
 | Y2 | Combined candidate | The hidden look's rule (below), on the new hidden judged part | open |
-| Y3 | Harmful | The set T measured against default with readers; the destructive-step marking with its recall reported; no claim beyond what T shows | open |
+| Y3 | Harmful | The set T measured against default with readers; the destructive-step marking with its recall reported; no claim beyond what T shows | **measured** (2026-11-23, `runs/m6/reports/rt_reading_result.md`): on T's 41 scenarios the readers found 14 harmful statements in the default's answers and 14 in the grounded mode's (11 answers each; 3.41 per 10 answers, 90 % interval 2.06 to 5.34; paired difference 0.00, −2.20 to +2.20). The marking catches 7 of the 15 harmful statements that are destructive steps (4 of 8 and 3 of 7) and none of the 13 others. Nothing more is claimed: T is built to tempt |
 | Y4 | Time and fit | Median answer at most 60 s with search; the second reranker within 1.5 GB of added memory (S3); the whole footprint reported against `GOAL.md`'s "about 20 GB" | open |
 | Y5 | Repairs | Items 1 to 5 of the plan's list, with tests, before any hidden run | open |
 
@@ -113,7 +113,7 @@ reduction of harm, 41 scenarios leave wide intervals.
 | DF | D5 funnel, strict count: r4g2 (within the memory limit) and, for information only, the Qwen reranker at full precision | job-operator | CPU, reranker | **done** 2026-11-22 23:46 (`runs/m6/D5_FUNNEL.md`, `runs/m6/RETRIEVAL_CHOSEN.json`): **r4g2 goes on to B4**. Strict count over 227 points with a covering set: frozen 69 (30.4 %), r4g2 112 (49.3 %), gain +18.9 percentage points (standard error 3.4; needed +15.0); no frozen-served point lost; second call 2.25 s median, 2.37 s at the 90th percentile (20 questions). For information: the Qwen reranker serves 120 (+22.5 over frozen; +3.5 over r4g2 with standard error 3.1, gained 18 and lost 10), second call 4.76 s median |
 | B4 | The one-time check of the chosen retrieval setting on B4 | job-operator | server 0.2 to 0.5 h | **done, FAIL** 2026-11-22 23:47 to 23:57 (`runs/m5/B4_CHECK.md`, marker `runs/m6/B4_USED`): strict count over 140 points with a covering set: frozen 50 (35.7 %), r4g2 65 (46.4 %), gain +10.7 percentage points (standard error 3.6; needed +15.0), gained 15, lost 0 (part (b) holds); weight-2 points +12.8 (34 against 24 of 78); loose count +10.0. **The combination stops here until the Owner has seen it** |
 | DA | D5 answers: default on the frozen packs as the reference in the same run; G2 and G3 on the chosen packs; two judge passes; the 116 mechanical items | job-operator | server 4 to 5.5 h | after DF |
-| RD, RT | Blind readings of D5 (S6) and of T | readers | about 8 and 5 sessions; server 2 to 2.5 h for T's answers | after DA |
+| RD, RT | Blind readings of D5 (S6) and of T | readers | about 8 and 5 sessions; server 2 to 2.5 h for T's answers | **RT done** 2026-11-23 02:02 to 02:22 (seven reader sessions; totals `work/m6/t/reading/totals.json`; result `runs/m6/reports/rt_reading_result.md`). RD waits for D5's answers, which wait for the Owner (U1) |
 | H | The hidden look on the new hidden part; ledger row first | job-operator, sealed readers | server 5 to 7 h | after everything above |
 
 Rules of the steps (from the plan, fixed before each result): the D5 funnel lets a
@@ -269,4 +269,23 @@ candidate C becomes the default, after the look.
   calls 40 of 41 g2 answers a decline (its known bias towards the gap sentence), so its
   count of refusals in the 8 destructive-right scenarios says nothing; the readers
   decide. 01:58: the reading of T defined (section above); bundles being prepared.
+- 2026-11-23 02:02 to 02:22: **the reading of T** (five first readers on all 82 answers,
+  two second readers on 22; the readers 5 % apart, 58 and 55 findings: the reading is
+  used). Non-minor wrong, invented or harmful statements per 10 answers: default 15.12
+  (90 % interval 11.95 to 18.54), grounded-g2 13.90 (10.98 to 16.83); paired −1.22
+  (−4.15 to +1.71). **Harmful: 14 and 14**, in 11 answers each; 12 and 12 in the 33
+  tempting scenarios, 2 and 2 in the 8 where the destructive step is right. Omissions 95
+  and 113. Unblinded and classified by one worker (not checked by a second): of the 28
+  harmful statements 15 are destructive steps, 11 wrong claims about behaviour, 1 an
+  unsafe order, 1 other; 26 fall under a rubric must-not. **The marking's recall on T:
+  7 of the 15 destructive steps** (default 4 of 8, grounded 3 of 7), none of the 13
+  others; 17 and 14 of the 30 answers without a harmful statement carry marks (66 and 44
+  marks). In the 8 scenarios where the destructive step is right the readers found one
+  refusal per mode, and the right step with its check was missing in 6 of 8 answers per
+  mode.
+- 2026-11-23 02:25, the conductor: the marking's patterns are **not** tuned on T's misses
+  (backticks inside two patterns, two prose forms, a code pattern): T is the only fair
+  test there is, and a fix made from its misses could not be tested again in M6. The
+  misses are listed in the report for a later milestone. The marking stays experimental
+  and off by default; its in-sample recall of 9 of 9 (H1) did not hold on fresh data.
 
