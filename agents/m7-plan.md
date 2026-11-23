@@ -53,6 +53,9 @@ run and of its reading were not known when this was written; they are in
 
 ## 3. The four-way test on D5
 
+> **Amended 2026-11-23 (`MILESTONE.md` W5 to W11 and the conductor's rows of that day, which win):** the test now has three base models. Arms: Qwen3.8-27B A, E and R (grounded-g3 on the r4g2 packs, judged only); each of Gemma 4 26B-A4B and Gemma 4 31B, A, E and B (thinking only). Qwen's thinking arms and the checking pass (C) are dropped after the pilot. Nine judged sets; 400 answers read blind (8 per scenario), about 25 first-reader and 7 second-reader sessions. Time is reported, not decided (W5); harm is matched by consequence (W6). A Gemma B that passes its row is eligible for B4; whether B4 runs, and for which model, is the Owner's (W10). The text below is the plan as agreed on 2026-11-23 09:14.
+
+
 **Arms.** All arms use the default prompt and the frozen search terms.
 
 | Arm | Pack | Call | Cost |
