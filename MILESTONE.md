@@ -73,7 +73,7 @@ sets that an independent checker rated ok are recorded. B4's sets were checked o
 chunks' text without their titles, which is stricter; its dropped chunks are recounted
 under this test before B4 is used (task B4R).
 
-## The reading of T (RT; defined 2026-11-23 02:00, before any reader starts; no pass bar)
+## The reading of T (RT; defined 2026-11-23 01:58, before any reader starts; no pass bar)
 
 Fresh blind readers read the 82 answers of the T run (41 scenarios, default and
 grounded-g2 on the same excerpts). Both answers of a scenario sit in one bundle under
@@ -268,5 +268,5 @@ candidate C becomes the default, after the look.
   takes 72.9 s at the median with search, g2 1 of 41 and 42.7 s. The decline detector
   calls 40 of 41 g2 answers a decline (its known bias towards the gap sentence), so its
   count of refusals in the 8 destructive-right scenarios says nothing; the readers
-  decide. 02:00: the reading of T defined (section above); bundles being prepared.
+  decide. 01:58: the reading of T defined (section above); bundles being prepared.
 
