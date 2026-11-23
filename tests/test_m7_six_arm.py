@@ -292,11 +292,15 @@ class Helpers(unittest.TestCase):
         self.assertEqual((e["ans_a"], e["ans_c"], e["ans_e"], e["ans_d"], e["ans_f"], e["ans_r"], e["judge"]), (166, 50, 50, 332, 100, 50, 800))
         e = R.expected_calls(50, "none", 96, 20, ("qwen",), ("qwen",))
         self.assertEqual((e["ans_c"], e["ans_d"], e["ans_f"], e["judge"]), (0, 166, 50, 500))
-        e = R.expected_calls(50, "V1C", 96, 20)                                   # the default: three models, only Qwen thinks
+        e = R.expected_calls(50, "V1C", 96, 20, R.MODEL_KEYS, ("qwen",))          # three models, only Qwen thinks
         self.assertEqual((e["ans_a_gemma31"], e["ans_e_gemma31"], e["ans_a_gemma26"], e["ans_e_gemma26"]), (166, 50, 166, 50))
         self.assertNotIn("ans_d_gemma26", e)
         self.assertEqual(e["judge"], (8 + 2 + 2) * 50 * 2)
         self.assertEqual(e["total_answer_calls"], 166 + 50 + 166 + 50 + 166 + 50 + 332 + 100 + 50 + 50)
+        e = R.expected_calls(50, "V1", 96, 20)                                    # the default, K4b: no model thinks; Qwen has A, C, E, R
+        self.assertEqual((e["ans_a"], e["ans_c"], e["ans_e"], e["ans_r"], "ans_d" in e, "ans_f" in e, e["judge"]), (166, 50, 50, 50, False, False, (4 + 2 + 2) * 50 * 2))
+        e = R.expected_calls(50, "none", 96, 20)
+        self.assertEqual(("ans_c" in e, e["judge"]), (False, (3 + 2 + 2) * 50 * 2))
         e = R.expected_calls(50, "V1C", 96, 20, R.MODEL_KEYS, ("qwen", "gemma31"))   # gemma31 thinks: D, F and C as Qwen's
         self.assertEqual((e["ans_d_gemma31"], e["ans_f_gemma31"], e["ans_c_gemma31"], e["judge"]), (332, 100, 50, (8 + 7 + 2) * 100))
         e = R.expected_calls(50, "none", 96, 20, R.MODEL_KEYS, ("qwen", "gemma26"))
@@ -558,10 +562,10 @@ class ScriptTests(unittest.TestCase):
         self.assertEqual({p for p in ("runs/m7", "work/m7/six_arm") if (ROOT / p).exists()}, before)
 
     def test_a_real_run_needs_the_sources_of_both_parameters(self):
-        r = self.sh("--check-variant", "V1C", "--think-cap", "1500", "--gemma31-model", "g31-test")
+        r = self.sh("--check-variant", "V1C", "--think-cap", "1500", "--gemma31-model", "g31-test", "--thinking-models", "none")
         self.assertEqual(r.returncode, 2)
         self.assertIn("--check-variant-source is required", r.stderr)
-        r = self.sh("--check-variant", "V1C", "--think-cap", "1500", "--gemma31-model", "g31-test", "--check-variant-source", "pilot report")
+        r = self.sh("--check-variant", "V1C", "--think-cap", "1500", "--gemma31-model", "g31-test", "--thinking-models", "none", "--check-variant-source", "pilot report")
         self.assertEqual(r.returncode, 2)
         self.assertIn("--think-cap-source is required", r.stderr)
 
@@ -576,6 +580,10 @@ class ScriptTests(unittest.TestCase):
 
     def test_a_real_run_needs_the_pilots_report_and_refuses_a_dry_run_record_and_the_plants(self):
         base = ("--check-variant", "V1", "--think-cap", "100", "--check-variant-source", "a", "--think-cap-source", "b", "--gemma31-model", "g31-test")
+        r = self.sh(*base, "--pilot-report", "/nonexistent/M7_PILOT.md")      # no --thinking-models: refused first (K4b: the real run passes it explicitly)
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("--thinking-models LIST|none is required in a real run", r.stderr)
+        base = base + ("--thinking-models", "none")
         r = self.sh(*base, "--pilot-report", "/nonexistent/M7_PILOT.md")
         self.assertEqual(r.returncode, 2)
         self.assertIn("pilot's report", r.stderr)
@@ -599,7 +607,7 @@ class ScriptTests(unittest.TestCase):
         self.assertIn("ECHOREF=$W/ans_d5_D$SFX.jsonl.manifest.json", text)
 
     def test_fail_after_is_for_dry_runs_only(self):
-        r = self.sh("--check-variant", "V1", "--think-cap", "100", "--check-variant-source", "a", "--think-cap-source", "b", "--gemma31-model", "g31-test", "--fail-after", "ans_a")
+        r = self.sh("--check-variant", "V1", "--think-cap", "100", "--check-variant-source", "a", "--think-cap-source", "b", "--gemma31-model", "g31-test", "--thinking-models", "none", "--fail-after", "ans_a")
         self.assertEqual(r.returncode, 2)
         self.assertIn("dry runs only", r.stderr)
 
@@ -1203,14 +1211,17 @@ class ModelsAndComparison(unittest.TestCase):
     def test_the_model_list_and_the_order_of_the_answers(self):
         plan = R.plan_models("qwen,gemma26,gemma31", None, {"gemma31": "g31-4bit"})
         self.assertEqual([m["key"] for m in plan], ["gemma31", "gemma26", "qwen"])            # each model alone, the order gemma31, gemma26, qwen
-        self.assertEqual([m["thinking"] for m in plan], [False, False, True])                 # only Qwen's thorough arms by default
+        self.assertEqual([m["thinking"] for m in plan], [False, False, False])                # K4b: no model thinks by default (none)
+        self.assertEqual([m["thinking"] for m in R.plan_models("qwen,gemma26", "none", None, True)], [False, False])
+        self.assertEqual([m["thinking"] for m in R.plan_models("qwen,gemma26", "", None, True)], [False, False])
+        self.assertEqual([m["thinking"] for m in R.plan_models("qwen,gemma26", "gemma26", None, True)], [True, False])     # a list without qwen is allowed
         self.assertEqual(R.plan_models("gemma26,qwen", "qwen", None, True)[0]["key"], "gemma26")
         self.assertEqual([m["key"] for m in R.plan_models("qwen", None, None, True)], ["qwen"])
         self.assertEqual(R.DEFAULT_MODEL_IDS["qwen"], "Qwen3.8-27B-4bit")
         self.assertEqual(R.DEFAULT_MODEL_IDS["gemma26"], "gemma-4-26B-A4B-it-QAT-MLX-4bit")
         th = R.plan_models("qwen,gemma26,gemma31", "qwen,gemma31", {"gemma31": "x"})
         self.assertEqual({m["key"]: m["thinking"] for m in th}, {"gemma31": True, "gemma26": False, "qwen": True})
-        for models, thinking in (("gemma26", None), ("qwen,gpt", None), ("qwen,qwen", None), ("", None), ("qwen,gemma26", "gemma26"), ("qwen", "qwen,gemma31"), ("qwen,gemma26", "gemma26,qwen,x")):
+        for models, thinking in (("gemma26", None), ("qwen,gpt", None), ("qwen,qwen", None), ("", None), ("qwen", "qwen,gemma31"), ("qwen,gemma26", "gemma26,qwen,x")):
             with self.subTest(models=models, thinking=thinking), self.assertRaises(R.SixError):
                 R.plan_models(models, thinking, {"gemma31": "x"}, True)
         code, out, _ = run_main(["model-order", "--thinking-models", "qwen,gemma26"])
@@ -1248,11 +1259,14 @@ class ModelsAndComparison(unittest.TestCase):
         text = SCRIPT.read_text(encoding="utf-8")
         self.assertEqual(subprocess.run(["sh", "-n", str(SCRIPT)], capture_output=True).returncode, 0)
         self.assertIn("for mo in $MODELORDER; do model_group", text)
-        self.assertIn("prepare_model $mk; probe_model $mk $mt", text)
+        self.assertIn("prepare_model $mk\n", text)
+        self.assertIn("probe_model $pk ${mo#*:}", text)                                       # K4b: every other model is probed at the gate, before any answer
         self.assertIn("finish_model $mk", text)
-        self.assertIn("--ours $(ours_ids)", text)
-        self.assertIn("[ $k = qwen ] || [ ! -e $W/loaded_$k ] || o=", text)                  # a Gemma model is ours only when this chain loaded it (a marker)
-        self.assertIn('if [ $k = qwen ] || [ -e $W/loaded_$k ]; then unload', text)
+        self.assertIn("--marker $(marker_args)", text)
+        self.assertNotIn("--ours", text)
+        self.assertIn('o="$o $(mid_of $k)=$W/loaded_$k"', text)                              # every model, Qwen's and the judge too, is ours only when this chain loaded it (a marker)
+        self.assertIn("touch $W/loaded_judge", text)
+        self.assertIn('if [ -e $W/loaded_$k ]; then unload', text)
         self.assertNotIn("unload-others", text)
         # the server gate with the models of this chain: another client's Gemma model is refused, ours (a marker) is not
         td = Path(tempfile.mkdtemp())
@@ -1265,13 +1279,19 @@ class ModelsAndComparison(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn(g26, err)
         self.assertEqual(run_main(["server-gate", "--status", str(st), "--keep", q4, "--ours", q4, "DS", g26])[0], 0)
+        mk = td / "loaded_gemma26"
+        self.assertEqual(run_main(["server-gate", "--status", str(st), "--keep", q4, "--marker", f"{g26}={mk}"])[0], 2)    # no marker file: foreign
+        mk.write_text("")
+        self.assertEqual(run_main(["server-gate", "--status", str(st), "--keep", q4, "--marker", f"{g26}={mk}"])[0], 0)
 
     def test_the_default_reading_has_eight_answers_per_scenario_and_the_sessions_are_configurable(self):
         td = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, td, True)
         code, out, _ = run_main(["reading-sets", "--check-variant", "V1C", "--work", "W"])
         sets = [l.split("=")[0] for l in out.split()]
-        self.assertEqual(sets, ["A", "D", "E", "F", "A_gemma26", "E_gemma26", "A_gemma31", "E_gemma31"])       # Qwen's A D E F and each Gemma model's A and E
+        self.assertEqual(sets, ["A", "C", "E", "A_gemma26", "E_gemma26", "A_gemma31", "E_gemma31"])             # K4b/W11: Qwen without thinking reads A, C, E; each Gemma model's A and E
+        sets = [l.split("=")[0] for l in run_main(["reading-sets", "--check-variant", "V1C", "--work", "W", "--thinking-models", "qwen"])[1].split()]
+        self.assertEqual(sets, ["A", "D", "E", "F", "A_gemma26", "E_gemma26", "A_gemma31", "E_gemma31"])       # Qwen's A D E F when it thinks
         _, out, _ = run_main(["reading-sets", "--check-variant", "V1C", "--work", "W", "--thinking-models", "qwen,gemma31"])
         self.assertIn("D_gemma31", [l.split("=")[0] for l in out.split()])
         self.assertEqual(len(out.split()), 9)
@@ -1367,23 +1387,37 @@ class ModelsAndComparison(unittest.TestCase):
 
         def probe(resp, expect):
             (td / "r.json").write_text(json.dumps(resp))
-            return run_main(["thinking-probe", "--file", str(td / "r.json"), "--expect", expect])[0]
+            return run_main(["thinking-probe", "--file", str(td / "r.json"), "--expect", expect])
         plain = {"choices": [{"message": {"content": "391"}}], "usage": {"completion_tokens": 3}}
         rf = {"choices": [{"message": {"content": "391", "reasoning_content": "17 * 23 = ..."}}]}
         tag = {"choices": [{"message": {"content": "<think>17 * 23</think>391"}}]}
+        for r in (rf, tag):
+            self.assertEqual((probe(r, "on")[0], probe(r, "off")[0]), (0, 1))
+        self.assertEqual((probe(plain, "on")[0], probe(plain, "off")[0]), (1, 0))
+        # K4b: reasoning tokens in the usage only, and an inline mark of another format, are "unknown format": neither on nor off passes
         tok = {"choices": [{"message": {"content": "391"}}], "usage": {"completion_tokens_details": {"reasoning_tokens": 40}}}
-        for r in (rf, tag, tok):
-            self.assertEqual((probe(r, "on"), probe(r, "off")), (0, 1))
-        self.assertEqual((probe(plain, "on"), probe(plain, "off")), (1, 0))
+        gemma = {"choices": [{"message": {"content": "<|channel>thought\n17 * 23 = 391<channel|>391"}}]}
+        for r in (tok, gemma):
+            self.assertEqual(R.probe_classify(r)[0], "unknown format")
+            code, out, err = probe(r, "on")
+            self.assertEqual(code, 1)
+            self.assertIn("unknown format", out)
+            self.assertIn("gets no thinking arm", err)                                   # with that result the model gets no thinking arm
+            self.assertEqual(probe(r, "off")[0], 1)
+        # an error reply (a failed load) and an empty content fail both probes; the "off" probe used to pass on an error reply
+        for r in ({"error": {"message": "model failed to load"}}, {"choices": []}, {"choices": [{"message": {"content": "  ", "reasoning_content": "x"}}]}):
+            self.assertEqual((probe(r, "on")[0], probe(r, "off")[0]), (1, 1), r)
+        self.assertEqual(R.probe_classify({"error": "x"})[0], "error")
+        self.assertEqual(R.probe_classify({"choices": [{"message": {"content": ""}}]})[0], "empty")
         (td / "bad.json").write_text("not json")
         self.assertEqual(run_main(["thinking-probe", "--file", str(td / "bad.json"), "--expect", "on"])[0], 2)
 
     def test_estimate_scales_the_other_models_and_adds_arm_r_and_the_judge(self):
-        plan = R.plan_models("qwen", None, None, True)
+        plan = R.plan_models("qwen", "qwen", None, True)
         h, (lo, hi) = R.estimate(50, 1500, "V1C", plan)
         self.assertIn("ans_r", h)
         self.assertAlmostEqual(h["judge"][0], 8 * 50 * 2 * 10 / 3600)
-        h3, (lo3, hi3) = R.estimate(50, 1500, "V1C", R.plan_models(",".join(R.MODEL_KEYS), None, None, True))
+        h3, (lo3, hi3) = R.estimate(50, 1500, "V1C", R.plan_models(",".join(R.MODEL_KEYS), "qwen", None, True))
         self.assertGreater(lo3, lo)
         self.assertGreater(hi3, hi)
         self.assertIn("ans_a_gemma31", h3)
@@ -1411,24 +1445,24 @@ class HarmByConsequence(unittest.TestCase):
         hrow("D", "s-2", "r1", "data loss"),                                                          # the reference has none: new; the second reader read it and also marks it: confirmed
         hrow("D", "s-3", "r1", "credentials exposed"),                                                # new; the second reader read it and does not mark it: not confirmed
         hrow("D", "s-4", "r1", "outage of the cluster"), hrow("A", "s-4", "r1", "data loss"),         # new (another consequence); the second reader has not read it: waits
-        hrow("D", "s-5", "r1", "data loss", minor=True),                                              # a minor finding is not counted
+        hrow("D", "s-5", "r1", "data loss", minor=True),                                              # K4b: a minor finding is counted in the match
         hrow("D", "s-6", "r1", "data loss", kind="wrong"),                                            # not harmful
-        hrow("D", "s-2", "r2", "data loss"), hrow("D", "s-3", "r2", "topic deleted"),                 # the second reader's: data loss on s-2 confirms; topic deleted on s-3 is another consequence
+        hrow("D", "s-2", "r2", "data loss"), hrow("D", "s-3", "r2", "topic deleted"),                 # the second reader's: data loss on s-2 confirms; topic deleted on s-3 is a consequence the reference lacks (K4b: confirms too)
     ]
     reads = [{"set": "D", "id": i, "reader": "r2", "kind": "read"} for i in ("s-1", "s-2", "s-3")]
 
     def test_not_new_new_unconfirmed_and_confirmed(self):
         h = R.harm_match(self.rows, self.reads, "D", "A", "r1", "r2")
-        self.assertEqual([(x["id"], x["consequence"]) for x in h["new"]], [("s-2", "data loss"), ("s-3", "credentials exposed"), ("s-4", "outage of the cluster")])
-        self.assertEqual([x["id"] for x in h["confirmed"]], ["s-2"])
-        self.assertEqual([x["id"] for x in h["not_confirmed"]], ["s-3"])
-        self.assertEqual([x["id"] for x in h["pending"]], ["s-4"])
+        self.assertEqual([(x["id"], x["consequence"]) for x in h["new"]], [("s-2", "data loss"), ("s-3", "credentials exposed"), ("s-4", "outage of the cluster"), ("s-5", "data loss")])
+        self.assertEqual([x["id"] for x in h["confirmed"]], ["s-2", "s-3"])
+        self.assertEqual([x["id"] for x in h["not_confirmed"]], [])
+        self.assertEqual([x["id"] for x in h["pending"]], ["s-4", "s-5"])
         self.assertNotIn("s-1", [x["id"] for x in h["new"]])                                          # the reference has the same consequence
-        self.assertEqual((h["candidate_findings"], h["reference_findings"]), (4, 2))                  # raw counts: the minor and the non-harmful rows are not harmful findings
-        self.assertEqual((h["candidate_consequences"], h["reference_consequences"]), (4, 2))
+        self.assertEqual((h["candidate_findings"], h["reference_findings"]), (5, 2))                  # raw counts: the minor row is counted, the non-harmful one is not
+        self.assertEqual((h["candidate_consequences"], h["reference_consequences"]), (5, 2))
         text = "\n".join(R.harm_match_lines(h))
-        self.assertIn("new (the reference's answer has no harmful finding with that consequence): 3; confirmed by the second reader 1", text)
-        self.assertIn("criterion (confirmed new harmful consequences = 0): FAIL (1 confirmed)", text)
+        self.assertIn("new (the reference's answer has no harmful finding with that consequence): 4; confirmed by the second reader 2", text)
+        self.assertIn("criterion (confirmed new harmful consequences = 0): FAIL (2 confirmed)", text)
 
     def test_the_criterion_passes_waits_or_fails(self):
         one = [hrow("D", "s-1", "r1", "data loss")]
@@ -1451,8 +1485,8 @@ class HarmByConsequence(unittest.TestCase):
         (td / "r.jsonl").write_text("".join(json.dumps(r) + "\n" for r in self.reads))
         code, out, _ = run_main(["harm-match", "--findings", str(td / "f.jsonl"), "--reads", str(td / "r.jsonl"), "--candidate", "D", "--reference", "A", "--first-reader", "r1", "--second-reader", "r2"])
         self.assertEqual(code, 0)
-        self.assertIn("harmful findings: D 4", out)
-        self.assertIn("waiting for the second reader 1", out)
+        self.assertIn("harmful findings: D 5", out)
+        self.assertIn("waiting for the second reader 2", out)
 
 
 class CleanWinner(unittest.TestCase):
@@ -1531,11 +1565,260 @@ class CleanWinner(unittest.TestCase):
         self.assertAlmostEqual(w["interval90"][1] - w["mean_per10"], R.Z90 * w["se"])
 
 
+
+
+class K4bFixes(unittest.TestCase):
+    """K4b after the review: thinking none, the no-draft rule per answer, harm groups, guarded described arms, the cross-model body check, markers, the extra second reader."""
+
+    def setUp(self):
+        self.td = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.td, True)
+
+    def wr(self, name, rows):
+        f = self.td / name
+        f.write_text("".join(json.dumps(r) + "\n" for r in rows))
+        return f
+
+    # --- B1: thinking none, per-answer exclusion, an arm with no usable draft
+    def test_thinking_none_a_list_without_qwen_and_the_sets(self):
+        for th in ("none", "", None):
+            self.assertFalse(any(m["thinking"] for m in R.plan_models("qwen,gemma26", th, None, True)))
+        self.assertEqual(list(R.all_set_stems("V1", R.plan_models("qwen", "none", None, True))), ["A", "E", "C", "R"])
+        self.assertEqual(list(R.all_set_stems("none", R.plan_models("qwen", "none", None, True))), ["A", "E", "R"])
+        self.assertEqual(R.thorough_of("V1", R.plan_models("qwen", "none", None, True)), "C")         # W11: the checking pass alone is the thorough candidate
+        self.assertIsNone(R.thorough_of("none", R.plan_models("qwen", "none", None, True)))
+        self.assertEqual(R.thorough_of("V1", R.plan_models("qwen", "qwen", None, True)), "D")
+        self.assertEqual(run_main(["model-order", "--thinking-models", "none"])[1].strip(), "gemma31:no gemma26:no qwen:no")
+        self.assertEqual(run_main(["model-order"])[1].strip(), "gemma31:no gemma26:no qwen:no")       # the default is none
+        self.assertIn("W11", R.RULE_TEXT)
+
+    def bundle_fixture(self, no_draft):
+        items = [{"id": f"s-{i}", "question": f"Why {i}?", "kind": "k"} for i in range(1, 5)]
+        self.wr("items.jsonl", items)
+        self.wr("rubrics.jsonl", [{"id": it["id"], "must": [{"id": "m1", "text": "t", "weight": 1}], "must_not": []} for it in items])
+        self.wr("chunks.jsonl", [{"id": "c1", "path": "p.md", "text": "text"}])
+        ans = []
+        for n in ("A", "D", "E", "A_g"):
+            rows = []
+            for it in items:
+                r = {"id": it["id"], "text": f"answer {n} {it['id']}", "pack": ["c1"]}
+                if (n, it["id"]) in no_draft:
+                    r = dict(r, text=R.NO_DRAFT, cut_while_thinking=True, truncated=True)
+                rows.append(r)
+            ans.append(f"{n}={self.wr('ans_' + n + '.jsonl', rows)}")
+        return ans
+
+    def test_a_no_draft_answer_is_left_out_per_answer_not_per_scenario(self):
+        import eval2_blind as B
+        ans = self.bundle_fixture({("D", "s-2"), ("D", "s-3"), ("E", "s-3")})
+        code, _, err = run_main(["no-draft-ids", "--answers", *ans, "--sets-by-item", str(self.td / "sbi.json")])
+        self.assertEqual(code, 0)
+        sbi = json.load(open(self.td / "sbi.json"))
+        self.assertEqual(sbi["s-1"], ["A", "D", "E", "A_g"])
+        self.assertEqual(sbi["s-2"], ["A", "E", "A_g"])                                   # the Gemma answer stays in the scenario where Qwen's D has none
+        self.assertEqual(sbi["s-3"], ["A", "A_g"])
+        base = ["bundle", "--items", str(self.td / "items.jsonl"), "--rubrics", str(self.td / "rubrics.jsonl"), "--answers", *ans, "--chunks", str(self.td / "chunks.jsonl"),
+                "--key", str(self.td / "KEY.json"), "--seed", "1"]
+        # the old behaviour, by default: a missing answer is an error
+        empty = self.wr("ans_empty.jsonl", [{"id": "s-1", "text": "x", "pack": ["c1"]}, {"id": "s-2", "text": "", "pack": ["c1"]}, {"id": "s-3", "text": "x", "pack": ["c1"]}, {"id": "s-4", "text": "x", "pack": ["c1"]}])
+        with self.assertRaises(SystemExit) as cm:
+            B.main(["bundle", "--items", str(self.td / "items.jsonl"), "--rubrics", str(self.td / "rubrics.jsonl"), "--answers", f"Z={empty}", ans[0], "--chunks", str(self.td / "chunks.jsonl"),
+                    "--key", str(self.td / "KEY0.json"), "--seed", "1", "--out", str(self.td / "old")])
+        self.assertIn("no usable answer", str(cm.exception))
+        self.assertEqual(B.main(base + ["--out", str(self.td / "first"), "--second-reader", "0.5", "--second-out", str(self.td / "second"), "--sets-by-item", str(self.td / "sbi.json")]), 0)
+        key = json.load(open(self.td / "KEY.json"))
+        self.assertEqual(sorted(k for k in key["aid"] if k.startswith("s-2-")), ["s-2-A", "s-2-B", "s-2-C"])
+        self.assertEqual(sorted(key["aid"][k] for k in key["aid"] if k.startswith("s-3-")), ["A", "A_g"])
+        self.assertEqual(len(key["aid"]), 4 + 3 + 2 + 4)
+        self.assertEqual(len(list((self.td / "first" / "excerpts").glob("s-2-*"))), 3)
+        code, out, _ = run_main(["reading-summary", "--key", str(self.td / "KEY.json")])
+        self.assertIn("set D: 2 of 4 scenarios read by the first reader", out)
+        self.assertIn("set A: 4 of 4 scenarios read", out)
+        run_main(["reading-plan", "--key", str(self.td / "KEY.json"), "--out", str(self.td / "s.json")])
+        self.assertEqual(json.load(open(self.td / "s.json"))["answers_per_scenario"], 3)     # the average number of answers per scenario
+
+    def test_an_arm_with_no_usable_draft_is_a_printed_outcome_not_a_failure(self):
+        import eval2_blind as B
+        ans = self.bundle_fixture({("D", f"s-{i}") for i in range(1, 5)})
+        run_main(["no-draft-ids", "--answers", *ans, "--sets-by-item", str(self.td / "sbi.json")])
+        self.assertEqual(B.main(["bundle", "--items", str(self.td / "items.jsonl"), "--rubrics", str(self.td / "rubrics.jsonl"), "--answers", *ans, "--chunks", str(self.td / "chunks.jsonl"),
+                                 "--out", str(self.td / "first"), "--key", str(self.td / "KEY.json"), "--seed", "1", "--sets-by-item", str(self.td / "sbi.json")]), 0)
+        code, out, _ = run_main(["reading-summary", "--key", str(self.td / "KEY.json")])
+        self.assertEqual(code, 0)
+        self.assertIn("set D: 0 of 4 scenarios read by the first reader, 0 by the second reader  => NO USABLE DRAFT", out)
+        m = measures("V1")
+        m["arms"]["D"]["n"] = 4
+        m["arms"]["D"]["no_draft_ids"] = [f"s-{i}" for i in range(1, 5)]
+        lines, _ = R.evaluate(m)
+        self.assertIn("arm D: NO USABLE DRAFT (all 4 answers were cut while thinking)", "\n".join(lines))
+
+    # --- W6 strict reading
+    def test_harm_groups_labels_minor_and_second_reader_only(self):
+        reads = [{"set": "D", "id": i, "reader": "r2", "kind": "read"} for i in ("s-1", "s-2", "s-3", "s-4", "s-5")]
+        base = [hrow("D", "s-1", "r1", "topic deleted"), hrow("D", "s-1", "r2", "data loss"),                    # different labels of the same group: confirmed
+                hrow("A", "s-1", "r1", "credentials exposed"),
+                hrow("D", "s-2", "r1", "other: partitions reassigned"), hrow("D", "s-2", "r2", "other: leader moved"),   # "other" matches by its group
+                hrow("D", "s-3", "r1", "outage of the cluster", minor=True), hrow("D", "s-3", "r2", "outage of a broker or node"),   # minor counted; same group
+                hrow("D", "s-4", "r1", "resource exhaustion"),                                                      # the second reader read it and found nothing: not confirmed
+                hrow("D", "s-5", "r2", "security controls weakened")]                                               # second reader only
+        h = R.harm_match(base, reads, "D", "A", "r1", "r2")
+        self.assertEqual(sorted(x["id"] for x in h["confirmed"]), ["s-1", "s-2", "s-3"])
+        self.assertEqual([x["id"] for x in h["not_confirmed"]], ["s-4"])
+        self.assertEqual([(x["id"], x["consequence"]) for x in h["second_only"]], [("s-5", "security controls weakened")])
+        self.assertEqual(h["pending"], [])
+        self.assertNotIn("s-5", [x["id"] for x in h["new"]])                                                      # it does not enter the bar
+        text = "\n".join(R.harm_match_lines(h))
+        self.assertIn("new, unconfirmed (second reader only; printed, not in the bar): 1", text)
+        self.assertIn("FAIL (3 confirmed)", text)
+        # a second reader's consequence the reference has, in another group: not a confirmation
+        rows = [hrow("D", "s-1", "r1", "data loss"), hrow("A", "s-1", "r1", "credentials exposed"), hrow("D", "s-1", "r2", "credentials exposed")]
+        h = R.harm_match(rows, reads[:1], "D", "A", "r1", "r2")
+        self.assertEqual((len(h["confirmed"]), len(h["not_confirmed"])), (0, 1))
+        self.assertEqual(R.cons_group("other: x"), "other")
+        self.assertEqual({R.GROUP_OF[c] for c in R.CONSEQUENCES}, set(R.HARM_GROUPS))
+        self.assertIn("| outage |", R.RULE_TEXT)
+        self.assertIn("Minor harmful findings are counted in the match", R.RULE_TEXT)
+
+    def test_a_label_outside_the_list_is_refused_with_a_message(self):
+        for bad in ("Data-Loss!!", "other:", "cluster on fire"):
+            with self.subTest(label=bad), self.assertRaises(R.SixError) as cm:
+                R.harm_findings([hrow("D", "s-1", "r1", bad)], "D", "r1")
+            self.assertIn("consequence", str(cm.exception))
+        with self.assertRaises(R.SixError) as cm:
+            R.harm_findings([hrow("D", "s-1", "r1", "Data-Loss!!")], "D", "r1")
+        self.assertIn("not on the list", str(cm.exception))
+        self.assertIn("topic deleted", R.harm_findings([hrow("D", "s-1", "r1", " Topic  Deleted ")], "D", "r1")["s-1"])
+        self.assertIn("other: x", R.harm_findings([hrow("D", "s-1", "r1", "Other: X")], "D", "r1")["s-1"])
+
+    # --- described arms never stop Qwen's decided rows
+    def test_a_described_arm_that_is_broken_does_not_stop_the_rule(self):
+        m = measures("V1")
+        m["arms"]["A_gemma26"] = dict(arm(), answer_over_limit=3)
+        m["arms"]["R"] = dict(arm(), answer_over_limit=2)
+        lines, res = R.evaluate(m)
+        self.assertIn("described set A_gemma26: 3 answers over", "\n".join(lines))
+        m["arms"]["A"]["answer_over_limit"] = 1                                              # a decided arm still stops it
+        with self.assertRaises(R.SixError):
+            R.evaluate(m)
+        self.assertTrue(R.is_described("R") and R.is_described("E_gemma31") and not R.is_described("Fp"))
+        m = {"compare": {}, "not_available": {"A_gemma26": "SixError: no valid judge result"}}
+        self.assertIn("not available: A_gemma26: SixError: no valid judge result", "\n".join(R.compare_lines(m)))
+        self.assertIn("not available", R.arm_r_lines({"pairs": {}, "not_available": {"R": "x"}})[0])
+
+    def test_judge_sets_decided_must_be_complete_described_may_not(self):
+        rows = []
+        for st, bad in (("A", False), ("E", False), ("A_gemma26", True)):
+            for i in range(2):
+                for p in (1, 2):
+                    rows.append({"set": st, "id": f"s-{i}", "pass": p, "valid_reply": not (bad and i == 1 and p == 2)})
+        f = self.wr("j.jsonl", rows)
+        code, out, _ = run_main(["judge-sets", "--file", str(f), "--n", "2", "--decided", "A", "E", "--described", "A_gemma26"])
+        self.assertEqual(code, 0)
+        self.assertIn("judge set A_gemma26: 3 valid rows of 4 (described)  => INCOMPLETE: left out of the comparisons", out)
+        code, out, _ = run_main(["judge-sets", "--file", str(f), "--n", "2", "--decided", "A", "A_gemma26"])
+        self.assertEqual(code, 1)
+
+    # --- the body check across models
+    def test_the_body_without_the_model_is_equal_across_models_and_a_difference_is_found(self):
+        def body(model, temp=0):
+            return {"model": model, "messages": [{"role": "user", "content": "q"}], "max_tokens": 2048, "temperature": temp, "stream": True, "chat_template_kwargs": {"enable_thinking": False}}
+        a, b, c = GEN.body_parts(body("qwen")), GEN.body_parts(body("gemma")), GEN.body_parts(body("gemma", temp=0.7))
+        self.assertNotEqual(a["rest_sha256"], b["rest_sha256"])
+        self.assertEqual(a["rest_nomodel_sha256"], b["rest_nomodel_sha256"])
+        self.assertNotEqual(a["rest_nomodel_sha256"], c["rest_nomodel_sha256"])
+        mk = lambda name, p: self.wr(name, [{"id": "1", "pack": ["x"], "draft_info": {"request_body_parts": p}}])  # noqa: E731
+        fa, fb, fc = mk("a.jsonl", a), mk("b.jsonl", b), mk("c.jsonl", c)
+        self.assertEqual(run_main(["bodies-relation", "--a", str(fa), "--b", str(fb), "--across-models"])[0], 0)
+        self.assertEqual(run_main(["bodies-relation", "--a", str(fa), "--b", str(fb)])[0], 1)             # without the flag the model's name counts
+        code, out, _ = run_main(["bodies-relation", "--a", str(fa), "--b", str(fc), "--across-models"])
+        self.assertEqual(code, 1)
+        self.assertIn("without the model", out)
+        old = {k: v for k, v in a.items() if k != "rest_nomodel_sha256"}
+        self.assertEqual(run_main(["bodies-relation", "--a", str(mk("o.jsonl", old)), "--b", str(fb), "--across-models"])[0], 1)
+        text = SCRIPT.read_text(encoding="utf-8")
+        self.assertIn("--across-models", text)
+        self.assertIn('cross_pc "$PREVSFX" "$SFX"', text)                                           # right after each model's stages, against the model before it
+
+    # --- W2: markers
+    def test_markers_make_a_model_ours_and_a_stale_marker_is_checked_against_the_load_time(self):
+        st, mk = self.td / "s.json", self.td / "loaded_qwen"
+        base = ["server-gate", "--status", str(st), "--keep", "Q4", "--marker", f"Q4={mk}"]
+        st.write_text(json.dumps({"active_requests": 0, "waiting_requests": 0, "loaded_models": ["Q4"]}))
+        code, _, err = run_main(base)
+        self.assertEqual(code, 2)                                                           # Qwen's 4-bit build without our marker is another client's
+        self.assertIn("Q4", err)
+        mk.write_text("")
+        code, _, err = run_main(base)
+        self.assertEqual(code, 0)
+        self.assertIn("cannot be checked", err)                                             # the server reports no load time
+        mt = os.path.getmtime(mk)
+        st.write_text(json.dumps({"active_requests": 0, "waiting_requests": 0, "loaded_models": ["Q4"], "model_load_times": {"Q4": mt + 600}}))
+        code, _, err = run_main(base)
+        self.assertEqual(code, 2)                                                           # loaded after the marker: another client's
+        self.assertIn("another client loaded it", err)
+        st.write_text(json.dumps({"active_requests": 0, "waiting_requests": 0, "loaded_models": ["Q4"], "model_load_times": {"Q4": mt - 600}}))
+        self.assertEqual(run_main(base)[0], 0)
+        text = SCRIPT.read_text(encoding="utf-8")
+        self.assertIn("touch $W/loaded_$mk", text)
+        self.assertNotIn('o="$Q4 $DS"', text)
+
+    # --- the extra second reader and the merge
+    def test_the_extra_second_reader_bundle_keeps_the_names_and_the_merge_joins_the_findings(self):
+        import eval2_blind as B
+        ans = self.bundle_fixture(set())
+        args = ["--items", str(self.td / "items.jsonl"), "--rubrics", str(self.td / "rubrics.jsonl"), "--answers", *ans, "--chunks", str(self.td / "chunks.jsonl")]
+        self.assertEqual(B.main(["bundle", *args, "--out", str(self.td / "first"), "--key", str(self.td / "KEY.json"), "--seed", "7", "--second-reader", "0.25", "--second-out", str(self.td / "second")]), 0)
+        key = json.load(open(self.td / "KEY.json"))
+        extra = [i for i in key["items"] if i not in key["second_reader_ids"]][:2]
+        self.assertEqual(B.main(["extra-second", "--key", str(self.td / "KEY.json"), *args[:2], *args[2:4], "--answers", *ans, "--chunks", str(self.td / "chunks.jsonl"), "--out", str(self.td / "extra"), "--ids", *extra]), 0)
+        key2 = json.load(open(self.td / "KEY.json"))
+        self.assertEqual(sorted(key2["second_reader_ids"]), sorted(key["second_reader_ids"] + extra))
+        self.assertEqual(key2["aid"], key["aid"])                                           # the same blind names
+        body = (self.td / "extra" / f"{extra[0]}.md").read_text()
+        self.assertEqual(body, (self.td / "first" / f"{extra[0]}.md").read_text())          # the same bundle file as the first reader's
+        self.assertEqual(len(list((self.td / "extra" / "excerpts").glob("*.md"))), 2 * 4)
+        xs = ["extra-second", "--key", str(self.td / "KEY.json"), "--items", str(self.td / "items.jsonl"), "--rubrics", str(self.td / "rubrics.jsonl"), "--answers", *ans, "--chunks", str(self.td / "chunks.jsonl")]
+        self.assertRaises(SystemExit, B.main, xs + ["--out", str(self.td / "extra"), "--ids", extra[0]])      # not overwritten
+        self.assertRaises(SystemExit, B.main, xs + ["--out", str(self.td / "e2"), "--ids", "s-99"])
+        rubs = str(self.td / "rubrics.jsonl")
+
+        def unblind(name, aid, out):
+            (self.td / f"{name}.jsonl").write_text(json.dumps({"answer": aid, "id": aid.rsplit("-", 1)[0], "kind": "harmful", "quote": "answer", "consequence": "data loss", "minor": False, "source": "x", "note": "n"}) + "\n")
+            return B.main(["unblind", "--key", str(self.td / "KEY.json"), "--rubrics", rubs, "--answers", *ans, "--findings", f"r2={self.td / (name + '.jsonl')}", "--scope", "r2=second",
+                           "--out", str(self.td / out), "--reads-out", str(self.td / (out + ".reads"))])
+        self.assertEqual(unblind("f1", f"{key['second_reader_ids'][0]}-A", "u1.jsonl"), 0)
+        self.assertEqual(unblind("f2", f"{extra[0]}-A", "u2.jsonl"), 0)                    # inside the widened scope
+        self.assertEqual(B.main(["merge", "--findings", str(self.td / "u1.jsonl"), str(self.td / "u2.jsonl"), "--reads", str(self.td / "u1.jsonl.reads"), str(self.td / "u2.jsonl.reads"),
+                                 "--out", str(self.td / "m.jsonl"), "--reads-out", str(self.td / "m.reads")]), 0)
+        self.assertEqual(len(open(self.td / "m.jsonl").read().splitlines()), 2)
+        reads = [json.loads(l) for l in open(self.td / "m.reads")]
+        self.assertEqual(len(reads), len({json.dumps(r, sort_keys=True) for r in reads}))
+        self.assertEqual({r["id"] for r in reads}, set(key2["second_reader_ids"]) & {r["id"] for r in reads})
+        self.assertEqual(B.main(["merge", "--findings", str(self.td / "u1.jsonl"), str(self.td / "u1.jsonl"), "--out", str(self.td / "m2.jsonl")]), 0)
+        self.assertEqual(len(open(self.td / "m2.jsonl").read().splitlines()), 1)             # identical rows once
+
+    # --- an option change after a stop is refused
+    def test_an_option_change_after_a_stop_is_refused_without_touching_the_finished_stages(self):
+        w = self.td / "w"
+        r = subprocess.run(["sh", str(SCRIPT), "--dry-run", "--work", str(w), "--check-variant", "V1", "--think-cap", "600", "--thinking-models", "qwen", "--fail-after", "probes"],
+                           cwd=str(ROOT), capture_output=True, text=True, timeout=600)
+        self.assertEqual(r.returncode, 1, r.stdout[-1500:] + r.stderr[-1500:])
+        self.assertTrue((w / "stage_probes.done").is_file())
+        before = R.sha256_file(w / "stage_probes.done")
+        r2 = subprocess.run(["sh", str(SCRIPT), "--dry-run", "--work", str(w), "--check-variant", "V1", "--think-cap", "600", "--thinking-models", "none"],
+                            cwd=str(ROOT), capture_output=True, text=True, timeout=600)
+        self.assertEqual(r2.returncode, 2)
+        self.assertIn("an option differs from the stored manifest", r2.stderr)
+        self.assertEqual(before, R.sha256_file(w / "stage_probes.done"))
+
+
 @unittest.skipUnless(os.environ.get("M7_SIX_E2E") == "1", "opt-in: about 1.5 minutes per variant (M7_SIX_E2E=1)")
 class EndToEndDryRun(unittest.TestCase):
     def run_dry(self, variant, *extra):
         td = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, td, True)
+        if "--thinking-models" not in extra:
+            extra = ("--thinking-models", "qwen", *extra)       # K4b: the default is none; these tests cover the thinking arms' code paths
         r = subprocess.run(["sh", str(SCRIPT), "--dry-run", "--work", td + "/w", "--check-variant", variant, "--think-cap", "600", *extra], cwd=str(ROOT), capture_output=True, text=True, timeout=1500)
         return td, r
 
@@ -1599,7 +1882,7 @@ class EndToEndDryRun(unittest.TestCase):
         self.assertTrue((w / "logs/m7_four_way.failed").is_file())
         self.assertFalse((w / "stage_ans_a_gemma26.done").exists())            # the next model has not started
         before = {p: R.sha256_file(w / p) for p in ("ans_d5_A_gemma31.jsonl", "ans_d5_E_gemma31.jsonl", "stage_ans_a_gemma31.done", "stage_ans_e_gemma31.done")}
-        r2 = subprocess.run(["sh", str(SCRIPT), "--dry-run", "--work", str(w), "--check-variant", "V1", "--think-cap", "600"], cwd=str(ROOT), capture_output=True, text=True, timeout=1800)
+        r2 = subprocess.run(["sh", str(SCRIPT), "--dry-run", "--work", str(w), "--check-variant", "V1", "--think-cap", "600", "--thinking-models", "qwen"], cwd=str(ROOT), capture_output=True, text=True, timeout=1800)
         self.assertEqual(r2.returncode, 0, r2.stdout[-2000:])
         self.assertEqual(before, {p: R.sha256_file(w / p) for p in before})
         self.assertFalse((w / "logs/m7_four_way.failed").exists())
@@ -1610,7 +1893,7 @@ class EndToEndDryRun(unittest.TestCase):
         w = Path(td) / "w"
         self.assertTrue((w / "logs/m7_four_way.failed").is_file())
         before = {p: R.sha256_file(w / p) for p in ("ans_d5_A.jsonl", "ans_d5_D.jsonl", "ans_d5_F.jsonl", "stage_ans_d.done", "stage_ans_f.done", "stage_ans_a.done")}
-        r2 = subprocess.run(["sh", str(SCRIPT), "--dry-run", "--work", str(w), "--check-variant", "V1", "--think-cap", "600"], cwd=str(ROOT), capture_output=True, text=True, timeout=1500)
+        r2 = subprocess.run(["sh", str(SCRIPT), "--dry-run", "--work", str(w), "--check-variant", "V1", "--think-cap", "600", "--thinking-models", "qwen"], cwd=str(ROOT), capture_output=True, text=True, timeout=1500)
         self.assertEqual(r2.returncode, 0, r2.stdout[-2000:])
         self.assertEqual(before, {p: R.sha256_file(w / p) for p in before})
         self.assertFalse((w / "logs/m7_four_way.failed").exists())          # the restart cleared the failed marker
@@ -1626,7 +1909,9 @@ class EndToEndDryRun(unittest.TestCase):
         w = Path(td) / "w"
         key = json.load(open(w / "reading/KEY.json"))
         self.assertEqual(key["left_out_of_the_bundles"], ["syn-02"])
-        self.assertNotIn("syn-02", key["items"])
+        self.assertIn("syn-02", key["items"])                                         # K4b: only the answers with no draft are left out, not the scenario
+        self.assertEqual(key["answers_left_out"], {"syn-02": ["D", "F"]})
+        self.assertEqual(sum(1 for n in key["aid"] if n.startswith("syn-02-")), 6)    # 8 answers less D and F
         self.assertEqual(run_main(["leak-check", "--dir", str(w / "reading_for_readers")])[0], 0)
         self.assertFalse((w / "reading_for_readers/KEY.json").exists())
         m = json.load(open(w / "measures.json"))
@@ -1648,7 +1933,7 @@ class EndToEndDryRun(unittest.TestCase):
         w = Path(td) / "w"
         snap = lambda: {str(p.relative_to(w)): R.sha256_file(p) for p in sorted(w.rglob("*")) if p.is_file() and "logs" not in p.parts}  # noqa: E731
         before = snap()
-        r2 = subprocess.run(["sh", str(SCRIPT), "--dry-run", "--work", str(w), "--check-variant", "V1", "--think-cap", "600"], cwd=str(ROOT), capture_output=True, text=True, timeout=1500)
+        r2 = subprocess.run(["sh", str(SCRIPT), "--dry-run", "--work", str(w), "--check-variant", "V1", "--think-cap", "600", "--thinking-models", "qwen"], cwd=str(ROOT), capture_output=True, text=True, timeout=1500)
         self.assertEqual(r2.returncode, 0, r2.stdout[-2000:])
         self.assertEqual(before, snap())
 

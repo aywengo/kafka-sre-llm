@@ -17,6 +17,10 @@
 #   (--qwen-model, --gemma26-model, --gemma31-model; defaults Qwen3.8-27B-4bit, gemma-4-26B-A4B-it-QAT-MLX-4bit, and a placeholder for the 31B, whose 4-bit build is made later, task G0: a real run refuses a placeholder).
 #   The answer stages are grouped by model, each model loaded alone and unloaded after its stages, in the order gemma31, gemma26, qwen (inside Qwen: D, F, A, C, E, R). The server gate never unloads a model another client
 #   loaded (W2): a model of this chain is one it loaded (a marker in the work folder), plus Qwen's 4-bit build and the judge. Another model's switch is probed after its load (thinking on shows thinking, off shows none).
+#   K4b (after the review; W11): --thinking-models defaults to none and a real run must pass it explicitly (recorded in the manifest and the header): with none, Qwen answers A, E, R and C (the checking pass alone is the thorough
+#   candidate, W11) and the thinking arms' code paths stay but are not part of the planned run. Every model other than Qwen is probed alone at the gate, before any answer (switch off and on; stage `probes`); a model counts as ours (W2)
+#   only with a marker this chain wrote when it loaded it, Qwen's 4-bit build and the judge included; the prompt check and the model-free request-body check run right after each model's stages; an answer with no draft is left out of its
+#   bundle, not the scenario; a described set (R, another model's) that cannot be computed is "not available" and stops nothing.
 #   Time is reported, not decided (W5); harm is matched by consequence (W6); the comparison of each model with Qwen is described, not decided (W10): see the rule text in the report header.
 # Required arguments (the real run and the dry run refuse without them): --check-variant V1|V1C|none and --think-cap N. They come from the pilot (K3 and the check pilot); the real run
 #   also needs --check-variant-source and --think-cap-source (where the value comes from), recorded in the manifest and the report. V1: the checking pass without reference cards, V1C:
@@ -60,7 +64,7 @@
 # 10 to 14 server hours).
 set -e
 DRY=no; WSET=no; W=work/m7/six_arm; REPORT=runs/m7/M7_SIX_ARM.md; RSET=no; VARIANT=; CAP=; VSRC=; CSRC=; PERFECT=work/m7/packs_perfect.jsonl; MAXU=0; FAILAFTER=; DRYITEMS=8; PSET=no
-PILOT=runs/m7/M7_PILOT.md; PLANTCUT=; PLANTCHK=; MODELS=qwen,gemma26,gemma31; THINK=qwen; QID=; G26ID=; G31ID=; SPS=0
+PILOT=runs/m7/M7_PILOT.md; PLANTCUT=; PLANTCHK=; MODELS=qwen,gemma26,gemma31; THINK=none; THSET=no; QID=; G26ID=; G31ID=; SPS=0
 IDS=eval/m4/g_dev_ids.json; ITEMS=eval/m6/d5/items.jsonl; RUBS=eval/m6/d5/rubrics.jsonl; CC=eval/m6/d5/CHUNK_CHECK.json; FW=work/m6/d5_funnel
 while [ $# -gt 0 ]; do case $1 in
   --dry-run) DRY=yes;;
@@ -68,7 +72,7 @@ while [ $# -gt 0 ]; do case $1 in
   --check-variant) VARIANT=${2:?}; shift;; --think-cap) CAP=${2:?}; shift;; --check-variant-source) VSRC=${2:?}; shift;; --think-cap-source) CSRC=${2:?}; shift;;
   --perfect-packs) PERFECT=${2:?}; PSET=yes; shift;; --ids) IDS=${2:?}; shift;; --max-unjudged) MAXU=${2:?}; shift;; --fail-after) FAILAFTER=${2:?}; shift;; --dry-items) DRYITEMS=${2:?}; shift;;
   --pilot-report) PILOT=${2:?}; shift;; --plant-cut) PLANTCUT=${2:?}; shift;; --plant-check-fail) PLANTCHK=${2:?}; shift;;
-  --models) MODELS=${2:?}; shift;; --thinking-models) THINK=${2:?}; shift;; --qwen-model) QID=${2:?}; shift;; --gemma26-model) G26ID=${2:?}; shift;; --gemma31-model) G31ID=${2:?}; shift;;
+  --models) MODELS=${2:?}; shift;; --thinking-models) THINK=${2:?}; THSET=yes; shift;; --qwen-model) QID=${2:?}; shift;; --gemma26-model) G26ID=${2:?}; shift;; --gemma31-model) G31ID=${2:?}; shift;;
   --scenarios-per-session) SPS=${2:?}; shift;;
   *) echo "usage: scripts/m7_four_way.sh [--dry-run] [--work DIR] [--report FILE] --check-variant V1|V1C|none --think-cap N [--check-variant-source TXT --think-cap-source TXT] [--perfect-packs F] [--ids FILE] [--pilot-report F] [--max-unjudged N] [--models LIST] [--thinking-models LIST] [--gemma31-model ID] (see the header)" >&2; exit 2;; esac
   shift; done
@@ -91,6 +95,7 @@ if [ $DRY = no ]; then
   case "$CSRC" in *[![:space:]]*) ;; *) refuse "--think-cap-source is required in a real run (where the cap comes from, e.g. the pilot's report)";; esac
   [ -z "$FAILAFTER" ] || refuse "--fail-after is for dry runs only"
   [ -z "$PLANTCUT$PLANTCHK" ] || refuse "--plant-cut and --plant-check-fail are for dry runs only"
+  [ $THSET = yes ] || refuse "--thinking-models LIST|none is required in a real run (the default is none: whether Qwen's thinking arms run at all is the Owner's decision; the value is recorded in the manifest and the header)"
   .venv/bin/python $R pilot-check --file "$PILOT" || refuse "the pilot's report is not usable (see above)"
 else
   [ -n "$VSRC" ] || VSRC="dry run: none"; [ -n "$CSRC" ] || CSRC="dry run: none"
@@ -104,6 +109,7 @@ JSETTING=deepseek-nothink-12k; SRC=12000
 case $VARIANT in none) CHECKING=no;; *) CHECKING=yes;; esac
 SETLINES=$(.venv/bin/python $R sets --check-variant $VARIANT $MARGS) || refuse "the judged sets could not be listed"
 SETNAMES=$(echo "$SETLINES" | awk '{print $1}' | tr '\n' ' ')
+DECSETS=$(echo "$SETLINES" | awk '$3=="decided"{print $1}' | tr '\n' ' '); DESCSETS=$(echo "$SETLINES" | awk '$3=="described"{print $1}' | tr '\n' ' ')     # Qwen's sets decide the rows; R and the other models' sets are described (K4b)
 NSETS=$(echo $SETNAMES | wc -w | tr -d ' ')
 stem_of() { echo "$SETLINES" | awk -v n=$1 '$1==n{print $2}'; }     # the file stem of a set's D5 answers
 MODELORDER=$(.venv/bin/python $R model-order $MARGS) || refuse "the model order could not be made"     # e.g. gemma31:no gemma26:no qwen:yes
@@ -113,7 +119,7 @@ if [ $DRY = yes ]; then
   [ $WSET = yes ] || W=$(mktemp -d "${TMPDIR:-/tmp}/m7_four_way.XXXXXX")
   L=$W/logs; [ $RSET = yes ] || REPORT=$W/M7_SIX_ARM_from_stub_data.md
   case "$REPORT $W $([ $PSET = yes ] && echo $PERFECT)" in *runs/m7/M7_SIX_ARM.md*|*work/m7/six_arm*|*work/m7/packs_perfect*) refuse "a dry run never uses the real report, work folder or perfect packs";; esac
-  case "$FAILAFTER" in ""|header|prepare|rettime|ans_[acdefr]|ans_[acdef]_gemma26|ans_[acdef]_gemma31|derive|judge|checks|reading) ;; *) refuse "--fail-after names no stage";; esac
+  case "$FAILAFTER" in ""|header|prepare|rettime|probes|ans_[acdefr]|ans_[acdef]_gemma26|ans_[acdef]_gemma31|derive|judge|checks|reading) ;; *) refuse "--fail-after names no stage";; esac
   mkdir -p $W     # only after the refusals above: a refused dry run writes nothing
   IN=$W/in
   [ -s $IN/items.jsonl ] || .venv/bin/python $R dry-inputs --dir $IN --items $DRYITEMS > /dev/null || refuse "the stand-in inputs could not be made"
@@ -192,24 +198,28 @@ unload_now() { # any model; only when no request is active or waiting (the Owner
   esac; }
 unload() { [ "$(loaded $1)" = "yes" ] || return 0; unload_now $1; }
 mid_of() { case $1 in qwen) echo "$Q4";; gemma26) echo "$MID_gemma26";; gemma31) echo "$MID_gemma31";; esac; }
-ours_ids() { # the models this chain may unload (W2): Qwen's 4-bit build, the judge, and a model it loaded itself (a marker in the work folder, written before its first request)
-  o="$Q4 $DS"; for k in $MODELKEYS; do [ $k = qwen ] || [ ! -e $W/loaded_$k ] || o="$o $(mid_of $k)"; done; echo $o; }
-server_gate() { # check|clear: before the first request (real runs): a request active or waiting, or a model that is not ours loaded, refuses (exit 2, the model named); nothing of another client is unloaded.
-  # Ours: the 4-bit model, the judge and the models this chain loaded itself. A judge model left loaded is unloaded (it cannot share the memory with the 4-bit model).
+marker_args() { # W2 (K4b): a model is ours only with a marker this chain wrote when it loaded it (before its first request): Qwen's 4-bit build, a Gemma model and the judge alike
+  o="$DS=$W/loaded_judge"; for k in $MODELKEYS; do o="$o $(mid_of $k)=$W/loaded_$k"; done; echo $o; }
+drop_marker() { # MODEL ID: the model was unloaded: its marker goes
+  for k in $MODELKEYS; do [ "$(mid_of $k)" != "$1" ] || rm -f $W/loaded_$k; done; [ "$1" != "$DS" ] || rm -f $W/loaded_judge; return 0; }
+server_gate() { # check|clear: before the first request (real runs): a request active or waiting, or a model without our marker loaded, refuses (exit 2, the model named); nothing of another client is unloaded.
+  # Ours (W2, K4b): only a model this chain loaded, shown by its marker (Qwen's 4-bit build and the judge too: another client's copy of them is foreign). A model of ours that is not the one kept is unloaded.
   api /api/status > $SJSON 2>/dev/null || true
-  gout=$(.venv/bin/python $R server-gate --status $SJSON --keep "$Q4" --ours $(ours_ids) 2>&1) || { echo "$gout" >&2; return 2; }
+  gout=$(.venv/bin/python $R server-gate --status $SJSON --keep "$Q4" --marker $(marker_args) 2>&1) || { echo "$gout" >&2; return 2; }
+  echo "$gout" | grep '^note:' || true
   [ "$1" = clear ] || return 0
-  for m in $(echo "$gout" | sed -n 's/^UNLOAD //p'); do unload_now $m; done; return 0; }
+  for m in $(echo "$gout" | sed -n 's/^UNLOAD //p'); do unload_now $m; drop_marker $m; done; return 0; }
 others() { pgrep -fl 'scripts/(m4|m5|m6|m7|s1)_[a-z0-9_]*\.sh|run_guarded\.py' | grep -v "$N" || true; }
 wait_others() { # before anything loads a reranker or a model: no other chain and no guarded job (real runs)
   [ $DRY = yes ] && return 0
   hb "$N: waiting until no other chain (scripts/m4_*.sh, m5_*.sh, m6_*.sh, m7_*.sh, s1_*.sh) and no guarded job runs"
   n=0; until [ -z "$(others)" ]; do sleep 60; n=$((n+1)); [ $n -lt 720 ] || fail "another chain or guarded job still runs after 12 h: $(others | head -3)"; done; }
 allstages() { # the stages that need the server (or CPU, rettime): in the order of the chain
-  s=rettime
+  s="probes rettime"
   for mo in $MODELORDER; do k=${mo%%:*}; x=; [ $k = qwen ] || x=_$k
     s="$s ans_a$x ans_e$x"
-    if [ ${mo#*:} = yes ]; then s="$s ans_d$x ans_f$x"; [ $CHECKING = yes ] && s="$s ans_c$x"; fi
+    if [ ${mo#*:} = yes ]; then s="$s ans_d$x ans_f$x"; fi
+    if [ $CHECKING = yes ] && { [ ${mo#*:} = yes ] || [ $k = qwen ]; }; then s="$s ans_c$x"; fi
     [ $k != qwen ] || s="$s ans_r"
   done; echo "$s judge"; }
 MIDOUT=$(.venv/bin/python $R model-ids $MARGS) || refuse "the model ids could not be made"
@@ -374,6 +384,38 @@ if [ $CHECKING = yes ]; then CHK_EXPECT_D5=$ND; CHK_EXPECT_M=$((NMA + NM3)); els
 calls() { # STAGE EXPECT_DRAFTS EXPECT_CHECKS FILES...   the model calls the set made against the expected count (strict in a dry run)
   st=$1; ed=$2; ec=$3; shift 3
   .venv/bin/python $R stage-calls --stage $st --files "$@" --expect-drafts $ed --expect-checks $ec $([ $DRY = yes ] && [ -z "$PLANTCUT" ] && echo --strict) || fail "the calls of the stage $st do not match the expected count"; }
+pc() { "$@" >> $PCOUT 2>&1 || PCFAIL=1; }
+pcheck_model() { # KEY THINKING (PCOUT, PCFAIL): the checks of one model's sets: every draft prompt hash is the default prompt on the row's own pack; the arms differ only in their switch; E (and F) differ from A (and D) only by the pack
+  k=$1; mt=$2; x=; [ $k = qwen ] || x=_$k
+  if [ $mt = yes ]; then sl="A D E F"; else sl="A E"; fi
+  for s in $sl; do pc .venv/bin/python $R prompts-default --items $ITEMS --answers $W/ans_d5_$s$x.jsonl; done
+  pc .venv/bin/python $R prompts-relation --a $W/ans_d5_A$x.jsonl --b $W/ans_d5_E$x.jsonl
+  pc .venv/bin/python $GR packs-equal --a $W/packs_frozen_d5.jsonl --b $W/ans_d5_A$x.jsonl
+  pc .venv/bin/python $GR packs-equal --a $PERFECT --b $W/ans_d5_E$x.jsonl
+  if [ $mt = yes ]; then
+    for part in ma m3; do
+      for s in A D; do pc .venv/bin/python $R prompts-default --items $W/items_$part.jsonl --answers $W/ans_${part}_$s$x.jsonl; done
+      pc .venv/bin/python $R prompts-relation --a $W/ans_${part}_A$x.jsonl --b $W/ans_${part}_D$x.jsonl --expect-same-pack
+    done
+    pc .venv/bin/python $R prompts-relation --a $W/ans_d5_A$x.jsonl --b $W/ans_d5_D$x.jsonl --expect-same-pack
+    pc .venv/bin/python $R prompts-relation --a $W/ans_d5_E$x.jsonl --b $W/ans_d5_F$x.jsonl --expect-same-pack
+    pc .venv/bin/python $R prompts-relation --a $W/ans_d5_D$x.jsonl --b $W/ans_d5_F$x.jsonl
+    # the request bodies of the drafts: A and D (and E and F) differ in the thinking switch and the token limit (plus the cap) only; A and E (D and F) in the messages only, where the packs differ
+    for part in d5 ma m3; do pc .venv/bin/python $R bodies-relation --a $W/ans_${part}_A$x.jsonl --b $W/ans_${part}_D$x.jsonl --thinking-differs --think-cap $CAP; done
+    pc .venv/bin/python $R bodies-relation --a $W/ans_d5_E$x.jsonl --b $W/ans_d5_F$x.jsonl --thinking-differs --think-cap $CAP
+    pc .venv/bin/python $R bodies-relation --a $W/ans_d5_D$x.jsonl --b $W/ans_d5_F$x.jsonl
+  else
+    for part in ma m3; do pc .venv/bin/python $R prompts-default --items $W/items_$part.jsonl --answers $W/ans_${part}_A$x.jsonl; done
+  fi
+  pc .venv/bin/python $R bodies-relation --a $W/ans_d5_A$x.jsonl --b $W/ans_d5_E$x.jsonl
+  return 0; }
+cross_pc() { # OTHER_SFX THIS_SFX: two models' A and E are the same call: the same prompt on the same pack, and the request body equal but for the model's name (K4b: the model-free body hash)
+  for s in A E; do
+    pc .venv/bin/python $R prompts-relation --a $W/ans_d5_$s$1.jsonl --b $W/ans_d5_$s$2.jsonl --expect-same-pack
+    pc .venv/bin/python $R bodies-relation --a $W/ans_d5_$s$1.jsonl --b $W/ans_d5_$s$2.jsonl --across-models
+  done
+  for part in ma m3; do pc .venv/bin/python $R bodies-relation --a $W/ans_${part}_A$1.jsonl --b $W/ans_${part}_A$2.jsonl --across-models; done
+  return 0; }
 use_model() { # KEY: the model of the answers that follow (SFX is the suffix of its files and stages; empty for qwen)
   mk=$1; MID=$(mid_of $mk); SFX=; [ $mk = qwen ] || SFX=_$mk
   if [ $DRY = yes ]; then GA="--backend stub --no-rerank"; VA="--dry-run"; else GA="--backend openai --model $MID"; VA="--backend openai --model $MID"; fi
@@ -384,29 +426,34 @@ prepare_model() { # KEY (real runs): only models of this chain may be loaded whe
   mk=$1; mid=$(mid_of $mk)
   idle
   api /api/status > $SJSON 2>/dev/null || true
-  gout=$(.venv/bin/python $R server-gate --status $SJSON --keep "$mid" --ours $(ours_ids) 2>&1) || { echo "$gout" >&2; refuse_late "the server is not free for the model $mid (a model of another client is loaded or a request is active or waiting)"; }
-  for m in $(echo "$gout" | sed -n 's/^UNLOAD //p'); do
-    unload_now $m
-    for k in $MODELKEYS; do [ "$(mid_of $k)" != "$m" ] || rm -f $W/loaded_$k; done
-  done
-  [ $mk = qwen ] || touch $W/loaded_$mk
+  gout=$(.venv/bin/python $R server-gate --status $SJSON --keep "$mid" --marker $(marker_args) 2>&1) || { echo "$gout" >&2; refuse_late "the server is not free for the model $mid (a model without this chain's marker is loaded, or a request is active or waiting)"; }
+  echo "$gout" | grep '^note:' || true
+  for m in $(echo "$gout" | sed -n 's/^UNLOAD //p'); do unload_now $m; drop_marker $m; done
+  touch $W/loaded_$mk     # the marker: this chain loads the model on its first request (W2)
   hb "$N: the server is idle and holds no model of another client; $mid loads on its first request (alone, after the other models of this chain were unloaded)"
   return 0; }
-probe_model() { # KEY THINKING (real runs, models other than qwen): the thinking switch is honoured: on shows thinking (a model that thinks in this run), off shows none (A and E are answered with it off)
+probe_model() { # KEY THINKING (real runs, models other than qwen; at the gate, before any answer, with the model loaded alone): two short requests, switch off and switch on (K4b)
+  # off must show no thinking (A and E are answered with it off) and a non-empty content; on must show thinking in a form the stream reader handles (a reasoning field or a <think> pair).
+  # A model that thinks in this run and fails the "on" probe gets no thinking arm: the chain stops here, before any answer (remove it from --thinking-models); for the other models the result is only reported.
   [ $DRY = yes ] && return 0
   [ $1 != qwen ] || return 0
   [ ! -s $W/probe_$1.done ] || { echo "skip the thinking probe of $1: done"; return 0; }
   for sw in false true; do
-    [ $sw = false ] || [ $2 = yes ] || continue
     idle
     curl -s -m 900 -X POST -H "Authorization: Bearer $OMLX_API_KEY" -H 'Content-Type: application/json' \
       -d "{\"model\": \"$MID\", \"messages\": [{\"role\": \"user\", \"content\": \"What is 17 times 23? Reply with the number only.\"}], \"max_tokens\": 1500, \"temperature\": 0, \"chat_template_kwargs\": {\"enable_thinking\": $sw}}" \
       "$BASE/v1/chat/completions" > $W/probe_$1_$sw.json 2>/dev/null || fail "the thinking probe of $1 (switch $sw): no reply from the server"
     want=off; [ $sw = false ] || want=on
-    .venv/bin/python $R thinking-probe --file $W/probe_$1_$sw.json --expect $want || fail "the thinking switch of $1 is not honoured (switch $sw: expected thinking $want; see $W/probe_$1_$sw.json): its answers would not be comparable"
+    pline=$(.venv/bin/python $R thinking-probe --file $W/probe_$1_$sw.json --expect $want 2>&1) && pok=yes || pok=no
+    echo "$1 ($MID): $pline" | tee -a $W/probes.txt
+    if [ $pok = no ]; then
+      if [ $sw = false ]; then fail "the thinking switch of $1 is not honoured with the switch off (see $W/probe_$1_$sw.json): its answers would not be comparable"; fi
+      if [ $2 = yes ]; then fail "the thinking probe of $1 failed with the switch on (see $W/probe_$1_$sw.json): it has no thinking arm: remove $1 from --thinking-models (nothing has been answered yet; the start check refuses an option change, so move the run aside, see the mv lines of a refused start)"; fi
+      echo "$1: the probe with the switch on did not show thinking in a readable form; no thinking arm is planned for it (reported only)" | tee -a $W/probes.txt
+    fi
   done
   echo done > $W/probe_$1.done
-  hb "$N: the thinking switch of $1 ($MID) was probed: off shows no thinking$([ $2 = yes ] && echo ', on shows thinking')"
+  hb "$N: the thinking switch of $1 ($MID) was probed before any answer (off, on)"
   return 0; }
 finish_model() { # KEY (real runs): the model is unloaded after its stages (it was loaded by this chain)
   [ $DRY = yes ] && return 0
@@ -416,10 +463,10 @@ finish_model() { # KEY (real runs): the model is unloaded after its stages (it w
 
 model_group() { # KEY THINKING(yes|no): the stages of one model, D F A C E (R for qwen), in this order (D and F before A and E: the server's prompt cache cannot make D look faster than it would be in use)
   use_model $1; mt=$2
-  gs="ans_a$SFX ans_e$SFX"; [ $mt = no ] || { gs="$gs ans_d$SFX ans_f$SFX"; [ $CHECKING = no ] || gs="$gs ans_c$SFX"; }; [ $mk != qwen ] || gs="$gs ans_r"
+  gs="ans_a$SFX ans_e$SFX"; [ $mt = no ] || gs="$gs ans_d$SFX ans_f$SFX"; { [ $CHECKING = no ] || { [ $mt = no ] && [ $mk != qwen ]; }; } || gs="$gs ans_c$SFX"; [ $mk != qwen ] || gs="$gs ans_r"
   gneed=no; for st in $gs; do stage_done $st || gneed=yes; done
   [ $gneed = yes ] || return 0
-  prepare_model $mk; probe_model $mk $mt
+  prepare_model $mk
   if [ $mt = yes ]; then ECHOREF=$W/ans_d5_D$SFX.jsonl.manifest.json; else ECHOREF=$W/ans_d5_A$SFX.jsonl.manifest.json; fi     # the first answers of this run for this model
 
   if [ $mt = yes ] && ! stage_done ans_d$SFX; then
@@ -451,7 +498,7 @@ model_group() { # KEY THINKING(yes|no): the stages of one model, D F A C E (R fo
   fi
 
   # C: the checking pass on A's D5 drafts (this model, thinking off per call). A record whose checking call ended with status error is redone (REDO_PASSES passes)
-  if [ $mt = yes ] && [ $CHECKING = yes ] && ! stage_done ans_c$SFX; then
+  if { [ $mt = yes ] || [ $mk = qwen ]; } && [ $CHECKING = yes ] && ! stage_done ans_c$SFX; then
     recheck ans_c$SFX
     bad=0; redo=$(cat $W/check_d5_C$SFX.jsonl.redo 2>/dev/null || echo 0)
     while :; do
@@ -491,51 +538,50 @@ model_group() { # KEY THINKING(yes|no): the stages of one model, D F A C E (R fo
     mark ans_r $W/ans_d5_R.jsonl
     hb "$N: arm R answers done (grounded-g3 on the r4g2 packs, D5 $ND)"
   fi
+  # K4b: the prompt check of this model's sets right after its stages, against the model answered before it (CPU), so that a mismatch stops the chain before the next model loads
+  PCOUT=$W/prompts_check_$mk.txt; : > $PCOUT; PCFAIL=0
+  pcheck_model $mk $mt
+  [ -z "$PREVK" ] || cross_pc "$PREVSFX" "$SFX"
+  [ $PCFAIL = 0 ] || { cat $PCOUT; fail "the prompt check of the model $mk failed right after its answers: its prompts or request bodies are not what the arms promise, or differ from the model before it (see above)"; }
+  echo "prompt check of $mk (right after its answers): $(wc -l < $PCOUT | tr -d ' ') lines, no failure"
   finish_model $mk
   return 0
 }
-for mo in $MODELORDER; do model_group ${mo%%:*} ${mo#*:}; done
+# the thinking probes at the gate: every model other than Qwen, alone, before any answer (K4b). Qwen's switch is the pilot's measured fact (it is not probed here: a thinking probe could use its whole limit)
+if ! stage_done probes; then
+  recheck probes
+  if [ $DRY = yes ]; then echo "dry run: no model is loaded and no thinking switch is probed" > $W/probes.txt
+  else
+    : >> $W/probes.txt
+    for mo in $MODELORDER; do pk=${mo%%:*}; [ $pk != qwen ] || continue
+      use_model $pk; prepare_model $pk; probe_model $pk ${mo#*:}; finish_model $pk
+    done
+    echo "qwen: not probed here (its thinking behaviour is the pilot's: $PILOT)" >> $W/probes.txt
+  fi
+  mark probes $W/probes.txt
+  hb "$N: thinking probes done (every model other than Qwen, before any answer): $(tr '\n' ' ' < $W/probes.txt | cut -c1-300)"
+fi
+PREVK=; PREVSFX=
+for mo in $MODELORDER; do model_group ${mo%%:*} ${mo#*:}; PREVK=${mo%%:*}; PREVSFX=; [ $PREVK = qwen ] || PREVSFX=_$PREVK; done
 
 # ---------------------------------------------------------------- derived sets (B and F' from the thorough rows, C's answers from A's rows) and the prompt check (CPU)
 if ! stage_done derive; then
   DOUT=""
   : > $W/prompts_check.txt
-  PCFAIL=0
-  pc() { "$@" >> $W/prompts_check.txt 2>&1 || PCFAIL=1; }
+  PCFAIL=0; PCOUT=$W/prompts_check.txt
   for mo in $MODELORDER; do
     k=${mo%%:*}; mt=${mo#*:}; x=; [ $k = qwen ] || x=_$k
     if [ $mt = yes ] && [ $CHECKING = yes ]; then
       .venv/bin/python $R derive-draft --src $W/ans_d5_D$x.jsonl --out $W/ans_d5_B$x.jsonl --arm B || fail "arm B of $k could not be derived from D's rows"
       .venv/bin/python $R derive-draft --src $W/ans_d5_F$x.jsonl --out $W/ans_d5_Fp$x.jsonl --arm Fp || fail "arm F-prime of $k could not be derived from F's rows"
+      DOUT="$DOUT $W/ans_d5_B$x.jsonl $W/ans_d5_Fp$x.jsonl"
+    fi
+    if [ $CHECKING = yes ] && { [ $mt = yes ] || [ $k = qwen ]; }; then
       .venv/bin/python $R derive-check --answers $W/ans_d5_A$x.jsonl --checks $W/check_d5_C$x.jsonl --out $W/ans_d5_C$x.jsonl || fail "arm C of $k could not be derived from A's rows and the check records"
-      DOUT="$DOUT $W/ans_d5_B$x.jsonl $W/ans_d5_Fp$x.jsonl $W/ans_d5_C$x.jsonl"
+      DOUT="$DOUT $W/ans_d5_C$x.jsonl"
     fi
-    # the prompt check: every draft prompt hash is the default prompt on the row's own pack; the arms differ only in their switch; E (and F) differ from A (and D) only by the pack
-    if [ $mt = yes ]; then sl="A D E F"; else sl="A E"; fi
-    for s in $sl; do pc .venv/bin/python $R prompts-default --items $ITEMS --answers $W/ans_d5_$s$x.jsonl; done
-    pc .venv/bin/python $R prompts-relation --a $W/ans_d5_A$x.jsonl --b $W/ans_d5_E$x.jsonl
-    pc .venv/bin/python $GR packs-equal --a $W/packs_frozen_d5.jsonl --b $W/ans_d5_A$x.jsonl
-    pc .venv/bin/python $GR packs-equal --a $PERFECT --b $W/ans_d5_E$x.jsonl
-    if [ $mt = yes ]; then
-      for part in ma m3; do
-        for s in A D; do pc .venv/bin/python $R prompts-default --items $W/items_$part.jsonl --answers $W/ans_${part}_$s$x.jsonl; done
-        pc .venv/bin/python $R prompts-relation --a $W/ans_${part}_A$x.jsonl --b $W/ans_${part}_D$x.jsonl --expect-same-pack
-      done
-      pc .venv/bin/python $R prompts-relation --a $W/ans_d5_A$x.jsonl --b $W/ans_d5_D$x.jsonl --expect-same-pack
-      pc .venv/bin/python $R prompts-relation --a $W/ans_d5_E$x.jsonl --b $W/ans_d5_F$x.jsonl --expect-same-pack
-      pc .venv/bin/python $R prompts-relation --a $W/ans_d5_D$x.jsonl --b $W/ans_d5_F$x.jsonl
-      # the request bodies of the drafts: A and D (and E and F) differ in the thinking switch and the token limit (plus the cap) only; A and E (D and F) in the messages only, where the packs differ
-      for part in d5 ma m3; do pc .venv/bin/python $R bodies-relation --a $W/ans_${part}_A$x.jsonl --b $W/ans_${part}_D$x.jsonl --thinking-differs --think-cap $CAP; done
-      pc .venv/bin/python $R bodies-relation --a $W/ans_d5_E$x.jsonl --b $W/ans_d5_F$x.jsonl --thinking-differs --think-cap $CAP
-      pc .venv/bin/python $R bodies-relation --a $W/ans_d5_D$x.jsonl --b $W/ans_d5_F$x.jsonl
-    else
-      for part in ma m3; do pc .venv/bin/python $R prompts-default --items $W/items_$part.jsonl --answers $W/ans_${part}_A$x.jsonl; done
-    fi
-    pc .venv/bin/python $R bodies-relation --a $W/ans_d5_A$x.jsonl --b $W/ans_d5_E$x.jsonl
-    if [ $k != qwen ]; then     # the same prompt on the same pack as Qwen's A and E (the other models get today's call)
-      pc .venv/bin/python $R prompts-relation --a $W/ans_d5_A.jsonl --b $W/ans_d5_A$x.jsonl --expect-same-pack
-      pc .venv/bin/python $R prompts-relation --a $W/ans_d5_E.jsonl --b $W/ans_d5_E$x.jsonl --expect-same-pack
-    fi
+    pcheck_model $k $mt
+    if [ $k != qwen ]; then cross_pc "" "$x"; fi     # the same prompt on the same pack and the same body (but for the model's name) as Qwen's A and E (the other models get today's call)
   done
   # arm R (W7): the prompt of grounded-g3 on its pack, different from the default prompt; the packs are the funnel's r4g2; the body is A's except the messages
   pc .venv/bin/python $R6 prompts-check --items $ITEMS --answers $W/ans_d5_R.jsonl --mode grounded-g3
@@ -556,7 +602,13 @@ for s in $SETNAMES; do SETS="$SETS $s=$W/ans_d5_$(stem_of $s).jsonl"; done
 if ! stage_done judge; then
   recheck judge
   if [ $DRY = no ]; then
-    for k in $MODELKEYS; do if [ $k = qwen ] || [ -e $W/loaded_$k ]; then unload $(mid_of $k); rm -f $W/loaded_$k; fi; done     # only Qwen's 4-bit build and the models this chain loaded (W2)
+    for k in $MODELKEYS; do if [ -e $W/loaded_$k ]; then unload $(mid_of $k); rm -f $W/loaded_$k; fi; done     # only the models this chain loaded: a marker (W2, K4b)
+    idle
+    api /api/status > $SJSON 2>/dev/null || true
+    gout=$(.venv/bin/python $R server-gate --status $SJSON --keep "$DS" --marker $(marker_args) 2>&1) || { echo "$gout" >&2; refuse_late "the server is not free for the judge $DS (a model without this chain's marker is loaded, or a request is active or waiting)"; }
+    echo "$gout" | grep '^note:' || true
+    for m in $(echo "$gout" | sed -n 's/^UNLOAD //p'); do unload_now $m; drop_marker $m; done
+    touch $W/loaded_judge     # the marker: this chain loads the judge on its first request
     hb "$N: answering finished, the base models of this chain unloaded; the judge $DS loads on the first request"
   fi
   judge_done() { if [ $MAXU != 0 ]; then [ -f "$1" ] && .venv/bin/python $GR judge-check --file "$1" --expect "$2" --max-unjudged $MAXU > /dev/null 2>&1; return; fi
@@ -586,12 +638,16 @@ if ! stage_done judge; then
     done
     if [ $MAXU != 0 ]; then
       .venv/bin/python $GR judge-check --file $jout --expect $calls --max-unjudged $MAXU || fail "judging d5: $jout does not hold $calls rows with at most $MAXU unjudged and a valid pass for every answer"
-    else judge_done $jout $calls || fail "judging d5: $jout does not hold $calls valid rows"; fi
+    else
+      # K4b: Qwen's decided sets must be complete; a described set (R, another model's) may have missing or invalid rows: it is listed and left out of the comparisons
+      .venv/bin/python $R judge-sets --file $jout --n $ND --decided $DECSETS --described $DESCSETS > $W/judge_sets.txt || { cat $W/judge_sets.txt; fail "judging d5: a decided set (Qwen's) does not hold a valid row for every scenario and pass ($jout; see $W/judge_sets.txt)"; }
+      cat $W/judge_sets.txt
+    fi
   fi
   JROWS=$(grep -c . $jout | tr -d ' ')
   [ "$JROWS" = "$calls" ] || fail "judge calls: $JROWS rows found, $calls expected"
   echo "calls judge: $JROWS judge rows (expected $calls = $ND scenarios x $NSETS sets x 2 passes)"
-  if [ $DRY = no ]; then unload $DS; hb "$N: judging finished, $DS unloaded"; fi
+  if [ $DRY = no ]; then unload $DS; rm -f $W/loaded_judge; hb "$N: judging finished, $DS unloaded"; fi
   mark judge $W/judge_d5.jsonl
 fi
 
@@ -629,15 +685,14 @@ if ! stage_done reading; then
   # Qwen's A, D, E, F (under none A, B, E, F-prime), each other model's A and E and its D when it ran; all the answers of a scenario in one bundle under blind names
   RSETS=$(.venv/bin/python $R reading-sets --check-variant $VARIANT --work $W $MARGS | tr '\n' ' ') || fail "the sets of the reading could not be listed"
   rm -rf $RD/first $RD/second $RD/KEY.json $RD/sessions.json $RCOPY
-  # a scenario where one of the four answers has no draft (cut while thinking) is not read: the notice would name the arm; the key lists it, the rule counts it as empty
-  NODRAFT=$(.venv/bin/python $R no-draft-ids --answers $RSETS 2> $RD/no_draft.err) || fail "the scan for answers with no draft failed"
+  # K4b: an answer with no draft (cut while thinking) is left out of its scenario's bundle, not the whole scenario: the bundle holds the answers that exist under random letters; the key lists them
+  .venv/bin/python $R no-draft-ids --answers $RSETS --sets-by-item $RD/sets_by_item.json > /dev/null 2> $RD/no_draft.err || fail "the scan for answers with no draft failed"
   cat $RD/no_draft.err
-  ONLY=$(.venv/bin/python -c 'import json,sys; no=set(sys.argv[2:]); print(" ".join(r["id"] for r in (json.loads(l) for l in open(sys.argv[1]) if l.strip()) if r["id"] not in no))' $ITEMS $NODRAFT)
-  [ -n "$ONLY" ] || fail "every scenario has an answer with no draft: nothing to read"
   .venv/bin/python scripts/eval2_blind.py bundle --items $ITEMS --rubrics $RUBS --answers $RSETS --chunks $CHUNKS --out $RD/first --key $RD/KEY.json --seed 20261123 \
-    --second-reader 0.25 --second-out $RD/second --only $ONLY --harm-consequences > $RD/bundle.out || fail "the blind bundles could not be made"
+    --second-reader 0.25 --second-out $RD/second --sets-by-item $RD/sets_by_item.json --harm-consequences > $RD/bundle.out || fail "the blind bundles could not be made (fewer than two usable answers in every scenario?)"
   tail -3 $RD/bundle.out
   .venv/bin/python $R no-draft-ids --answers $RSETS --key $RD/KEY.json > /dev/null 2>&1 || fail "the no-draft answers could not be recorded in the key"
+  .venv/bin/python $R reading-summary --key $RD/KEY.json | tee $RD/reading_summary.txt
   .venv/bin/python $R reading-plan --key $RD/KEY.json --out $RD/sessions.json --scenarios-per-session $SPS || fail "the reading plan could not be made"
   # the key is written outside every bundle folder; nothing of the configuration is in a bundle (eval2_blind.py); no reading is done here
   LEAKT=$Q4; for k in $MODELKEYS; do LEAKT="$LEAKT $(mid_of $k)"; done
@@ -665,13 +720,25 @@ FINAL=$(sed -n 's/^\(M7 SIX-ARM TEST DONE: .*\)$/\1/p' $W/rule_out.txt | tail -n
   echo
   echo '```'; cat $W/rule_out.txt; echo '```'
   echo
+  echo "### Thinking-switch probes (before any answer; a thinking Gemma model is not planned: the probe result is reported)"
+  echo
+  echo '```'; cat $W/probes.txt; echo '```'
+  echo
+  echo "### Judge rows per set (a described set may be incomplete and is then left out of the comparisons)"
+  echo
+  echo '```'; cat $W/judge_sets.txt 2>/dev/null || echo "(all sets valid, or a dry run's stub judge)"; echo '```'
+  echo
+  echo "### The reading: scenarios read per set"
+  echo
+  echo '```'; cat $W/reading/reading_summary.txt 2>/dev/null || echo "(not prepared)"; echo '```'
+  echo
   echo "### The prompt check and the call counts"
   echo
   echo '```'; cat $W/prompts_check.txt; echo '```'
   echo
   echo "### What this report does not show"
   echo
-  echo "Wrong, invented and harmful statements, and the consequence of every harmful one (blind readings of Qwen's A, D, E and F, each other model's A and E and its D when it ran wait; with the findings, \`$R harm-match\` matches the harm by consequence and \`$R compare-models\` prints the whole comparison with the reading's parts; a new harmful consequence goes to the second reader beyond the quarter: bundle those scenarios again with the same seed and \`--second-reader 1\`, the blind names stay the same: the readers' copy of the bundles, without the key, in \`$RCOPY\`; the work folder's bundles in \`$W/reading/first\`, the second reader's quarter in \`$W/reading/second\`, the plan in \`$W/reading/sessions.json\`, the key, which lists the scenarios left out because an answer had no draft, in \`$W/reading/KEY.json\`, which no reader opens). A \"build\" of the knowledge base does not settle (b): decision V8 leaves the writers and the licences to the Owner; the deadline of the profile counts from the call, not from the question (the replay has no search); the 4-bit build's honouring of the thinking switch is seen in the rows' reasoning tokens, not assumed. Development data only (D5 is worn after M6); the hidden part is not involved."
+  echo "Wrong, invented and harmful statements, and the consequence of every harmful one (blind readings of Qwen's A, D, E and F, each other model's A and E and its D when it ran wait; with the findings, \`$R harm-match\` matches the harm by consequence and \`$R compare-models\` prints the whole comparison with the reading's parts; a new harmful consequence goes to the second reader beyond the quarter: \`scripts/eval2_blind.py extra-second --key $W/reading/KEY.json --items ITEMS --rubrics RUBRICS --answers NAME=PATH... --out DIR --ids ID...\` writes a further bundle with the same blind names and widens the key's second-reader scope (\`reading-sets\` lists the NAME=PATH pairs), and \`scripts/eval2_blind.py merge --findings F1 F2 --reads R1 R2 --out F --reads-out R\` joins the two unblinded files for \`harm-match\`: the blind names stay the same: the readers' copy of the bundles, without the key, in \`$RCOPY\`; the work folder's bundles in \`$W/reading/first\`, the second reader's quarter in \`$W/reading/second\`, the plan in \`$W/reading/sessions.json\`, the key, which lists the scenarios left out because an answer had no draft, in \`$W/reading/KEY.json\`, which no reader opens). A \"build\" of the knowledge base does not settle (b): decision V8 leaves the writers and the licences to the Owner; the deadline of the profile counts from the call, not from the question (the replay has no search); the 4-bit build's honouring of the thinking switch is seen in the rows' reasoning tokens, not assumed. Development data only (D5 is worn after M6); the hidden part is not involved."
   echo
   echo "### Files"
   echo

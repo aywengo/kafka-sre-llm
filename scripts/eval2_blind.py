@@ -16,6 +16,11 @@ not lie inside a bundle folder. --only limits the bundle to items by id. --secon
 least FRACTION of them, whole items, stratified by item kind, by the seed) into a second folder --second-out, with the SAME answer names
 as the first, so that the findings of the two readers can be matched; the key lists those items ("second_reader_ids").
 
+K4b (M7): --sets-by-item FILE ({item id: [set names]}) gives each item its own list of sets: an answer left out of the list (for example a draft cut while thinking) is not in that item's
+bundle, the letters are drawn over the remaining answers, an item with fewer than two answers is left out (the key lists it as "left_out_items") and the key keeps the lists ("sets_by_item").
+Without the option every item holds every set and a missing answer is an error, as before. `extra-second` writes a further second-reader bundle for chosen items with the SAME answer names as the
+first bundle (from its key) and adds the items to the key's second_reader_ids; `merge` joins two unblinded findings files (and their read markers) for the harm match.
+
 unblind: takes the readers' findings files (NAME=PATH, one name per reader), validates every row and writes the merged findings with the
 set and the reader (the reader's name) in place of the neutral answer name, plus the "read" markers the coverage report needs
 (--reads-out: {"set", "id", "reader", "kind": "read"} for every answer the reader had in the bundle, answers with no finding included).
@@ -178,6 +183,32 @@ def consequence_ok(c):
     return c in HARM_CONSEQUENCES or (c.startswith("other:") and bool(c[len("other:"):].strip()))
 
 
+def render_item(it, rubric, names, answers, chunks, chunks_path):
+    """The bundle file of one item (question, evidence, points, the answers under their blind names) and the excerpt file of each answer: (body, {answer name: text})."""
+    L = [f"# Item {it['id']}", "", "## Question", "", it["question"], ""]
+    if it.get("evidence"):
+        L += ["## Evidence pasted by the user", "", "```text", it["evidence"], "```", ""]
+    L += render_points(rubric)
+    if rubric.get("reference"):
+        L += ["", "## Reference answer (for the reader, not for a score)", "", rubric["reference"]]
+    L += ["", "## Answers", "", "Excerpts of each answer: `excerpts/<answer name>.md`.", ""]
+    for name, s in names.items():
+        L += [f"===== ANSWER {name} BEGIN =====", answers[s][it["id"]]["text"].rstrip("\n"), f"===== ANSWER {name} END =====", ""]
+    body = "\n".join(L) + "\n"
+    exc = {}
+    for name, s in names.items():
+        pack = answers[s][it["id"]].get("pack") or []
+        parts = []
+        for cid in pack:
+            c = chunks.get(cid)
+            if c is None:
+                raise SystemExit(f"answer {name}: chunk {cid} is not in {chunks_path}")
+            head = f"----- chunk {cid} | {c.get('path') or c.get('source') or ''}" + (f" | {c['title']}" if c.get("title") else "") + " -----"
+            parts.append(head + "\n" + c["text"].rstrip("\n"))
+        exc[name] = f"# Excerpts of answer {name}\n\n" + ("\n\n".join(parts) if parts else "(none)") + "\n"
+    return body, exc
+
+
 def cmd_bundle(a):
     items = [r for r in rd(a.items)]
     rub = {r["id"]: r for r in rd(a.rubrics)}
@@ -191,12 +222,25 @@ def cmd_bundle(a):
         if unknown:
             raise SystemExit(f"--only: no such item: {unknown}")
         items = [it for it in items if it["id"] in set(a.only)]
+    sbi = None
+    left_out = []
+    if getattr(a, "sets_by_item", None):
+        sbi = json.loads(Path(a.sets_by_item).read_text(encoding="utf-8"))
+        kept = []
+        for it in items:
+            ss = [x for x in (sbi.get(it["id"]) if it["id"] in sbi else list(sets)) if x in sets]
+            if len(ss) < 2:
+                left_out.append(it["id"])
+                continue
+            sbi[it["id"]] = ss
+            kept.append(it)
+        items = kept
     if not items:
         raise SystemExit("no items")
     for it in items:
         if it["id"] not in rub:
             raise SystemExit(f"item {it['id']} has no rubric")
-        for s in sets:
+        for s in (sbi[it["id"]] if sbi else sets):
             r = answers[s].get(it["id"])
             if r is None or r.get("error") or not (r.get("text") or "").strip():
                 raise SystemExit(f"set {s}: no usable answer for item {it['id']}")
@@ -219,29 +263,9 @@ def cmd_bundle(a):
             raise SystemExit(f"{f} exists and is not empty; not overwriting")
     key = OrderedDict()
     for it in items:
-        names = neutral_names(it["id"], sets, a.seed)
+        names = neutral_names(it["id"], sbi[it["id"]] if sbi else sets, a.seed)
         key.update(names)
-        L = [f"# Item {it['id']}", "", "## Question", "", it["question"], ""]
-        if it.get("evidence"):
-            L += ["## Evidence pasted by the user", "", "```text", it["evidence"], "```", ""]
-        L += render_points(rub[it["id"]])
-        if rub[it["id"]].get("reference"):
-            L += ["", "## Reference answer (for the reader, not for a score)", "", rub[it["id"]]["reference"]]
-        L += ["", "## Answers", "", "Excerpts of each answer: `excerpts/<answer name>.md`.", ""]
-        for name, s in names.items():
-            L += [f"===== ANSWER {name} BEGIN =====", answers[s][it["id"]]["text"].rstrip("\n"), f"===== ANSWER {name} END =====", ""]
-        body = "\n".join(L) + "\n"
-        exc = {}
-        for name, s in names.items():
-            pack = answers[s][it["id"]].get("pack") or []
-            parts = []
-            for cid in pack:
-                c = chunks.get(cid)
-                if c is None:
-                    raise SystemExit(f"answer {name}: chunk {cid} is not in {a.chunks}")
-                head = f"----- chunk {cid} | {c.get('path') or c.get('source') or ''}" + (f" | {c['title']}" if c.get("title") else "") + " -----"
-                parts.append(head + "\n" + c["text"].rstrip("\n"))
-            exc[name] = f"# Excerpts of answer {name}\n\n" + ("\n\n".join(parts) if parts else "(none)") + "\n"
+        body, exc = render_item(it, rub[it["id"]], names, answers, chunks, a.chunks)
         for f in folders:
             if f is not out and it["id"] not in second_ids:
                 continue
@@ -253,9 +277,15 @@ def cmd_bundle(a):
         (f / "README.md").write_text(README + (README_CONSEQUENCE if getattr(a, "harm_consequences", False) else ""), encoding="utf-8")
     meta = {"seed": a.seed, "sets": list(sets), "items": [it["id"] for it in items], "second_reader_ids": second_ids,
             "aid": key}
+    if sbi is not None:
+        meta["sets_by_item"] = {it["id"]: sbi[it["id"]] for it in items}
+        meta["left_out_items"] = left_out
     Path(a.key).parent.mkdir(parents=True, exist_ok=True)
     Path(a.key).write_text(json.dumps(meta, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
-    print(f"bundle {out}: {len(items)} items, {len(key)} answers ({len(sets)} per item); key {a.key}")
+    print(f"bundle {out}: {len(items)} items, {len(key)} answers ({len(sets)} per item{', fewer where an answer was left out' if sbi else ''}); key {a.key}")
+    if sbi is not None:
+        print(f"left out of the bundles: {len(left_out)} items with fewer than two answers; per set, scenarios in the bundles: "
+              + ", ".join(f"{s} {sum(1 for it in items if s in sbi[it['id']])} of {len(items) + len(left_out)}" for s in sets))
     if second_ids is not None:
         print(f"second bundle {a.second_out}: {len(second_ids)} of {len(items)} items "
               f"({100 * len(second_ids) / len(items):.0f} %; by kind {dict(sorted(_kind_counts(items, second_ids).items()))})")
@@ -309,6 +339,71 @@ def validate_row(row, key, rub, text_of, scope_ids, require_consequence=False):
     if require_consequence and kind == "harmful" and not consequence_ok(row.get("consequence")):
         return "a harmful row needs a consequence: one phrase of the closed list, or 'other: ...'"
     return None
+
+
+def cmd_extra_second(a):
+    """A further second-reader bundle for chosen items, with the answer names of the key (so the findings match the first reader's). The key's second_reader_ids grow by these items."""
+    kp = Path(a.key)
+    key = json.loads(kp.read_text(encoding="utf-8"))
+    rub = {r["id"]: r for r in rd(a.rubrics)}
+    items = {r["id"]: r for r in rd(a.items)}
+    sets = parse_named(a.answers, "--answers")
+    answers = {s: {r["id"]: r for r in rd(p)} for s, p in sets.items()}
+    chunks = {c["id"]: c for c in rd(a.chunks)}
+    unknown = [i for i in a.ids if i not in key["items"]]
+    if unknown:
+        raise SystemExit(f"--ids: not an item of the key: {unknown}")
+    out = Path(a.out)
+    if out.resolve() == kp.resolve().parent or out.resolve() in kp.resolve().parents:
+        raise SystemExit(f"the key {a.key} must not lie inside the bundle folder {a.out}")
+    if out.exists() and any(out.iterdir()):
+        raise SystemExit(f"{out} exists and is not empty; not overwriting")
+    for iid in a.ids:
+        names = OrderedDict((n, s) for n, s in key["aid"].items() if n.rsplit("-", 1)[0] == iid)
+        for s in names.values():
+            if s not in answers:
+                raise SystemExit(f"the key names set {s!r}, which is not in --answers")
+        body, exc = render_item(items[iid], rub[iid], names, answers, chunks, a.chunks)
+        (out / "excerpts").mkdir(parents=True, exist_ok=True)
+        (out / f"{iid}.md").write_text(body, encoding="utf-8")
+        for name, txt in exc.items():
+            (out / "excerpts" / f"{name}.md").write_text(txt, encoding="utf-8")
+    (out / "README.md").write_text(README + (README_CONSEQUENCE if getattr(a, "harm_consequences", False) else ""), encoding="utf-8")
+    old = set(key.get("second_reader_ids") or [])
+    key["second_reader_ids"] = sorted(old | set(a.ids))
+    key["second_reader_extra"] = sorted(set(key.get("second_reader_extra") or []) | (set(a.ids) - old))
+    kp.write_text(json.dumps(key, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+    print(f"extra second-reader bundle {out}: {len(a.ids)} items ({len(set(a.ids) - old)} new to the second reader's scope), same answer names as the first bundle; key {a.key} updated")
+    return 0
+
+
+def _row_sig(r):
+    return json.dumps(r, sort_keys=True, ensure_ascii=False)
+
+
+def cmd_merge(a):
+    """Two unblinded findings files (and their read markers) into one for the harm match: identical rows are kept once; a reader's rows of both runs are joined. The inputs are not changed."""
+    def join(paths):
+        seen, out = set(), []
+        for p in paths:
+            for r in rd(p):
+                sg = _row_sig(r)
+                if sg not in seen:
+                    seen.add(sg)
+                    out.append(r)
+        return out
+    rows = join(a.findings)
+    Path(a.out).parent.mkdir(parents=True, exist_ok=True)
+    Path(a.out).write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows), encoding="utf-8")
+    print(f"merged {len(a.findings)} files into {a.out}: {len(rows)} rows")
+    if a.reads:
+        marks = join(a.reads)
+        if not a.reads_out:
+            raise SystemExit("--reads needs --reads-out")
+        Path(a.reads_out).parent.mkdir(parents=True, exist_ok=True)
+        Path(a.reads_out).write_text("".join(json.dumps(m) + "\n" for m in marks), encoding="utf-8")
+        print(f"merged {len(a.reads)} read-marker files into {a.reads_out}: {len(marks)} markers")
+    return 0
 
 
 def cmd_unblind(a):
@@ -396,6 +491,21 @@ def main(argv=None):
     b.add_argument("--second-reader", type=float, metavar="FRACTION")
     b.add_argument("--second-out")
     b.add_argument("--harm-consequences", action="store_true", help="the reader's instructions ask for a consequence on every harmful row (M7 W6)")
+    b.add_argument("--sets-by-item", help="JSON {item id: [set names]}: the answers each item's bundle holds (an answer left out is not in it; letters are drawn over the rest)")
+    x = sub.add_parser("extra-second")
+    x.add_argument("--key", required=True, help="the key of the first bundle; its second_reader_ids grow by --ids")
+    x.add_argument("--items", required=True)
+    x.add_argument("--rubrics", required=True)
+    x.add_argument("--answers", nargs="+", required=True, metavar="NAME=PATH")
+    x.add_argument("--chunks", default="work/v3/chunks_s1.jsonl")
+    x.add_argument("--out", required=True, help="the new second-reader folder (empty or new)")
+    x.add_argument("--ids", nargs="+", required=True, metavar="ID", help="items of the key that the second reader reads on top of the quarter")
+    x.add_argument("--harm-consequences", action="store_true")
+    mg = sub.add_parser("merge")
+    mg.add_argument("--findings", nargs="+", required=True, help="unblinded findings files (unblind --out)")
+    mg.add_argument("--reads", nargs="*", default=[], help="their read marker files (unblind --reads-out)")
+    mg.add_argument("--out", required=True)
+    mg.add_argument("--reads-out")
     u = sub.add_parser("unblind")
     u.add_argument("--key", required=True)
     u.add_argument("--rubrics", required=True)
@@ -407,7 +517,7 @@ def main(argv=None):
     u.add_argument("--allow-rejects", action="store_true")
     u.add_argument("--require-consequence", action="store_true", help="a harmful row needs a consequence from the closed list or 'other: ...' (M7 W6)")
     a = ap.parse_args(argv)
-    return cmd_bundle(a) if a.cmd == "bundle" else cmd_unblind(a)
+    return {"bundle": cmd_bundle, "unblind": cmd_unblind, "extra-second": cmd_extra_second, "merge": cmd_merge}[a.cmd](a)
 
 
 if __name__ == "__main__":
