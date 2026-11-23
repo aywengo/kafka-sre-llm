@@ -17,8 +17,12 @@ half, the answer checker, the streaming service, a base-model bake-off) closed o
 setup from a fresh clone; its commits are also on `main`. M5 (retrieval ranking, fewer
 wrong statements) closed on 2026-11-22 with both criteria not met, each candidate stopped
 by a rule fixed beforehand; `v3.2.0` (2026-11-22) carries its candidates as experimental
-options, off by default (`milestones/M5.md`). The current milestone is M6: a combined
-candidate (a grounded prompt with better ranking), harmful statements, repairs.
+options, off by default (`milestones/M5.md`). M6 (a combined candidate: a grounded prompt
+with better ranking; harmful statements; repairs) ran on 2026-11-22 and 23: the candidate
+was stopped by a rule fixed beforehand (the out-of-sample check on B4), no hidden look was
+used, and its closing waits for the Owner (`milestones/M6.md`). The current milestone is
+M7: one test on D5 first, then a thorough answer profile and a knowledge base beside the
+index, as far as the test supports them.
 
 ## Start of every session
 
@@ -29,13 +33,16 @@ candidate (a grounded prompt with better ranking), harmful statements, repairs.
    anything on the GPU or the model server next to it, unless the task says so.
 
 The mission brief is `agents/train-v3.md`, amended by `agents/train-v3-stage1.md` (the
-amendment wins). The brief of M6 is `agents/m6-plan.md` (`MILESTONE.md` wins where they
+amendment wins). The brief of M7 is `agents/m7-plan.md` (`MILESTONE.md` wins where they
 differ); the evaluation's rules are `agents/m4-evaluation.md`. The run log is
 `runs/v3/HEARTBEAT.md`.
 
 ## Who does what
 
-One conductor session plans and decides; workers do the tasks. The conductor does not do
+One conductor session plans and decides; workers do the tasks. Since 2026-11-23 there are
+two (the Owner's decision W1): the session that ran M4 to M6 keeps `milestones/M6.md` until
+M6 is closed; a second session is the conductor of M7 and keeps `MILESTONE.md`. They share
+the main working tree and the model server by the rules in `MILESTONE.md`. The conductor does not do
 worker tasks itself: it runs the most expensive model with the largest context. Every task
 goes to the role below, on the model that role's file in `.claude/agents/` names. Pick the
 cheapest role that fits.
@@ -60,7 +67,7 @@ GPU, model server), and where the report goes.
 
 ## Reports
 
-Each worker writes its full report to a file (`runs/m6/reports/<task>.md` in M6, or the session's
+Each worker writes its full report to a file (`runs/m7/reports/<task>.md` in M7, or the session's
 scratch directory for throwaway detail) and returns at most about 150 words: pass or fail of
 each acceptance item, the files it changed, anything that needs a decision. It says what it
 could not verify. A failed check is reported as failed, with the output.
@@ -77,10 +84,10 @@ with bulk generation or training. A failed gate stops the stage until the Owner 
 it. The Owner is whoever `CODEOWNERS` names.
 Loading and unloading the three models named below is covered by the Owner's standing go, when no
 other client is active.
-For M6 the Owner's go of 2026-11-22 also covers loading the 4-bit build of the base model
-for measurement runs, and unloading any model from the server, also one that another
-client left loaded, when the server has no active or waiting request. The rest of M4's
-wider go (the full-precision build, the bake-off candidates) ended with M4.
+For M7 the Owner's go of 2026-11-23 (V1) also covers loading the 4-bit build of the base
+model for measurement runs. What a chain of M7 does about a model that another client
+left loaded is recorded in `MILESTONE.md`. The rest of M4's wider go (the full-precision
+build, the bake-off candidates) ended with M4.
 
 ## Repository map
 
@@ -88,7 +95,7 @@ wider go (the full-precision build, the bake-off candidates) ended with M4.
 |---|---|
 | `GOAL.md` | Where the project is going and how success is judged; changes only by the Owner's decision |
 | `MILESTONE.md` | Progress of the current milestone; kept by the conductor, not edited by workers |
-| `milestones/` | Tracking documents of closed milestones; code comments that cite "MILESTONE.md" for decisions J, K, L, M and N mean `milestones/M4.md`, for P and Q `milestones/M5.md` |
+| `milestones/` | Tracking documents of closed milestones; code comments that cite "MILESTONE.md" for decisions J, K, L, M and N mean `milestones/M4.md`, for P and Q `milestones/M5.md`, for S and U `milestones/M6.md` |
 | `agents/` | Mission briefs, one per version or work package |
 | `kafka_sre_rag/` | Retrieval runtime: `prompts.py` (the only place prompt text lives), `frozen.json`, `ask` / `chat` / `verify` |
 | `scripts/` | Pipeline: sources, chunking, retrieval, question bank, packs, generation and verification, guard, chain scripts (`s1_*.sh`) |
@@ -115,9 +122,12 @@ Commands: `.venv/bin/python -m unittest discover -s tests` (offline, seconds);
   no longer a gate, no prompt or retrieval tuning on them, and say so whenever a conclusion
   leans on them. Differences under about 0.2 on 40 questions are noise (the standard error
   is about 0.2). The open judged batches B1 and B2, the pilot sets and the open mechanical
-  half are worn development data. D5 (`eval/m6/d5/`) is the fresh development batch of M6.
-  B4 is the out-of-sample check for a retrieval candidate: its rule is fixed beforehand
-  and it is used once.
+  half are worn development data. D5 (`eval/m6/d5/`) was the fresh development batch of M6;
+  its answers exist since 2026-11-23, so it is worn development data for M7's test. T
+  (`eval/m6/t/`, built to tempt) is answered and read. B4 was the out-of-sample check for
+  a retrieval candidate and was used once for that in M6; its scenarios have never been
+  answered, and M7 uses them once as the out-of-sample answer check (V6), with the rule
+  fixed beforehand.
 - **Covering sets:** a must point of B4 and D5 records sets of one or two chunks that an
   independent checker found to state its whole fact, read as the model receives them
   (title line and text). A point is served when one whole set is in the pack. Nobody adds
@@ -125,9 +135,10 @@ Commands: `.venv/bin/python -m unittest discover -s tests` (offline, seconds);
 - **The hidden part of the M4 evaluation** (`agents/m4-evaluation.md`) is the gate. Nobody
   opens its items, the answers to them or per-item results; the harness prints totals only.
   Every run on it is written in `runs/m4/HIDDEN_LEDGER.md` with its decision rule before
-  the run. Six looks in total: two were used in M4, none in M5; M6 uses one and keeps one
-  spare, and its look runs on a new hidden judged part written in M6. A change prompted by particular open items lists those items
-  and is judged on the hidden part.
+  the run. Six looks in total: two were used in M4, none in M5 and none in M6. The new
+  hidden judged part written in M6 (60 scenarios, `eval/m6/h6/CHUNK_CHECK.json`) is
+  unused; a look of M7 runs on it. A change prompted by particular open items lists those
+  items and is judged on the hidden part.
 - **The catalogues** (`work/m4/catalogues/`, built by `scripts/build_catalogues.py`) are
   hashed like the index. The evaluation's scorer and the runtime's answer checker share
   them and nothing else.
@@ -146,7 +157,7 @@ Commands: `.venv/bin/python -m unittest discover -s tests` (offline, seconds);
   together. Local generation and training never overlap with server jobs.
 - Before a load or unload, check that the server has no active or waiting request; if
   another client is active, wait for the Owner. Unload only what we loaded, unless the
-  Owner's go for the milestone says otherwise (it does for M5, see above). Note every swap in
+  Owner's go for the milestone says otherwise (see "Decisions that are the Owner's"). Note every swap in
   `HEARTBEAT.md`.
 - Keep `runs/v3/status.json` and `STATE.md` true at every milestone and whenever a job
   stops or waits for the Owner.
