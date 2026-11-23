@@ -339,4 +339,27 @@ candidate C becomes the default, after the look.
   thinking per call, the lookup cards in the check, the profile's switches, the
   harness's rows) is being built in an isolated git worktree, because M6's running
   chain pins the runtime's files in the main tree; it is merged after that chain ends.
+- 2026-11-23 10:34, M7: the thorough profile's code is built on a branch (five commits and
+  the review's fixes, head `ab879e2`; about 90 new tests; with the profile off the
+  requests and outputs equal main's). A review found no blocker and seven things to fix,
+  all fixed: a thinking draft cut before its reasoning ended could have been returned as
+  the answer; an exception after the draft could lose the draft; four ways a bad change
+  could pass the acceptance rules (a finding on another line of the same command; one
+  key's default landing on another key through a card; a short flag or a
+  topic:partition value removed; a short line of the user's own configuration changed);
+  arms that differed in more than their switch. It is merged when M6's chain has ended.
+  **The pilot, fixed now, before any call** (design `runs/m7/reports/k1_check_design.md`,
+  section 5, with the conductor's changes): (T) 20 scenarios of B1 and B2 on their
+  stored packs with thinking on: whether the 4-bit build honours the switch, the tokens
+  thinking takes, drafts empty, cut or cut while thinking; no bar, it sets the cap.
+  (V) the checking pass on stored drafts written without thinking: without cards and
+  with the draft's cards, on B1 (60), pilot2 (48) and T (82); without cards on B2 (60).
+  A catch is an accepted change on a line that holds a reader's finding; every accepted
+  change on a line no finding names is read by one reader. Bars: net catches at least
+  +0.5 per 10 answers on B1 and pilot2 (6 on 108); damage to correct lines at most half
+  the catches and at most 5 cases; no new harmful statement and no new destructive match
+  accepted; valid replies at least 95 %, cut at most 5 %; added median at most 30 s and
+  90th percentile at most 45 s. The variant with more net catches among those clearing
+  every bar goes into the six-arm test (a tie goes to the one without cards); if none
+  clears them, the pass does not go into the test and its arms are dropped.
 
