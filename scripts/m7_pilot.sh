@@ -3,6 +3,8 @@
 # code. Built and rehearsed (dry run, stub model) now; the real run is a separate task. Nothing here starts a model by itself: the model calls are server calls (one request at a time) under
 # scripts/run_guarded.py. Everything is on worn development data (B1, B2, pilot2, T); D5, the hidden part of the M4 evaluation and the legacy sets are never read.
 #
+# Order (fix 1, 2026-11-23): stage V (stored drafts) first, then stage T (thinking, --think-cap N, default 1500), then the check on the thinking drafts, then stage S. A stage T with no usable
+# thinking draft is a result (written in the report), not a failure: only the check on the thinking drafts is skipped. The numbers below are the steps, not the order.
 # Steps (each resumable by its output files; a stage marker W/stage_NAME.done records the manifest hash and the sha256 of every output; a line per item):
 #   1. Gate (CPU, refusal exit 2, nothing written before it passes): every stored answer file present, complete (row counts), every row with its pack of chunk ids and a text; the same ids
 #      in both arms of a set and in the items file; the readers' findings files as the design counts them (B1 90 non-minor rows of reader r1 with the 14 catchable rows checked by set, id and
@@ -28,19 +30,27 @@
 #   mkdir -p runs/m7/logs && scripts/m7_pilot.sh > runs/m7/logs/m7_pilot.out 2>&1 &          (real)
 #   scripts/m7_pilot.sh --dry-run [--work DIR]                                                (stub model, BM25-only retrieval is never used (packs are replayed), no server; nothing is
 #                                                                                              written outside DIR; the numbers are not measurements)
-# Options: --dry-run, --work DIR, --report FILE, and for dry runs --spec FILE (a set table instead of the real one; see scripts/m7_pilot_score.py).
+# Options: --dry-run, --work DIR, --report FILE, --think-cap N (tokens added to the answer limit for stage T; recorded in the manifest and the report), and for dry runs --spec FILE, --plant-cut-think SUBSTR and --plant-check-fail SUBSTR (the stub fails on questions containing SUBSTR) (a set table instead of the real one; see scripts/m7_pilot_score.py).
 # Markers: runs/m7/logs/m7_pilot.done or .failed (a dry run: in DIR/logs). The server address and key come from OMLX_URL and OMLX_API_KEY or ~/.config/kafka-sre-llm/.
 #
 # Estimated duration of the real run (inferred, not measured: from the budget of agents/m7-plan.md section 3 and the check design, see "planned:" below): stage T about 60 to 125 s a draft
 # (11 s prompt, thinking at most 47 s, answer at most 64 s), the check 14 to 33 s a call (14 s prompt of about 7k tokens, at most 19 s for 600 tokens), loads 0.3 to 0.5 h.
 set -e
-DRY=no; WSET=no; W=work/m7/pilot; REPORT=runs/m7/M7_PILOT.md; RSET=no; SPEC=""
+DRY=no; WSET=no; W=work/m7/pilot; REPORT=runs/m7/M7_PILOT.md; RSET=no; SPEC=""; CAP=1500; PLANT_CUT=""; PLANT_CHK=""
 while [ $# -gt 0 ]; do case $1 in
   --dry-run) DRY=yes;;
   --work) W=${2:?}; WSET=yes; shift;; --report) REPORT=${2:?}; RSET=yes; shift;;
   --spec) SPEC=${2:?}; shift;;
-  *) echo "usage: scripts/m7_pilot.sh [--dry-run] [--work DIR] [--report FILE] [--spec FILE (dry runs)] (see the header)" >&2; exit 2;; esac
+  --think-cap) CAP=${2:?}; shift;;
+  --plant-cut-think) PLANT_CUT=${2:?}; shift;; --plant-check-fail) PLANT_CHK=${2:?}; shift;;
+  *) echo "usage: scripts/m7_pilot.sh [--dry-run] [--work DIR] [--report FILE] [--spec FILE (dry runs)] [--think-cap N] (see the header)" >&2; exit 2;; esac
   shift; done
+case "$CAP" in ''|*[!0-9]*) echo "REFUSED: --think-cap takes a whole number of tokens; nothing started" >&2; exit 2;; esac
+[ "$CAP" -gt 0 ] || { echo "REFUSED: --think-cap must be above 0; nothing started" >&2; exit 2; }
+[ -z "$PLANT_CUT$PLANT_CHK" ] || [ $DRY = yes ] || { echo "REFUSED: --plant-* options are for dry runs only; nothing started" >&2; exit 2; }
+# dry runs only: the stub model fails on request (comma-separated substrings of a question), read by scripts/eval2.py's stub
+[ -z "$PLANT_CUT" ] || export M7_STUB_CUT_WHILE_THINKING="$PLANT_CUT"
+[ -z "$PLANT_CHK" ] || export M7_STUB_CHECK_FAIL="$PLANT_CHK"
 R=scripts/m7_pilot_score.py; GR=scripts/m5_g_rule.py; N=m7_pilot; L=runs/m7/logs
 CATS=work/m4/catalogues; CHUNKS=work/v3/chunks_s1.jsonl; FROZEN=kafka_sre_rag/frozen.json
 EB='{"chat_template_kwargs": {"enable_thinking": false}}'
@@ -145,7 +155,7 @@ for f in $(.venv/bin/python $R code-pins) $FROZEN; do     # the code the answer 
   PINS="$PINS --pin $f"; done
 GIT_HEAD=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)   # recorded for the reader, never compared
 gstate() { # SUBCOMMAND: the manifest and the start check take the same state
-  .venv/bin/python $R "$1" --manifest $W/MANIFEST.json --work $W $PINS --frozen $FROZEN $DRYFLAG --opt "model=$Q4" --opt "pilot=m7-think-and-check" --info "git_head=$GIT_HEAD"; }
+  .venv/bin/python $R "$1" --manifest $W/MANIFEST.json --work $W $PINS --frozen $FROZEN $DRYFLAG --opt "model=$Q4" --opt "pilot=m7-think-and-check" --opt "think_cap=$CAP" --info "git_head=$GIT_HEAD"; }
 gstate start-check || { moveaside; refuse "the start check failed (see above; nothing was moved or deleted)"; }
 gstate manifest
 # a rerun after a stop: the failed marker is removed (its text is shown); the start check above and the stage markers decide what is done, so finished stages are kept
@@ -161,9 +171,11 @@ RUNS=$W/runs.tsv
 .venv/bin/python $R runs $SPECARG --work $W > $RUNS.tmp && mv $RUNS.tmp $RUNS
 NCHK=$(awk -F'\t' '$5 ~ /^[0-9]+$/ {s+=$5} END {print s+0}' $RUNS)
 NTHINK=$(.venv/bin/python $R select-think $SPECARG --out-dir $W/think_plan | grep -o ' for the thinking stage' >/dev/null; grep -c . $W/think_plan/items.jsonl | tr -d ' '); rm -rf $W/think_plan
-est() { awk -v t=$NTHINK -v c=$NCHK 'BEGIN{ n=c+t; lo=t*60 + n*14 + 1100; hi=t*125 + n*33 + 1800; printf "%.1f to %.1f", lo/3600, hi/3600 }'; }
-echo "planned: $NTHINK thinking drafts, then $((NCHK + NTHINK)) checking calls (V1 and V1C on stored drafts, V1 on the thinking drafts): $(est) h of model-server time"
-echo "estimate basis: the budget of agents/m7-plan.md section 3 (a thinking draft 60 to 125 s, a check 14 to 33 s, loads 0.3 to 0.5 h); not measured on this model and these prompts"
+# the measured rate of the real run of 2026-11-23: a thinking call at about 31 tokens/s, so stage T's worst case is NTHINK x (cap + 2,048 answer limit) / 31 s
+est() { awk -v t=$NTHINK -v c=$NCHK -v cap=$CAP 'BEGIN{ n=c+t; lo=t*60 + n*14 + 1100; hi=t*(cap+2048)/31 + n*33 + 1800; if (hi < lo) hi = lo; printf "%.1f to %.1f", lo/3600, hi/3600 }'; }
+tworst() { awk -v t=$NTHINK -v cap=$CAP 'BEGIN{ printf "%.0f", t*(cap+2048)/31 }'; }
+echo "planned: stage V first ($NCHK checking calls on stored drafts), then $NTHINK thinking drafts (cap $CAP tokens), then up to $NTHINK checking calls on the thinking drafts: $(est) h of model-server time"
+echo "estimate basis: stage T worst case $NTHINK x ($CAP + 2,048) / 31 tokens per second = $(tworst) s (31 tokens/s measured in the real run of 2026-11-23, a thinking call using the whole total limit); a check 14 to 33 s, loads 0.3 to 0.5 h (budget of agents/m7-plan.md section 3); not measured on these prompts"
 
 stage_done() { [ -f $W/stage_$1.done ]; }
 mark() { st=$1; shift; .venv/bin/python $GR mark --work $W --stage $st --out "$@" > /dev/null; }
@@ -182,6 +194,8 @@ if ! stage_done header; then
     for f in $(.venv/bin/python $R input-files $SPECARG); do echo "- \`$f\` $(.venv/bin/python -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest()[:16])' $f)"; done
     echo
     .venv/bin/python $R header-text
+    echo "Thinking cap of stage T: $CAP tokens added to the answer limit of 2,048 (\`--think-cap\`; default 1500); stage order: V (stored drafts), T (thinking), S (scoring)."
+    echo
     echo "This header was written before any model call of the run (stage marker \`$W/stage_header.done\`)."
   } > $HEAD
   cp $HEAD $REPORT.tmp && mv $REPORT.tmp $REPORT
@@ -211,24 +225,6 @@ fi
 
 if [ $DRY = yes ]; then GA="--backend stub --no-rerank"; VGA="--dry-run"; else GA="--backend openai --model $Q4"; VGA="--backend openai --model $Q4 --extra-body $EB"; fi
 
-# ---------------------------------------------------------------- 4. stage T: thinking on the stored packs (no check)
-if ! stage_done think; then
-  recheck think
-  tries=0
-  while :; do
-    [ $DRY = yes ] || idle
-    hb "$N: thinking drafts started ($NT scenarios, stored packs, thinking on, no check)"
-    $G --stall-min 40 --log $L/$N.think.log -- .venv/bin/python scripts/eval2.py answer --items $W/think/items.jsonl --out $W/think/ans_think.jsonl --config m7-pilot-think $GA \
-      --extra-body "$EB" --mode default --replay-packs $W/think/replay_packs.jsonl --catalogue $CATS --host-class "Mac Studio" --allow-commit-change \
-      --answer-profile thorough --no-verify </dev/null || fail "the thinking drafts failed (see $L/$N.think.log)"
-    .venv/bin/python $R check-think --file $W/think/ans_think.jsonl --expect $NT && break
-    tries=$((tries+1)); [ $tries -lt 3 ] || fail "the thinking drafts are incomplete or failed for another reason than an empty draft after $tries passes ($W/think/ans_think.jsonl)"
-  done
-  .venv/bin/python $R think-measures --answers $W/think/ans_think.jsonl --out-json $W/think/measures.json --out-md $W/think/measures.md $([ $DRY = yes ] && echo --stub) || fail "the thinking measures failed"
-  mark think $W/think/ans_think.jsonl $W/think/measures.json $W/think/measures.md
-  hb "$N: thinking drafts done ($NT scenarios)"
-fi
-
 # ---------------------------------------------------------------- the checking runs (one output file per set, arm and variant; resumable by id)
 verify_run() { # NAME ANSWERS ITEMS OUT EXPECT CARDS
   name=$1; ans=$2; items=$3; out=$4; expect=$5; cards=$6
@@ -246,17 +242,6 @@ verify_run() { # NAME ANSWERS ITEMS OUT EXPECT CARDS
 }
 TAB=$(printf '\t')
 
-# ---------------------------------------------------------------- 5. the checking pass (V1) on the thinking drafts
-if ! stage_done thinkcheck; then
-  recheck thinkcheck
-  .venv/bin/python $R think-drafts --answers $W/think/ans_think.jsonl --out $W/think/ans_think_drafts.jsonl || fail "the selection of the thinking drafts failed"
-  ND=$(grep -c . $W/think/ans_think_drafts.jsonl | tr -d ' ')
-  if [ "$ND" = "0" ]; then : > $W/verify_think_none; fail "no thinking draft is usable: every one was an error or cut while thinking (see $W/think/measures.md); the checking pass has nothing to check"; fi
-  mkdir -p $W/verify
-  verify_run THINK_think_V1 $W/think/ans_think_drafts.jsonl $W/think/items.jsonl $W/verify/think_think_V1.jsonl $ND no
-  mark thinkcheck $W/think/ans_think_drafts.jsonl $W/verify/think_think_V1.jsonl
-fi
-
 # ---------------------------------------------------------------- 6. stage V: the checking pass on the stored drafts
 if ! stage_done verify; then
   recheck verify
@@ -270,23 +255,60 @@ if ! stage_done verify; then
   mark verify $OUTS
   hb "$N: the checking passes on the stored drafts are done"
 fi
+# ---------------------------------------------------------------- 4. stage T: thinking on the stored packs (no check)
+if ! stage_done think; then
+  recheck think
+  tries=0
+  while :; do
+    [ $DRY = yes ] || idle
+    hb "$N: thinking drafts started ($NT scenarios, stored packs, thinking on, no check)"
+    $G --stall-min 40 --log $L/$N.think.log -- .venv/bin/python scripts/eval2.py answer --items $W/think/items.jsonl --out $W/think/ans_think.jsonl --config m7-pilot-think $GA \
+      --extra-body "$EB" --mode default --replay-packs $W/think/replay_packs.jsonl --catalogue $CATS --host-class "Mac Studio" --allow-commit-change \
+      --answer-profile thorough --no-verify --think-cap $CAP </dev/null || fail "the thinking drafts failed (see $L/$N.think.log)"
+    .venv/bin/python $R check-think --file $W/think/ans_think.jsonl --expect $NT && break
+    tries=$((tries+1)); [ $tries -lt 3 ] || fail "the thinking drafts are incomplete or failed for another reason than an empty draft after $tries passes ($W/think/ans_think.jsonl)"
+  done
+  .venv/bin/python $R think-measures --answers $W/think/ans_think.jsonl --out-json $W/think/measures.json --out-md $W/think/measures.md --cap $CAP $([ $DRY = yes ] && echo --stub) || fail "the thinking measures failed"
+  mark think $W/think/ans_think.jsonl $W/think/measures.json $W/think/measures.md
+  hb "$N: thinking drafts done ($NT scenarios)"
+fi
+
+# ---------------------------------------------------------------- 5. the checking pass (V1) on the thinking drafts
+if ! stage_done thinkcheck; then
+  recheck thinkcheck
+  .venv/bin/python $R think-drafts --answers $W/think/ans_think.jsonl --out $W/think/ans_think_drafts.jsonl || fail "the selection of the thinking drafts failed"
+  ND=$(grep -c . $W/think/ans_think_drafts.jsonl | tr -d ' ')
+  if [ "$ND" = "0" ]; then
+    # fix 1: no usable thinking draft is a result, not a failure: only the checking pass on the thinking drafts is skipped; stage V and S have run or run as before
+    echo "no usable thinking draft at cap $CAP: every row was an error or cut while thinking (see $W/think/measures.md); the checking pass on thinking drafts is skipped"
+    echo "no usable thinking draft at cap $CAP" > $W/verify_think_none
+    hb "$N: no usable thinking draft at cap $CAP; the check on thinking drafts is skipped; the chain goes on"
+    mark thinkcheck $W/think/ans_think_drafts.jsonl $W/verify_think_none
+  else
+    mkdir -p $W/verify
+    verify_run THINK_think_V1 $W/think/ans_think_drafts.jsonl $W/think/items.jsonl $W/verify/think_think_V1.jsonl $ND no
+    mark thinkcheck $W/think/ans_think_drafts.jsonl $W/verify/think_think_V1.jsonl
+  fi
+fi
+
 # the 4-bit model is unloaded when this chain loaded it
 if [ $DRY = no ] && [ $SERVER_NEEDED = yes ]; then
   if [ "$(cat $W/q4_loaded_at_start 2>/dev/null)" = "no" ]; then unload $Q4; hb "$N: model calls finished, $Q4 unloaded (this chain loaded it)"
   else hb "$N: model calls finished, $Q4 left loaded (it was loaded before this chain started)"; fi
 fi
 
+NOTHINK=""; [ ! -e $W/verify_think_none ] || NOTHINK="--no-think-check"
 # ---------------------------------------------------------------- 8. stage S: scoring by code (CPU)
 if ! stage_done score; then
   recheck score
-  .venv/bin/python $R score $SPECARG --work $W --out-prefix $W/score > $W/score.out || { tail -3 $W/score.out; fail "the scoring failed (a missing input is an error, see above)"; }
+  .venv/bin/python $R score $SPECARG --work $W --out-prefix $W/score $NOTHINK > $W/score.out || { tail -3 $W/score.out; fail "the scoring failed (a missing input is an error, see above)"; }
   cat $W/score.out
   mark score $W/score.json $W/score.md $W/score_reader_V1.jsonl $W/score_reader_V1C.jsonl
 fi
 
 # ---------------------------------------------------------------- 9. the report and the done marker
 recheck report
-DONE_LINE=$(.venv/bin/python $R done-line $SPECARG --work $W)
+DONE_LINE=$(.venv/bin/python $R done-line $SPECARG --work $W $NOTHINK)
 {
   cat $HEAD
   echo
@@ -297,7 +319,7 @@ DONE_LINE=$(.venv/bin/python $R done-line $SPECARG --work $W)
   cat $W/score.md
   echo "### Files for the reader and for the next step"
   echo
-  echo "Reader files, one per variant (every accepted change with the old line, the new line, the quote and where it was found; catches are listed to be confirmed, changes on lines no finding names and all changes on B2, T and the thinking drafts to be read): \`$W/score_reader_V1.jsonl\`, \`$W/score_reader_V1C.jsonl\`. Check records \`$W/verify/*.jsonl\`; thinking answers \`$W/think/ans_think.jsonl\`; scores \`$W/score.json\`. After the reading, \`python scripts/m7_pilot_score.py score --work $W --damage V1=N,V1C=M\` prints the bars with the damage count (it writes score.json, score.md and the reader files again; the chain's own copies are kept as they are while the stage marker stands, so write them to another prefix with --out-prefix)."
+  echo "Reader files, one per variant (every accepted change with the old line, the new line, the quote and where it was found; catches are listed to be confirmed, changes on lines no finding names and all changes on B2, T and the thinking drafts to be read): \`$W/score_reader_V1.jsonl\`, \`$W/score_reader_V1C.jsonl\`. Check records \`$W/verify/*.jsonl\`; thinking answers \`$W/think/ans_think.jsonl\`; scores \`$W/score.json\`. After the reading, \`python scripts/m7_pilot_score.py score --work $W $NOTHINK --damage V1=N,V1C=M\` prints the bars with the damage count (it writes score.json, score.md and the reader files again; the chain's own copies are kept as they are while the stage marker stands, so write them to another prefix with --out-prefix)."
   echo
   echo "$DONE_LINE"
 } > $REPORT.tmp && mv $REPORT.tmp $REPORT

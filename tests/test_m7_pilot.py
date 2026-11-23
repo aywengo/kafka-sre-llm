@@ -272,5 +272,81 @@ class ScriptRefusalTests(unittest.TestCase):
         self.assertEqual(r.returncode, 2)
 
 
+class Fix1Tests(unittest.TestCase):
+    """M7 pilot fix 1 (2026-11-23): an unusable stage T never stops stage V, --think-cap, stage V before stage T. The full dry runs take about a minute and a half each, so these test the
+    pieces and the script's text; the end-to-end dry runs are done by hand (see runs/m7/reports/pilot_fix1.md)."""
+
+    def test_stage_v_comes_before_stage_t_in_the_script(self):
+        t = SCRIPT.read_text()
+        self.assertLess(t.index("if ! stage_done verify; then"), t.index("if ! stage_done think; then"))
+        self.assertLess(t.index("if ! stage_done think; then"), t.index("if ! stage_done thinkcheck; then"))
+        self.assertLess(t.index("if ! stage_done thinkcheck; then"), t.index("if ! stage_done score; then"))
+
+    def test_think_cap_reaches_the_calls_and_the_manifest(self):
+        t = SCRIPT.read_text()
+        self.assertIn("--think-cap $CAP </dev/null", t)                       # the eval2.py answer call of stage T
+        self.assertIn('--opt "think_cap=$CAP"', t)                            # the manifest
+        self.assertIn("--cap $CAP", t)                                         # the measures and the report
+        self.assertIn("CAP=1500", t)                                           # the default as before
+        for bad in ("0", "x", "-5", ""):
+            r = subprocess.run([str(SCRIPT), "--dry-run", "--think-cap", bad or "''"], capture_output=True, text=True, cwd=ROOT)
+            self.assertEqual(r.returncode, 2, bad)
+        r = subprocess.run([str(SCRIPT), "--plant-cut-think", "x"], capture_output=True, text=True, cwd=ROOT)
+        self.assertEqual(r.returncode, 2)                                      # planted failures are for dry runs only
+
+    def test_a_dry_run_with_a_cap_records_it(self):
+        with tempfile.TemporaryDirectory() as d:
+            spec, _ = small_spec(d, packs=False)                               # refused at the gate, before anything is written: the option itself parses
+            r = subprocess.run([str(SCRIPT), "--dry-run", "--think-cap", "8000", "--work", str(Path(d) / "w"), "--spec", str(spec)], capture_output=True, text=True, cwd=ROOT)
+            self.assertEqual(r.returncode, 2)
+            self.assertIn("REFUSED", r.stderr)
+
+    def rows(self, n_cut, n_ok, cap_tokens=3548):
+        out = []
+        for i in range(n_cut):
+            out.append({"id": f"c{i}", "error": "EmptyAnswerError: cut", "cut_while_thinking": True, "truncated": True, "text": "", "pack": ["c1"],
+                        "draft_info": {"thinking_requested": True, "reasoning_tokens": 3548, "finish_reason": "length"}, "tokens_detail": {"draft": cap_tokens, "draft_max_tokens": cap_tokens}})
+        for i in range(n_ok):
+            out.append({"id": f"o{i}", "text": "x" * 400, "pack": ["c1"], "draft_info": {"thinking_requested": True, "reasoning_tokens": 900 + 100 * i, "finish_reason": "stop"},
+                        "tokens_detail": {"draft": 1100 + 100 * i, "draft_max_tokens": cap_tokens}})
+        return out
+
+    def test_all_cut_rows_are_a_result_and_the_measures_say_so(self):
+        rows = self.rows(20, 0)
+        self.assertFalse(any(P.is_draft(r) for r in rows))
+        m = P.think_measures(rows, 1500)
+        self.assertEqual((m["finished_thinking"], m["drafts"], m["cut_while_thinking"], m["think_cap"]), (0, 0, 20, 1500))
+        md = P.think_md(m)
+        self.assertIn("No usable thinking draft at cap 1500", md)
+        self.assertIn("stage V and stage S are not affected", md)
+
+    def test_finished_drafts_report_their_thinking_tokens(self):
+        m = P.think_measures(self.rows(2, 3), 8000)
+        self.assertEqual(m["finished_thinking"], 3)
+        self.assertEqual((m["finished_thinking_tokens"]["median"], m["finished_thinking_tokens"]["max"], m["finished_thinking_tokens_source"]), (1000, 1100, "server"))
+        self.assertIn("Drafts that finished thinking under the cap: 3 of 5", P.think_md(m))
+        rows = self.rows(0, 2)
+        for r in rows:
+            del r["draft_info"]["reasoning_tokens"]
+        m = P.think_measures(rows, 1500)
+        self.assertEqual(m["finished_thinking_tokens_source"], "total_minus_answer")
+        self.assertIn("total tokens of the call minus the answer part", P.think_md(m))
+
+    def test_scoring_and_the_done_line_leave_the_thinking_check_out_when_asked(self):
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            spec = {"sets": [{"name": "S", "items": "i", "variants": ["V1"], "arms": [{"name": "default", "answers": "a", "n": 1}], "findings": None}]}
+            names = [r["name"] for r in P.plan_runs(spec, d)]
+            self.assertEqual(names[0], "THINK_think_V1")
+            self.assertNotIn("THINK_think_V1", [r["name"] for r in P.plan_runs(spec, d, think=False)])
+            (d / "verify").mkdir()
+            P.wr(d / "verify/s_default_V1.jsonl", [rec([])])
+            with self.assertRaises(P.PilotError):
+                P.score_all(spec, d)                                            # the thinking check is expected by default
+            res, _ = P.score_all(spec, d, use_think=False)
+            self.assertIsNone(res["think"])
+            self.assertEqual(res["variants"]["V1"]["total"]["answers"], 1)
+
+
 if __name__ == "__main__":
     unittest.main()

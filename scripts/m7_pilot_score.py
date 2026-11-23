@@ -92,7 +92,7 @@ Fixed by the conductor on 2026-11-23 (`runs/m7/reports/k1_check_design.md` secti
 pilot2, T and the stored answers of those sets). It does not use D5, the hidden part of the M4 evaluation or the legacy question sets. The model is the 4-bit build of the base model.
 
 **Stage T, thinking.** 20 scenarios: the first 10 ids of B1 and the first 10 of B2, ordered by the sha256 of the id. The default prompt on the STORED packs of the stored default answers
-(replay of the packs, no search call), thinking on, no check, the answer limit plus 1,500 tokens as the total limit (the builder's `--answer-profile thorough --no-verify`). It answers:
+(replay of the packs, no search call), thinking on, no check, the answer limit plus the thinking cap as the total limit (1,500 tokens unless the chain's `--think-cap N` says otherwise; the cap used is stated in the lines above; the builder's `--answer-profile thorough --no-verify`). It answers:
 does the 4-bit build honour the thinking switch (reasoning present), how many tokens thinking takes (median, 90th percentile, maximum), how many drafts come back empty, cut, or cut while
 thinking under that total limit, and the seconds per part. It has no bar; it sets the thinking cap for the six-arm test. Then the checking pass (variant V1, no cards) runs on these drafts
 (a draft that was cut while thinking is no draft and is left out); mechanical measures only.
@@ -171,10 +171,11 @@ def input_files(spec):
     return list(dict.fromkeys(files))
 
 
-def plan_runs(spec, work):
-    """The checking runs in the order they are made: V1 on every set, then V1C; the thinking drafts first. Each: name, set, arm, variant, answers, items, out, expect, cards."""
+def plan_runs(spec, work, think=True):
+    """The checking runs in the order they are made: V1 on every set, then V1C; the thinking drafts first (left out when think is False: no usable thinking draft, M7 pilot fix 1).
+    Each: name, set, arm, variant, answers, items, out, expect, cards."""
     W = Path(work)
-    runs = [{"name": "THINK_think_V1", "set": THINK_SET, "arm": "think", "variant": "V1", "answers": str(W / "think/ans_think_drafts.jsonl"), "items": str(W / "think/items.jsonl"),
+    runs = [] if not think else [{"name": "THINK_think_V1", "set": THINK_SET, "arm": "think", "variant": "V1", "answers": str(W / "think/ans_think_drafts.jsonl"), "items": str(W / "think/items.jsonl"),
              "out": str(W / "verify/think_think_V1.jsonl"), "expect": None, "cards": False}]
     for v in VARIANTS:
         for s in spec["sets"]:
@@ -557,7 +558,7 @@ def cmd_think_drafts(a):
     return 0
 
 
-def think_measures(rows):
+def think_measures(rows, cap=None):
     infos = [r.get("draft_info") or {} for r in rows]
     n = len(rows)
     errs = Counter((r.get("error") or "").split(":")[0] for r in rows if r.get("error"))
@@ -575,7 +576,19 @@ def think_measures(rows):
     total_s = [s["total"] for s in secs if isinstance(s.get("total"), (int, float))]
     comp = [(r.get("tokens_detail") or {}).get("draft") for r in rows if isinstance((r.get("tokens_detail") or {}).get("draft"), (int, float))]
     maxt = sorted({(r.get("tokens_detail") or {}).get("draft_max_tokens") for r in rows if (r.get("tokens_detail") or {}).get("draft_max_tokens")})
+    # fix 1: the drafts that finished thinking under the cap (not cut while thinking, no failure other than an empty answer) and their thinking tokens: the server's reasoning-token count when it
+    # reports one, otherwise the total tokens of the call minus the answer part (the answer part inferred from the text, about 4 characters per token)
+    fin = [r for r in rows if not r.get("cut_while_thinking") and not (r.get("error") and not str(r["error"]).startswith("EmptyAnswerError"))]
+    fin_tok, fin_src = [], "none"
+    for r in fin:
+        i = r.get("draft_info") or {}
+        tot = (r.get("tokens_detail") or {}).get("draft")
+        if isinstance(i.get("reasoning_tokens"), (int, float)):
+            fin_tok.append(i["reasoning_tokens"]); fin_src = "server"
+        elif isinstance(tot, (int, float)):
+            fin_tok.append(max(0, tot - len(r.get("text") or "") / 4)); fin_src = fin_src if fin_src == "server" else "total_minus_answer"
     return {
+        "think_cap": cap, "finished_thinking": len(fin), "finished_thinking_tokens": st(fin_tok), "finished_thinking_tokens_source": fin_src,
         "scenarios": n, "errors": dict(errs), "empty_drafts": errs.get("EmptyAnswerError", 0), "drafts": len(drafts),
         "thinking_requested": sum(1 for i in infos if i.get("thinking_requested")), "reasoning_present": present,
         "reasoning_in_content": sum(1 for i in infos if i.get("reasoning_inline")),
@@ -595,6 +608,17 @@ def fmt(x, d=1):
 
 def think_md(m, stub=False):
     L = [f"### Stage T: thinking on {m['scenarios']} stored packs of B1 and B2 (no bar; it sets the thinking cap of the six-arm test)" + (" (stub run: not a measurement)" if stub else ""), ""]
+    cap = m.get("think_cap")
+    L.append(f"- Thinking cap of this run: {cap if cap is not None else 'the profile default (1,500)'} tokens added to the answer limit (the total limit; the thinking part has no limit of its own, "
+             f"the answer part is cut at the answer limit).")
+    ft = m.get("finished_thinking_tokens") or {}
+    src = {"server": "the server's reasoning-token count", "total_minus_answer": "the total tokens of the call minus the answer part (the answer part inferred from the text, about 4 "
+           "characters per token; the server reported no reasoning-token count)", "none": "no count available"}[m.get("finished_thinking_tokens_source", "none")]
+    L.append(f"- Drafts that finished thinking under the cap: {m.get('finished_thinking', 0)} of {m['scenarios']}; their thinking tokens ({src}, {ft.get('n', 0)} calls): median {fmt(ft.get('median'), 0)}, "
+             f"90th percentile {fmt(ft.get('p90'), 0)}, maximum {fmt(ft.get('max'), 0)}.")
+    if not m.get("drafts"):
+        L.append(f"- No usable thinking draft at cap {cap if cap is not None else 1500}: every row was an error or was cut while thinking; the checking pass on thinking drafts is skipped, "
+                 f"stage V and stage S are not affected.")
     L.append(f"- Does the 4-bit build honour the switch: thinking requested on {m['thinking_requested']} of {m['scenarios']} calls; reasoning present in {m['reasoning_present']} "
              f"(of them inline in the content {m['reasoning_in_content']}).")
     t = m["reasoning_tokens"]
@@ -622,7 +646,7 @@ def think_md(m, stub=False):
 
 def cmd_think_measures(a):
     rows = rd(a.answers)
-    m = think_measures(rows)
+    m = think_measures(rows, a.cap)
     Path(a.out_json).write_text(json.dumps(m, indent=1, sort_keys=True) + "\n", encoding="utf-8")
     Path(a.out_md).write_text(think_md(m, a.stub), encoding="utf-8")
     print(f"think measures: {m['scenarios']} rows, reasoning present {m['reasoning_present']}, empty {m['empty_drafts']}, cut while thinking {m['cut_while_thinking']}, cut {m['cut_at_limit']}")
@@ -768,12 +792,12 @@ def reader_rows(run, rows, scored, read_all):
     return out
 
 
-def score_all(spec, work, damage=None):
+def score_all(spec, work, damage=None, use_think=True):
     """-> (the result tree, {variant: reader rows}). Raises PilotError when a check output is missing."""
     W = Path(work)
     findings = {s["name"]: load_findings(s) for s in spec["sets"]}
     by_variant, reader, think = {}, {v: [] for v in VARIANTS}, None
-    for run in plan_runs(spec, W):
+    for run in plan_runs(spec, W, use_think):
         if not Path(run["out"]).is_file():
             raise PilotError(f"the check output {run['out']} is missing")
         rows = rd(run["out"])
@@ -858,7 +882,7 @@ def cmd_score(a):
     spec = load_spec(a.spec)
     W = Path(a.work)
     damage = parse_damage(a.damage)
-    res, reader = score_all(spec, W, damage)
+    res, reader = score_all(spec, W, damage, use_think=not a.no_think_check)
     out = Path(a.out_prefix) if a.out_prefix else W / "score"
     for v, rows in reader.items():
         if v in res["variants"]:
@@ -888,7 +912,7 @@ def cmd_code_pins(a):
 def cmd_done_line(a):
     W = Path(a.work)
     spec = load_spec(a.spec)
-    runs = plan_runs(spec, W)
+    runs = plan_runs(spec, W, not a.no_think_check)
     n = sum(len(rd(r["out"])) for r in runs)
     print(f"M7 PILOT DONE: {len(rd(W / 'think/ans_think.jsonl'))} thinking drafts, {n} checks")
     return 0
@@ -918,6 +942,7 @@ def main(argv=None):
     p.add_argument("--out-json", required=True)
     p.add_argument("--out-md", required=True)
     p.add_argument("--stub", action="store_true")
+    p.add_argument("--cap", type=int, default=None, help="the thinking cap of the run (tokens added to the answer limit), for the report")
     p = sub.add_parser("check-think")
     p.add_argument("--file", required=True)
     p.add_argument("--expect", type=int, required=True)
@@ -930,10 +955,12 @@ def main(argv=None):
     spec_arg(p)
     p.add_argument("--work", required=True)
     p.add_argument("--out-prefix", default=None, help="default: WORK/score (writes .json, .md and _reader_V.jsonl)")
+    p.add_argument("--no-think-check", action="store_true", help="the checking pass on the thinking drafts was skipped (no usable thinking draft)")
     p.add_argument("--damage", default=None, help="the reader's count of damaged correct lines, e.g. V1=2,V1C=0 (leave out while the reading is open)")
     p = sub.add_parser("done-line")
     spec_arg(p)
     p.add_argument("--work", required=True)
+    p.add_argument("--no-think-check", action="store_true")
     sub.add_parser("header-text")
     sub.add_parser("code-pins")
     a = ap.parse_args(argv)
