@@ -304,7 +304,16 @@ class Helpers(unittest.TestCase):
         e = R.expected_calls(50, "V1C", 96, 20, R.MODEL_KEYS, ("qwen", "gemma31"))   # gemma31 thinks: D, F and C as Qwen's
         self.assertEqual((e["ans_d_gemma31"], e["ans_f_gemma31"], e["ans_c_gemma31"], e["judge"]), (332, 100, 50, (8 + 7 + 2) * 100))
         e = R.expected_calls(50, "none", 96, 20, R.MODEL_KEYS, ("qwen", "gemma26"))
-        self.assertEqual((e["ans_d_gemma26"], e["ans_f_gemma26"], "ans_c_gemma26" in e), (166, 50, False))
+        self.assertEqual((e["ans_d_gemma26"], "ans_f_gemma26" in e, "ans_c_gemma26" in e), (166, False, False))      # under none a thinking Gemma model has B only (no F')
+        self.assertEqual(e["ans_f"] if "ans_f" in e else None, 50)                                                    # Qwen thinks here: its F' stays
+        e = R.expected_calls(50, "none", 96, 20, R.MODEL_KEYS, ("gemma26", "gemma31"), "yes")                          # the planned run
+        self.assertEqual((e["ans_d_gemma26"], e["ans_d_gemma31"], "ans_f_gemma26" in e, "ans_f_gemma31" in e, "ans_d" in e, "ans_f" in e), (166, 166, False, False, False, False))
+        self.assertEqual(e["judge"], (3 + 3 + 3) * 50 * 2)                                                              # Qwen A E R; each Gemma A E B
+        e = R.expected_calls(50, "none", 96, 20, R.MODEL_KEYS, ("gemma26", "gemma31"), "no")                            # --thinking-mech no: B on D5 only
+        self.assertEqual((e["ans_d_gemma26"], e["ans_d_gemma31"]), (50, 50))
+        self.assertEqual((e["ans_a_gemma26"], e["total_answer_calls"]), (166, 166 * 3 + 50 * 3 + 50 + 50 + 50))
+        with self.assertRaises(R.SixError):
+            R.expected_calls(50, "none", 96, 20, R.MODEL_KEYS, ("gemma26",), "maybe")
 
     def test_the_judged_sets_by_variant(self):
         self.assertEqual(list(R.SET_STEMS["V1"]), ["A", "B", "C", "D", "E", "F", "Fp"])
@@ -1232,7 +1241,8 @@ class ModelsAndComparison(unittest.TestCase):
         self.assertEqual(stems["D_gemma26"], "D_gemma26")
         none = R.all_set_stems("none", R.plan_models("qwen,gemma31", "qwen,gemma31", None, True))
         self.assertEqual(none["B_gemma31"], "D_gemma31")                                     # under none the thinking-only run is B (and F' is the F run), as for Qwen
-        self.assertEqual(none["Fp_gemma31"], "F_gemma31")
+        self.assertNotIn("Fp_gemma31", none)                                                   # a thinking Gemma model under none has A, E and B only (2026-11-23)
+        self.assertEqual([k for k in none if k.endswith("_gemma31")], ["A_gemma31", "B_gemma31", "E_gemma31"])
 
     def test_a_placeholder_model_id_is_refused_in_a_real_run(self):
         with self.assertRaises(R.SixError) as cm:
@@ -1567,6 +1577,144 @@ class CleanWinner(unittest.TestCase):
 
 
 
+class PerModelThoroughRow(unittest.TestCase):
+    """2026-11-23: the planned run is --thinking-models gemma26,gemma31 --check-variant none; the thorough-profile row applies per thinking Gemma model (its B against its own A);
+    Qwen's row is not tested (W11 and the pilot)."""
+
+    def m(self, g26=(0.0, 0), g31=(0.0, 0), med=(52.0, 127.0)):
+        """Synthetic totals of the planned run: g26 and g31 are (coverage difference B - A, cut answers)."""
+        mm = {"variant": "none", "think_cap": 1500, "thorough_arm": None, "sizes": {"D5": 50}, "arms": {k: arm(ident=2.0) for k in ("A", "E", "R")},
+              "pairs": {"E-A": {"mean": 0.0, "se": 0.03, "n": 50}}, "thorough_models": {}}
+        for g, (cov, cut), t in (("gemma26", g26, med[0]), ("gemma31", g31, med[1])):
+            mm["arms"].update({f"A_{g}": arm(), f"E_{g}": arm(), f"B_{g}": arm(cut=cut, med=t, p90=t * 2)})
+            mm["pairs"][f"B_{g}-A_{g}"] = {"mean": cov, "se": 0.03, "n": 50}
+            mm["thorough_models"][g] = {"set": f"B_{g}", "ref": f"A_{g}"}
+        return mm
+
+    def reading(self, wrong=-3.0, confirmed=0, pending=0):
+        """Findings and reads whose paired wrong count is `wrong` per 10 (a multiple of 10/50 steps on 50 scenarios) and the given harm for B_gemma26 against A_gemma26."""
+        rows, reads = [], []
+        for i in range(50):
+            sid = f"s-{i:02d}"
+            for st in ("B_gemma26", "A_gemma26"):
+                reads.append({"set": st, "id": sid, "reader": "r1", "kind": "read"})
+                reads.append({"set": st, "id": sid, "reader": "r2", "kind": "read"})
+        k = round(-wrong * 5)          # k fewer wrong statements in B than in A over 50 scenarios: B-A = -k/50*10 per 10
+        for i in range(k):
+            rows.append({"set": "A_gemma26", "id": f"s-{i:02d}", "reader": "r1", "kind": "wrong", "minor": False})
+        for i in range(confirmed + pending):
+            sid = f"s-{i:02d}"
+            rows.append({"set": "B_gemma26", "id": sid, "reader": "r1", "kind": "harmful", "minor": False, "consequence": "data loss"})
+            if i < confirmed:
+                rows.append({"set": "B_gemma26", "id": sid, "reader": "r2", "kind": "harmful", "minor": False, "consequence": "data loss"})
+            else:
+                reads = [r for r in reads if not (r["set"] == "B_gemma26" and r["id"] == sid and r["reader"] == "r2")]
+        return rows, reads
+
+    def test_the_final_line_lists_each_models_outcome_and_qwens_row_is_not_tested(self):
+        L, res = R.evaluate(self.m())
+        text = "\n".join(L)
+        self.assertIn("Thorough-profile rows, Qwen: not tested (W11 and the pilot)", text)
+        self.assertEqual(res["time_reported"], None)
+        GL, g = R.gemma_thorough(self.m())
+        gtext = "\n".join(GL)
+        self.assertEqual([l for l in GL if l.startswith("Thorough outcome")].__len__(), 2)       # one outcome line per model
+        self.assertIn("Thorough outcome, gemma26: waits for the reading", gtext)
+        self.assertIn("B4 then takes gemma26's B", gtext)
+        self.assertIn("W4", gtext)
+        self.assertIn("REPORTED  time per answer with search, median 52.0 s", gtext)
+        self.assertEqual({k: v["outcome"] for k, v in g.items()}, {"gemma26": "waits", "gemma31": "waits"})
+        with tempfile.TemporaryDirectory() as td:
+            pth = Path(td) / "m.json"
+            pth.write_text(json.dumps(self.m(g31=(-0.05, 0))))
+            code, out, _ = run_main(["rule", "--measures", str(pth)])
+        self.assertEqual(code, 0)
+        self.assertEqual(out.strip().splitlines()[-1], "M7 SIX-ARM TEST DONE: knowledge-base row: none_lookup_not_tested; thorough-profile row: "
+                                                      "qwen NOT TESTED (W11 and the pilot); gemma26 WAITS FOR THE READING; gemma31 FAILS (coverage)")
+
+    def test_each_measured_condition_fails_alone_per_model(self):
+        for kw, why in ((dict(g26=(-0.0401, 0)), "coverage"), (dict(g26=(0.0, 6)), "cut")):
+            with self.subTest(failing=why):
+                _, g = R.gemma_thorough(self.m(**kw))
+                self.assertEqual((g["gemma26"]["outcome"], g["gemma26"]["failing"], g["gemma31"]["outcome"]), ("fail", [why], "waits"))     # the other model is not touched
+        _, g = R.gemma_thorough(self.m(g26=(-0.04, 5)))                                                                             # the edges pass
+        self.assertEqual(g["gemma26"]["conditions"], {"coverage": True, "cut": True, "wrong": None, "harm": None})
+        text = "\n".join(R.gemma_thorough(self.m(g26=(0.0, 6)))[0])
+        self.assertIn("Thorough outcome, gemma26: neither (cut fails); gemma26's B does not go on to B4", text)
+
+    def test_a_gemma_b_that_passes_goes_on_to_b4_and_the_reading_conditions_fail_alone(self):
+        m = self.m()
+        _, g = R.gemma_thorough(m, (*self.reading(wrong=-3.0), "r1", "r2"))
+        self.assertEqual((g["gemma26"]["outcome"], g["gemma26"]["conditions"]), ("pass", {"coverage": True, "cut": True, "wrong": True, "harm": True}))
+        L, _ = R.gemma_thorough(m, (*self.reading(wrong=-3.0), "r1", "r2"))
+        self.assertIn("Thorough outcome, gemma26: PASS; gemma26's B goes on to B4 (W4: thinking alone may go on to B4); B4 then takes gemma26's B", "\n".join(L))
+        _, g = R.gemma_thorough(m, (*self.reading(wrong=-2.0), "r1", "r2"))                  # the edge of the wrong bar passes
+        self.assertEqual(g["gemma26"]["outcome"], "pass")
+        _, g = R.gemma_thorough(m, (*self.reading(wrong=-1.8), "r1", "r2"))                  # wrong alone fails
+        self.assertEqual((g["gemma26"]["outcome"], g["gemma26"]["failing"]), ("fail", ["wrong"]))
+        _, g = R.gemma_thorough(m, (*self.reading(wrong=-3.0, confirmed=1), "r1", "r2"))     # a confirmed new harm alone fails
+        self.assertEqual((g["gemma26"]["outcome"], g["gemma26"]["failing"]), ("fail", ["harm"]))
+        _, g = R.gemma_thorough(m, (*self.reading(wrong=-3.0, pending=1), "r1", "r2"))       # not yet read by the second reader: waits
+        self.assertEqual(g["gemma26"]["outcome"], "waits")
+
+    def test_a_missing_measure_is_not_available_never_a_pass(self):
+        m = self.m()
+        del m["pairs"]["B_gemma31-A_gemma31"]
+        L, g = R.gemma_thorough(m)
+        self.assertEqual((g["gemma31"]["outcome"], g["gemma26"]["outcome"]), ("na", "waits"))
+        self.assertIn("Thorough outcome, gemma31: NOT AVAILABLE", "\n".join(L))
+        self.assertIn("gemma31 NOT AVAILABLE", R.thorough_final("NOT TESTED", g))
+
+    def test_the_thorough_rows_command_applies_the_reading(self):
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            rows, reads = self.reading(wrong=-3.0)
+            (td / "m.json").write_text(json.dumps(self.m()))
+            (td / "f.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+            (td / "r.jsonl").write_text("".join(json.dumps(r) + "\n" for r in reads))
+            code, out, _ = run_main(["thorough-rows", "--measures", str(td / "m.json"), "--findings", str(td / "f.jsonl"), "--reads", str(td / "r.jsonl"),
+                                     "--first-reader", "r1", "--second-reader", "r2"])
+        self.assertEqual(code, 0)
+        self.assertEqual(out.strip().splitlines()[-1], "M7 THOROUGH ROWS: qwen not tested (W11 and the pilot); gemma26 GOES ON TO B4 (its B); gemma31 WAITS FOR THE READING")   # gemma31 has no reading here
+
+    def test_the_planned_configuration_sets_estimate_and_reading_sets(self):
+        plan = R.plan_models("qwen,gemma26,gemma31", "gemma26,gemma31", None, True)
+        self.assertEqual(list(R.all_set_stems("none", plan)), ["A", "E", "R", "A_gemma26", "B_gemma26", "E_gemma26", "A_gemma31", "B_gemma31", "E_gemma31"])
+        self.assertIsNone(R.thorough_of("none", plan))
+        with tempfile.TemporaryDirectory() as td:
+            code, out, _ = run_main(["reading-sets", "--check-variant", "none", "--work", td, "--thinking-models", "gemma26,gemma31"])
+        names = [l.split("=")[0] for l in out.strip().splitlines()]
+        self.assertEqual(names, ["A", "E", "A_gemma26", "E_gemma26", "B_gemma26", "A_gemma31", "E_gemma31", "B_gemma31"])     # 8 answers per scenario
+        h, (lo, hi) = R.estimate(50, 1500, "none", plan)
+        h2, (lo2, hi2) = R.estimate(50, 1500, "none", R.plan_models("qwen,gemma26,gemma31", "gemma26,gemma31", None, True, "no"))
+        self.assertEqual(sorted(k for k in h if k.startswith("ans_d")), ["ans_d_gemma26", "ans_d_gemma31"])
+        self.assertNotIn("ans_f_gemma26", h)
+        self.assertAlmostEqual(h["ans_d_gemma31"][0], (50 + 116) * 127.0 / 3600)          # the measured median seconds per thinking answer
+        self.assertAlmostEqual(h["ans_d_gemma26"][1], (50 + 116) * 141.0 / 3600)          # the measured 90th percentile
+        self.assertAlmostEqual(h2["ans_d_gemma31"][0], 50 * 127.0 / 3600)                  # --thinking-mech no
+        self.assertLess(lo2, lo)
+
+    def test_the_blind_bundles_mix_the_gemma_b_arm_under_random_letters_and_the_leak_check_covers_it(self):
+        for term in ("B_gemma26", "gemma26", "Gemma"):
+            with tempfile.TemporaryDirectory() as td:
+                (Path(td) / "first").mkdir()
+                (Path(td) / "first/s-1.md").write_text(f"## answer C\n{term}\n")
+                self.assertNotEqual(run_main(["leak-check", "--dir", td])[0], 0, term)
+        with tempfile.TemporaryDirectory() as td:
+            (Path(td) / "first").mkdir()
+            (Path(td) / "first/s-1.md").write_text("## answer C\nplain answer\n")
+            self.assertEqual(run_main(["leak-check", "--dir", td, "--terms", "Qwen3.8-27B-4bit", "gemma-4-26B-A4B-it-QAT-MLX-4bit"])[0], 0)
+
+    def test_the_rule_text_states_the_planned_run_and_keeps_the_plans_table(self):
+        t = R.RULE_TEXT
+        self.assertIn("`--thinking-models gemma26,gemma31 --check-variant none`", t)
+        self.assertIn("runs/m7/reports/gemma_think.md", t)
+        self.assertIn("W4", t)
+        self.assertIn("--thinking-mech yes|no", t)
+        self.assertIn("B4 then takes THAT model's B", t)
+        self.assertEqual(t.count("| D − A wrong statements at most −2.0 per 10, coverage at least −0.04, harmful at most A + 2, cut at most 10 %, median at most 180 s and measured 90th percentile at most 270 s | Thorough profile goes on to B4 |"), 1)
+
+
 class K4bFixes(unittest.TestCase):
     """K4b after the review: thinking none, the no-draft rule per answer, harm groups, guarded described arms, the cross-model body check, markers, the extra second reader."""
 
@@ -1869,7 +2017,7 @@ class EndToEndDryRun(unittest.TestCase):
         self.assertIn("calls ans_d_gemma26: drafts 124 (expected 124), checks 0 (expected 0)", r.stdout)
         self.assertNotIn("ans_c_gemma26", r.stdout)
         m = json.load(open(Path(td) / "w/measures.json"))
-        self.assertEqual(sorted(m["compare"]["gemma26"]), ["A", "B", "E"])    # the thinking-only run is B under none
+        self.assertEqual(sorted(m["compare"]["gemma26"]), ["A", "B", "B~A", "E"])    # the thinking-only run is B under none; B against Qwen's B, and against Qwen's A
         td, r = self.run_dry("V1C", "--models", "qwen")
         self.assertEqual(r.returncode, 0, r.stdout[-2500:] + r.stderr[-2000:])
         self.assertIn("(no other model in this run)", r.stdout)

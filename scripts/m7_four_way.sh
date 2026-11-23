@@ -18,7 +18,9 @@
 #   The answer stages are grouped by model, each model loaded alone and unloaded after its stages, in the order gemma31, gemma26, qwen (inside Qwen: D, F, A, C, E, R). The server gate never unloads a model another client
 #   loaded (W2): a model of this chain is one it loaded (a marker in the work folder), plus Qwen's 4-bit build and the judge. Another model's switch is probed after its load (thinking on shows thinking, off shows none).
 #   K4b (after the review; W11): --thinking-models defaults to none and a real run must pass it explicitly (recorded in the manifest and the header): with none, Qwen answers A, E, R and C (the checking pass alone is the thorough
-#   candidate, W11) and the thinking arms' code paths stay but are not part of the planned run. Every model other than Qwen is probed alone at the gate, before any answer (switch off and on; stage `probes`); a model counts as ours (W2)
+#   candidate, W11) and the thinking arms' code paths stay. THE PLANNED RUN (the conductor, 2026-11-23, after the Gemma thinking measurement in runs/m7/reports/gemma_think.md) is
+#   --thinking-models gemma26,gemma31 --check-variant none: Qwen A, E, R; each Gemma model A, E and its thinking-only arm B (stage ans_d, files ans_*_D_<model>; no perfect-pack thinking arm); the thorough-profile row is applied per Gemma model
+#   (its B against its own A) and is "not tested (W11 and the pilot)" for Qwen; --thinking-mech yes|no (default yes): whether a Gemma B also answers the 116 mechanical items. Every model other than Qwen is probed alone at the gate, before any answer (switch off and on; stage `probes`); a model counts as ours (W2)
 #   only with a marker this chain wrote when it loaded it, Qwen's 4-bit build and the judge included; the prompt check and the model-free request-body check run right after each model's stages; an answer with no draft is left out of its
 #   bundle, not the scenario; a described set (R, another model's) that cannot be computed is "not available" and stops nothing.
 #   Time is reported, not decided (W5); harm is matched by consequence (W6); the comparison of each model with Qwen is described, not decided (W10): see the rule text in the report header.
@@ -54,7 +56,7 @@
 #   scripts/m7_four_way.sh --check-variant V1C --think-cap 1500 --check-variant-source "..." --think-cap-source "..." --gemma31-model ID > runs/m7/logs/m7_six_arm.out 2>&1 &     (real, K5)
 #   scripts/m7_four_way.sh --dry-run --work DIR --check-variant V1|V1C|none --think-cap N       # stub model, stub judge, stand-in reranker and inputs, no server; nothing is written outside DIR
 # Options: --dry-run, --work DIR, --report FILE, --check-variant V, --think-cap N, --check-variant-source TXT, --think-cap-source TXT, --pilot-report FILE (default runs/m7/M7_PILOT.md; pinned by its sha256;
-#   a real run refuses without it or with a dry-run record; a dry run uses a stub), --perfect-packs F, --ids FILE, --max-unjudged N (default 0), --models LIST, --thinking-models LIST, --qwen-model ID, --gemma26-model ID, --gemma31-model ID, --scenarios-per-session N (reading sessions; default about 16 answers
+#   a real run refuses without it or with a dry-run record; a dry run uses a stub), --perfect-packs F, --ids FILE, --max-unjudged N (default 0), --models LIST, --thinking-models LIST, --thinking-mech yes|no, --qwen-model ID, --gemma26-model ID, --gemma31-model ID, --scenarios-per-session N (reading sessions; default about 16 answers
 #   each), and for dry runs only: --fail-after STAGE (plant a failure
 #   after that stage, to rehearse a restart), --dry-items N (stand-in scenarios, default 8), --plant-cut SUBSTRINGS (comma-separated substrings of a question: the thinking drafts of those scenarios are
 #   cut while thinking), --plant-check-fail SUBSTRINGS (the checking calls of those scenarios fail, every time).
@@ -64,7 +66,7 @@
 # 10 to 14 server hours).
 set -e
 DRY=no; WSET=no; W=work/m7/six_arm; REPORT=runs/m7/M7_SIX_ARM.md; RSET=no; VARIANT=; CAP=; VSRC=; CSRC=; PERFECT=work/m7/packs_perfect.jsonl; MAXU=0; FAILAFTER=; DRYITEMS=8; PSET=no
-PILOT=runs/m7/M7_PILOT.md; PLANTCUT=; PLANTCHK=; MODELS=qwen,gemma26,gemma31; THINK=none; THSET=no; QID=; G26ID=; G31ID=; SPS=0
+PILOT=runs/m7/M7_PILOT.md; PLANTCUT=; PLANTCHK=; MODELS=qwen,gemma26,gemma31; THINK=none; THSET=no; THMECH=yes; QID=; G26ID=; G31ID=; SPS=0
 IDS=eval/m4/g_dev_ids.json; ITEMS=eval/m6/d5/items.jsonl; RUBS=eval/m6/d5/rubrics.jsonl; CC=eval/m6/d5/CHUNK_CHECK.json; FW=work/m6/d5_funnel
 while [ $# -gt 0 ]; do case $1 in
   --dry-run) DRY=yes;;
@@ -72,16 +74,16 @@ while [ $# -gt 0 ]; do case $1 in
   --check-variant) VARIANT=${2:?}; shift;; --think-cap) CAP=${2:?}; shift;; --check-variant-source) VSRC=${2:?}; shift;; --think-cap-source) CSRC=${2:?}; shift;;
   --perfect-packs) PERFECT=${2:?}; PSET=yes; shift;; --ids) IDS=${2:?}; shift;; --max-unjudged) MAXU=${2:?}; shift;; --fail-after) FAILAFTER=${2:?}; shift;; --dry-items) DRYITEMS=${2:?}; shift;;
   --pilot-report) PILOT=${2:?}; shift;; --plant-cut) PLANTCUT=${2:?}; shift;; --plant-check-fail) PLANTCHK=${2:?}; shift;;
-  --models) MODELS=${2:?}; shift;; --thinking-models) THINK=${2:?}; THSET=yes; shift;; --qwen-model) QID=${2:?}; shift;; --gemma26-model) G26ID=${2:?}; shift;; --gemma31-model) G31ID=${2:?}; shift;;
+  --models) MODELS=${2:?}; shift;; --thinking-models) THINK=${2:?}; THSET=yes; shift;; --thinking-mech) THMECH=${2:?}; shift;; --qwen-model) QID=${2:?}; shift;; --gemma26-model) G26ID=${2:?}; shift;; --gemma31-model) G31ID=${2:?}; shift;;
   --scenarios-per-session) SPS=${2:?}; shift;;
-  *) echo "usage: scripts/m7_four_way.sh [--dry-run] [--work DIR] [--report FILE] --check-variant V1|V1C|none --think-cap N [--check-variant-source TXT --think-cap-source TXT] [--perfect-packs F] [--ids FILE] [--pilot-report F] [--max-unjudged N] [--models LIST] [--thinking-models LIST] [--gemma31-model ID] (see the header)" >&2; exit 2;; esac
+  *) echo "usage: scripts/m7_four_way.sh [--dry-run] [--work DIR] [--report FILE] --check-variant V1|V1C|none --think-cap N [--check-variant-source TXT --think-cap-source TXT] [--perfect-packs F] [--ids FILE] [--pilot-report F] [--max-unjudged N] [--models LIST] [--thinking-models LIST] [--thinking-mech yes|no] [--gemma31-model ID] (see the header)" >&2; exit 2;; esac
   shift; done
 refuse() { echo "REFUSED: $1; nothing started" >&2; exit 2; }
 R=scripts/m7_six_arm_rule.py; GR=scripts/m5_g_rule.py; R6=scripts/m6_d5_rule.py; N=m7_four_way; L=runs/m7/logs
 [ -n "$VARIANT" ] || refuse "--check-variant V1|V1C|none is required (from the pilot)"
 [ -n "$CAP" ] || refuse "--think-cap N is required (from the pilot)"
 .venv/bin/python $R gate-params --check-variant "$VARIANT" --think-cap "$CAP" || refuse "the run parameters are not usable (see above)"
-MARGS="--models $MODELS --thinking-models $THINK"
+MARGS="--models $MODELS --thinking-models $THINK --thinking-mech $THMECH"
 if [ -n "$QID" ]; then MARGS="$MARGS --qwen-model $QID"; fi
 if [ -n "$G26ID" ]; then MARGS="$MARGS --gemma26-model $G26ID"; fi
 if [ -n "$G31ID" ]; then MARGS="$MARGS --gemma31-model $G31ID"; fi
@@ -114,6 +116,8 @@ NSETS=$(echo $SETNAMES | wc -w | tr -d ' ')
 stem_of() { echo "$SETLINES" | awk -v n=$1 '$1==n{print $2}'; }     # the file stem of a set's D5 answers
 MODELORDER=$(.venv/bin/python $R model-order $MARGS) || refuse "the model order could not be made"     # e.g. gemma31:no gemma26:no qwen:yes
 MODELKEYS=$(echo $MODELORDER | tr ' ' '\n' | sed 's/:.*//' | tr '\n' ' ')
+hasf() { [ $1 = qwen ] || [ $CHECKING = yes ]; }       # does a thinking model have the perfect-pack thinking arm F? (a thinking Gemma model under none has B only)
+hasm() { [ $1 = qwen ] || [ $THMECH = yes ]; }         # does a thinking model's D (B under none) answer the 116 mechanical items?
 thinks() { case " $MODELORDER " in *" $1:yes "*) return 0;; esac; return 1; }
 if [ $DRY = yes ]; then
   [ $WSET = yes ] || W=$(mktemp -d "${TMPDIR:-/tmp}/m7_four_way.XXXXXX")
@@ -218,7 +222,7 @@ allstages() { # the stages that need the server (or CPU, rettime): in the order 
   s="probes rettime"
   for mo in $MODELORDER; do k=${mo%%:*}; x=; [ $k = qwen ] || x=_$k
     s="$s ans_a$x ans_e$x"
-    if [ ${mo#*:} = yes ]; then s="$s ans_d$x ans_f$x"; fi
+    if [ ${mo#*:} = yes ]; then s="$s ans_d$x"; if hasf $k; then s="$s ans_f$x"; fi; fi
     if [ $CHECKING = yes ] && { [ ${mo#*:} = yes ] || [ $k = qwen ]; }; then s="$s ans_c$x"; fi
     [ $k != qwen ] || s="$s ans_r"
   done; echo "$s judge"; }
@@ -250,7 +254,7 @@ GIT_HEAD=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)   # recorded 
 gstate() { # SUBCOMMAND [EXTRA...]: the manifest and the start check take the same state
   sub=$1; shift
   .venv/bin/python $R "$sub" --manifest $W/MANIFEST.json --work $W $PINS --frozen $FROZEN $DRYFLAG --opt "model=$Q4" --opt "check_variant=$VARIANT" --opt "think_cap=$CAP" \
-    --opt "models=$MODELS" --opt "thinking_models=$THINK" --opt "gemma26_id=$MID_gemma26" --opt "gemma31_id=$MID_gemma31" --opt "scenarios_per_session=$SPS" \
+    --opt "models=$MODELS" --opt "thinking_models=$THINK" --opt "thinking_mech=$THMECH" --opt "gemma26_id=$MID_gemma26" --opt "gemma31_id=$MID_gemma31" --opt "scenarios_per_session=$SPS" \
     --opt "check_variant_source=$VSRC" --opt "think_cap_source=$CSRC" --opt "bundle_seed=20261123" --opt "pilot_report=$PILOT" \
     --info "git_head=$GIT_HEAD" --info "max_unjudged=$MAXU" --judge-arg "model=$DS" --judge-arg "setting=$JSETTING" --judge-arg "extra_body=$JEB" --judge-arg "source_chars=$SRC" \
     --judge-arg "instruction=v2" --judge-arg "passes=1 2" --judge-arg "role=coverage" "$@"; }
@@ -273,7 +277,7 @@ recheck() { # NAME: the start check again before a stage, so that a change of a 
 ND=$(grep -c . $ITEMS | tr -d ' ')
 est() { .venv/bin/python $R estimate --nd $ND --think-cap $CAP --check-variant $VARIANT $MARGS; }
 NMA=96; NM3=20
-CNT=$(.venv/bin/python $R call-counts --nd $ND --nma $NMA --nm3 $NM3 --check-variant $VARIANT --models $MODELS --thinking-models $THINK)
+CNT=$(.venv/bin/python $R call-counts --nd $ND --nma $NMA --nm3 $NM3 --check-variant $VARIANT --models $MODELS --thinking-models $THINK --thinking-mech $THMECH)
 cnt() { echo "$CNT" | tr ' ' '\n' | sed -n "s/^$1=//p"; }
 echo "planned: $ND D5 scenarios; models in the order of their answers: $MODELORDER (key:thinking); sets $(echo $SETNAMES | tr ' ' ',') (check variant $VARIANT, thinking cap $CAP); answer calls: $CNT; $(est) h of model-server time (inferred from the development check's rates, the plan's budget per answer, the cap and M4's load test for the other models' speed; none measured with thinking on these builds); CPU: the retrieval timing, a few minutes"
 
@@ -387,23 +391,29 @@ calls() { # STAGE EXPECT_DRAFTS EXPECT_CHECKS FILES...   the model calls the set
 pc() { "$@" >> $PCOUT 2>&1 || PCFAIL=1; }
 pcheck_model() { # KEY THINKING (PCOUT, PCFAIL): the checks of one model's sets: every draft prompt hash is the default prompt on the row's own pack; the arms differ only in their switch; E (and F) differ from A (and D) only by the pack
   k=$1; mt=$2; x=; [ $k = qwen ] || x=_$k
-  if [ $mt = yes ]; then sl="A D E F"; else sl="A E"; fi
+  if [ $mt = yes ]; then if hasf $k; then sl="A D E F"; else sl="A D E"; fi; else sl="A E"; fi
   for s in $sl; do pc .venv/bin/python $R prompts-default --items $ITEMS --answers $W/ans_d5_$s$x.jsonl; done
   pc .venv/bin/python $R prompts-relation --a $W/ans_d5_A$x.jsonl --b $W/ans_d5_E$x.jsonl
   pc .venv/bin/python $GR packs-equal --a $W/packs_frozen_d5.jsonl --b $W/ans_d5_A$x.jsonl
   pc .venv/bin/python $GR packs-equal --a $PERFECT --b $W/ans_d5_E$x.jsonl
   if [ $mt = yes ]; then
     for part in ma m3; do
-      for s in A D; do pc .venv/bin/python $R prompts-default --items $W/items_$part.jsonl --answers $W/ans_${part}_$s$x.jsonl; done
-      pc .venv/bin/python $R prompts-relation --a $W/ans_${part}_A$x.jsonl --b $W/ans_${part}_D$x.jsonl --expect-same-pack
+      if hasm $k; then
+        for s in A D; do pc .venv/bin/python $R prompts-default --items $W/items_$part.jsonl --answers $W/ans_${part}_$s$x.jsonl; done
+        pc .venv/bin/python $R prompts-relation --a $W/ans_${part}_A$x.jsonl --b $W/ans_${part}_D$x.jsonl --expect-same-pack
+      else pc .venv/bin/python $R prompts-default --items $W/items_$part.jsonl --answers $W/ans_${part}_A$x.jsonl; fi
     done
     pc .venv/bin/python $R prompts-relation --a $W/ans_d5_A$x.jsonl --b $W/ans_d5_D$x.jsonl --expect-same-pack
-    pc .venv/bin/python $R prompts-relation --a $W/ans_d5_E$x.jsonl --b $W/ans_d5_F$x.jsonl --expect-same-pack
-    pc .venv/bin/python $R prompts-relation --a $W/ans_d5_D$x.jsonl --b $W/ans_d5_F$x.jsonl
     # the request bodies of the drafts: A and D (and E and F) differ in the thinking switch and the token limit (plus the cap) only; A and E (D and F) in the messages only, where the packs differ
-    for part in d5 ma m3; do pc .venv/bin/python $R bodies-relation --a $W/ans_${part}_A$x.jsonl --b $W/ans_${part}_D$x.jsonl --thinking-differs --think-cap $CAP; done
-    pc .venv/bin/python $R bodies-relation --a $W/ans_d5_E$x.jsonl --b $W/ans_d5_F$x.jsonl --thinking-differs --think-cap $CAP
-    pc .venv/bin/python $R bodies-relation --a $W/ans_d5_D$x.jsonl --b $W/ans_d5_F$x.jsonl
+    for part in d5 ma m3; do
+      if [ $part = d5 ] || hasm $k; then pc .venv/bin/python $R bodies-relation --a $W/ans_${part}_A$x.jsonl --b $W/ans_${part}_D$x.jsonl --thinking-differs --think-cap $CAP; fi
+    done
+    if hasf $k; then
+      pc .venv/bin/python $R prompts-relation --a $W/ans_d5_E$x.jsonl --b $W/ans_d5_F$x.jsonl --expect-same-pack
+      pc .venv/bin/python $R prompts-relation --a $W/ans_d5_D$x.jsonl --b $W/ans_d5_F$x.jsonl
+      pc .venv/bin/python $R bodies-relation --a $W/ans_d5_E$x.jsonl --b $W/ans_d5_F$x.jsonl --thinking-differs --think-cap $CAP
+      pc .venv/bin/python $R bodies-relation --a $W/ans_d5_D$x.jsonl --b $W/ans_d5_F$x.jsonl
+    fi
   else
     for part in ma m3; do pc .venv/bin/python $R prompts-default --items $W/items_$part.jsonl --answers $W/ans_${part}_A$x.jsonl; done
   fi
@@ -463,7 +473,7 @@ finish_model() { # KEY (real runs): the model is unloaded after its stages (it w
 
 model_group() { # KEY THINKING(yes|no): the stages of one model, D F A C E (R for qwen), in this order (D and F before A and E: the server's prompt cache cannot make D look faster than it would be in use)
   use_model $1; mt=$2
-  gs="ans_a$SFX ans_e$SFX"; [ $mt = no ] || gs="$gs ans_d$SFX ans_f$SFX"; { [ $CHECKING = no ] || { [ $mt = no ] && [ $mk != qwen ]; }; } || gs="$gs ans_c$SFX"; [ $mk != qwen ] || gs="$gs ans_r"
+  gs="ans_a$SFX ans_e$SFX"; if [ $mt = yes ]; then gs="$gs ans_d$SFX"; if hasf $mk; then gs="$gs ans_f$SFX"; fi; fi; { [ $CHECKING = no ] || { [ $mt = no ] && [ $mk != qwen ]; }; } || gs="$gs ans_c$SFX"; [ $mk != qwen ] || gs="$gs ans_r"
   gneed=no; for st in $gs; do stage_done $st || gneed=yes; done
   [ $gneed = yes ] || return 0
   prepare_model $mk
@@ -472,14 +482,19 @@ model_group() { # KEY THINKING(yes|no): the stages of one model, D F A C E (R fo
   if [ $mt = yes ] && ! stage_done ans_d$SFX; then
     recheck ans_d$SFX
     answer_run $W/ans_d5_D$SFX.jsonl $W/items_d5_h.jsonl $W/packs_frozen_d5.jsonl $ND m7-six-d5-D$SFX "$PD"
-    answer_run $W/ans_ma_D$SFX.jsonl $W/items_ma.jsonl $TA_ANS $NMA m7-six-ma-D$SFX "$PD" "$ECH_MA"
-    answer_run $W/ans_m3_D$SFX.jsonl $W/items_m3.jsonl $TA3_ANS $NM3 m7-six-m3-D$SFX "$PD" "$ECH_M3"
-    calls ans_d$SFX $((ND + NMA + NM3)) $((CHK_EXPECT_D5 + CHK_EXPECT_M)) $W/ans_d5_D$SFX.jsonl $W/ans_ma_D$SFX.jsonl $W/ans_m3_D$SFX.jsonl
-    mark ans_d$SFX $W/ans_d5_D$SFX.jsonl $W/ans_ma_D$SFX.jsonl $W/ans_m3_D$SFX.jsonl
+    if hasm $mk; then
+      answer_run $W/ans_ma_D$SFX.jsonl $W/items_ma.jsonl $TA_ANS $NMA m7-six-ma-D$SFX "$PD" "$ECH_MA"
+      answer_run $W/ans_m3_D$SFX.jsonl $W/items_m3.jsonl $TA3_ANS $NM3 m7-six-m3-D$SFX "$PD" "$ECH_M3"
+      calls ans_d$SFX $((ND + NMA + NM3)) $((CHK_EXPECT_D5 + CHK_EXPECT_M)) $W/ans_d5_D$SFX.jsonl $W/ans_ma_D$SFX.jsonl $W/ans_m3_D$SFX.jsonl
+      mark ans_d$SFX $W/ans_d5_D$SFX.jsonl $W/ans_ma_D$SFX.jsonl $W/ans_m3_D$SFX.jsonl
+    else     # --thinking-mech no: this model's thinking arm leaves the mechanical items out
+      calls ans_d$SFX $ND $CHK_EXPECT_D5 $W/ans_d5_D$SFX.jsonl
+      mark ans_d$SFX $W/ans_d5_D$SFX.jsonl
+    fi
     hb "$N: arm D answers of $mk done (thinking$([ $CHECKING = yes ] && echo ', then the checking pass'); D5 $ND, tier_a part $NMA, tier_a3 part $NM3)"
   fi
 
-  if [ $mt = yes ] && ! stage_done ans_f$SFX; then
+  if [ $mt = yes ] && hasf $mk && ! stage_done ans_f$SFX; then
     recheck ans_f$SFX
     answer_run $W/ans_d5_F$SFX.jsonl $W/items_d5_h.jsonl $PERFECT $ND m7-six-d5-F$SFX "$PD"
     calls ans_f$SFX $ND $CHK_EXPECT_D5 $W/ans_d5_F$SFX.jsonl
@@ -662,7 +677,7 @@ if ! stage_done checks; then
   done
   for mo in $MODELORDER; do
     k=${mo%%:*}; x=; [ $k = qwen ] || x=_$k
-    if [ ${mo#*:} = yes ]; then vs="A D"; else vs="A"; fi
+    if [ ${mo#*:} = yes ] && hasm $k; then vs="A D"; else vs="A"; fi
     for grp in ma m3; do
       for v in $vs; do
         .venv/bin/python scripts/eval2_score.py --items $W/items_$grp.jsonl --answers $W/ans_${grp}_$v$x.jsonl --catalogues $CATS --scores $W/score_${grp}_$v$x.jsonl \
@@ -720,7 +735,7 @@ FINAL=$(sed -n 's/^\(M7 SIX-ARM TEST DONE: .*\)$/\1/p' $W/rule_out.txt | tail -n
   echo
   echo '```'; cat $W/rule_out.txt; echo '```'
   echo
-  echo "### Thinking-switch probes (before any answer; a thinking Gemma model is not planned: the probe result is reported)"
+  echo "### Thinking-switch probes (before any answer; the result is reported for every model other than Qwen)"
   echo
   echo '```'; cat $W/probes.txt; echo '```'
   echo
@@ -738,7 +753,7 @@ FINAL=$(sed -n 's/^\(M7 SIX-ARM TEST DONE: .*\)$/\1/p' $W/rule_out.txt | tail -n
   echo
   echo "### What this report does not show"
   echo
-  echo "Wrong, invented and harmful statements, and the consequence of every harmful one (blind readings of Qwen's A, D, E and F, each other model's A and E and its D when it ran wait; with the findings, \`$R harm-match\` matches the harm by consequence and \`$R compare-models\` prints the whole comparison with the reading's parts; a new harmful consequence goes to the second reader beyond the quarter: \`scripts/eval2_blind.py extra-second --key $W/reading/KEY.json --items ITEMS --rubrics RUBRICS --answers NAME=PATH... --out DIR --ids ID...\` writes a further bundle with the same blind names and widens the key's second-reader scope (\`reading-sets\` lists the NAME=PATH pairs), and \`scripts/eval2_blind.py merge --findings F1 F2 --reads R1 R2 --out F --reads-out R\` joins the two unblinded files for \`harm-match\`: the blind names stay the same: the readers' copy of the bundles, without the key, in \`$RCOPY\`; the work folder's bundles in \`$W/reading/first\`, the second reader's quarter in \`$W/reading/second\`, the plan in \`$W/reading/sessions.json\`, the key, which lists the scenarios left out because an answer had no draft, in \`$W/reading/KEY.json\`, which no reader opens). A \"build\" of the knowledge base does not settle (b): decision V8 leaves the writers and the licences to the Owner; the deadline of the profile counts from the call, not from the question (the replay has no search); the 4-bit build's honouring of the thinking switch is seen in the rows' reasoning tokens, not assumed. Development data only (D5 is worn after M6); the hidden part is not involved."
+  echo "Wrong, invented and harmful statements, and the consequence of every harmful one (blind readings of Qwen's A, D, E and F, each other model's A and E and its D, or B under none, when it ran wait; \`$R thorough-rows --measures $W/measures.json --findings F --reads R --first-reader NAME --second-reader NAME\` applies each thinking Gemma model's thorough row with the findings; with the findings, \`$R harm-match\` matches the harm by consequence and \`$R compare-models\` prints the whole comparison with the reading's parts; a new harmful consequence goes to the second reader beyond the quarter: \`scripts/eval2_blind.py extra-second --key $W/reading/KEY.json --items ITEMS --rubrics RUBRICS --answers NAME=PATH... --out DIR --ids ID...\` writes a further bundle with the same blind names and widens the key's second-reader scope (\`reading-sets\` lists the NAME=PATH pairs), and \`scripts/eval2_blind.py merge --findings F1 F2 --reads R1 R2 --out F --reads-out R\` joins the two unblinded files for \`harm-match\`: the blind names stay the same: the readers' copy of the bundles, without the key, in \`$RCOPY\`; the work folder's bundles in \`$W/reading/first\`, the second reader's quarter in \`$W/reading/second\`, the plan in \`$W/reading/sessions.json\`, the key, which lists the scenarios left out because an answer had no draft, in \`$W/reading/KEY.json\`, which no reader opens). A \"build\" of the knowledge base does not settle (b): decision V8 leaves the writers and the licences to the Owner; the deadline of the profile counts from the call, not from the question (the replay has no search); the 4-bit build's honouring of the thinking switch is seen in the rows' reasoning tokens, not assumed. Development data only (D5 is worn after M6); the hidden part is not involved."
   echo
   echo "### Files"
   echo

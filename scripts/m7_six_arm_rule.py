@@ -74,6 +74,7 @@ MODEL_KEYS = ("qwen", "gemma26", "gemma31")
 ANSWER_ORDER = ("gemma31", "gemma26", "qwen")        # answer stages are grouped by model: each model alone on the server, unloaded after its stages
 GEMMA31_PLACEHOLDER = "PLACEHOLDER-gemma31-4bit-id-from-task-G0"   # the 4-bit build of the 31B is made later (task G0): the real run must pass its id
 DEFAULT_MODEL_IDS = {"qwen": "Qwen3.8-27B-4bit", "gemma26": "gemma-4-26B-A4B-it-QAT-MLX-4bit", "gemma31": GEMMA31_PLACEHOLDER}
+THINK_SECONDS = {"gemma26": (52.0, 141.0), "gemma31": (127.0, 177.0)}   # the measured seconds per thinking answer (median, 90th percentile), runs/m7/reports/gemma_think.md, 2026-11-23: used by the estimate
 DEFAULT_THINKING = ()            # K4b (Owner's question Q1): no model thinks unless --thinking-models names it; the real run passes it explicitly (it is in the manifest and the header)
 READ_ANSWERS_PER_SESSION = 16    # the reading sessions hold about this many answers when --scenarios-per-session is not given (4 scenarios of 4 answers before the models were added)
 # W6: the consequence of a harmful finding, a closed list plus "other: ..." (the reader's instructions in the bundles carry the same list: scripts/eval2_blind.py)
@@ -145,7 +146,14 @@ B against C shows whether thinking or checking carries an effect. That compariso
 **Amended by the Owner's decisions of 2026-11-23 (W5 time, W6 harm; the plan's table above is kept word for word, these two cells are read as follows):**
 - W11 (the Owner, 2026-11-23): Qwen's thinking arms B, D, F and F' are dropped from the planned test (the pilot showed every thinking draft cut). The run passes `--thinking-models none`; the code paths of the thinking arms stay (tested) but are not part of the planned run. The thorough candidate is
   the checking pass alone, arm C (the checking pass on A's drafts), applied on the same row the plan gave D: C - A coverage at least {D_COV_MIN:+.2f}, cut at most {D_CUT_PCT} %, wrong statements at most {D_WRONG_MAX:+.1f} per 10 and 0 confirmed new harmful consequences go on to B4; time is reported (W5). Under `--check-variant none` there is no checking pass and no thorough candidate: that row is NOT TESTED.
-- W11 and the pilot (2026-11-23): neither checking variant cleared its bars in the pilot, so arm C is dropped too. **The planned run is `--thinking-models none --check-variant none`: Qwen A, E, R; each Gemma model A and E.** The thorough-profile row is "not tested (W11 and the pilot)". The code paths of C, D, F and the thinking arms stay tested but are out of the planned run.
+- W11 and the pilot (2026-11-23): neither checking variant cleared its bars in the pilot, so arm C is dropped too, and Qwen's thorough-profile row is "not tested (W11 and the pilot)".
+- The Gemma thinking measurement (2026-11-23, `runs/m7/reports/gemma_think.md`): with thinking on, on the pilot's 20 stored-pack scenarios at a cap of 8,000, Gemma 4 26B-A4B gave 18 of 20 usable drafts (2 cut while thinking; thinking tokens median 2,096, maximum 10,046; 52 s median)
+  and Gemma 4 31B 20 of 20 (thinking median 1,082, maximum 3,672; 127 s median, maximum 278 s); the answers read normal. So the conductor decided (2026-11-23): **the planned run is `--thinking-models gemma26,gemma31 --check-variant none`: Qwen A, E, R; each Gemma model A, E and its
+  thinking-only arm B** (no checking pass, no perfect-pack thinking arm, no Gemma arm C, D or F). The code paths of C, D, F and Qwen's thinking arms stay tested but are out of the planned run.
+- The thorough-profile row applies PER MODEL that has a thinking arm: for each Gemma model, its B against its own A (thinking only, since the checking pass is dropped by the pilot), on the plan's row as amended above: coverage at least {D_COV_MIN:+.2f}, cut at most {D_CUT_PCT} %, wrong statements at most {D_WRONG_MAX:+.1f} per 10,
+  {D_HARM_NEW_MAX} confirmed new harmful consequences (W6), time reported (W5). A Gemma B that passes goes on to B4 because W4 allows thinking alone to go on to B4, and B4 then takes THAT model's B (not Qwen's answer, not a checking pass). The report prints one outcome line per model and the last line lists each model's thorough
+  outcome. Qwen's row is "not tested (W11 and the pilot)". A model's B against its own A is measured here (coverage, cut, time); its wrong statements and harm come from the blind reading (`thorough-rows` applies them).
+- `--thinking-mech yes|no` (default yes): a thinking Gemma model's B also answers the 116 mechanical items, as the plan's D did; `no` leaves them out (only when the estimate puts the run over 24 server hours).
 - W5, time is reported, not decided. The median and the 90th percentile of the thorough-profile row (the plan's bars were {PLAN_MED_S:.0f} s and {PLAN_P90_S:.0f} s) are printed as "reported" with their values and never as PASS or FAIL. The operational deadline stays
   (the profile's {DEADLINE_S:.0f} s start-by of the checking call) and the number of answers it cut short (check status not_checked) is reported. The row "Errors improve but time fails" can therefore no longer arise: no time value decides a row. The
   thorough-profile row is decided by coverage, cut, wrong statements and harm only.
@@ -167,8 +175,8 @@ B against C shows whether thinking or checking carries an effect. That compariso
 - cut answers (at the token limit, cut while thinking counted apart) and empty answers (no text, or no draft after a cut while thinking);
 - time per part (search terms, whole retrieval, draft with its thinking, check), the median and the 90th percentile of the time with search;
 - nonexistent identifiers per 10 answers (scripts/eval2_idcheck.py), per arm;
-- the 116 mechanical items for A and D (scripts/eval2_score.py), with and without the lookup (decision V7);
-- a blind reading of Qwen's A, D, E and F (A and E when Qwen does not think), each Gemma model's A and E, and its D when it ran (all answers of a scenario in one bundle, names drawn per scenario from the seed {BUNDLE_SEED}; wrong, invented and
+- the 116 mechanical items for A and D, and for a thinking Gemma model's B under `none` unless `--thinking-mech no` (scripts/eval2_score.py), with and without the lookup (decision V7);
+- a blind reading of Qwen's A, D, E and F (A and E when Qwen does not think), each Gemma model's A and E, and its D (B under `none`) when it ran (all answers of a scenario in one bundle, names drawn per scenario from the seed {BUNDLE_SEED}; wrong, invented and
   harmful statements by the readers, a consequence for every harmful one; a quarter read by a second reader; the model's name is in no bundle). B, C, F' and R are judged only. The reading is not part of this chain.
 
 **What 50 scenarios can show (sample-size limits):**
@@ -226,10 +234,10 @@ An answer with no draft is delivered as empty: all its points are missed (and no
 **Models and the comparison with Qwen (W8, W9, W10; described, not decided).** The test answers on up to three base models: `qwen` (`Qwen3.8-27B-4bit`, the arms above), `gemma26` (Gemma 4 26B-A4B, M4's 4-bit build) and `gemma31` (Gemma 4 31B, 4-bit, built later in task G0; the real run must
 pass its id and refuses the placeholder). `--models` takes a list of them (all three by default; Qwen must be in it, the rule is Qwen's). Every model gets arms A and E, with the same call, decoding, 2,048-token answer limit and packs as Qwen's A and E, and its A runs on the 116 mechanical items. The
 2,048-token limit is the same number of tokens in every model, but a token is a different length of text under each model's tokenizer (fair by tokens, not by text); the report prints the words per answer and the wrong statements per 1,000 words next to the rate per 10 answers.
-The thinking arms (B, D, F, F', and for a model other than Qwen also C) run for a model only when `--thinking-models` names it: a comma list, or `none` (the default; the real run passes it explicitly and it is recorded in the manifest and in this header). With `none`
-Qwen answers A, E and R, and, when the variant has a checking pass, C (the checking pass on A's drafts; it needs no thinking); the thorough-profile row is then NOT TESTED, and C - A is printed as description only. A thinking Gemma model is not planned (the conductor's decision of 2026-11-23): the
-thinking probe still runs for each other model before any answer, and its result is reported; a model whose switch is not honoured, or whose thinking arrives in a format the stream reader does not know, gets no thinking arm (the chain refuses it before any answer). Each model is loaded alone and unloaded after its stages, in the order gemma31, gemma26, qwen (inside Qwen the order is unchanged); the server gate
-never unloads a model another client loaded (W2). Read blind: Qwen's A, D, E, F (A and E without thinking), each Gemma model's A and E, and its D when it ran. For each Gemma model against Qwen, on the same arm (A with A, E with E, D with D when both ran), the report prints:
+The thinking arms (B, D, F, F', and for a model other than Qwen also C) run for a model only when `--thinking-models` names it: a comma list, or `none` (the default; the real run passes it explicitly and it is recorded in the manifest and in this header). Without Qwen in the list
+Qwen answers A, E and R, and, when the variant has a checking pass, C (the checking pass on A's drafts; it needs no thinking); Qwen's thorough-profile row is then NOT TESTED, and C - A is printed as description only. The planned run names the two Gemma models (the conductor's decision of 2026-11-23, after the Gemma thinking measurement,
+`runs/m7/reports/gemma_think.md`); under `--check-variant none` such a model answers A, E and its thinking-only arm B. The thinking probe runs for each other model before any answer, and its result is reported; a model whose switch is not honoured, or whose thinking arrives in a format the stream reader does not know, gets no thinking arm (the chain refuses it before any answer). Each model is loaded alone and unloaded after its stages, in the order gemma31, gemma26, qwen (inside Qwen the order is unchanged); the server gate
+never unloads a model another client loaded (W2). Read blind: Qwen's A, D, E, F (A and E without thinking), each Gemma model's A and E, and its thorough arm (D; B under `none`) when it ran, all of a scenario's answers in one bundle under random letters (8 answers in the planned run). For each Gemma model against Qwen, on the same arm (A with A, E with E, D with D or B with B when both ran; and a Gemma B against Qwen's A, label "B~A"; and, between two Gemma models, B against B), the report prints:
 - wrong statements per 10 answers, paired by scenario, with a 90 % interval ({Z90} standard errors) (needs the reading);
 - judged coverage, paired by scenario, with its standard error and a 90 % interval;
 - new harmful consequences both ways (the Gemma answer's against Qwen's answer to the same scenario, and Qwen's against Gemma's), confirmed by the second reader as above (needs the reading);
@@ -240,7 +248,7 @@ there are 0 confirmed new harmful consequences (the Gemma answers' against Qwen'
 or for the second reader is printed as waiting, not as a pass. **The comparison decides nothing: the Owner decides publishing after the tests (W10).**
 Point-level measures of E against A are printed for every model. Arm R (grounded-g3 on the r4g2 packs, W7) is judged only: its coverage against A is printed as description and it is in no decided row and not read.
 A measure that is missing, not a number or not computed is an error, never a pass.
-The last line of the log and of the report is M7 SIX-ARM TEST DONE: knowledge-base row: <build|a_only|none ...>; thorough-profile row: WAITS FOR THE READING.
+The last line of the log and of the report is M7 SIX-ARM TEST DONE: knowledge-base row: <build|a_only|none ...>; thorough-profile row: <Qwen's word, and with a thinking Gemma model the outcome of each model's row>.
 """
 
 
@@ -301,7 +309,14 @@ def is_placeholder(model_id):
     return not str(model_id or "").strip() or "placeholder" in str(model_id).lower()
 
 
-def plan_models(models, thinking=None, ids=None, dry=False):
+def parse_yes_no(v, what):
+    v = str(v if v is not None else "yes").strip().lower()
+    if v not in ("yes", "no"):
+        raise SixError(f"{what} must be yes or no (got {v!r})")
+    return v == "yes"
+
+
+def plan_models(models, thinking=None, ids=None, dry=False, think_mech="yes"):
     """The models of the run in the order their answers are made (gemma31, gemma26, qwen): [{"key", "id", "thinking"}]. Refuses (SixError): an unknown or repeated model, a
     --models list without qwen (the rule and every comparison are Qwen's), a --thinking-models list that is not inside --models (`none` or an empty list: no model thinks; a list
     without qwen: Qwen answers without thinking, K4b), and, in a real run, a placeholder or empty model id (the 31B's 4-bit build is made later, task G0) or two models with one id."""
@@ -312,7 +327,8 @@ def plan_models(models, thinking=None, ids=None, dry=False):
     if any(k not in ms for k in th):
         raise SixError("--thinking-models names a model that --models does not")
     mid = {**DEFAULT_MODEL_IDS, **{k: v for k, v in (ids or {}).items() if v}}
-    plan = [{"key": k, "id": mid[k], "thinking": k in th} for k in ANSWER_ORDER if k in ms]
+    tm = parse_yes_no(think_mech, "--thinking-mech")
+    plan = [{"key": k, "id": mid[k], "thinking": k in th, "think_mech": k == "qwen" or tm} for k in ANSWER_ORDER if k in ms]   # think_mech: a thinking Gemma model also answers the 116 mechanical items
     if not dry:
         for m in plan:
             if is_placeholder(m["id"]):
@@ -335,6 +351,8 @@ def model_set_stems(variant, model, thinking):
         base = {"A": "A", "E": "E"}
         if model == "qwen" and variant != "none":
             base["C"] = "C"
+    if thinking and model != "qwen" and variant == "none":
+        base.pop("Fp", None)         # K4b, 2026-11-23: a thinking Gemma model under none has A, E and its thinking-only arm B (no perfect-pack thinking arm)
     out = {set_name(k, model): (v if model == "qwen" else f"{v}_{model}") for k, v in base.items()}
     if model == "qwen":
         out["R"] = "R"
@@ -360,9 +378,14 @@ def thorough_of(variant, plan):
     return "C" if variant != "none" else None      # W11: without thinking the thorough candidate is the checking pass alone (C)
 
 
+def thorough_label(variant):
+    """The thorough arm of a thinking Gemma model: D (thinking, then the checking pass), or B (thinking only) under `none`."""
+    return "D" if variant != "none" else "B"
+
+
 def plan_from_args(a, dry=False):
     ids = {"qwen": getattr(a, "qwen_model", None), "gemma26": getattr(a, "gemma26_model", None), "gemma31": getattr(a, "gemma31_model", None)}
-    return plan_models(getattr(a, "models", None) or ",".join(MODEL_KEYS), getattr(a, "thinking_models", None), ids, dry)
+    return plan_models(getattr(a, "models", None) or ",".join(MODEL_KEYS), getattr(a, "thinking_models", None), ids, dry, getattr(a, "thinking_mech", None) or "yes")
 
 
 def is_no_draft(r):
@@ -1026,7 +1049,7 @@ def cmd_measures(a):
     m = {"schema": SCHEMA, "variant": variant, "think_cap": cap, "stub": bool(a.stub), "sizes": {"D5": len(rub), "points": n_all, "points_with_set": n_set, "points_without_set": n_no,
                                                                                                 "mech": {k: len(ids[k]) for k in ("M1", "M2", "M3")}},
          "retrieval_frozen_median_s": retr_s, "retrieval_timing_n": len(tids), "arms": {},
-         "models": [{"key": mm["key"], "thinking": mm["thinking"]} for mm in plan]}
+         "models": [{"key": mm["key"], "thinking": mm["thinking"], "think_mech": mm["think_mech"]} for mm in plan]}
     qsets = model_set_stems(variant, "qwen", thinking_of(plan, "qwen"))
     decided = {k for k in qsets if k != "R"}               # Qwen's sets (without R): the rows the rule decides. Everything else (R, the other models' sets) is described: K4b, a described set that cannot be computed is "not available" and stops nothing
     m["not_available"] = {}
@@ -1064,6 +1087,22 @@ def cmd_measures(a):
         except (SixError, OSError, KeyError, ValueError, TypeError, G.RuleError) as e:
             m["not_available"][f"point_level_{mm['key']}"] = f"{type(e).__name__}: {e}"
     m["pairs"] = {f"{x}-{y}": pair(m, x, y) for x, y in pairs if x in m["arms"] and y in m["arms"] and x != y}
+    tl = thorough_label(variant)
+    m["thorough_models"] = {mm["key"]: {"set": set_name(tl, mm["key"]), "ref": set_name("A", mm["key"])} for mm in plan if mm["key"] != "qwen" and mm["thinking"]}
+    for k, e in m["thorough_models"].items():     # each thinking Gemma model's thorough arm against its own A (K4b, 2026-11-23)
+        if e["set"] in m["arms"] and e["ref"] in m["arms"]:
+            try:
+                m["pairs"][f"{e['set']}-{e['ref']}"] = pair(m, e["set"], e["ref"])
+            except (KeyError, TypeError, ValueError) as ex:
+                m["not_available"][f"thorough_{k}"] = f"{type(ex).__name__}: {ex}"
+    gb = [e["set"] for e in m["thorough_models"].values() if e["set"] in m["arms"]]
+    m["gemma_b_pairs"] = {}
+    for i in range(len(gb)):          # B against B between two Gemma models (described)
+        for j in range(i + 1, len(gb)):
+            try:
+                m["gemma_b_pairs"][f"{gb[j]}-{gb[i]}"] = pair(m, gb[j], gb[i])
+            except (KeyError, TypeError, ValueError) as ex:
+                m["not_available"][f"pair_{gb[j]}_{gb[i]}"] = f"{type(ex).__name__}: {ex}"
     for mm in plan:    # a Gemma model against Qwen on the same arm: the paired coverage differences (W10; described, decides nothing)
         if mm["key"] == "qwen":
             continue
@@ -1082,7 +1121,7 @@ def cmd_measures(a):
         m["mech"]["D"] = mech_arm(W, "D", ids, kinds)   # D is the thinking-only run in the variant none
     for mm in plan:    # each model's A on the 116 mechanical items, and its D when it ran (described: a failure is "not available")
         if mm["key"] != "qwen":
-            for v in ("A", "D") if mm["thinking"] else ("A",):
+            for v in ("A", "D") if mm["thinking"] and mm["think_mech"] else ("A",):
                 try:
                     m["mech"][f"{v}_{mm['key']}"] = mech_arm(W, f"{v}_{mm['key']}", ids, kinds)
                 except (SixError, OSError, KeyError, ValueError, TypeError, G.RuleError) as e:
@@ -1179,26 +1218,31 @@ def compare_block(m, plan):
         if g == "qwen":
             continue
         rows = {}
+        entries = []     # (label, Gemma set, Qwen set, Gemma's mechanical arm, Qwen's mechanical arm): the mechanical items are answered by A and D only, so arm E is compared on A's
         for label in dict.fromkeys(x for x in ("A", "E", thorough) if x):
-            gx = set_name(label, g)
-            if gx not in m["arms"] or label not in m["arms"]:
+            mk = "D" if (label == thorough and thorough in ("B", "D")) else "A"
+            entries.append((label, set_name(label, g), label, mk, mk))
+        gt = (m.get("thorough_models") or {}).get(g)
+        if gt and m.get("variant") == "none":        # the Gemma model's thinking-only B against Qwen's A (K4b, 2026-11-23); B against Qwen's B is the "B" entry above when Qwen has B
+            entries.append(("B~A", gt["set"], "A", "D", "A"))
+        for label, gx, qx, mg, mq in entries:
+            if gx not in m["arms"] or qx not in m["arms"]:
                 continue
-            ga, qa = m["arms"][gx], m["arms"][label]
-            mk = "D" if (label == thorough and thorough in ("B", "D")) else "A"        # the mechanical items are answered by A and D only: arm E is compared on A's
-            gm, qm = m["mech"].get(f"{mk}_{g}"), m["mech"].get(mk)
+            ga, qa = m["arms"][gx], m["arms"][qx]
+            gm, qm = m["mech"].get(f"{mg}_{g}"), m["mech"].get(mq)
             try:
                 mech = mech_compare(gm, qm) if gm and qm else None
             except SixError as e:
                 mech = None
-                m.setdefault("not_available", {})[f"mech_compare_{gx}"] = str(e)
+                m.setdefault("not_available", {})[f"mech_compare_{gx}_{qx}"] = str(e)
             try:
-                rows[label] = {"gemma_set": gx, "qwen_set": label, "coverage": pair(m, gx, label), "mech_arm": mk, "mech": mech,
+                rows[label] = {"gemma_set": gx, "qwen_set": qx, "coverage": pair(m, gx, qx), "mech_arm": mg if mg == mq else f"{mg} ({g}) against {mq} (Qwen)", "mech": mech,
                                "cut": {"gemma": ga["cut"], "qwen": qa["cut"]}, "empty": {"gemma": ga["empty"], "qwen": qa["empty"]},
                                "not_checked": {"gemma": nchk(ga), "qwen": nchk(qa)},
                                "time": {"gemma": {k: ga["time"][k] for k in ("median_s", "p90_s")}, "qwen": {k: qa["time"][k] for k in ("median_s", "p90_s")}},
                                "cached": {"gemma": [ga.get("cached_median"), ga.get("cached_reported")], "qwen": [qa.get("cached_median"), qa.get("cached_reported")]}}
             except (KeyError, TypeError, ValueError) as e:     # described: the comparison of this arm is "not available" and stops nothing
-                m.setdefault("not_available", {})[f"compare_{gx}"] = f"{type(e).__name__}: {e}"
+                m.setdefault("not_available", {})[f"compare_{gx}_{qx}"] = f"{type(e).__name__}: {e}"
         out[g] = rows
     return out
 
@@ -1396,7 +1440,7 @@ def compare_lines(m, reading=None):
             if e["mech"]:
                 a_, w_ = e["mech"]["all"], e["mech"]["without_lookup"]
                 gp, qp = e["mech"]["all_pass"]["gemma"], e["mech"]["all_pass"]["qwen"]
-                L.append(f"    mechanical all-pass (arm {e['mech_arm']}'s answers on the 116 items): {g} {gp[0]} of {gp[1]}, Qwen {qp[0]} of {qp[1]}; paired difference {a_['mean_pts']:+.1f} points, 90 % interval {_fmt_iv(a_['interval90'], 1)}; "
+                L.append(f"    mechanical all-pass ({"the answers on the 116 items: " + e['mech_arm'] if " against " in e['mech_arm'] else "arm " + e['mech_arm'] + "'s answers on the 116 items"}): {g} {gp[0]} of {gp[1]}, Qwen {qp[0]} of {qp[1]}; paired difference {a_['mean_pts']:+.1f} points, 90 % interval {_fmt_iv(a_['interval90'], 1)}; "
                          f"without the lookup kinds ({w_['n']} items) {w_['mean_pts']:+.1f} points, {_fmt_iv(w_['interval90'], 1)}")
             else:
                 L.append(f"    mechanical all-pass: not available (the model's answers on arm {e['mech_arm']} for the mechanical items did not run)")
@@ -1411,6 +1455,12 @@ def compare_lines(m, reading=None):
             tail = "" if v == "yes" else (f" (fails: {', '.join(names[k] for k, x in c.items() if x is False)})" if v == "no" and any(x is False for x in c.values()) else
                                           f" (waits for the reading: {', '.join(names[k] for k in wait)})")
             L.append(f"    clean winner against Qwen on arm {label}: {'yes' if v == 'yes' else 'no'}{tail}")
+    for k, v in sorted((m.get("gemma_b_pairs") or {}).items()):
+        x, y = k.split("-", 1)
+        ax, ay = m["arms"][x], m["arms"][y]
+        L.append(f"  B against B between two Gemma models ({x} against {y}; described): judged coverage, paired over {v['n']} scenarios: {v['mean']:+.3f}, SE {f2(v['se'])}, 90 % interval {_fmt_iv(v.get('ci90'))}; "
+                 f"cut answers {ax['cut']} against {ay['cut']}; time per answer with search, median/90th percentile (reported) {ax['time']['median_s']:.1f}/{ax['time']['p90_s']:.1f} s against {ay['time']['median_s']:.1f}/{ay['time']['p90_s']:.1f} s; "
+                 f"wrong statements and harm of the two sets: `harm-match` and the reading's findings by set name")
     for k, v in sorted((m.get("not_available") or {}).items()):
         L.append(f"  not available: {k}: {v}")
     return L
@@ -1545,7 +1595,8 @@ def _arm_notes(m, over_d):
 def _evaluate_no_thinking(m, L, kb, n, variant, over_d):
     """No thinking arm in the run (--thinking-models none, or without qwen): the knowledge-base rows are applied, the thorough-profile row is NOT RUN. C (the checking pass on A's drafts) is
     described as C - A when the variant has a checking pass."""
-    L.append("Thorough-profile rows: NOT TESTED (W11 and the pilot). No thinking arm and no checking pass in this run (--thinking-models none --check-variant none), so the plan's table row for the thorough profile has nothing to apply to.")
+    L.append("Thorough-profile rows, Qwen: not tested (W11 and the pilot). Qwen has no thinking arm and no checking pass in this run (--check-variant none; Qwen's thinking arms are dropped), so the plan's table row for the thorough profile has nothing to apply to for Qwen. "
+             "A thinking Gemma model gets its own row, printed below.")
     c = (m.get("pairs") or {}).get("C-A")
     if c:
         L.append(f"  description only, decides nothing: the checking pass alone (C, A's drafts checked), C - A judged coverage {c['mean']:+.3f}, standard error {f2(c['se'])} ({c['n']} scenarios); "
@@ -1569,16 +1620,89 @@ def _evaluate_no_thinking(m, L, kb, n, variant, over_d):
     return L, {"kb": kb, "thorough_possible": ["not run (no thinking arm in this run)"], "conditions": {}, "check_failures_above_limit": above, "time_reported": None}
 
 
+def thorough_row(cov, cut, n, wrong=None, harm=None):
+    """The plan's thorough-profile row as amended (W5, W6), for one thorough arm against its own A: coverage at least D_COV_MIN, cut at most D_CUT_PCT % (integer arithmetic), wrong statements per 10 at
+    most D_WRONG_MAX (from the reading; None waits), 0 confirmed new harmful consequences (harm_match's dict, or None: waits; pending ones wait). Time decides nothing (W5).
+    -> ({condition: True|False|None}, "pass"|"fail"|"waits")."""
+    eps = 1e-9
+    c = {"coverage": cov >= D_COV_MIN - eps, "cut": cut * 100 <= D_CUT_PCT * n,
+         "wrong": None if wrong is None else wrong <= D_WRONG_MAX + eps,
+         "harm": None if harm is None else (False if harm["confirmed"] else None if harm["pending"] else True)}
+    return c, ("fail" if any(v is False for v in c.values()) else "waits" if any(v is None for v in c.values()) else "pass")
+
+
+def gemma_thorough(m, reading=None):
+    """The thorough-profile row PER thinking Gemma model: its thorough arm (B, thinking only, under `none`; D otherwise) against its own A. W4: thinking alone may go on to B4; a passing arm goes on to B4 and B4 then takes THAT
+    model's B. reading: None, or (rows, reads, first_reader, second_reader) of the blind reading's unblinded findings (the wrong statements and the harm are then applied). -> (lines, {model: {"outcome": pass|fail|waits|na, ...}})."""
+    L, res = [], {}
+    n = need(m, "sizes", "D5")
+    tl = thorough_label(m.get("variant"))
+    for g, e in sorted((m.get("thorough_models") or {}).items()):
+        x, y = e["set"], e["ref"]
+        L.append(f"Thorough-profile row, {g} ({x} against {y}; {'thinking only, no checking pass' if tl == 'B' else 'thinking, then the checking pass'}; the plan's row as amended, applied per model):")
+        arm_x, pr = (m.get("arms") or {}).get(x), (m.get("pairs") or {}).get(f"{x}-{y}")
+        if not arm_x or not pr or not all(num(v) for v in (pr.get("mean"), arm_x.get("cut"), (arm_x.get("time") or {}).get("median_s"), (arm_x.get("time") or {}).get("p90_s"))):
+            why = (m.get("not_available") or {}).get(f"thorough_{g}") or (m.get("not_available") or {}).get(x) or "a measure of the row is missing"
+            L.append(f"  NOT AVAILABLE  {why}; this is not a pass")
+            L.append(f"Thorough outcome, {g}: NOT AVAILABLE ({why}); {g}'s B does not go on to B4 on this evidence")
+            res[g] = {"outcome": "na", "conditions": {}}
+            continue
+        cov, cut = pr["mean"], arm_x["cut"]
+        wrong = harm = None
+        why_na = None
+        if reading:
+            rows, reads, first, second = reading
+            try:
+                wrong = wrong_paired(rows, reads, x, y, first)["mean_per10"]
+                harm = harm_match(rows, reads, x, y, first, second)
+            except SixError as ex:
+                why_na = str(ex)
+        c, out = thorough_row(cov, cut, n, wrong, harm)
+        tag = lambda k: "WAITS" if c[k] is None else "PASS" if c[k] else "FAIL"  # noqa: E731
+        L.append(f"  {tag('coverage')}  coverage difference {cov:+.3f}, standard error {f2(pr.get('se'))} (needs >= {D_COV_MIN:+.2f})")
+        L.append(f"  {tag('cut')}  cut at the token limit: {int(cut)} of {int(n)} = {100 * cut / n:.1f} % (needs <= {D_CUT_PCT} %)")
+        L.append(f"  REPORTED  time per answer with search, median {arm_x['time']['median_s']:.1f} s, 90th percentile {arm_x['time']['p90_s']:.1f} s (not decided: W5)")
+        if wrong is None:
+            L.append(f"  NEEDS THE READING  wrong statements per 10 answers, {x} minus {y} (needs <= {D_WRONG_MAX:+.1f})" + (f": not available: {why_na}" if why_na else ""))
+        else:
+            L.append(f"  {tag('wrong')}  wrong statements per 10 answers, {x} minus {y}: {wrong:+.2f} (needs <= {D_WRONG_MAX:+.1f})")
+        if harm is None:
+            L.append(f"  NEEDS THE READING  confirmed new harmful consequences, {x} against {y}, by W6 (must be {D_HARM_NEW_MAX})" + (f": not available: {why_na}" if why_na else ""))
+        else:
+            L.append(f"  {'WAITS (second reader)' if c['harm'] is None else tag('harm')}  confirmed new harmful consequences {len(harm['confirmed'])} (waiting for the second reader {len(harm['pending'])}; must be {D_HARM_NEW_MAX}; W6)")
+        failing = [k for k, v in c.items() if v is False]
+        b4 = f"{g}'s B goes on to B4 (W4: thinking alone may go on to B4); B4 then takes {g}'s B, not Qwen's answer and not a checking pass"
+        if out == "fail":
+            L.append(f"Thorough outcome, {g}: neither ({', '.join(failing)} fails); {g}'s B does not go on to B4")
+        elif out == "waits":
+            L.append(f"Thorough outcome, {g}: waits for the reading; if the readings give wrong statements at most {D_WRONG_MAX:+.1f} per 10 and {D_HARM_NEW_MAX} confirmed new harmful consequences, {b4}; otherwise neither")
+        else:
+            L.append(f"Thorough outcome, {g}: PASS; {b4}")
+        L.append("")
+        res[g] = {"outcome": out, "conditions": c, "failing": failing}
+    return L, res
+
+
+def thorough_final(qwen_word, gres):
+    """The thorough-profile part of the last line. Without a thinking Gemma model: Qwen's word alone (as before). With one: Qwen's word and one outcome per model."""
+    if not gres:
+        return qwen_word
+    word = {"pass": "GOES ON TO B4 (its B)", "waits": "WAITS FOR THE READING", "na": "NOT AVAILABLE"}
+    parts = [f"qwen {qwen_word}"] + [f"{g} " + (f"FAILS ({', '.join(r['failing'])})" if r["outcome"] == "fail" else word[r["outcome"]]) for g, r in sorted(gres.items())]
+    return "; ".join(parts)
+
+
 def cmd_rule(a):
     try:
         m = json.load(open(a.measures, encoding="utf-8"))
         L, res = evaluate(m)
-        L += [""] + arm_r_lines(m) + [""] + compare_lines(m)
+        GL, gres = gemma_thorough(m)
+        L += [""] + GL + arm_r_lines(m) + [""] + compare_lines(m)
     except (OSError, ValueError, SixError) as e:
         print(f"ERROR: {e}; a missing input is not a pass; no verdict", file=sys.stderr)
         return 2
     print("\n".join(L))
-    print(f"M7 SIX-ARM TEST DONE: knowledge-base row: {res['kb']}; thorough-profile row: {'NOT TESTED (W11 and the pilot)' if res['time_reported'] is None else 'WAITS FOR THE READING'}"
+    print(f"M7 SIX-ARM TEST DONE: knowledge-base row: {res['kb']}; thorough-profile row: {thorough_final('NOT TESTED (W11 and the pilot)' if res['time_reported'] is None else 'WAITS FOR THE READING', gres)}"
           + (f"; check failures above limit: {', '.join(res['check_failures_above_limit'])}" if res["check_failures_above_limit"] else ""))
     return 0
 
@@ -1605,18 +1729,20 @@ def cmd_reading_plan(a):
     return 0
 
 
-def expected_calls(nd, variant, nma, nm3, models=MODEL_KEYS, thinking=DEFAULT_THINKING):
+def expected_calls(nd, variant, nma, nm3, models=MODEL_KEYS, thinking=DEFAULT_THINKING, thinking_mech="yes"):
     """Model calls per stage (answer rows are the unit: a draft; a check is one more call where a draft exists). Qwen's stages keep their names; another model's carry its key
     (ans_a_gemma26 ...). Every model has A (D5 and the mechanical items) and E; a model that thinks also D (D5 and the mechanical items), F and, with a check, C. R (Qwen's comparison arm) is one draft per scenario."""
     mech = nma + nm3
     chk = variant != "none"
-    plan = plan_models(",".join(models), ",".join(thinking) or "none", None, True)
+    plan = plan_models(",".join(models), ",".join(thinking) or "none", None, True, thinking_mech)
     st = {}
     for m in plan:
         s = "" if m["key"] == "qwen" else "_" + m["key"]
         st[f"ans_a{s}"], st[f"ans_e{s}"] = nd + mech, nd
         if m["thinking"]:
-            st[f"ans_d{s}"], st[f"ans_f{s}"] = (nd + mech) * (2 if chk else 1), nd * (2 if chk else 1)
+            st[f"ans_d{s}"] = (nd + (mech if m["think_mech"] else 0)) * (2 if chk else 1)      # --thinking-mech no: a thinking Gemma model skips the mechanical items
+            if m["key"] == "qwen" or chk:                                                       # a thinking Gemma model under none has B only: no perfect-pack thinking arm
+                st[f"ans_f{s}"] = nd * (2 if chk else 1)
         if (m["thinking"] and (chk or m["key"] == "qwen")) or (m["key"] == "qwen" and chk):    # C: the checking pass on A's drafts; Qwen has it with or without thinking (K4b)
             st[f"ans_c{s}"] = nd if chk else 0
         if m["key"] == "qwen":
@@ -1627,7 +1753,7 @@ def expected_calls(nd, variant, nma, nm3, models=MODEL_KEYS, thinking=DEFAULT_TH
 
 
 def cmd_call_counts(a):
-    exp = expected_calls(a.nd, a.check_variant, a.nma, a.nm3, parse_key_list(a.models, "--models"), parse_key_list(a.thinking_models, "--thinking-models", allow_none=True))
+    exp = expected_calls(a.nd, a.check_variant, a.nma, a.nm3, parse_key_list(a.models, "--models"), parse_key_list(a.thinking_models, "--thinking-models", allow_none=True), a.thinking_mech)
     print(" ".join(f"{k}={v}" for k, v in exp.items()))
     return 0
 
@@ -1886,8 +2012,13 @@ def estimate(nd, cap, variant, plan, mech=116):
         sfx = "" if k == "qwen" else "_" + k
         st[f"ans_a{sfx}"] = ((nd * plo + mech * mlo) * sl, (nd * phi + mech * mhi) * sh)
         st[f"ans_e{sfx}"] = (nd * plo * sl, nd * phi * sh)
-        if mm["thinking"]:
-            st[f"ans_d{sfx}"] = ((nd * (plo + tlo + clo) + mech * (mlo + tlo + clo)) * sl, (nd * (phi + thi + chi) + mech * (mhi + thi + chi)) * sh)
+        gb = mm["thinking"] and k != "qwen" and not chk and k in THINK_SECONDS
+        if gb:      # a thinking Gemma model under none: B only, at the measured seconds per thinking answer (median to 90th percentile), on the mechanical items too unless --thinking-mech no
+            md, p9 = THINK_SECONDS[k]
+            st[f"ans_d{sfx}"] = (nd * md + (mech * md if mm["think_mech"] else 0), nd * p9 + (mech * p9 if mm["think_mech"] else 0))
+        elif mm["thinking"]:
+            mc = mech if mm["think_mech"] else 0
+            st[f"ans_d{sfx}"] = ((nd * (plo + tlo + clo) + mc * (mlo + tlo + clo)) * sl, (nd * (phi + thi + chi) + mc * (mhi + thi + chi)) * sh)
             st[f"ans_f{sfx}"] = (nd * (plo + tlo + clo) * sl, nd * (phi + thi + chi) * sh)
         if chk and (mm["thinking"] or k == "qwen"):
             st[f"ans_c{sfx}"] = (nd * clo * sl, nd * chi * sh)
@@ -1999,6 +2130,7 @@ def cmd_server_gate(a):
 def add_model_args(q):
     q.add_argument("--models", default=",".join(MODEL_KEYS), help="comma list from qwen,gemma26,gemma31 (all three by default; qwen is required)")
     q.add_argument("--thinking-models", default="none", help="the models whose thinking arms (B, D, F, F' and, for a Gemma model, C) run: a comma list, or none (the default; the real run passes it explicitly)")
+    q.add_argument("--thinking-mech", default="yes", help="yes|no: whether a thinking Gemma model's thinking arm also answers the 116 mechanical items (default yes; Qwen's thinking arms always do)")
     q.add_argument("--qwen-model", default=None)
     q.add_argument("--gemma26-model", default=None)
     q.add_argument("--gemma31-model", default=None)
@@ -2028,6 +2160,18 @@ def cmd_compare_models(a):
         rows, reads = _read_findings(a)
         reading = reading_for_compare(m, rows, reads, a.first_reader, a.second_reader)
     print("\n".join(compare_lines(m, reading)))
+    return 0
+
+
+def cmd_thorough_rows(a):
+    """The thorough-profile row of each thinking Gemma model with the blind reading's findings (the wrong statements and the harm by consequence). Prints one outcome line per model and a last line."""
+    m = json.load(open(a.measures, encoding="utf-8"))
+    if not (a.first_reader and a.reads):
+        raise SixError("--findings needs --first-reader and --reads (and --second-reader for the harm)")
+    rows, reads = _read_findings(a)
+    L, gres = gemma_thorough(m, (rows, reads, a.first_reader, a.second_reader))
+    print("\n".join(L))
+    print("M7 THOROUGH ROWS: " + thorough_final("not tested (W11 and the pilot)" if m.get("thorough_arm") is None else "see the rule's output", gres))
     return 0
 
 
@@ -2157,6 +2301,12 @@ def build_parser():
     q.add_argument("--reads", default=None)
     q.add_argument("--first-reader", default=None)
     q.add_argument("--second-reader", default=None)
+    q = sub.add_parser("thorough-rows")
+    q.add_argument("--measures", required=True)
+    q.add_argument("--findings", required=True)
+    q.add_argument("--reads", required=True)
+    q.add_argument("--first-reader", required=True)
+    q.add_argument("--second-reader", default=None)
     q = sub.add_parser("reading-plan")
     q.add_argument("--key", required=True)
     q.add_argument("--out", required=True)
@@ -2176,6 +2326,7 @@ def build_parser():
     q.add_argument("--check-variant", required=True)
     q.add_argument("--models", default=",".join(MODEL_KEYS))
     q.add_argument("--thinking-models", default="none")
+    q.add_argument("--thinking-mech", default="yes")
     return p
 
 
@@ -2191,7 +2342,7 @@ def main(argv=None):
         fn = {"model-ids": cmd_model_ids, "thinking-probe": cmd_thinking_probe, "reading-sets": cmd_reading_sets, "estimate": cmd_estimate, "gate-models": cmd_gate_models, "model-order": cmd_model_order, "sets": cmd_sets, "gate-params": cmd_gate_params, "gate-inputs": cmd_gate_inputs, "frozen-packs": cmd_frozen_packs, "dry-inputs": cmd_dry_inputs, "manifest": cmd_manifest,
               "start-check": cmd_start_check, "derive-draft": cmd_derive_draft, "derive-check": cmd_derive_check, "check-verify": cmd_check_verify,
               "check-rows": cmd_check_rows, "prompts-relation": cmd_prompts_relation, "prompts-default": cmd_prompts_default, "measures": cmd_measures,
-              "rule": cmd_rule, "harm-match": cmd_harm_match, "compare-models": cmd_compare_models, "reading-plan": cmd_reading_plan, "call-counts": cmd_call_counts,
+              "rule": cmd_rule, "thorough-rows": cmd_thorough_rows, "harm-match": cmd_harm_match, "compare-models": cmd_compare_models, "reading-plan": cmd_reading_plan, "call-counts": cmd_call_counts,
               "stage-calls": cmd_stage_calls, "leak-check": cmd_leak_check, "no-draft-ids": cmd_no_draft_ids, "bodies-relation": cmd_bodies_relation,
               "check-errors": cmd_check_errors, "reading-summary": cmd_reading_summary, "judge-sets": cmd_judge_sets, "pilot-check": cmd_pilot_check, "models-check": cmd_models_check, "server-gate": cmd_server_gate}[a.cmd]
         return fn(a)
