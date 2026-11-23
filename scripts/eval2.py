@@ -591,7 +591,7 @@ def thorough_row(r):
                               "draft_max_tokens": th["max_tokens"],
                               "check": (rec or {}).get("r2", {}).get("tokens")},
             "thorough": verify_pass.compact(rec), "thorough_note": verify_pass.summary_line(rec),
-            "draft_info": info}
+            "draft_info": info, "cut_while_thinking": th["cut_while_thinking"], "draft_streamed": th["draft_streamed"]}
 
 
 def make_generator(a):
@@ -813,6 +813,12 @@ def cmd_answer(a, out=sys.stdout):
             raise EvalError("--no-thinking with --no-verify leaves nothing of the answer profile")
         if not a.catalogue:
             raise EvalError("--answer-profile needs --catalogue DIR (the catalogues of the checking pass)")
+        ctk = (a.extra_body or {}).get("chat_template_kwargs") if isinstance(a.extra_body, dict) else None
+        if not (isinstance(ctk, dict) and ctk.get("enable_thinking") is False):
+            # M7 P1 review S7: the profile sets the key per call; arm A, run with the same --extra-body, then sends
+            # the very bytes the profile's calls with thinking off send
+            raise EvalError("--answer-profile needs --extra-body to set chat_template_kwargs.enable_thinking to false "
+                            "(as arm A runs), so that the arms differ only in their switch")
         try:
             th_kw = {"thorough": thorough, "thorough_checker": service.AnswerChecker(a.catalogue)}
         except service.CatalogueError as e:

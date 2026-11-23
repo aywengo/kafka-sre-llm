@@ -362,13 +362,19 @@ def run_one(question, gen, cfg, a, checker=None):
             out["destructive_marks"] = n_marks
         if ans.thorough is not None:
             from . import verify_pass
-            out["answer_profile"] = dict(thorough.manifest(), measured=False, draft_text=ans.thorough["first_pass_text"],
+            # one name per text (review note): first_pass_text is the draft, as in the harness's rows; checked_text is
+            # the text after the checking pass (what --check then checks and marks)
+            out["first_pass_text"] = ans.thorough["first_pass_text"]
+            out["answer_profile"] = dict(thorough.manifest(), measured=False, checked_text=ans.text,
                                          note=verify_pass.summary_line(ans.thorough["record"]),
                                          check=verify_pass.compact(ans.thorough["record"]),
-                                         draft_info=ans.thorough["draft_info"], seconds=ans.thorough["seconds"])
+                                         draft_info=ans.thorough["draft_info"], seconds=ans.thorough["seconds"],
+                                         cut_while_thinking=ans.thorough["cut_while_thinking"],
+                                         draft_streamed=ans.thorough["draft_streamed"])
         if check is not None:
             out["check"] = check
-            out["first_pass_text"] = ans.text
+            if ans.thorough is None:  # unchanged without the profile
+                out["first_pass_text"] = ans.text
             if getattr(a, "revise", False):
                 out["revise"] = revise_mod.public(rec)
         print(json.dumps(out, ensure_ascii=False))

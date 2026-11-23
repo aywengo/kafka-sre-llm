@@ -52,9 +52,12 @@ class Model:
     def __init__(self, *replies, truncated=False):
         self.replies, self.calls, self.truncated = list(replies), [], truncated
 
-    def chat(self, messages, max_tokens, on_token=None, *, thinking=None, info=None):
-        self.calls.append({"messages": messages, "max_tokens": max_tokens, "thinking": thinking})
+    def chat(self, messages, max_tokens, on_token=None, *, thinking=None, info=None, timeout=None):
+        self.calls.append({"messages": messages, "max_tokens": max_tokens, "thinking": thinking, "timeout": timeout,
+                           "streamed": on_token is not None})
         r = self.replies.pop(0)
+        if callable(r):
+            return r(messages, info)
         if isinstance(r, Exception):
             raise r
         return r, 9, self.truncated
@@ -448,7 +451,7 @@ class TestCards(Pass):
 class TestProfileDraft(Pass):
     def test_draft_with_thinking_then_check_without(self):
         class G(Model):
-            def chat(self, messages, max_tokens, on_token=None, *, thinking=None, info=None):
+            def chat(self, messages, max_tokens, on_token=None, *, thinking=None, info=None, timeout=None):
                 self.calls.append({"messages": messages, "max_tokens": max_tokens, "thinking": thinking,
                                    "streamed": on_token is not None})
                 if messages[0]["content"] == prompts.VERIFY_SYSTEM:

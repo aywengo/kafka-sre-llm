@@ -81,6 +81,26 @@ def open_think(text):
     return text
 
 
+class CallTimeout(ServerError):
+    """A call given its own timeout (chat(..., timeout=s)) did not finish within it."""
+
+
+def thinking_answer(raw, cut_by_limit, separate_reasoning):
+    """The answer of a call with thinking on, and whether it was cut while thinking (M7 P1, review S1). raw: the
+    content as received. A think block that is never closed is reasoning, not answer: everything from the unclosed
+    <think> to the end is dropped and the call counts as cut while thinking. A reply with no </think> that stopped at
+    the token limit also counts as cut while thinking (the template opened the block in the prompt, so the whole
+    content may be reasoning), unless the server returned the reasoning in its own field and the content is the
+    answer. Returns (answer, cut)."""
+    t = open_think(raw)
+    out = strip_think(t)
+    i = out.find("<think>")
+    if i >= 0:
+        return out[:i].strip(), True
+    cut = bool(cut_by_limit and "</think>" not in t and not (separate_reasoning and out))
+    return out, cut
+
+
 def request_info(info, usage, reasoning_text, raw_content, finish_reason, thinking, seconds, think_seconds):
     """Fill `info` (a dict) with what one call reported. The reasoning is never part of the answer text; only its size
     is kept. reasoning_tokens is the server's own count (usage.completion_tokens_details.reasoning_tokens, the OpenAI
@@ -168,14 +188,20 @@ class OpenAIChatGenerator:
     def identity(self):
         return {"backend": self.backend, "model": self.model, "adapter": None}
 
-    def chat(self, messages, max_tokens, on_token=None, *, thinking=None, info=None):
+    def chat(self, messages, max_tokens, on_token=None, *, thinking=None, info=None, timeout=None):
         """thinking None (the default) sends today's request unchanged: whatever extra_body says. True or False sets
         chat_template_kwargs.enable_thinking for this call only (the key the Qwen3 chat template reads; the scripts of
         this repository send the same key through --extra-body). info: a dict that receives what the server reported
-        about the call (see request_info); passing it changes nothing in the request."""
+        about the call (see request_info); passing it changes nothing in the request. With thinking True, a reply cut
+        before its </think> is handled by thinking_answer() and info["cut_while_thinking"] says so. timeout: seconds
+        for this call only (None: the client's timeout); when it runs out, CallTimeout is raised."""
         self._check_model_listed()
         try:
-            return self._chat(messages, max_tokens, on_token, thinking, info)
+            return self._chat(messages, max_tokens, on_token, thinking, info, timeout)
+        except httpx.TimeoutException as e:
+            if timeout is not None:
+                raise CallTimeout(f"the call to {self.base} did not finish within {timeout:.0f} s") from None
+            raise self._unreachable(e) from None
         except httpx.HTTPError as e:
             raise self._unreachable(e) from None
 
@@ -189,11 +215,12 @@ class OpenAIChatGenerator:
             body["chat_template_kwargs"] = kw
         return body
 
-    def _chat(self, messages, max_tokens, on_token, thinking=None, info=None):
+    def _chat(self, messages, max_tokens, on_token, thinking=None, info=None, timeout=None):
         body = self.request_body(messages, max_tokens, thinking)
         t_start = time.monotonic()
+        tkw = {} if timeout is None else {"timeout": timeout}  # None: the request is sent exactly as before
         if on_token is None:
-            r = self.client.post(self.url, json=body, headers=self.headers)
+            r = self.client.post(self.url, json=body, headers=self.headers, **tkw)
             self._check_status(r)
             d = r.json()
             self._check_answer_model(d.get("model"))
@@ -201,20 +228,26 @@ class OpenAIChatGenerator:
             toks = (d.get("usage") or {}).get("completion_tokens", 0)
             msg = ch["message"]
             raw = msg.get("content") or ""
+            sep = msg.get("reasoning_content") or msg.get("reasoning")
+            trunc = ch.get("finish_reason") == "length"
+            cut = False
             if thinking:
                 raw = open_think(raw)
-            out = strip_think(raw)
-            trunc = ch.get("finish_reason") == "length"
+                out, cut = thinking_answer(raw, trunc, bool(sep))
+            else:
+                out = strip_think(raw)
             if info is not None:
-                request_info(info, d.get("usage"), msg.get("reasoning_content") or msg.get("reasoning") or "", raw,
+                request_info(info, d.get("usage"), sep or "", raw,
                              ch.get("finish_reason"), thinking, time.monotonic() - t_start, None)
+                if thinking:
+                    info["cut_while_thinking"] = cut
             if not out:
-                raise _empty_error(max_tokens, trunc, msg.get("reasoning_content") or msg.get("reasoning"))
+                raise _empty_error(max_tokens, trunc, sep)
             return out, toks, trunc
         body.update(stream=True, stream_options={"include_usage": True})
         text, toks, finish, reasoning = "", 0, None, False
         rtext, usage, t_r0, t_c0 = "", None, None, None
-        with self.client.stream("POST", self.url, json=body, headers=self.headers) as r:
+        with self.client.stream("POST", self.url, json=body, headers=self.headers, **tkw) as r:
             self._check_status(r)
             for line in r.iter_lines():
                 if not line.startswith("data:") or line[5:].strip() == "[DONE]":
@@ -250,7 +283,12 @@ class OpenAIChatGenerator:
                 think_s = (t_c0 or t_end) - t_start
             request_info(info, usage, rtext, open_think(text) if thinking else text, finish, thinking,
                          t_end - t_start, think_s)
-        out = strip_think(open_think(text) if thinking else text)
+        if thinking:
+            out, cut = thinking_answer(text, finish == "length", reasoning)
+            if info is not None:
+                info["cut_while_thinking"] = cut
+        else:
+            out = strip_think(text)
         if not out:
             raise _empty_error(max_tokens, finish == "length", reasoning)
         return out, toks, finish == "length"
@@ -271,8 +309,9 @@ class MLXGenerator:
     def identity(self):
         return {"backend": self.backend, "model": self.model_path, "adapter": self.adapter}
 
-    def chat(self, messages, max_tokens, on_token=None, *, thinking=None, info=None):
-        """thinking None or False: today's prompt (enable_thinking=False); True: enable_thinking=True for this call."""
+    def chat(self, messages, max_tokens, on_token=None, *, thinking=None, info=None, timeout=None):
+        """thinking None or False: today's prompt (enable_thinking=False); True: enable_thinking=True for this call.
+        timeout: accepted for the common interface; an in-process call is not bounded by it."""
         prompt = self.tok.apply_chat_template(messages, add_generation_prompt=True, tokenize=False,
                                               enable_thinking=bool(thinking))
         text, last = "", None
@@ -292,7 +331,15 @@ class MLXGenerator:
             request_info(info, {"completion_tokens": last.generation_tokens,
                                 "prompt_tokens": getattr(last, "prompt_tokens", None)},
                          "", text, last.finish_reason, thinking, t_end - t0, think_s)
-        return strip_think(text), last.generation_tokens, last.finish_reason == "length"
+        trunc = last.finish_reason == "length"
+        if not thinking:
+            return strip_think(text), last.generation_tokens, trunc
+        out, cut = thinking_answer(text, trunc, False)
+        if info is not None:
+            info["cut_while_thinking"] = cut
+        if not out:
+            raise _empty_error(max_tokens, trunc, True)
+        return out, last.generation_tokens, trunc
 
 
 class ThinkFilter:

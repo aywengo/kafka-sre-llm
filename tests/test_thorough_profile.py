@@ -2,6 +2,7 @@
 `verify_pass run` command; the refusals; the default path unchanged. Stub models, fixture catalogues, retrieval
 patched. Offline: no model server, no GPU."""
 import contextlib
+import hashlib
 import io
 import json
 import shutil
@@ -115,7 +116,10 @@ class TestAsk(Cat):
         ap = d["answer_profile"]
         self.assertEqual((ap["name"], ap["measured"], ap["thinking"], ap["verify"], ap["cards"]),
                          ("thorough", False, True, True, True))
-        self.assertEqual(ap["draft_text"], DRAFT)
+        self.assertEqual(d["first_pass_text"], DRAFT)
+        self.assertEqual(ap["checked_text"], d["text"])
+        self.assertNotIn("draft_text", ap)
+        self.assertEqual((ap["cut_while_thinking"], ap["draft_streamed"]), (False, True))
         self.assertEqual(ap["check"]["r2"]["status"], "accepted")
         self.assertEqual(ap["draft_info"]["reasoning_tokens"], 100)
         self.assertEqual(ap["seconds"]["thinking"], 2.0)
@@ -154,7 +158,8 @@ class TestAsk(Cat):
         out, _ = run_cli(["ask", Q, "--json", "--answer-profile", "thorough", "--check"], Gen(), self.dir)
         d = json.loads(out)
         self.assertIn("not confirmed: `log.retention.hours`", d["text"])   # R1 marks of today's --check stay
-        self.assertEqual(d["answer_profile"]["draft_text"], DRAFT)
+        self.assertEqual(d["first_pass_text"], DRAFT)   # the draft, as in the harness's rows (no naming clash)
+        self.assertNotIn("not confirmed", d["answer_profile"]["checked_text"])   # after the pass, before the marks
 
 
 def _profile_init(**over):
@@ -166,6 +171,9 @@ def _profile_init(**over):
     return init
 
 
+OFF = ("--extra-body", '{"chat_template_kwargs": {"enable_thinking": false}}')
+
+
 class TestHarness(Base):
     def setUp(self):
         super().setUp()
@@ -174,7 +182,7 @@ class TestHarness(Base):
 
     def test_rows_with_the_profile(self):
         f, out = self.items_file([item(1)]), self.tmp / "a.jsonl"
-        rc, text = self.run_answer(f, out, "--answer-profile", "thorough", "--catalogue", str(self.cat),
+        rc, text = self.run_answer(f, out, "--answer-profile", "thorough", "--catalogue", str(self.cat), *OFF,
                                    gen=Gen(draft="Raise `max.poll.interval.ms` on the consumer."))
         self.assertEqual(rc, 0, text)
         r = eval2.read_jsonl(out)[0]
@@ -185,6 +193,7 @@ class TestHarness(Base):
         self.assertEqual(r["tokens_detail"]["draft_reasoning"], 100)
         self.assertEqual(r["thorough"]["r2"]["status"], "no_patch")
         self.assertNotIn("first_pass_text", r["thorough"])
+        self.assertEqual((r["cut_while_thinking"], r["draft_streamed"]), (False, True))   # review S1, S7
         m = json.loads(eval2.manifest_path(out).read_text())
         self.assertEqual(m["answer_profile"]["name"], "thorough")
         self.assertTrue(any(x.startswith("answer profile thorough") for x in m["unmeasured_reasons"]))
@@ -198,6 +207,15 @@ class TestHarness(Base):
                                   "prompt_sha256", "prompt_chars", "search_terms_prompt_sha256", "search_terms_prompt_chars"})
         m = json.loads(eval2.manifest_path(out).read_text())
         self.assertNotIn("answer_profile", m)
+
+    def test_profile_needs_thinking_off_in_the_extra_body(self):
+        # review S7: arm A and the profile's calls with thinking off send the same bytes only when --extra-body sets it
+        f, out = self.items_file([item(1)]), self.tmp / "a.jsonl"
+        for extra in ((), ("--extra-body", '{"chat_template_kwargs": {"enable_thinking": true}}'),
+                      ("--extra-body", '{"top_p": 1}')):
+            with self.assertRaises(eval2.EvalError) as e:
+                self.run_answer(f, out, "--answer-profile", "thorough", "--catalogue", str(self.cat), *extra)
+            self.assertIn("enable_thinking to false", str(e.exception))
 
     def test_refusals(self):
         f, out = self.items_file([item(1)]), self.tmp / "a.jsonl"
@@ -249,6 +267,29 @@ class TestRunCommand(Cat):
         self.assertEqual(len((self.tmp / "out.jsonl").read_text().splitlines()), 2)
         with self.assertRaises(SystemExit):     # another configuration is not mixed into the same file
             self.run_cmd()
+
+    def test_config_names_the_answers_and_the_deadline(self):
+        # review S7: the stored answers by sha256 and run id; the deadline counts the stored row's own seconds
+        Path(str(self.answers) + ".manifest.json").write_text(json.dumps({"run": "run-abc"}))
+        rows = [json.loads(l) for l in self.answers.read_text().splitlines()]
+        rows[0]["seconds"] = {"total": vp.DEADLINE_S + 5}
+        rows[1]["seconds"] = {"total": 1.0}
+        self.answers.write_text("".join(json.dumps(r) + "\n" for r in rows))
+        self.run_cmd()
+        out = [json.loads(l) for l in (self.tmp / "out.jsonl").read_text().splitlines()]
+        c = out[0]["config"]
+        self.assertEqual(c["answers_sha256"], hashlib.sha256(self.answers.read_bytes()).hexdigest())
+        self.assertEqual(c["answers_run"], "run-abc")
+        self.assertEqual((c["deadline"]["deadline_s"], c["deadline"]["total_s"]), (vp.DEADLINE_S, vp.TOTAL_S))
+        self.assertEqual(out[0]["r2"]["status"], "not_checked")
+        self.assertEqual(out[1]["r2"]["status"], "no_patch")
+        self.assertEqual(out[1]["stored_seconds"], 1.0)
+
+    def test_no_stored_seconds_is_recorded(self):
+        self.run_cmd()
+        out = [json.loads(l) for l in (self.tmp / "out.jsonl").read_text().splitlines()]
+        self.assertEqual(out[0]["deadline"], "none: the stored row has no seconds.total")
+        self.assertIsNone(out[0]["config"]["answers_run"])
 
     def test_limit(self):
         rc, text = self.run_cmd("--limit", "1")

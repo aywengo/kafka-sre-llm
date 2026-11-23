@@ -12,18 +12,22 @@ with a word-for-word quote and the corrected line. Each proposed change is accep
       token limit changes nothing. revise.parse_reply cannot be used: it refuses any key besides line and text, so the
       "quote" this reply must carry would make every reply invalid.
   A2  the quote (whitespace collapsed, ** and backticks removed) is a substring of pack_text(chunks), title lines
-      included (at least 4 words), or of the evidence of a finding on that line (at least 3 words), or, with cards, of
-      the cards as rendered (at least 3 words).
+      included (at least 4 words), or of the evidence of a finding on that very line (at least 3 words), or, with
+      cards, of the cards as rendered (at least 3 words).
   A3  the quote shares with the old line (its command unit inside a fence) a Checker.extract item or two content words;
-      a quote from the evidence of a finding on the line passes (the finding names the line's item), and so does a
-      quote from a card whose name stands on the line (a card's facts rarely repeat its name).
+      a quote from the evidence of a finding on the line itself passes (the finding names the line's item), and so
+      does a quote from a card whose name stands on the line on identifier boundaries and is the only carded name
+      there or the one nearest to the changed words (a card's facts rarely repeat its name).
   A4  the line is not a heading, a table separator, a fence marker, the last line of a draft cut at the token limit, a
-      "General knowledge (not in the excerpts):" line, or a line that copies 40 or more characters of the question.
+      "General knowledge (not in the excerpts):" line, or a line that copies the question: 40 or more characters in a
+      row, the whole line, or a key=value / key: value pair, word for word.
   A5  at most two lines per replacement and no fence marker (revise.validate_patches); outside a fence a line is its own
       command unit (revise.command_unit), so a prose line cannot become two.
   A6  every new item (Checker.extract) and every new number in the new text is in the quote or found in the excerpts
       (Excerpts.has; with cards also in the cards).
-  A7  inside a fence, every flag (FLAG_RE) and namespace of the old command unit that no finding names is still there.
+  A7  inside a fence, every flag (FLAG_RE) and namespace of the old command unit that no finding names is still there,
+      and no token of the unit (split on whitespace, values included) is removed or shortened and no flag replaced,
+      unless a finding names it; on a prose line the same for the tokens of its inline code spans.
   A8  a line with a warning (_NEG_BEFORE, _NEG_AFTER, "data loss", "irreversible") keeps every warning phrase and is not
       deleted; a deletion only for a prose line or a whole command unit.
 
@@ -34,7 +38,12 @@ revise.yaml_regressions; the re-check by the checker (no new invented or wrong_u
 item no longer on a changed line; revise.surviving empty for the items the changes touch); checker.find_destructive
 (no new destructive match that is not skipped, none turned from skipped to not skipped, counted per pattern).
 
-Limits: at most 6 changed lines, 25 % of the draft's lines and 15 % of its characters; over that nothing changes. A
+Failures: nothing after the draft can lose it; an exception gives status error and the draft stands. The checking
+call starts before DEADLINE_S and must end within TOTAL_S of the question (its timeout is the time left); otherwise
+the draft stands, "not checked". A thinking draft cut by the token limit before its </think> is no draft: the
+answer says so and nothing is checked.
+
+Limits: at most 6 changed lines (counted as written: a change may write two), 25 % of the draft's lines and 15 % of its characters; over that nothing changes. A
 rejected change leaves the draft's line as it is, with no new mark (decision 4 of 2026-11-23).
 
 Items that prompted the rules (open development data B1 and B2 of M4, never D5, the hidden part or the legacy sets;
@@ -68,6 +77,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from . import prompts
+from .generators import CallTimeout, EmptyAnswerError
 from .checker import FLAG_RE, _NEG_AFTER, _NEG_BEFORE, Excerpts, find_destructive
 from .revise import (FENCE_OPEN_RE, FLAGGED, apply_patches, command_unit, fence_lines, finding_view, flagged,
                      item_keys, numbered, occurrences, only_allowed_changed, structure_problems, surviving,
@@ -81,6 +91,7 @@ MAX_LINES = 6
 MAX_LINE_SHARE = 0.25
 MAX_CHAR_SHARE = 0.15
 DEADLINE_S = 240.0
+TOTAL_S = 300.0               # the whole answer: the checking call gets the time left of it as its timeout
 THINKING_TOKENS = 1500        # added to the answer's token limit when the draft is written with thinking on
 MIN_WORDS = {"excerpts": 4, "finding": 3, "card": 3}
 QUESTION_COPY_CHARS = 40
@@ -245,6 +256,114 @@ class Context:
         a, z = self.unit(n)
         return [f for f in self.flagged if any(a <= o <= z for o in occurrences(f))]
 
+    def findings_on_line(self, n: int) -> List[Dict[str, Any]]:
+        """The flagged findings with an occurrence on line n itself (review S3: not merely in its command unit)."""
+        return [f for f in self.flagged if n in occurrences(f)]
+
+
+def _name_spans(name: str, line: str) -> List[Tuple[int, int]]:
+    """Where a card's name stands in a line, on identifier boundaries (review S4: `acks` is not in `backs`, a key is not
+    in a longer key)."""
+    rx = re.compile(r"(?<![\w.\-/])%s(?![\w\-]|\.\w)" % re.escape(name))
+    return [m.span() for m in rx.finditer(line)]
+
+
+def _changed_span(old: str, new: Optional[str]) -> Tuple[int, int]:
+    """The part of the old line that the change touches (first to last changed character)."""
+    if new is None:
+        return 0, len(old)
+    ops = [(i1, i2) for tag, i1, i2, _, _ in SequenceMatcher(None, old, new, autojunk=False).get_opcodes()
+           if tag != "equal"]
+    if not ops:
+        return 0, 0
+    return ops[0][0], max(i2 for _, i2 in ops)
+
+
+def card_ties_line(ctx: "Context", names: set, old: str, new: Optional[str]) -> bool:
+    """A3's card path (review S4): a card the quote comes from is tied to the line when its name stands on the line on
+    identifier boundaries and is the only carded name there, or the carded name nearest to the changed words. Nearest
+    is read in the order a value follows its key: a carded name the change touches, else the last one that ends
+    before the change, else the first one after it; a tie is not enough."""
+    on_line = {name: _name_spans(name, old) for name, _ in ctx.card_texts}
+    on_line = {k: v for k, v in on_line.items() if v}
+    if not on_line or not names & set(on_line):
+        return False
+    if len(on_line) == 1:
+        return True
+    a, z = _changed_span(old, new)
+    spans = [(s, e, k) for k, v in on_line.items() for s, e in v]
+    touched = {k for s, e, k in spans if s < z and a < e}
+    if touched:
+        nearest = touched
+    else:
+        before = [(e, k) for s, e, k in spans if e <= a]
+        after = [(s, k) for s, e, k in spans if s >= z]
+        if before:
+            m = max(e for e, _ in before)
+            nearest = {k for e, k in before if e == m}
+        else:
+            m = min(s for s, _ in after)
+            nearest = {k for s, k in after if s == m}
+    return len(nearest) == 1 and next(iter(nearest)) in names
+
+
+_CODE_SPAN = re.compile(r"`([^`\n]+)`")
+
+
+def _tokens(s: str) -> List[str]:
+    return [t for t in (s or "").split() if t != "\\"]
+
+
+def _named(tok: str, names: set) -> bool:
+    t = tok.strip("\"'`,;()")
+    return any(n and (n in t or t == n or (len(t) >= 4 and t in n)) for n in names)
+
+
+def lost_tokens(old: str, new: str, names: set) -> List[str]:
+    """A7 (review S5): the tokens of a command (split on whitespace, values included) that the change removes or
+    shortens, or flags it replaces by another token, unless a finding names them. A value replaced by a different
+    value that is not a part of it is allowed (that is what a correction does); A6 checks where the new value comes
+    from."""
+    a, b = _tokens(old), _tokens(new)
+    lost: List[str] = []
+    for tag, i1, i2, j1, j2 in SequenceMatcher(None, a, b, autojunk=False).get_opcodes():
+        if tag == "equal" or tag == "insert":
+            continue
+        if tag == "delete":
+            lost += a[i1:i2]
+            continue
+        olds, news = a[i1:i2], b[j1:j2]
+        for k, t in enumerate(olds):
+            if k >= len(news):
+                lost.append(t)
+                continue
+            u = news[k]
+            if (u != t and u in t) or (t.startswith("-") and u != t):
+                lost.append(t)
+    return [t for t in lost if not _named(t, names)]
+
+
+_KV = re.compile(r"(?<![\w.\-])([A-Za-z][\w.\-/]*)\s*(=|:)\s*([^\s,;`'\"]+)")
+_LIST_MARK = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+")
+
+
+def question_copy(old: str, question: str) -> Optional[str]:
+    """A4's question rule (review S6): the reason when the line copies the question, else None: 40 or more characters
+    in a row, the whole line (list marker and backticks removed), or a key=value / key: value pair, word for word."""
+    if not (question and old.strip()):
+        return None
+    m = SequenceMatcher(None, old, question, autojunk=False).find_longest_match(0, len(old), 0, len(question))
+    if m.size >= QUESTION_COPY_CHARS:
+        return "A4: the line copies %d characters of the question" % m.size
+    qn = " ".join(question.replace("`", "").split())
+    line = " ".join(_LIST_MARK.sub("", old).replace("`", "").replace("**", "").split())
+    if re.search(r"[A-Za-z0-9]", line) and line in qn:
+        return "A4: the line is in the question word for word"
+    for k, _, v in _KV.findall(old.replace("`", "")):
+        if re.search(r"(?<![\w.\-])%s\s*[=:]\s*%s(?![\w.\-])" % (re.escape(k), re.escape(v)), qn):
+            return "A4: the line carries the question's setting %s word for word" % k
+    return None
+
 
 # ----------------------------------------------------------------------------- stage 1
 def where_quoted(ctx: Context, e: Dict[str, Any]) -> Tuple[Optional[str], str]:
@@ -253,7 +372,7 @@ def where_quoted(ctx: Context, e: Dict[str, Any]) -> Tuple[Optional[str], str]:
     words = len(q.split())
     if words and q in ctx.pack and words >= MIN_WORDS["excerpts"]:
         return "excerpts", ""
-    for f in ctx.findings_on(e["line"]):
+    for f in ctx.findings_on_line(e["line"]):
         if words >= MIN_WORDS["finding"] and q in norm(finding_view(f)[0]):
             return "finding", ""
     if ctx.cards and words >= MIN_WORDS["card"] and q in ctx.cards:
@@ -278,12 +397,13 @@ def stage1(ctx: Context, e: Dict[str, Any]) -> Tuple[List[str], Optional[str]]:
     # A3
     unit_text = "\n".join(ctx.lines[a - 1:z])
     items_here = set().union(*[ctx.items_by_line.get(i, set()) for i in range(a, z + 1)])
-    # a quote from a card is tied to the line through the card's name (a card's facts rarely repeat the name)
-    # and a quote from the evidence of a finding on this line is about the item that finding names on it
+    # a quote from a card is tied to the line through the card's name (a card's facts rarely repeat the name; S4: on
+    # identifier boundaries, the only or the nearest carded name), and a quote from the evidence of a finding on this
+    # very line (S3: where_quoted looks on the line only) is about the item that finding names on it
     card_names = {name for name, t in ctx.card_texts if q in t} if found == "card" else set()
     if found != "finding" and not any(norm(t) and norm(t) in q for t in items_here) \
             and len(content_words(unit_text) & content_words(q)) < 2 \
-            and not any(n in norm(unit_text) for n in card_names):
+            and not (card_names and card_ties_line(ctx, card_names, old, new)):
         why.append("A3: the quote shares no checked item and fewer than two content words with the line")
     # A4
     if not infence and _HEADING.match(old):
@@ -296,10 +416,9 @@ def stage1(ctx: Context, e: Dict[str, Any]) -> Tuple[List[str], Optional[str]]:
         why.append("A4: the last line of a draft cut at the token limit")
     if GENERAL in old:
         why.append("A4: a general-knowledge line")
-    if ctx.question and old.strip():
-        m = SequenceMatcher(None, old, ctx.question, autojunk=False).find_longest_match(0, len(old), 0, len(ctx.question))
-        if m.size >= QUESTION_COPY_CHARS:
-            why.append("A4: the line copies %d characters of the question" % m.size)
+    qc = question_copy(old, ctx.question)
+    if qc:
+        why.append(qc)
     # A5
     patch = {"line": n, "text": new}
     why += ["A5: " + w for w in validate_patches(ctx.text, [patch], set(range(1, ctx.n + 1)))]
@@ -329,6 +448,14 @@ def stage1(ctx: Context, e: Dict[str, Any]) -> Tuple[List[str], Optional[str]]:
         lost_ns = sorted(_namespaces(unit_text) - _namespaces(new_unit) - named)
         if lost_ns:
             why.append("A7: namespace removed from the command: " + ", ".join(lost_ns))
+        gone = lost_tokens(unit_text, new_unit, named)
+        if gone:
+            why.append("A7: part of the command removed or shortened: " + ", ".join(gone))
+    elif new is not None:  # S5: a command in inline code on a prose line
+        named = {f["text"] for f in ctx.findings_on_line(n)}
+        gone = lost_tokens(" ".join(_CODE_SPAN.findall(old)), " ".join(_CODE_SPAN.findall(new)), named)
+        if gone:
+            why.append("A7: part of the inline code removed or shortened: " + ", ".join(gone))
     # A8
     warn = _warnings(old)
     if warn and new is None:
@@ -343,6 +470,19 @@ def stage1(ctx: Context, e: Dict[str, Any]) -> Tuple[List[str], Optional[str]]:
 
 
 # ----------------------------------------------------------------------------- the pass
+def new_record(text: str, truncated: bool, cards: bool, ident: Dict[str, Any], max_tokens: int) -> Dict[str, Any]:
+    """The record of one pass before anything ran: the draft is the final text."""
+    return {
+        "verify_version": VERSION, "verify_layout": LAYOUT, "cards_enabled": bool(cards),
+        "verify_prompt_sha256": prompt_sha256(cards), "model": ident.get("model"),
+        "max_tokens": max_tokens, "thinking": False, "first_pass_text": text, "check_first": None,
+        "flagged": None, "draft_truncated": bool(truncated), "cards": None, "patches": [],
+        "proposals": [], "dropped": [], "r2": {"status": "not_started", "reasons": []},
+        "revised_text": text, "final_text": text, "check_after": None, "limits": None,
+        "destructive_before": None, "destructive_after": None,
+        "timings": {"check_s": 0.0, "cards_s": 0.0, "call_s": 0.0, "rules_s": 0.0}}
+
+
 class Verifier:
     """checker: service.AnswerChecker (check(text, chunks) -> dict; .checker.extract for items) or any object with those.
     gen: chat(messages, max_tokens, on_token=None, *, thinking=None, info=None) -> (text, tokens, truncated).
@@ -376,25 +516,33 @@ class Verifier:
         return kb_lookup.render(cs, self.card_chars or kb_lookup.DEFAULT_MAX_CHARS), cs
 
     def run(self, question: str, text: str, chunks, *, truncated: bool = False, first: Optional[Dict[str, Any]] = None,
-            deadline_at: Optional[float] = None) -> Dict[str, Any]:
+            deadline_at: Optional[float] = None, call_deadline_at: Optional[float] = None) -> Dict[str, Any]:
+        """deadline_at: the checking call starts only before it. call_deadline_at: the call itself must end by then (a
+        per-call timeout; on timeout the draft stands, status not_checked). Nothing after the draft can lose it
+        (review S2): any exception in the check, the cards, the call, the rules or stage 2 gives status error with the
+        reason recorded, and the draft is the final text."""
         t0 = time.monotonic()
+        rec = new_record(text, truncated, self.cards, getattr(self.gen, "identity", None) or {}, self.max_tokens)
+        try:
+            self._run(rec, t0, question, text, chunks, truncated, first, deadline_at, call_deadline_at)
+        except Exception as e:  # noqa: BLE001 - the draft is kept whatever failed
+            rec.update(patches=[], revised_text=text, check_after=None, destructive_after=None)
+            for p in rec.get("proposals") or []:
+                p["accepted"] = False
+            rec["r2"].update(status="error", reasons=["the checking pass failed: " + " ".join(
+                ("%s: %s" % (type(e).__name__, e)).split())[:200]])
+        return self._done(rec, t0)
+
+    def _run(self, rec, t0, question, text, chunks, truncated, first, deadline_at, call_deadline_at):
+        rec["destructive_before"] = dict(_destructive_live(text))
         if first is None:
             first = self.checker.check(text, chunks)
-        t_check = time.monotonic() - t0
-        ident = getattr(self.gen, "identity", None) or {}
-        rec: Dict[str, Any] = {
-            "verify_version": VERSION, "verify_layout": LAYOUT, "cards_enabled": self.cards,
-            "verify_prompt_sha256": prompt_sha256(self.cards), "model": ident.get("model"),
-            "max_tokens": self.max_tokens, "thinking": False, "first_pass_text": text, "check_first": first,
-            "flagged": len(flagged(first)), "draft_truncated": bool(truncated), "cards": None, "patches": [],
-            "proposals": [], "dropped": [], "r2": {"status": "not_started", "reasons": []},
-            "revised_text": text, "final_text": text, "check_after": None, "limits": None,
-            "destructive_before": dict(_destructive_live(text)), "destructive_after": None,
-            "timings": {"check_s": t_check, "cards_s": 0.0, "call_s": 0.0, "rules_s": 0.0}}
+        rec.update(check_first=first, flagged=len(flagged(first)))
+        rec["timings"]["check_s"] = time.monotonic() - t0
         call = rec["r2"]   # named as in revise's Reviser record, so revise.public() applies to this record too
         if deadline_at is not None and time.monotonic() > deadline_at:
             call.update(status="not_checked", reasons=["the deadline had passed before the checking call"])
-            return self._done(rec, t0)
+            return
         cards_text, card_list = None, []
         if self.cards:
             t = time.monotonic()
@@ -404,14 +552,25 @@ class Verifier:
                             "text": cards_text}
         msgs = build_messages(question, text, chunks, first["findings"], cards_text)
         rec["prompt_chars"] = sum(len(m["content"]) for m in msgs)
+        kw: Dict[str, Any] = {}
+        if call_deadline_at is not None:
+            left = call_deadline_at - time.monotonic()
+            if left <= 0:
+                call.update(status="not_checked", reasons=["no time was left for the checking call"])
+                return
+            kw["timeout"] = left
         t = time.monotonic()
         info: Dict[str, Any] = {}
         try:
-            reply, toks, trunc = self.gen.chat(msgs, self.max_tokens, None, thinking=False, info=info)
+            reply, toks, trunc = self.gen.chat(msgs, self.max_tokens, None, thinking=False, info=info, **kw)
+        except CallTimeout:
+            rec["timings"]["call_s"] = time.monotonic() - t
+            call.update(status="not_checked", reasons=["the checking call did not finish within the time left"])
+            return
         except Exception as e:  # the draft is not lost because the check failed; the type only (no server text)
             rec["timings"]["call_s"] = time.monotonic() - t
             call.update(status="error", reasons=["model call failed: " + type(e).__name__])
-            return self._done(rec, t0)
+            return
         rec["timings"]["call_s"] = time.monotonic() - t
         call.update(reply=reply, tokens=toks, truncated=bool(trunc), info=info)
         t = time.monotonic()
@@ -425,7 +584,6 @@ class Verifier:
             self._rules(rec, Context(question, text, chunks, first, self.extract, truncated, cards_text, card_list),
                         entries)
         rec["timings"]["rules_s"] = time.monotonic() - t
-        return self._done(rec, t0)
 
     def _done(self, rec, t0):
         rec["final_text"] = rec["revised_text"]
@@ -473,7 +631,8 @@ class Verifier:
         patches = [{"line": props[i]["line"], "text": props[i]["text"]} for i in kept]
         new = apply_patches(ctx.text, patches)
         changed_chars = sum(max(len(props[i]["was"]), len(props[i]["text"] or "")) for i in kept)
-        lim = {"lines": len(kept), "line_share": len(kept) / max(ctx.n, 1),
+        n_lines = sum(max(1, len((props[i]["text"] or "").split("\n"))) for i in kept)   # a change may write two
+        lim = {"lines": n_lines, "line_share": n_lines / max(ctx.n, 1),
                "char_share": changed_chars / max(len(ctx.text), 1),
                "max": {"lines": MAX_LINES, "line_share": MAX_LINE_SHARE, "char_share": MAX_CHAR_SHARE}}
         rec["limits"] = lim
@@ -550,9 +709,19 @@ def summary_line(rec: Optional[Dict[str, Any]]) -> str:
         return "thorough profile (EXPERIMENTAL, unmeasured): not checked (the checking pass is switched off)"
     st = rec["r2"]["status"]
     props = rec.get("proposals") or []
+    if st == "no_draft":
+        return ("thorough profile (EXPERIMENTAL, unmeasured): no draft: the model was cut off by the token limit while "
+                "thinking; nothing was checked")
     if st == "not_checked":
-        return "thorough profile (EXPERIMENTAL, unmeasured): %s: the %d s deadline had passed before the checking call" % (
-            NOT_CHECKED, int(DEADLINE_S))
+        why = (rec["r2"].get("reasons") or [""])[0]
+        if "deadline" in why:
+            return "thorough profile (EXPERIMENTAL, unmeasured): %s: the %d s deadline had passed before the checking call" % (
+                NOT_CHECKED, int(DEADLINE_S))
+        return "thorough profile (EXPERIMENTAL, unmeasured): %s: the checking call did not finish within the %d s limit" % (
+            NOT_CHECKED, int(TOTAL_S))
+    if st == "error" and (rec["r2"].get("reasons") or [""])[0].startswith("the checking pass failed"):
+        return "thorough profile (EXPERIMENTAL, unmeasured): %s: the checking pass failed; the draft is shown as written" % (
+            NOT_CHECKED)
     if st in ("error", "cut", "not_json"):
         return "thorough profile (EXPERIMENTAL, unmeasured): %s: the checking call gave no usable reply (%s)" % (
             NOT_CHECKED, st)
@@ -587,26 +756,61 @@ class Profile:
                 "verify_prompt_sha256": prompt_sha256(self.cards) if self.verify else None}
 
 
+NO_DRAFT = ("No answer: the model was cut off by the token limit while thinking, before it wrote the answer "
+            "(thorough profile, EXPERIMENTAL). Nothing was checked. Ask again, or without --answer-profile.")
+
+
+def no_draft_record(profile: "Profile", gen, truncated: bool) -> Dict[str, Any]:
+    """The record of a draft cut while thinking (review S1): no draft, nothing checked, no reasoning text kept."""
+    rec = new_record(NO_DRAFT, truncated, profile.cards and profile.verify, getattr(gen, "identity", None) or {},
+                     MAX_TOKENS)
+    rec["first_pass_text"] = ""
+    rec["r2"].update(status="no_draft", reasons=["the draft was cut by the token limit while thinking"])
+    return rec
+
+
 def draft_and_check(question: str, msgs, chunks, gen, answer_max_tokens: int, profile: Profile, checker, *, kb=None,
                     t_start: Optional[float] = None) -> Dict[str, Any]:
     """The draft (thinking as the profile says) and, when switched on, the checking pass (thinking off). t_start: the
-    moment the question arrived, for the wall-clock deadline (now when None). Returns text (final), first_pass_text,
-    tokens, truncated, record (None without the pass), draft_info (what the server reported), seconds, max_tokens."""
+    moment the question arrived, for the wall-clock deadline (now when None); the checking call must end within TOTAL_S
+    of it. Returns text (final), first_pass_text, tokens, truncated, record (None without the pass), draft_info (what
+    the server reported), seconds, max_tokens, cut_while_thinking, draft_streamed.
+
+    The draft is streamed internally in every arm of the profile, thinking on or off (review S7: the arms differ only
+    in their switch), so the seconds of thinking can be measured; nothing is shown. A draft cut by the token limit
+    while thinking is no draft (review S1): the answer says so and nothing is checked."""
     t_start = time.monotonic() if t_start is None else t_start
     info: Dict[str, Any] = {}
     mt = answer_max_tokens + (profile.thinking_tokens if profile.thinking else 0)
     t0 = time.monotonic()
-    # streamed internally when thinking is on, so the seconds of thinking can be measured; nothing is shown
-    text, toks, trunc = gen.chat(msgs, mt, (lambda s: None) if profile.thinking else None,
-                                 thinking=bool(profile.thinking), info=info)
+    cut, text, toks, trunc = False, None, 0, False
+    try:
+        text, toks, trunc = gen.chat(msgs, mt, lambda s: None, thinking=bool(profile.thinking), info=info)
+        cut = bool(profile.thinking and info.get("cut_while_thinking"))
+    except EmptyAnswerError:
+        if not (profile.thinking and info.get("cut_while_thinking")):
+            raise
+        cut, toks, trunc = True, info.get("completion_tokens") or 0, True
     t1 = time.monotonic()
     rec = None
-    if profile.verify:
-        rec = Verifier(checker, gen, cards=profile.cards, kb=kb).run(
-            question, text, chunks, truncated=trunc, deadline_at=t_start + profile.deadline_s)
+    if cut:
+        rec = no_draft_record(profile, gen, trunc)
+        text = NO_DRAFT
+    elif profile.verify:
+        try:
+            ver = Verifier(checker, gen, cards=profile.cards, kb=kb)
+        except Exception as e:  # noqa: BLE001 - the draft stands (review S2)
+            ver = None
+            rec = new_record(text, trunc, profile.cards, getattr(gen, "identity", None) or {}, MAX_TOKENS)
+            rec["r2"].update(status="error", reasons=["the checking pass failed: " + " ".join(
+                ("%s: %s" % (type(e).__name__, e)).split())[:200]])
+        if ver is not None:
+            rec = ver.run(question, text, chunks, truncated=trunc, deadline_at=t_start + profile.deadline_s,
+                          call_deadline_at=t_start + TOTAL_S)
     t2 = time.monotonic()
-    return {"text": rec["final_text"] if rec else text, "first_pass_text": text, "tokens": toks, "truncated": bool(trunc),
-            "record": rec, "draft_info": info, "max_tokens": mt,
+    return {"text": rec["final_text"] if rec else text, "first_pass_text": "" if cut else text, "tokens": toks,
+            "truncated": bool(trunc), "record": rec, "draft_info": info, "max_tokens": mt,
+            "cut_while_thinking": cut, "draft_streamed": True,
             "seconds": {"draft": t1 - t0, "thinking": info.get("think_s"), "check": t2 - t1}}
 
 
@@ -639,6 +843,26 @@ def _questions(items_path) -> Dict[str, str]:
     return {it["id"]: eval2.full_question(it) for it in _read_jsonl(items_path)}
 
 
+STORED_SECONDS = "the stored row's seconds.total (search terms, retrieval and draft), before this check"
+
+
+def _file_sha256(path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for b in iter(lambda: f.read(1 << 20), b""):
+            h.update(b)
+    return h.hexdigest()
+
+
+def _answers_run(path) -> Optional[str]:
+    """The run id in the eval2 manifest next to the answers file (None when there is none)."""
+    m = Path(str(path) + ".manifest.json")
+    try:
+        return json.loads(m.read_text(encoding="utf-8")).get("run")
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
 def run_command(a, out=sys.stdout) -> int:
     from . import config, evalhooks, service
     from .__main__ import make_generator
@@ -658,7 +882,9 @@ def run_command(a, out=sys.stdout) -> int:
     ident = getattr(gen, "identity", None) or {}
     conf = {"verify_version": VERSION, "cards": bool(a.cards), "verify_prompt_sha256": prompt_sha256(bool(a.cards)),
             "max_tokens": MAX_TOKENS, "backend": ident.get("backend"), "model": ident.get("model"),
-            "catalogue_hash": checker.catalogue_hash, "answers_file": Path(a.answers).name}
+            "catalogue_hash": checker.catalogue_hash, "answers_file": Path(a.answers).name,
+            "answers_sha256": _file_sha256(a.answers), "answers_run": _answers_run(a.answers),
+            "deadline": {"deadline_s": DEADLINE_S, "total_s": TOTAL_S, "counted_from": STORED_SECONDS}}
     questions = _questions(a.items)
     rows = [r for r in _read_jsonl(a.answers) if not r.get("error") and r.get("text") and isinstance(r.get("pack"), list)]
     if a.limit:
@@ -683,7 +909,15 @@ def run_command(a, out=sys.stdout) -> int:
             if r["id"] not in questions:
                 raise KeyError("no item with this id in --items")
             chunks = evalhooks.chunks_by_ids(r["pack"])
-            row.update(ver.run(questions[r["id"]], r["text"], chunks, truncated=bool(r.get("truncated"))))
+            # the stored row's own seconds count against the deadline, as in the in-line profile (review S7)
+            spent = (r.get("seconds") or {}).get("total")
+            row["stored_seconds"] = spent
+            kw = {}
+            if isinstance(spent, (int, float)):
+                kw = {"deadline_at": t0 + DEADLINE_S - spent, "call_deadline_at": t0 + TOTAL_S - spent}
+            else:
+                row["deadline"] = "none: the stored row has no seconds.total"
+            row.update(ver.run(questions[r["id"]], r["text"], chunks, truncated=bool(r.get("truncated")), **kw))
         except Exception as e:  # recorded; the run continues
             row["error"] = " ".join(("%s: %s" % (type(e).__name__, e)).split())[:300]
         row["seconds"] = {"total": time.monotonic() - t0}
