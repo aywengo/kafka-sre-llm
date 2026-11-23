@@ -38,6 +38,8 @@ class VerifyPrompts(unittest.TestCase):
                               "a sentence in the excerpts cannot", 1)
         cards = cards.replace("Copy the deciding words of that sentence or fact exactly into \"quote\", from the excerpt "
                               "or the card.", "Copy the deciding words of that sentence exactly into \"quote\".", 1)
+        cards = cards.replace("A line that neither the excerpts nor a reference card mention is not contradicted",
+                              "A line the excerpts do not mention is not contradicted", 1)
         self.assertEqual(cards, P.VERIFY_PROMPT)
         i = P.VERIFY_PROMPT_CARDS.index("<<FINDINGS>>")
         self.assertLess(i, P.VERIFY_PROMPT_CARDS.index("<<CARDS>>"))

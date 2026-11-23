@@ -44,6 +44,7 @@ deleted, the reset then hit every partition), b2-02, b1-20 and b1-25 S (stage 2 
 indentation change), b1-23 S and b1-02 D (stage 2 re-check and surviving names), b1-25 D (one bad line rejected six
 correct changes: hence each change by itself), b2-20 (a claim repeated in prose stays open: surviving covers names
 only; a known limit, not a rule). They are fitted to these items; the pass is judged on other data.
+The rules were fitted on B1, B2, pilot2 and T; D5 was not read.
 
 Thinking per call (generators.OpenAIChatGenerator.chat(thinking=...)): the draft may be written with thinking on, the
 search-terms call and this call stay off. What the server returns as reasoning stays out of the answer text.

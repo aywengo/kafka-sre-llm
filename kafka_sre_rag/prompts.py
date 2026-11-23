@@ -194,8 +194,8 @@ _VERIFY_CASE1 = (
 _VERIFY_CASE1_CARDS = (
     "1. Contradicted: a sentence in the excerpts or a fact on a reference card cannot be true together with what the line "
     "states (a different default, name, value or field for the same purpose, or the opposite behaviour). Copy the deciding "
-    "words of that sentence or fact exactly into \"quote\", from the excerpt or the card. A line the excerpts do not "
-    "mention is not contradicted, even if you believe it is wrong.\n")
+    "words of that sentence or fact exactly into \"quote\", from the excerpt or the card. A line that neither the "
+    "excerpts nor a reference card mention is not contradicted, even if you believe it is wrong.\n")
 _VERIFY_TAIL = (
     "2. Named by a finding: the line holds the item a finding names. Copy the deciding words of the finding's evidence or "
     "of an excerpt exactly into \"quote\".\n"

@@ -4,8 +4,8 @@
   "sha256": "f2cd4955017bc5350d9794114135dc80767ec717bcbaa996d8db3e1978681d58"
  },
  "VERIFY_PROMPT_CARDS": {
-  "len": 2097,
-  "sha256": "4e41e3dce89f4b831817359fd3f39d7aaef77812e6e4727811cb108a00b0ae34"
+  "len": 2124,
+  "sha256": "102370ec77bf8eecf36399335fcf43fe028d980fd4da8855b0299eec24d7c835"
  },
  "VERIFY_SYSTEM": {
   "len": 328,
