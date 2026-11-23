@@ -134,6 +134,12 @@ test as a further arm (asked in the M7 session), and X1 below.
 | 2026-11-23 | W2 | Unloading under M7 (asked: should the M6 go to unload a model another client loaded also hold for M7?). Answer: "No, stop and wait". M7's chains never unload a model they did not load; when one is loaded or another client is active, the gate refuses and waits for the Owner. Unloading our own 4-bit or judge model between stages stays |
 | 2026-11-23 | W3 | The six-arm test's row "errors improve but time fails" (asked: should a run where too many answers are cut AND time fails take that row?). Answer: "No, keep it narrow": a cut failure together with a time failure is "neither" |
 | 2026-11-23 | W4 | Under the check variant "none" (asked: if thinking alone clears the thorough profile's row, may it go on to B4?). Answer: "Yes, may go to B4" |
+| 2026-11-23 | W5 | Time (asked: should the thorough profile's time bars become a reported measure with an operational timeout, so that a safer, more correct but slower profile is not vetoed by time?). Answer: "Yes". The median and 90th-percentile rows of the test and of Z2 are reported, not decided; the runtime keeps an operational timeout |
+| 2026-11-23 | W6 | Harm (asked: should harmful statements be matched by action, condition and consequence, a candidate's harm counting as new when the reference answer to the same scenario has no matching one?). Answer: "Consequence": a candidate's harmful statement is new when no harmful statement in the reference answer to the same scenario has the same consequence. Readers record the consequence of each harmful finding |
+| 2026-11-23 | W7 | Grounded-g3 on the r4g2 packs joins the six-arm test as a comparison arm, judged only, outside the decision rule (asked; answer: "Yes") |
+| 2026-11-23 | W8 | Gemma 4 as an alternative base model in M7, both Gemma 4 26B-A4B and Gemma 4 31B (answer: "Both"), built locally (the 31B at 4-bit from the local full-precision weights; the 26B-A4B 4-bit build of M4), loaded on the server for M7's measurement runs, measured beside Qwen3.8-27B |
+| 2026-11-23 | W9 | Memory: the Gemma 4 31B 4-bit model at about 18.0 GB loaded is accepted (asked; answer: "Yes"); the full footprint is still measured and reported against `GOAL.md` |
+| 2026-11-23 | W10 | Publishing one or both models is decided by the Owner after the tests ("We will after tests. Both also possible") |
 | 2026-11-23 | conductor | The 18 departures of the checking pass's code from its design are accepted (builder's report in the session's scratch folder; the review covers them); in the cards variant of the prompt the sentence on unmentioned lines names the cards as well |
 
 
@@ -142,8 +148,7 @@ test as a further arm (asked in the M7 session), and X1 below.
 - **X1** (from M6's result): one hidden look on h6 for grounded-g3 on the r4g2 packs as
   the fast profile's default candidate, under the look's rule of `milestones/M6.md`.
   Recommended by the M6 session: yes; it would be a second look in M7, leaving two.
-- The M7 session's own open questions (the time bars as a reported measure with an
-  operational timeout; how harm is matched; grounded-g3 on r4g2 as a judged-only arm).
+- After the tests: which model or models to publish (W10).
 
 ## Rules that are shared between the two sessions
 
