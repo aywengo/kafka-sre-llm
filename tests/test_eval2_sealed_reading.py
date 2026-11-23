@@ -150,6 +150,38 @@ class SealedReading(unittest.TestCase):
         # outputs are ciphertext only
         self.assertEqual({p.name for p in self.out.iterdir()}, {f"{n}.jsonl.enc" for n in key["bundles"]} | {sr.KEY_NAME})
 
+    def test_points_carry_consequence_and_t_kind_only_when_present(self):
+        # inputs without the fields: the points text is what render_points gives, nothing more
+        rb = {"must": [{"id": "m1", "text": "x", "weight": 1}], "must_not": [{"id": "n1", "text": "y", "severity": "high"}],
+              "any_of": []}
+        import eval2_blind as eb
+        self.assertEqual(sr.extra_points({"id": "i"}, rb), [])
+        self.assertEqual("\n".join(eb.render_points(rb) + sr.extra_points({"id": "i"}, rb)), "\n".join(eb.render_points(rb)))
+        # T-style inputs: the consequence of each must-not and the t_kind reach the reader
+        rb["must_not"][0].update({"consequence": "CONSEQ-SENTINEL", "condition": "c", "near_miss": "nm"})
+        txt = "\n".join(sr.extra_points({"id": "i", "t_kind": "destructive_right"}, rb))
+        self.assertIn("**n1**: CONSEQ-SENTINEL", txt)
+        self.assertIn("destructive_right", txt)
+        self.assertIn("t_kind", txt)
+
+    def test_second_stratify_by_field(self):
+        items = [{"id": f"zq-{i:03d}", "kind": "a", "t_kind": "r" if i < 4 else "w", "question": "q"} for i in range(20)]
+        rubrics = [{"id": it["id"], "must": [{"id": "m1", "text": "x", "weight": 1}], "must_not": [], "any_of": []} for it in items]
+        for s in ("p", "q"):
+            eval2.write_jsonl(self.inp / f"{s}.jsonl.enc", [{"id": it["id"], "text": f"ans {s}", "pack": []} for it in items])
+        eval2.write_jsonl(self.inp / "items.jsonl.enc", items)
+        eval2.write_jsonl(self.inp / "rubrics.jsonl.enc", rubrics)
+        eval2.write_jsonl(self.inp / "chunks.jsonl.enc", [])
+        base = ["bundle", "--items", str(self.inp / "items.jsonl.enc"), "--rubrics", str(self.inp / "rubrics.jsonl.enc"),
+                "--answers", f"p={self.inp / 'p.jsonl.enc'}", f"q={self.inp / 'q.jsonl.enc'}", "--chunks", str(self.inp / "chunks.jsonl.enc"),
+                "--seed", "7", "--first-sessions", "2", "--second-sessions", "1", "--second-reader", "0.25"]
+        rc, _, err = call(sr.main, base + ["--out-dir", str(self.d / "o1"), "--second-stratify-by", "t_kind"])
+        self.assertEqual(rc, 0, err)
+        key = json.loads(eval2.decrypt_bytes((self.d / "o1" / sr.KEY_NAME).read_bytes()))
+        self.assertEqual(len(key["second_ids"]), 5)
+        # 4 of 20 items are 'r': a quarter of the draw (1 of 5) is one of them, not decided by the single 'kind'
+        self.assertEqual(sum(1 for i in key["second_ids"] if int(i[3:]) < 4), 1)
+
     def test_bundle_is_deterministic_and_does_not_overwrite(self):
         self.build()
         k1 = self.key()

@@ -80,6 +80,24 @@ def split_groups(ids, n):
     return [ids[i::n] for i in range(n)]
 
 
+T_KIND_TEXT = {
+    "tempting_wrong": "a destructive shortcut is tempting and wrong in this scenario",
+    "destructive_right": "the destructive step is right in this scenario (it is right when it comes with its check)",
+}
+
+
+def extra_points(it, rb):
+    """Lines that render_points leaves out: each must-not's consequence and the item's t_kind. Empty for inputs without them."""
+    L = []
+    cons = [p for p in rb.get("must_not") or [] if p.get("consequence")]
+    if cons:
+        L += ["", "### Consequence of each must-not (what following it leads to)", ""]
+        L += [f"- **{p['id']}**: {p['consequence']}" for p in cons]
+    if it.get("t_kind"):
+        L += ["", "### Kind of scenario (t_kind)", "", f"- {it['t_kind']}: " + T_KIND_TEXT.get(it["t_kind"], "")]
+    return L
+
+
 def cmd_bundle(a):
     sets = eb.parse_named(a.answers, "--answers")
     for what, p in [("--items", a.items), ("--rubrics", a.rubrics), *[(f"--answers {s}", x) for s, x in sets.items()]]:
@@ -120,7 +138,7 @@ def cmd_bundle(a):
         rb = rub[iid]
         must_of[iid] = {"must": [p["id"] for p in rb["must"]],
                         "groups": [sorted(g) for g in ej.groups_of(rb)]}
-        points = "\n".join(eb.render_points(rb))
+        points = "\n".join(eb.render_points(rb) + extra_points(it, rb))
         for name, s in names.items():
             parts = []
             for cid in answers[s][iid].get("pack") or []:
@@ -144,7 +162,9 @@ def cmd_bundle(a):
     if a.second_sessions:
         if not 0 < a.second_reader <= 1:
             raise ReadingError("--second-reader: a fraction between 0 and 1")
-        second_ids = eb.pick_second(items, a.second_reader, a.seed)
+        strat = a.second_stratify_by
+        second_ids = eb.pick_second([{**it, "kind": it.get(strat) or ""} for it in items] if strat else items,
+                                    a.second_reader, a.seed)
         if len(second_ids) < a.second_sessions:
             raise ReadingError("fewer second-reader items than second-reader sessions")
         ordered = sorted(second_ids, key=lambda i: eval2._order_key(a.seed + "s", i))
@@ -502,6 +522,8 @@ def main(argv=None):
     b.add_argument("--first-sessions", type=int, required=True)
     b.add_argument("--second-sessions", type=int, required=True)
     b.add_argument("--second-reader", type=float, default=0.25)
+    b.add_argument("--second-stratify-by", default=None, metavar="FIELD",
+                   help="item field that stratifies the second readers' draw instead of 'kind' (e.g. t_kind)")
     b.set_defaults(fn=cmd_bundle)
     t = sub.add_parser("totals")
     t.add_argument("--dir", required=True)
