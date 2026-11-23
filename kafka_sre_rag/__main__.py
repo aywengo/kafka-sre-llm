@@ -18,9 +18,18 @@ class StubGenerator:
     def __init__(self, out=sys.stdout):
         self.out, self.n = out, 0
 
-    def chat(self, messages, max_tokens, on_token=None):
+    def chat(self, messages, max_tokens, on_token=None, **kw):
+        from . import prompts
+        if messages and messages[0]["content"] == prompts.VERIFY_SYSTEM:  # EXPERIMENTAL thorough profile: the check
+            print(f"===== CHECK REQUEST (max_tokens {max_tokens}, thinking off) =====", file=self.out)
+            for m in messages:
+                print(f"--- {m['role']} ---\n{m['content']}", file=self.out)
+            self.out.flush()
+            return '{"replacements": []}', 0, False
         self.n += 1
         label = "EXPANSION REQUEST" if self.n % 2 == 1 else "ANSWER REQUEST"
+        if kw.get("thinking") is not None:  # only under the thorough profile
+            label += " (thinking %s)" % ("on" if kw["thinking"] else "off")
         print(f"===== {label} (max_tokens {max_tokens}) =====", file=self.out)
         for m in messages:
             print(f"--- {m['role']} ---\n{m['content']}", file=self.out)
@@ -37,6 +46,52 @@ def mark_option(p):
                         "consequence; a step the sentence warns against is not marked. Nothing is removed or reworded. "
                         "It marks what the text says; it cannot tell whether a claim about behaviour is true, and it is "
                         "no measure of harm. The answer is printed when it is complete (not streamed)")
+
+
+def answer_profile_options(p):
+    p.add_argument("--answer-profile", choices=["thorough"], default=None,
+                   help="EXPERIMENTAL and UNMEASURED, off by default: thorough = the draft is written with thinking on, "
+                        "then one more call (thinking off) checks it against the excerpts, the catalogue findings and "
+                        "the reference cards of its names; a line is changed only with a word-for-word quote and under "
+                        "mechanical rules, each change accepted by itself. Needs the catalogues. The answer is printed "
+                        "when it is complete (not streamed); after 240 s the check is skipped and the answer says "
+                        "'not checked'. Not available with --stream, --service-url or serve")
+    p.add_argument("--no-thinking", action="store_true",
+                   help="with --answer-profile thorough: the draft without thinking (check only; experimental)")
+    p.add_argument("--no-verify", action="store_true",
+                   help="with --answer-profile thorough: no checking pass (thinking only; experimental)")
+    p.add_argument("--no-cards", action="store_true",
+                   help="with --answer-profile thorough: no reference cards in the check (experimental)")
+
+
+def thorough_profile(a):
+    """The verify_pass.Profile of the options, or None when the profile is off."""
+    if not getattr(a, "answer_profile", None):
+        return None
+    from .verify_pass import Profile
+    return Profile(thinking=not a.no_thinking, verify=not a.no_verify, cards=not a.no_cards)
+
+
+def answer_profile_error(a):
+    """The refusal for a bad combination of the answer-profile options, or None."""
+    sub = [o for o, v in (("--no-thinking", getattr(a, "no_thinking", False)),
+                          ("--no-verify", getattr(a, "no_verify", False)),
+                          ("--no-cards", getattr(a, "no_cards", False))) if v]
+    if not getattr(a, "answer_profile", None):
+        return f"{', '.join(sub)} needs --answer-profile thorough" if sub else None
+    if a.cmd == "serve":
+        return "--answer-profile cannot be used with serve: the service has no answer profile"
+    if getattr(a, "service_url", None):
+        return "--answer-profile cannot be used with --service-url: the service has no answer profile"
+    if getattr(a, "stream", False):
+        return "--answer-profile thorough holds the answer until it is checked; do not combine it with --stream"
+    if getattr(a, "revise", False):
+        return "--answer-profile thorough has its own checking pass; do not combine it with --revise"
+    if a.no_thinking and a.no_verify:
+        return "--no-thinking with --no-verify leaves nothing of the answer profile"
+    if a.no_cards and a.no_verify:
+        return "--no-cards applies to the checking pass; it cannot be combined with --no-verify"
+    return None
 
 
 def build_parser():
@@ -89,6 +144,7 @@ def build_parser():
     a.add_argument("question")
     common(a)
     mark_option(a)
+    answer_profile_options(a)
     a.add_argument("--stream", action="store_true",
                    help="print the answer as it is generated (a <think> block is not shown); the sources follow")
     a.add_argument("--service-url", metavar="URL",
@@ -98,8 +154,10 @@ def build_parser():
                                     "(no conversation history is sent; multi-turn is unmeasured)")
     common(c)
     mark_option(c)
+    answer_profile_options(c)
     sv = sub.add_parser("serve", help="long-running local service, OpenAI-compatible, loopback only")
     common(sv)
+    answer_profile_options(sv)
     sv.add_argument("--host", default="127.0.0.1", help="bind address (default 127.0.0.1; loopback only)")
     sv.add_argument("--port", type=int, default=8765)
     sv.add_argument("--allow-non-local", action="store_true",
@@ -249,7 +307,8 @@ def run_one(question, gen, cfg, a, checker=None):
     gate = None
     seen_now = []
     mark_d = getattr(a, "mark_destructive", False)
-    live = not (a.json or a.dry_run or mark_d)  # the answer is printed while it is generated
+    thorough = getattr(a, "thorough_profile", None)  # EXPERIMENTAL answer profile; None = off
+    live = not (a.json or a.dry_run or mark_d or thorough)  # the answer is printed while it is generated
     if live and checker is not None:  # decision O2, option c: prose as written, a code block only after its check
         gate = revise_mod.FenceGate(lambda s: print(s, end="", flush=True), checker.check,
                                     lambda: seen_now[0] if seen_now else [])
@@ -260,6 +319,11 @@ def run_one(question, gen, cfg, a, checker=None):
         stream = None if not live else (lambda t: print(t, end="", flush=True))
     kw = dict(k=a.k, mode=a.mode, on_token=stream, rerank=not (a.dry_run and a.no_rerank_in_dry_run),
               max_tokens=a.max_tokens)
+    if thorough is not None:  # off: the call stays exactly as it was
+        if thorough.verify and thorough.cards and getattr(a, "thorough_kb", None) is None:  # loaded once (chat)
+            from .kb_lookup import KbLookup
+            a.thorough_kb = KbLookup(a.thorough_checker.cats, a.thorough_checker.directory, verify=True)
+        kw.update(thorough=thorough, thorough_checker=a.thorough_checker, kb=getattr(a, "thorough_kb", None))
     if a.profile != "frozen":  # the frozen call stays exactly as it was
         kw["profile"] = a.profile
         if not a.json:
@@ -296,9 +360,21 @@ def run_one(question, gen, cfg, a, checker=None):
         out.update(ans.profile_fields)  # nothing for frozen
         if mark_d:
             out["destructive_marks"] = n_marks
+        if ans.thorough is not None:
+            from . import verify_pass
+            # one name per text (review note): first_pass_text is the draft, as in the harness's rows; checked_text is
+            # the text after the checking pass (what --check then checks and marks)
+            out["first_pass_text"] = ans.thorough["first_pass_text"]
+            out["answer_profile"] = dict(thorough.manifest(), measured=False, checked_text=ans.text,
+                                         note=verify_pass.summary_line(ans.thorough["record"]),
+                                         check=verify_pass.compact(ans.thorough["record"]),
+                                         draft_info=ans.thorough["draft_info"], seconds=ans.thorough["seconds"],
+                                         cut_while_thinking=ans.thorough["cut_while_thinking"],
+                                         draft_streamed=ans.thorough["draft_streamed"])
         if check is not None:
             out["check"] = check
-            out["first_pass_text"] = ans.text
+            if ans.thorough is None:  # unchanged without the profile
+                out["first_pass_text"] = ans.text
             if getattr(a, "revise", False):
                 out["revise"] = revise_mod.public(rec)
         print(json.dumps(out, ensure_ascii=False))
@@ -319,6 +395,9 @@ def run_one(question, gen, cfg, a, checker=None):
             print("\n" + revise_mod.corrections_block(rec["patches"]))
     if mark_d:
         print("\n(destructive-step marks written: %d; experimental)" % n_marks)
+    if ans.thorough is not None:
+        from . import verify_pass
+        print("\n(%s)" % verify_pass.summary_line(ans.thorough["record"]))
     if a.sources:
         print_sources(ans.sources)
     if ans.truncated:
@@ -327,6 +406,11 @@ def run_one(question, gen, cfg, a, checker=None):
 
 def main(argv=None):
     a = build_parser().parse_args(argv)
+    if a.cmd != "verify":
+        why = answer_profile_error(a)
+        if why:
+            print(f"error: {why}", file=sys.stderr)
+            return 2
     if a.cmd == "verify":
         try:
             rep = config.verify()
@@ -380,6 +464,14 @@ def main(argv=None):
     if a.check:  # before anything slow is loaded
         try:
             checker = service.AnswerChecker(a.catalogues)
+        except service.CatalogueError as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 2
+    a.thorough_profile = thorough_profile(a)
+    a.thorough_checker = None
+    if a.thorough_profile is not None:  # EXPERIMENTAL: the checking pass needs the catalogues
+        try:
+            a.thorough_checker = checker or service.AnswerChecker(a.catalogues)
         except service.CatalogueError as e:
             print(f"error: {e}", file=sys.stderr)
             return 2
