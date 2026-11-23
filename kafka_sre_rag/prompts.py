@@ -167,3 +167,54 @@ def grounded_user_message(question, chunks, variant):
 def grounded_answer_messages(question, chunks, variant):
     return [{"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": grounded_user_message(question, chunks, variant)}]
+
+
+# M7 P1 (EXPERIMENTAL, unmeasured): the checking pass of the thorough profile (kafka_sre_rag/verify_pass.py). Added after
+# the prompts above; nothing above it changed. Text verbatim from the design runs/m7/reports/k1_check_design.md section 2.
+# Placeholders are filled with one re.sub: <<QUESTION>>, <<EXCERPTS>> (pack_text), <<ANSWER>> (revise.numbered),
+# <<FINDINGS>> (one JSON object per flagged finding, as revise.build_messages lays them out) and, in VERIFY_PROMPT_CARDS
+# only, <<CARDS>> (kb_lookup.render of the draft's cards). The hashes are in tests/golden/prompts_verify.json; these
+# constants are not in frozen.json (they are no part of the measured configuration). No text of any evaluation item.
+VERIFY_SYSTEM = (
+    "You check a draft answer to an operations question about Apache Kafka, Strimzi, Kubernetes or Argo CD against the "
+    "documentation excerpts it was written from. You do not answer the question and you do not improve wording, order or "
+    "completeness. You only correct lines that the excerpts or the catalogue findings show to be wrong.")
+
+_VERIFY_HEAD = (
+    "Question:\n\n<<QUESTION>>\n\n"
+    "Documentation excerpts:\n\n<<EXCERPTS>>\n\n"
+    "Draft answer, one numbered line per line:\n\n<<ANSWER>>\n\n"
+    "Findings of a mechanical check against catalogues of what exists (one JSON object per line; empty if none):\n\n"
+    "<<FINDINGS>>\n\n")
+_VERIFY_CASES = "Name a line of the draft only in one of two cases.\n"
+_VERIFY_CASE1 = (
+    "1. Contradicted: a sentence in the excerpts cannot be true together with what the line states (a different default, "
+    "name, value or field for the same purpose, or the opposite behaviour). Copy the deciding words of that sentence "
+    "exactly into \"quote\". A line the excerpts do not mention is not contradicted, even if you believe it is wrong.\n")
+_VERIFY_CASE1_CARDS = (
+    "1. Contradicted: a sentence in the excerpts or a fact on a reference card cannot be true together with what the line "
+    "states (a different default, name, value or field for the same purpose, or the opposite behaviour). Copy the deciding "
+    "words of that sentence or fact exactly into \"quote\", from the excerpt or the card. A line the excerpts do not "
+    "mention is not contradicted, even if you believe it is wrong.\n")
+_VERIFY_TAIL = (
+    "2. Named by a finding: the line holds the item a finding names. Copy the deciding words of the finding's evidence or "
+    "of an excerpt exactly into \"quote\".\n"
+    "For each line you name, give in \"text\" the line as it should read. Change only the words that are wrong; keep the "
+    "rest of the line, its indentation, list or comment marker, code formatting and trailing backslash. Take every new "
+    "name, value or number from the quote. Do not add a step, command, flag, warning or sentence. Do not remove a flag, "
+    "option, namespace or warning from a command unless that exact item is what is wrong. Never change a heading, a line "
+    "that repeats the user's own configuration or output from the question, or a line that begins with \"General "
+    "knowledge (not in the excerpts):\". If the wrong item stands on several lines, name each of them. Give \"text\": "
+    "null only when the whole line is contradicted and the excerpts give no correct form; never delete part of a "
+    "command.\n"
+    "Name at most 6 lines, most important first. Most answers need no change; then reply with an empty list.\n\n"
+    "Reply with JSON only, one object and nothing else (no code fence, no text before or after it), in exactly this form: "
+    "{\"replacements\": [{\"line\": 12, \"quote\": \"words copied from an excerpt or a finding\", \"text\": \"the "
+    "corrected line 12\"}]}")
+
+VERIFY_PROMPT = _VERIFY_HEAD + _VERIFY_CASES + _VERIFY_CASE1 + _VERIFY_TAIL
+VERIFY_PROMPT_CARDS = (
+    _VERIFY_HEAD
+    + "Reference cards from the pinned catalogues for names the draft uses (exact facts; empty if none):\n\n<<CARDS>>\n\n"
+    + _VERIFY_CASES + _VERIFY_CASE1_CARDS + _VERIFY_TAIL)
+del _VERIFY_HEAD, _VERIFY_CASES, _VERIFY_CASE1, _VERIFY_CASE1_CARDS, _VERIFY_TAIL
