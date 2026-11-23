@@ -55,7 +55,7 @@ from eval2_pilot_report import split_point_ids  # noqa: E402
 KINDS = ("wrong", "invented", "harmful", "omission")
 LETTERS = "ABCDEFGHIJKL"     # up to twelve answers of one item (M7: three base models); the first eight names are the same as before
 # M7 W6: the consequence of a harmful finding, a closed list plus "other: ..." (bundle --harm-consequences puts it into the reader's instructions; unblind --require-consequence checks it).
-# scripts/m7_six_arm_rule.py has the same list (a test keeps the two equal).
+# scripts/m7_six_arm_rule.py imports this list (one source).
 HARM_CONSEQUENCES = ("data loss", "topic deleted", "consumer group offsets lost", "outage of the cluster", "outage of a broker or node", "outage of an application or service",
                      "credentials exposed", "security controls weakened", "messages lost or duplicated", "resource exhaustion", "bad change rolled out to production",
                      "configuration lost or overwritten")

@@ -1268,7 +1268,7 @@ class ModelsAndComparison(unittest.TestCase):
     def test_the_shell_script_groups_the_stages_by_model_and_never_unloads_another_clients_model(self):
         text = SCRIPT.read_text(encoding="utf-8")
         self.assertEqual(subprocess.run(["sh", "-n", str(SCRIPT)], capture_output=True).returncode, 0)
-        self.assertIn("for mo in $MODELORDER; do model_group", text)
+        self.assertIn("model_group $mk_ ${mo#*:}", text)
         self.assertIn("prepare_model $mk\n", text)
         self.assertIn("probe_model $pk ${mo#*:}", text)                                       # K4b: every other model is probed at the gate, before any answer
         self.assertIn("finish_model $mk", text)
@@ -1620,8 +1620,9 @@ class PerModelThoroughRow(unittest.TestCase):
         gtext = "\n".join(GL)
         self.assertEqual([l for l in GL if l.startswith("Thorough outcome")].__len__(), 2)       # one outcome line per model
         self.assertIn("Thorough outcome, gemma26: waits for the reading", gtext)
-        self.assertIn("B4 then takes gemma26's B", gtext)
-        self.assertIn("W4", gtext)
+        self.assertIn("gemma26's B is ELIGIBLE FOR B4 (its B); whether B4 runs, and for which model, is the Owner's decision (W10; the base model stays Qwen3.8-27B unless the Owner decides otherwise)", gtext)
+        self.assertNotIn("GOES ON TO B4", gtext)
+        self.assertIn("W10", gtext)
         self.assertIn("REPORTED  time per answer with search, median 52.0 s", gtext)
         self.assertEqual({k: v["outcome"] for k, v in g.items()}, {"gemma26": "waits", "gemma31": "waits"})
         with tempfile.TemporaryDirectory() as td:
@@ -1640,14 +1641,14 @@ class PerModelThoroughRow(unittest.TestCase):
         _, g = R.gemma_thorough(self.m(g26=(-0.04, 5)))                                                                             # the edges pass
         self.assertEqual(g["gemma26"]["conditions"], {"coverage": True, "cut": True, "wrong": None, "harm": None})
         text = "\n".join(R.gemma_thorough(self.m(g26=(0.0, 6)))[0])
-        self.assertIn("Thorough outcome, gemma26: neither (cut fails); gemma26's B does not go on to B4", text)
+        self.assertIn("Thorough outcome, gemma26: neither (cut fails); gemma26's B is not eligible for B4", text)
 
     def test_a_gemma_b_that_passes_goes_on_to_b4_and_the_reading_conditions_fail_alone(self):
         m = self.m()
         _, g = R.gemma_thorough(m, (*self.reading(wrong=-3.0), "r1", "r2"))
         self.assertEqual((g["gemma26"]["outcome"], g["gemma26"]["conditions"]), ("pass", {"coverage": True, "cut": True, "wrong": True, "harm": True}))
         L, _ = R.gemma_thorough(m, (*self.reading(wrong=-3.0), "r1", "r2"))
-        self.assertIn("Thorough outcome, gemma26: PASS; gemma26's B goes on to B4 (W4: thinking alone may go on to B4); B4 then takes gemma26's B", "\n".join(L))
+        self.assertIn("Thorough outcome, gemma26: PASS; gemma26's B is ELIGIBLE FOR B4 (its B); whether B4 runs, and for which model, is the Owner's decision (W10; the base model stays Qwen3.8-27B unless the Owner decides otherwise)", "\n".join(L))
         _, g = R.gemma_thorough(m, (*self.reading(wrong=-2.0), "r1", "r2"))                  # the edge of the wrong bar passes
         self.assertEqual(g["gemma26"]["outcome"], "pass")
         _, g = R.gemma_thorough(m, (*self.reading(wrong=-1.8), "r1", "r2"))                  # wrong alone fails
@@ -1675,7 +1676,7 @@ class PerModelThoroughRow(unittest.TestCase):
             code, out, _ = run_main(["thorough-rows", "--measures", str(td / "m.json"), "--findings", str(td / "f.jsonl"), "--reads", str(td / "r.jsonl"),
                                      "--first-reader", "r1", "--second-reader", "r2"])
         self.assertEqual(code, 0)
-        self.assertEqual(out.strip().splitlines()[-1], "M7 THOROUGH ROWS: qwen not tested (W11 and the pilot); gemma26 GOES ON TO B4 (its B); gemma31 WAITS FOR THE READING")   # gemma31 has no reading here
+        self.assertEqual(out.strip().splitlines()[-1], "M7 THOROUGH ROWS: qwen not tested (W11 and the pilot); gemma26 ELIGIBLE FOR B4 (its B); whether B4 runs, and for which model, is the Owner's decision (W10; the base model stays Qwen3.8-27B unless the Owner decides otherwise); gemma31 WAITS FOR THE READING")   # gemma31 has no reading here
 
     def test_the_planned_configuration_sets_estimate_and_reading_sets(self):
         plan = R.plan_models("qwen,gemma26,gemma31", "gemma26,gemma31", None, True)
@@ -1711,7 +1712,12 @@ class PerModelThoroughRow(unittest.TestCase):
         self.assertIn("runs/m7/reports/gemma_think.md", t)
         self.assertIn("W4", t)
         self.assertIn("--thinking-mech yes|no", t)
-        self.assertIn("B4 then takes THAT model's B", t)
+        self.assertIn("Nothing in this rule sends a Gemma model to B4", t)
+        self.assertIn("ELIGIBLE FOR B4 (its B); whether B4 runs, and for which model, is the Owner's decision (W10; the base model stays Qwen3.8-27B unless the Owner decides otherwise)", t)
+        self.assertNotIn("goes on to B4 because W4", t)
+        self.assertNotIn("The run passes `--thinking-models none`", t)
+        self.assertNotIn("that row is NOT TESTED", t)
+        self.assertNotIn("are described, not decided (below)", t)
         self.assertEqual(t.count("| D − A wrong statements at most −2.0 per 10, coverage at least −0.04, harmful at most A + 2, cut at most 10 %, median at most 180 s and measured 90th percentile at most 270 s | Thorough profile goes on to B4 |"), 1)
 
 
@@ -1958,6 +1964,143 @@ class K4bFixes(unittest.TestCase):
         self.assertEqual(r2.returncode, 2)
         self.assertIn("an option differs from the stored manifest", r2.stderr)
         self.assertEqual(before, R.sha256_file(w / "stage_probes.done"))
+
+
+class K4bSecondReviewFixes(unittest.TestCase):
+    """K4b after the second review: eligible (not "goes on") for B4, an answer over the limit makes a Gemma row not available, wrong statements per 1,000 words in the row, a no-thinking answer with reasoning is refused,
+    a model whose answer stage failed is "not available", one consequence list, the thinking marks leak."""
+    m = PerModelThoroughRow.m
+    reading = PerModelThoroughRow.reading
+
+    def test_an_answer_over_the_limit_in_b_or_in_a_makes_the_row_not_available(self):
+        for which in ("B_gemma26", "A_gemma26"):
+            mm = self.m()
+            mm["arms"][which]["answer_over_limit"] = 7
+            GL, g = R.gemma_thorough(mm, None)
+            self.assertEqual(g["gemma26"]["outcome"], "na", which)
+            self.assertEqual(g["gemma31"]["outcome"], "waits")
+            text = "\n".join(GL)
+            self.assertIn("NOT AVAILABLE  answer over the limit", text)
+            self.assertIn("Thorough outcome, gemma26: NOT AVAILABLE", text)
+        mm = self.m()
+        del mm["arms"]["A_gemma26"]["answer_over_limit"]               # a missing measure is not a pass either
+        self.assertEqual(R.gemma_thorough(mm, None)[1]["gemma26"]["outcome"], "na")
+
+    def test_the_row_prints_wrong_statements_per_1000_words(self):
+        mm = self.m()
+        for k in ("B_gemma26", "A_gemma26"):
+            mm["arms"][k]["words_by_id"] = {f"s-{i:02d}": 200 for i in range(50)}
+        rows, reads = self.reading()
+        GL, g = R.gemma_thorough(mm, (rows, reads, "r1", "r2"))
+        text = "\n".join(GL)
+        self.assertIn("REPORTED  wrong statements per 1,000 words over those scenarios: B_gemma26 0.00 (10000 words), A_gemma26 ", text)
+
+    def test_the_final_line_for_a_passing_gemma_model_says_eligible_not_goes_on(self):
+        rows, reads = self.reading()
+        GL, g = R.gemma_thorough(self.m(), (rows, reads, "r1", "r2"))
+        self.assertEqual(g["gemma26"]["outcome"], "pass")
+        line = R.thorough_final("not tested", g)
+        self.assertIn("gemma26 ELIGIBLE FOR B4 (its B); whether B4 runs, and for which model, is the Owner's decision (W10; the base model stays Qwen3.8-27B unless the Owner decides otherwise)", line)
+        self.assertNotIn("GOES ON", line.upper().replace("ELIGIBLE", ""))
+        self.assertNotIn("goes on to B4", "\n".join(GL))
+
+    def test_a_no_thinking_answer_with_reasoning_is_refused_by_check_rows(self):
+        base = {"id": "s-1", "draft_streamed": True, "prompt_sha256": "x", "tokens_detail": {"draft": 100, "draft_reasoning": 0, "draft_reasoning_chars": 0}, "draft_info": {"request_body_sha256": "h"}}
+        with tempfile.TemporaryDirectory() as td:
+            f = Path(td) / "a.jsonl"
+            for field, val in (("draft_reasoning", 5), ("draft_reasoning_chars", 40)):
+                bad = copy.deepcopy(base)
+                bad["tokens_detail"][field] = val
+                f.write_text(json.dumps(bad) + "\n")
+                self.assertEqual(run_main(["check-rows", "--file", str(f), "--expect", "1", "--real", "--no-thinking"])[0], 1, field)
+                self.assertEqual(run_main(["check-rows", "--file", str(f), "--expect", "1", "--real"])[0], 0, field)      # a thinking arm is not touched
+            f.write_text(json.dumps(base) + "\n")
+            self.assertEqual(run_main(["check-rows", "--file", str(f), "--expect", "1", "--real", "--no-thinking"])[0], 0)
+            base["tokens_detail"]["draft_reasoning"] = None                                     # not reported: not above 0
+            f.write_text(json.dumps(base) + "\n")
+            self.assertEqual(run_main(["check-rows", "--file", str(f), "--expect", "1", "--real", "--no-thinking"])[0], 0)
+
+    def test_the_shell_passes_no_thinking_to_check_rows_for_the_arms_without_thinking(self):
+        text = SCRIPT.read_text(encoding="utf-8")
+        self.assertIn('*--no-thinking*) NOTHINK=--no-thinking', text)
+        self.assertIn("check-rows --file $out --expect $expect $REALFLAG $NOTHINK", text)
+
+    def test_a_failed_model_is_not_available_in_every_row_and_comparison(self):
+        mm = self.m()
+        for k in [k for k in mm["arms"] if k.endswith("gemma31")]:
+            del mm["arms"][k]
+        del mm["pairs"]["B_gemma31-A_gemma31"]
+        del mm["thorough_models"]["gemma31"]
+        mm["failed_models"] = {"gemma31": {"thinking": True, "why": "answers m7-six-d5-A_gemma31: failed"}}
+        GL, g = R.gemma_thorough(mm, None)
+        text = "\n".join(GL)
+        self.assertEqual(g["gemma31"], {"outcome": "na", "conditions": {}, "failed": True})
+        self.assertIn("Thorough outcome, gemma31: NOT AVAILABLE: answer stage failed", text)
+        self.assertEqual(g["gemma26"]["outcome"], "waits")
+        self.assertIn("gemma31 NOT AVAILABLE: answer stage failed", R.thorough_final("x", g))
+        self.assertIn("gemma31 against Qwen: not available: answer stage failed", "\n".join(R.compare_lines(mm)))
+
+    def test_model_failed_marker_refuses_qwen_and_is_read_back(self):
+        with tempfile.TemporaryDirectory() as td:
+            self.assertEqual(run_main(["model-failed", "--work", td, "--model", "qwen", "--why", "x"])[0], 2)
+            self.assertEqual(run_main(["model-failed", "--work", td, "--model", "gemma26", "--thinking", "yes", "--why", "boom"])[0], 0)
+            self.assertEqual(R.failed_models(td), {"gemma26": {"thinking": True, "why": "boom"}})
+
+    def test_one_consequence_list_and_the_thinking_marks_are_leaks(self):
+        import eval2_blind as B
+        self.assertIs(R.CONSEQUENCES, B.HARM_CONSEQUENCES)
+        for mk in R.THINK_MARKS:
+            self.assertIn(mk, R.LEAK_TERMS)
+
+    def test_the_worker_script_counts_a_running_chain_as_busy(self):
+        text = (ROOT / ".claude/local-worker.sh").read_text(encoding="utf-8")
+        self.assertIn(r"scripts/m[4-7]_[a-z0-9_]*\.sh", text)
+        self.assertEqual(subprocess.run(["sh", "-n", str(ROOT / ".claude/local-worker.sh")]).returncode, 0)
+
+    def test_the_report_instructions_name_unblind_with_require_consequence(self):
+        self.assertIn("unblind --key $W/reading/KEY.json ... --require-consequence", SCRIPT.read_text(encoding="utf-8"))
+
+
+@unittest.skipUnless(os.environ.get("M7_SIX_E2E") == "1", "opt-in: about 1.5 minutes per run (M7_SIX_E2E=1)")
+class PlantedModelFailureDryRun(unittest.TestCase):
+    ARGS = ("--check-variant", "none", "--think-cap", "8000", "--thinking-models", "gemma26,gemma31", "--gemma31-model", "gemma-4-31b-it-4bit")
+
+    def run_dry(self, td, *extra):
+        return subprocess.run(["sh", str(SCRIPT), "--dry-run", "--work", td + "/w", *self.ARGS, *extra], cwd=str(ROOT), capture_output=True, text=True, timeout=1500)
+
+    def test_a_persistent_error_on_one_gemma_model_ends_as_not_available_and_the_run_goes_on(self):
+        td = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, td, True)
+        r = self.run_dry(td, "--plant-answer-error", "gemma26")
+        self.assertEqual(r.returncode, 0, r.stdout[-2500:] + r.stderr[-2000:])
+        out = r.stdout
+        self.assertIn("MODEL NOT AVAILABLE: gemma26", out)
+        self.assertIn("models not available (answer stage failed): gemma26", out)
+        last = out.strip().splitlines()[-1]
+        self.assertIn("gemma26 NOT AVAILABLE: answer stage failed", last)
+        self.assertIn("gemma31 WAITS FOR THE READING", last)
+        self.assertIn("Thorough outcome, gemma26: NOT AVAILABLE: answer stage failed", out)
+        w = Path(td) / "w"
+        self.assertTrue((w / "model_failed_gemma26.json").is_file())
+        self.assertFalse((w / "stage_ans_a_gemma26.done").exists())
+        self.assertTrue((w / "stage_judge.done").is_file())
+        m = json.load(open(w / "measures.json"))
+        self.assertNotIn("A_gemma26", m["arms"])
+        self.assertIn("B_gemma31", m["arms"])
+        files = sorted(p for p in w.rglob("*") if p.is_file() and "logs" not in p.parts)
+        before = {str(p): R.sha256_file(p) for p in files}
+        r2 = self.run_dry(td, "--plant-answer-error", "gemma26")                  # a second invocation changes nothing
+        self.assertEqual(r2.returncode, 0, r2.stdout[-2000:])
+        after = {str(p): R.sha256_file(p) for p in sorted(p for p in w.rglob("*") if p.is_file() and "logs" not in p.parts)}
+        changed = [k for k in before if after.get(k) != before[k] and not k.endswith(("report_header.md",))]
+        self.assertEqual(changed, [])
+
+    def test_a_failure_of_qwen_is_not_planted_and_a_planted_qwen_is_refused(self):
+        td = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, td, True)
+        r = self.run_dry(td, "--plant-answer-error", "qwen")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("Qwen's failure stops the run", r.stderr)
 
 
 @unittest.skipUnless(os.environ.get("M7_SIX_E2E") == "1", "opt-in: about 1.5 minutes per variant (M7_SIX_E2E=1)")
