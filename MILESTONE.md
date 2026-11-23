@@ -314,7 +314,7 @@ candidate C becomes the default, after the look.
   the perfect packs of D5 (K0), the design of the checking pass (K1), the catalogue
   lookup module (K7). M6 closes when the informative D5 run and its reading are in;
   this document then moves to `milestones/M6.md`.
-- 2026-11-23 09:35, M7's first slice is in. K0 (`4a09010`): the perfect packs serve all
+- 2026-11-23 09:21, M7's first slice is in. K0 (`4a09010`): the perfect packs serve all
   227 points with a covering set (frozen 69, r4g2 112); median 4 chunks from the sets.
   K7 (`f24370a`): the lookup module gives 1.3 to 2.2 cards per question and about 11
   per draft answer, under 12 ms per call. K1 (`runs/m7/reports/k1_check_design.md`):
