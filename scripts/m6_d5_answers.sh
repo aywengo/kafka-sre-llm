@@ -47,17 +47,19 @@
 # model-server time (see "planned:" below), plus about 20 to 40 min of CPU for the 116 mechanical packs (reranker) before the first answer.
 set -e
 DRY=no; WSET=no; W=work/m6/d5_answers; REPORT=runs/m6/D5_ANSWERS.md; RSET=no; CHOSENOUT=runs/m6/CANDIDATE_CHOSEN.json; COSET=no
-FW=work/m6/d5_funnel; REC=runs/m6/RETRIEVAL_CHOSEN.json; USED=runs/m6/D5_FUNNEL_USED; B4USED=runs/m6/B4_USED; B4W=work/m5/b4; NOB4=; MAXU=0; ACCEPT=
+FW=work/m6/d5_funnel; REC=runs/m6/RETRIEVAL_CHOSEN.json; USED=runs/m6/D5_FUNNEL_USED; B4USED=runs/m6/B4_USED; B4W=work/m5/b4; NOB4=; INFORM=; MAXU=0; ACCEPT=
 IDS=eval/m4/g_dev_ids.json; ITEMS=eval/m6/d5/items.jsonl; RUBS=eval/m6/d5/rubrics.jsonl; CC=eval/m6/d5/CHUNK_CHECK.json; INSET=no; FWSET=no; RECSET=no; USEDSET=no; B4SET=no
 while [ $# -gt 0 ]; do case $1 in
   --dry-run) DRY=yes;;
   --work) W=${2:?}; WSET=yes; shift;; --report) REPORT=${2:?}; RSET=yes; shift;; --candidate-out) CHOSENOUT=${2:?}; COSET=yes; shift;;
   --funnel-work) FW=${2:?}; FWSET=yes; shift;; --funnel-used) USED=${2:?}; USEDSET=yes; shift;; --chosen-record) REC=${2:?}; RECSET=yes; shift;;
-  --b4-used) B4USED=${2:?}; B4SET=yes; shift;; --b4-work) B4W=${2:?}; B4SET=yes; shift;; --without-b4) NOB4=${2:?}; shift;;
+  --b4-used) B4USED=${2:?}; B4SET=yes; shift;; --b4-work) B4W=${2:?}; B4SET=yes; shift;; --without-b4) NOB4=${2:?}; shift;; --informative) INFORM=${2:?}; shift;;
   --ids) IDS=${2:?}; shift;; --items) ITEMS=${2:?}; INSET=yes; shift;; --rubrics) RUBS=${2:?}; INSET=yes; shift;; --chunk-check) CC=${2:?}; INSET=yes; shift;;
   --max-unjudged) MAXU=${2:?}; shift;; --accept-code-change) ACCEPT=${2:?}; shift;;
-  *) echo "usage: scripts/m6_d5_answers.sh [--dry-run] [--work DIR] [--report FILE] [--candidate-out FILE] [--funnel-work DIR] [--funnel-used FILE] [--chosen-record FILE] [--b4-used FILE] [--b4-work DIR] [--without-b4 REASON] [--ids FILE] [--max-unjudged N] [--accept-code-change REASON] (see the header)" >&2; exit 2;; esac
+  *) echo "usage: scripts/m6_d5_answers.sh [--dry-run] [--work DIR] [--report FILE] [--candidate-out FILE] [--funnel-work DIR] [--funnel-used FILE] [--chosen-record FILE] [--b4-used FILE] [--b4-work DIR] [--without-b4 REASON | --informative REASON] [--ids FILE] [--max-unjudged N] [--accept-code-change REASON] (see the header)" >&2; exit 2;; esac
   shift; done
+if [ -n "$INFORM" ] && [ -n "$NOB4" ]; then echo "REFUSED: --informative and --without-b4 together; nothing started" >&2; exit 2; fi
+case "$INFORM" in *[![:space:]]*|"") ;; *) echo "REFUSED: --informative needs a non-empty reason; nothing started" >&2; exit 2;; esac
 case $MAXU in ''|*[!0-9]*) echo "REFUSED: --max-unjudged is a whole number (0 or more); nothing started" >&2; exit 2;; esac
 R=scripts/m6_d5_rule.py; GR=scripts/m5_g_rule.py; N=m6_d5_answers; L=runs/m6/logs
 CATS=work/m4/catalogues; CHUNKS=work/v3/chunks_s1.jsonl; FROZEN=kafka_sre_rag/frozen.json
@@ -79,6 +81,7 @@ if [ $DRY = yes ]; then
   if [ $INSET = no ]; then ITEMS=$FW/in/items.jsonl; RUBS=$FW/in/rubrics.jsonl; CC=$FW/in/CHUNK_CHECK.json
   else case "$ITEMS $RUBS $CC" in *eval/m6/d5*) refuse "a dry run never uses the real D5 files";; esac; fi
   [ -n "$NOB4" ] || [ $B4SET = yes ] || refuse "a dry run needs --b4-used and --b4-work (a dry run of scripts/m5_b4_check.sh), or --without-b4 REASON"
+  [ -z "$INFORM" ] || [ $B4SET = yes ] || refuse "an informative dry run needs --b4-used and --b4-work (a dry run of scripts/m5_b4_check.sh, or a planted marker)"
   G="scripts/run_guarded.py --other-retries 0"; STANDIN="--stand-in"
 else
   [ $INSET = no ] || refuse "--items, --rubrics and --chunk-check are for dry runs only (the real run reads eval/m6/d5)"
@@ -121,7 +124,13 @@ SETTING=$(.venv/bin/python $R chosen-setting --record $REC) || refuse "$REC is u
 if [ -n "$NOB4" ] && { [ $DRY = no ] || [ $B4SET = yes ]; }; then      # --without-b4 does not override a B4 check that ran and did not pass
   .venv/bin/python $R gate-b4-override --used $B4USED || refuse "$B4USED exists and its verdict is not PASS: --without-b4 does not override a B4 check that did not pass"
 fi
-if [ -n "$NOB4" ]; then
+if [ -n "$INFORM" ]; then
+  [ -f $B4USED ] || refuse "an informative run follows a B4 check that ran and failed: $B4USED is missing"
+  .venv/bin/python $R gate-b4 --used $B4USED --b4-work $B4W --record $REC --setting $SETTING --allow-fail $DRYFLAG \
+    || refuse "the B4 marker or manifest is not usable for an informative run (another setting, not the strict count, another parameters of the setting, or no verdict)"
+  B4V=$(.venv/bin/python $R b4-summary --used $B4USED --field verdict); B4N=$(.venv/bin/python $R b4-summary --used $B4USED --field line)
+  echo "gate: INFORMATIVE run (decides nothing): the B4 verdict is $B4V; $B4N; reason recorded: $INFORM"
+elif [ -n "$NOB4" ]; then
   echo "gate: the B4 gate is SKIPPED by --without-b4; reason recorded in the manifest and the report: $NOB4"
 else
   .venv/bin/python $R gate-b4 --used $B4USED --b4-work $B4W --record $REC --setting $SETTING $DRYFLAG \
@@ -193,9 +202,10 @@ for f in $(.venv/bin/python $R code-pins) $FROZEN; do     # the code the answer,
   [ -f $f ] || refuse "pinned code file $f is missing"
   PINS="$PINS --pin $f"; done
 GIT_HEAD=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)   # recorded for the reader, never compared
+INFFLAG=""; [ -z "$INFORM" ] || INFFLAG="--informative"
 gstate() { # SUBCOMMAND [EXTRA...]: the manifest and the start check take the same state
   sub=$1; shift
-  .venv/bin/python $R "$sub" --manifest $W/MANIFEST.json --work $W $PINS --frozen $FROZEN $DRYFLAG --opt "setting=$SETTING" --opt "model=$Q4" --opt "without_b4=$NOB4" --opt "mechanical=sample" \
+  .venv/bin/python $R "$sub" --manifest $W/MANIFEST.json --work $W $PINS --frozen $FROZEN $DRYFLAG --opt "setting=$SETTING" --opt "model=$Q4" --opt "without_b4=$NOB4" --opt "informative=$INFORM" --opt "b4_verdict=$B4V" --opt "b4_numbers=$B4N" --opt "mechanical=sample" \
     --info "git_head=$GIT_HEAD" --info "max_unjudged=$MAXU" --judge-arg "model=$DS" --judge-arg "setting=$JSETTING" --judge-arg "extra_body=$JEB" --judge-arg "source_chars=$SRC" \
     --judge-arg "instruction=v2" --judge-arg "passes=1 2" --judge-arg "role=coverage" "$@"; }
 if [ -n "$ACCEPT" ]; then gstate start-check --accept-code-change "$ACCEPT" || { moveaside; refuse "the start check failed (see above; nothing was moved or deleted)"; }
@@ -224,17 +234,22 @@ if ! stage_done header; then
   for f in $ANS_FILES $REF_FILES; do [ ! -e $f ] || refuse "$f exists but the report header was not written yet; the rule text must come first"; done
   [ $DRY = yes ] || [ ! -e $REPORT ] || { moveaside; refuse "$REPORT exists; it is not overwritten before the header of this run is written (move it away first)"; }
   {
+    if [ -n "$INFORM" ]; then echo "Informative run; decides nothing"; echo; echo "Reason: $INFORM"; echo; fi
     echo "# M6 D5 answers: grounded prompt on the $SETTING packs against the default on the frozen packs$([ $DRY = yes ] && echo ' (DRY RUN: stub model, stub judge, stand-in reranker; no number below is a measurement)')"
     echo
     echo "Written by \`scripts/$N.sh\` on $(date +%Y-%m-%d), 4-bit model \`$Q4\`, retrieval setting \`$SETTING\` (record \`$REC\`: $(.venv/bin/python -c 'import json,sys; print(json.load(open(sys.argv[1]))["verdict_line"])' $REC)). Manifest hash $(.venv/bin/python -c 'import hashlib,json,sys; print(hashlib.sha256(json.dumps({k: v for k, v in json.load(open(sys.argv[1])).items() if k != "accepted_code_changes"}, sort_keys=True).encode()).hexdigest()[:16])' $W/MANIFEST.json). Ids of the mechanical sample: \`$IDS\`. Rule: \`$R\`."
     echo
-    if [ -n "$NOB4" ]; then
+    if [ -n "$INFORM" ]; then
+      echo "**The B4 check did not pass; this is an informative run (\`--informative\`).** The B4 marker and its numbers as the marker and its report give them (the B4 check decided on the strict count):"
+      echo
+      echo '```'; .venv/bin/python $R b4-summary --used $B4USED --field text; echo '```'
+    elif [ -n "$NOB4" ]; then
       echo "**The B4 gate was skipped (\`--without-b4\`), for the conductor only. Reason recorded: $NOB4**"
     else
       echo "B4 gate: \`$B4USED\` says $(grep '^verdict' $B4USED | tr -d '\n') on the $(grep '^decide' $B4USED | cut -d' ' -f2) count, for $SETTING."
     fi
     echo
-    .venv/bin/python $R rule-text
+    .venv/bin/python $R rule-text $INFFLAG
     echo
     echo "This header, with the rule, was written before any answer of the run existed (stage marker \`$W/stage_header.done\`)."
   } > $HEAD
@@ -408,13 +423,21 @@ fi
 # ---------------------------------------------------------------- 8. the measures, the rule by code, 9. the report
 recheck measures
 .venv/bin/python $R measures --work $W --ids $IDS --d5-rubrics $RUBS --d5-items $ITEMS --funnel-work $FW --setting $SETTING --packs-frozen $W/packs_frozen_d5.jsonl \
-  --packs-chosen $W/packs_chosen_d5.jsonl --max-unjudged $MAXU $([ $DRY = yes ] && echo --stub) > $W/measures.out || { tail -3 $W/measures.out; fail "the measures could not be computed (a missing input is an error, see above)"; }
-RULE_RC=0; .venv/bin/python $R rule --measures $W/measures.json > $W/rule_out.txt 2> $W/rule_out.err || RULE_RC=$?
+  --packs-chosen $W/packs_chosen_d5.jsonl --max-unjudged $MAXU $INFFLAG $([ $DRY = yes ] && echo --stub) > $W/measures.out || { tail -3 $W/measures.out; fail "the measures could not be computed (a missing input is an error, see above)"; }
+RULE_RC=0; .venv/bin/python $R rule --measures $W/measures.json $INFFLAG > $W/rule_out.txt 2> $W/rule_out.err || RULE_RC=$?
 [ $RULE_RC = 0 ] || { cat $W/rule_out.err >&2; fail "the rule could not be applied: $(head -1 $W/rule_out.err)"; }
 cat $W/rule_out.txt
-CHOICE=$(sed -n 's/^CHOICE: \(.*\)$/\1/p' $W/rule_out.txt | tail -n 1)
-case $CHOICE in grounded-g2|grounded-g3|neither) ;; *) fail "the rule printed no usable CHOICE line";; esac
-.venv/bin/python $R candidate --measures $W/measures.json --record $REC --manifest $W/MANIFEST.json --out $CHOSENOUT --report $REPORT $DRYFLAG || fail "CANDIDATE_CHOSEN.json could not be written"
+if [ -n "$INFORM" ]; then
+  CHOICE=$(sed -n 's/^Reading as written: \(.*\)$/\1/p' $W/rule_out.txt | tail -n 1); ALT=$(sed -n 's/^Reading with (b) on the frozen pack: \(.*\)$/\1/p' $W/rule_out.txt | tail -n 1)
+  case "$CHOICE $ALT" in "grounded-g2 grounded-g2"|"grounded-g2 grounded-g3"|"grounded-g2 neither"|"grounded-g3 grounded-g2"|"grounded-g3 grounded-g3"|"grounded-g3 neither"|"neither grounded-g2"|"neither grounded-g3"|"neither neither") ;; *) fail "the rule printed no usable reading lines";; esac
+  FINAL="INFORMATIVE RUN DONE: rule reading as written: $CHOICE; with (b) on the frozen pack: $ALT"
+  .venv/bin/python $R candidate --measures $W/measures.json --record $REC --manifest $W/MANIFEST.json --out $W/rule_reading.json --report $REPORT --informative "$INFORM" $DRYFLAG || fail "rule_reading.json could not be written"
+else
+  CHOICE=$(sed -n 's/^CHOICE: \(.*\)$/\1/p' $W/rule_out.txt | tail -n 1)
+  case $CHOICE in grounded-g2|grounded-g3|neither) ;; *) fail "the rule printed no usable CHOICE line";; esac
+  FINAL="CHOICE: $CHOICE"
+  .venv/bin/python $R candidate --measures $W/measures.json --record $REC --manifest $W/MANIFEST.json --out $CHOSENOUT --report $REPORT $DRYFLAG || fail "CANDIDATE_CHOSEN.json could not be written"
+fi
 {
   cat $HEAD
   echo
@@ -424,11 +447,11 @@ case $CHOICE in grounded-g2|grounded-g3|neither) ;; *) fail "the rule printed no
   done
   echo "## Result$([ $DRY = yes ] && echo ' (from stub data: not a measurement)')"
   echo
-  echo "**Choice by the rule: $CHOICE.**"
+  if [ -n "$INFORM" ]; then echo "**Informative run; decides nothing.** Rule reading as written: $CHOICE; with (b) on the frozen pack: $ALT."; else echo "**Choice by the rule: $CHOICE.**"; fi
   echo
   cat $W/measures.md
   echo
-  echo "### The rule applied by code (\`$R rule\`)"
+  if [ -n "$INFORM" ]; then echo "### The rule's reading (decides nothing) (\`$R rule --informative\`)"; else echo "### The rule applied by code (\`$R rule\`)"; fi
   echo
   echo '```'; cat $W/rule_out.txt; echo '```'
   echo
@@ -440,15 +463,15 @@ case $CHOICE in grounded-g2|grounded-g3|neither) ;; *) fail "the rule printed no
   echo
   echo "Answers \`$W/ans_*_{default,g2,g3}.jsonl\`; packs \`$W/packs_*.jsonl\`; judge results \`$W/judge_d5.jsonl\`; identifier checks \`$W/idcheck_d5_*.txt\`; scores \`$W/score_*.jsonl\`; measures \`$W/measures.json\`. Development data only (D5 is the fresh development batch of M6); the hidden part is not involved."
   echo
-  echo "CHOICE: $CHOICE"
+  echo "$FINAL"
 } > $REPORT.tmp && mv $REPORT.tmp $REPORT
 if [ $DRY = yes ]; then
   grep -q M6_D5_ANSWERS_DRY_RUN_DONE $L/$N.done 2>/dev/null || echo M6_D5_ANSWERS_DRY_RUN_DONE >> $L/$N.done   # a resume of a finished run changes nothing
   echo "dry run done: report from stub data in $REPORT"
-  echo "CHOICE: $CHOICE"
+  echo "$FINAL"
   exit 0
 fi
-hb "$N: done; report $REPORT; choice by the rule: $CHOICE" yes
-status DONE yes "$N done: $REPORT; choice by the rule: $CHOICE; the Owner decides what follows"
+hb "$N: done; report $REPORT; $FINAL" yes
+status DONE yes "$N done: $REPORT; $FINAL; the Owner decides what follows"
 grep -q M6_D5_ANSWERS_DONE $L/$N.done 2>/dev/null || echo M6_D5_ANSWERS_DONE >> $L/$N.done
-echo "CHOICE: $CHOICE"
+echo "$FINAL"

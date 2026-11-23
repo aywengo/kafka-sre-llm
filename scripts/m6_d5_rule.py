@@ -106,6 +106,21 @@ The last line of the log and of the report is CHOICE: grounded-g2, CHOICE: groun
 """
 
 
+INFORMATIVE_LAST = "The last line of the log and of the report is INFORMATIVE RUN DONE: rule reading as written: <grounded-g2|grounded-g3|neither>; with (b) on the frozen pack: <...>."
+
+
+def rule_text(informative=False):
+    """The rule as written (RULE_TEXT). In an informative run (the Owner's decision after a failed B4 check) the same rule is printed as a reading that decides nothing."""
+    if not informative:
+        return RULE_TEXT
+    head, rest = RULE_TEXT.split("\n", 1)
+    note = ("INFORMATIVE RUN: the combination stops (the B4 check failed); this run measures it on fresh data and decides nothing. The rule below is computed and printed as the rule's reading "
+            "(condition by condition, for both variants, under both readings of (b)); no CANDIDATE_CHOSEN.json is written and no line of the log or of the report is a CHOICE line.\n")
+    body = rest.replace(RULE_TEXT.splitlines()[-1], INFORMATIVE_LAST)
+    assert body != rest
+    return head + "\n" + note + body
+
+
 class DaError(RuntimeError):
     pass
 
@@ -226,12 +241,35 @@ def gate_b4_override(used):
     return [] if v == "PASS" else [f"{used} exists and its verdict is {v!r}, not PASS: --without-b4 does not override a B4 check that did not pass"]
 
 
-def gate_b4(used, b4_work, record, setting, dry):
+def b4_summary(used):
+    """-> (verdict, one line with the numbers, text): the marker and, where the report it names can be read, its strict-count lines."""
+    m = kvfile(used)
+    rep_p = Path(m.get("report", ""))
+    if not rep_p.is_absolute():
+        rep_p = ROOT / rep_p
+    lines = []
+    if rep_p.is_file():
+        for l in rep_p.read_text(encoding="utf-8").splitlines():
+            if (l.startswith("strict | all indexed points") or l.strip().startswith("(a) r4 minus frozen")
+                    or (l.strip().startswith("(b) of the") and "frozen serves" in l) or l.startswith("X1 verdict")):
+                key = l.strip()[:6]
+                if key in ("(a) r4", "(b) of") and any(x.startswith(key) for x in lines):
+                    continue          # the first (a) and (b) are the strict count's (the loose count follows and decides nothing)
+                lines.append(" ".join(l.split()))
+    first = next((l for l in lines if l.startswith("(a) r4 minus frozen")), None)
+    text = [f"marker {used}: used {m.get('used', '?')}, decide {m.get('decide', '?')}, verdict {m.get('verdict', '?')}, report {m.get('report', '?')}"] + (lines or ["(the B4 report could not be read; no numbers)"])
+    return m.get("verdict", "?"), (first or "numbers not available"), "\n".join(text)
+
+
+def gate_b4(used, b4_work, record, setting, dry, allow_fail=False):
     problems = []
     if not Path(used).is_file():
         return [f"{used} is missing: the B4 check has not been run (scripts/m5_b4_check.sh --decide strict --setting {setting})"]
     m = kvfile(used)
-    if m.get("verdict") != "PASS":
+    if allow_fail:      # an informative run: the check ran and its verdict is known (PASS or FAIL); a failed check is accepted
+        if m.get("verdict") not in ("PASS", "FAIL"):
+            problems.append(f"the B4 marker's verdict is {m.get('verdict')!r}, neither PASS nor FAIL")
+    elif m.get("verdict") != "PASS":
         problems.append(f"the B4 check's verdict is {m.get('verdict')!r}, not PASS")
     if m.get("decide") != "strict":
         problems.append(f"the B4 check decided on the {m.get('decide')!r} count, not strict")
@@ -333,7 +371,7 @@ def current_state(a):
     missing = [p for p in a.pin if not Path(p).is_file()]
     if missing:
         raise DaError(f"pinned file missing: {missing[0]}" + (f" (and {len(missing) - 1} more)" if len(missing) > 1 else ""))
-    return {"schema": SCHEMA, "kind": "dry" if a.dry else "real", "rule_text_sha256": sha256_text(RULE_TEXT), "prompts_sha256": G.prompt_hashes(a.frozen),
+    return {"schema": SCHEMA, "kind": "dry" if a.dry else "real", "rule_text_sha256": sha256_text(rule_text(bool(G.kv(a.opt).get("informative")))), "prompts_sha256": G.prompt_hashes(a.frozen),
             "options": G.kv(a.opt), "judge_args": G.kv(a.judge_arg), "info": G.kv(a.info), "pins": {p: sha256_file(p) for p in sorted(a.pin)}}
 
 
@@ -677,6 +715,16 @@ def cmd_measures(a):
     st = {**ma_st, **m3_st}
     m["mech_packs"] = {"items": len(mp), "chosen_size_median": median([len(p) for p in mp.values()]), "stored_size_median": median([len(st[i]) for i in mp]),
                        "gained_a_chunk": sum(1 for i in mp if len(mp[i]) > len(st[i]))}
+    if a.informative:
+        kinds = {it["id"]: it.get("kind", "?") for it in items}
+        m["by_kind"] = {}
+        for k in sorted(set(kinds.values())):
+            ids_k = [i for i in kinds if kinds[i] == k]
+            row = {"n": len(ids_k), "P_default": mean([m["variants"]["default"]["P_by_id"][i] for i in ids_k])}
+            for v in VARIANTS:
+                d = [m["variants"][v]["P_by_id"][i] - m["variants"]["default"]["P_by_id"][i] for i in ids_k]
+                row[v] = {"P": mean([m["variants"][v]["P_by_id"][i] for i in ids_k]), "diff": mean(d), "se": se(d)}
+            m["by_kind"][k] = row
     if a.max_unjudged > 0:
         m["unjudged"] = {"max_unjudged": a.max_unjudged, "rows": len(G.unjudged_state(W / "judge_d5.jsonl")[1])}
     (W / "measures.json").write_text(json.dumps(m, indent=1, sort_keys=True) + "\n", encoding="utf-8")
@@ -714,6 +762,11 @@ def measures_md(m):
     L += ["", f"Served points (strict count, {s['indexed_points']} indexed points of D5; reported, deciding nothing): frozen {s['strict']['frozen']}, {st} {s['strict'][st]} "
           f"(gained {s['strict']['gained']}, lost {s['strict']['lost']}); loose count frozen {s['loose']['frozen']}, {st} {s['loose'][st]}; pack size median "
           f"{s['pack_size_median']['frozen']:g} against {s['pack_size_median'][st]:g} chunks."]
+    if m.get("by_kind"):
+        L += ["", "Paired coverage difference against the reference by the kind of task (SMALL SAMPLES: about ten scenarios per kind, so the standard errors are wide and a difference of a few hundredths is noise; reported, deciding nothing):", "",
+              "| kind | scenarios | P reference | G2: P, difference (SE) | G3: P, difference (SE) |", "|---|---|---|---|---|"]
+        for k, r in m["by_kind"].items():
+            L.append(f"| {k} | {r['n']} | {f(r['P_default'], 3)} | {f(r['g2']['P'], 3)}, {r['g2']['diff']:+.3f} (SE {f(r['g2']['se'], 3)}) | {f(r['g3']['P'], 3)}, {r['g3']['diff']:+.3f} (SE {f(r['g3']['se'], 3)}) |")
     mp = m["mech_packs"]
     L += ["", f"Packs of the {mp['items']} mechanical items: median size {mp['chosen_size_median']:g} chunks on the {st} packs against {mp['stored_size_median']:g} on the stored frozen packs; "
           f"{mp['gained_a_chunk']} of {mp['items']} gained at least one chunk.", "",
@@ -796,6 +849,15 @@ def cmd_rule(a):
     except DaError as e:
         print(f"ERROR: {e}; a missing input is not a pass; no verdict", file=sys.stderr)
         return 2
+    if a.informative:
+        print("The rule's reading (decides nothing): condition by condition, (b) on each answer's own pack, as the rule is written:")
+        print("\n".join(L))
+        print("The same conditions with (b) on the FROZEN pack:")
+        for l in L2:
+            print(l)
+        print(f"Reading as written: {choice}")
+        print(f"Reading with (b) on the frozen pack: {choice2}")
+        return 0
     print("\n".join(L))
     if choice == "neither":
         print("(neither variant is eligible: the combination stops and the Owner sees it)")
@@ -813,19 +875,19 @@ def cmd_candidate(a):
     m = json.load(open(a.measures, encoding="utf-8"))
     _, elig, choice = evaluate(m)
     _, elig2, choice2 = evaluate(m, frozen_b=True)
-    if choice == "neither":
+    if choice == "neither" and not a.informative:
         print("candidate: no mode chosen; no CANDIDATE_CHOSEN.json is written")
         return 0
-    v = next(k for k, mode in MODES.items() if mode == choice)
+    v = next((k for k, mode in MODES.items() if mode == choice), None)
     rec = json.load(open(a.record, encoding="utf-8"))
     frozen = json.load(open(a.frozen, encoding="utf-8"))["prompts_sha256"]
-    out = {"mode": choice, "prompt_sha256_key": PROMPT_KEYS[v], "prompt_sha256": frozen[PROMPT_KEYS[v]], "retrieval_setting": rec["setting"],
-           "settings_sha256": rec["settings_sha256"], "verdict_line": f"CHOICE: {choice}", "choice_b_on_frozen_pack": choice2, "eligible_b_on_frozen_pack": elig2,
+    out = {"mode": choice, "prompt_sha256_key": PROMPT_KEYS.get(v), "prompt_sha256": frozen.get(PROMPT_KEYS.get(v)), "retrieval_setting": rec["setting"],
+           "settings_sha256": rec["settings_sha256"], "verdict_line": (f"rule reading as written: {choice}" if a.informative else f"CHOICE: {choice}"), "informative": a.informative or None, "choice_b_on_frozen_pack": choice2, "eligible_b_on_frozen_pack": elig2,
            "choice_b_on_frozen_pack_note": "reported only; decides only if the Owner amends the rule before the result is known", "manifest_sha256": G.manifest_hash(json.load(open(a.manifest, encoding="utf-8"))),
            "dry_run": bool(a.dry), "date": datetime.date.today().isoformat(), "report": str(a.report), "eligible": elig,
            "decided_by": "scripts/m6_d5_rule.py evaluate (the rule written in the report header before any answer)"}
     Path(a.out).write_text(json.dumps(out, indent=1) + "\n", encoding="utf-8")
-    print(f"candidate: wrote {a.out} ({choice})")
+    print(f"candidate: wrote {a.out} ({choice}{'; informative: a rule reading, not a candidate' if a.informative else ''})")
     return 0
 
 
@@ -846,7 +908,8 @@ def cmd_unjudged_note(a):
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("rule-text")
+    p = sub.add_parser("rule-text")
+    p.add_argument("--informative", action="store_true")
     sub.add_parser("gate-first-call")
     p = sub.add_parser("gate-b4-override")
     p.add_argument("--used", required=True)
@@ -864,7 +927,11 @@ def main(argv=None):
     for k in ("funnel-work", "items", "rubrics", "record", "used", "setting"):
         p.add_argument("--" + k, required=True)
     p.add_argument("--dry", action="store_true")
+    p = sub.add_parser("b4-summary")
+    p.add_argument("--used", required=True)
+    p.add_argument("--field", choices=["verdict", "line", "text"], default="text")
     p = sub.add_parser("gate-b4")
+    p.add_argument("--allow-fail", action="store_true")
     for k in ("used", "b4-work", "record", "setting"):
         p.add_argument("--" + k, required=True)
     p.add_argument("--dry", action="store_true")
@@ -889,13 +956,16 @@ def main(argv=None):
         p.add_argument("--" + k, required=True)
     p.add_argument("--stub", action="store_true")
     p.add_argument("--max-unjudged", type=int, default=0)
+    p.add_argument("--informative", action="store_true")
     p = sub.add_parser("rule")
     p.add_argument("--measures", required=True)
+    p.add_argument("--informative", action="store_true")
     p = sub.add_parser("candidate")
     for k in ("measures", "record", "manifest", "out", "report"):
         p.add_argument("--" + k, required=True)
     p.add_argument("--frozen", default="kafka_sre_rag/frozen.json")
     p.add_argument("--dry", action="store_true")
+    p.add_argument("--informative", default=None, metavar="REASON")
     p = sub.add_parser("unjudged-note")
     p.add_argument("--work", required=True)
     p.add_argument("--max-unjudged", type=int, default=0)
@@ -904,7 +974,7 @@ def main(argv=None):
     a = ap.parse_args(argv)
     try:
         if a.cmd == "rule-text":
-            print(RULE_TEXT, end="")
+            print(rule_text(a.informative), end="")
             return 0
         if a.cmd == "chosen-setting":
             setting, _ = gate_chosen(a.record, True)
@@ -925,6 +995,10 @@ def main(argv=None):
             for p_ in problems:
                 print(f"gate: {p_}", file=sys.stderr)
             return 1 if problems else 0
+        if a.cmd == "b4-summary":
+            v, line, text = b4_summary(a.used)
+            print({"verdict": v, "line": line, "text": text}[a.field])
+            return 0
         if a.cmd == "code-pins":
             print("\n".join(CODE_PINS))
             return 0
@@ -936,8 +1010,8 @@ def main(argv=None):
                 problems = gate_funnel(a.funnel_work, a.items, a.rubrics, a.setting, a.record, a.used, a.dry)
                 ok = "gate: the funnel's stage markers, outputs, packs and timing are intact and equal what the funnel recorded"
             else:
-                problems = gate_b4(a.used, a.b4_work, a.record, a.setting, a.dry)
-                ok = f"gate: the B4 check ran for {a.setting}, decided on the strict count, and passed"
+                problems = gate_b4(a.used, a.b4_work, a.record, a.setting, a.dry, a.allow_fail)
+                ok = f"gate: the B4 check ran for {a.setting}, decided on the strict count, and " + ("its verdict is recorded (informative run: a failed check is accepted)" if a.allow_fail else "passed")
             for p_ in problems:
                 print(f"gate: {p_}", file=sys.stderr)
             if not problems:

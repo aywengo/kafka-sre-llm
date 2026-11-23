@@ -435,6 +435,99 @@ class FrozenPackMeasureTests(unittest.TestCase):
             self.assertEqual(R.supp_miss_on_pack(jp, rp, "g2", {"x": []})["x"], 0)
 
 
+class InformativeTests(unittest.TestCase):
+    def setUp(self):
+        self.td = tempfile.TemporaryDirectory()
+        self.addCleanup(self.td.cleanup)
+
+    def b4(self, verdict="FAIL", setting="r4g2"):
+        from kafka_sre_rag import profiles
+        d = Path(self.td.name) / "b4"
+        d.mkdir(exist_ok=True)
+        rec = Path(self.td.name) / "rec.json"
+        sha = profiles.settings_sha256("r4", grid="r4g2")
+        rec.write_text(json.dumps({"setting": "r4g2", "settings_sha256": sha}))
+        (d / "B4_USED").write_text(f"used 2026-11-22\ndecide strict\nverdict {verdict}\nreport {d / 'B4_CHECK.md'}\n")
+        (d / "B4_CHECK.md").write_text("strict | all indexed points | 140 points | frozen 50 (35.7 %) | r4 65 (46.4 %) | gained 15 lost 0 | diff +10.7 pp (SE 3.6)\n"
+                                        "  (a) r4 minus frozen = +10.7 percentage points (65 - 50 of 140) (needs at least +15.0): FAILS\n"
+                                        "  (b) of the 50 points frozen serves, r4 does not serve 0 = 0.0 % (needs at most 5 %): holds\n"
+                                        "loose | all indexed points | 140 points\n  (a) r4 minus frozen = +10.0 percentage points: FAILS\nX1 verdict (--decide strict): FAIL\n")
+        (d / "B4_MANIFEST.json").write_text(json.dumps({"options": {"decide": "strict", "setting": setting, "dry_run": True}, "profile": {"settings_sha256": sha}}))
+        return d, rec
+
+    def test_gate_with_a_failed_marker_with_and_without_the_option(self):
+        d, rec = self.b4("FAIL")
+        pr = R.gate_b4(d / "B4_USED", d, rec, "r4g2", dry=True)
+        self.assertTrue(any("not PASS" in p for p in pr), pr)
+        self.assertEqual(R.gate_b4(d / "B4_USED", d, rec, "r4g2", dry=True, allow_fail=True), [])
+        d, rec = self.b4("FAIL", setting="r4g4")
+        self.assertTrue(R.gate_b4(d / "B4_USED", d, rec, "r4g2", dry=True, allow_fail=True))          # another setting is still refused
+        d, rec = self.b4("MAYBE")
+        self.assertTrue(R.gate_b4(d / "B4_USED", d, rec, "r4g2", dry=True, allow_fail=True))
+        self.assertTrue(R.gate_b4(Path(self.td.name) / "none" / "B4_USED", d, rec, "r4g2", dry=True, allow_fail=True))     # a missing marker is refused
+
+    def test_b4_summary_gives_the_verdict_and_the_strict_numbers(self):
+        d, _ = self.b4("FAIL")
+        v, line, text = R.b4_summary(d / "B4_USED")
+        self.assertEqual(v, "FAIL")
+        self.assertIn("+10.7 percentage points", line)
+        self.assertIn("diff +10.7 pp", text)
+        self.assertEqual(text.count("(a) r4 minus frozen"), 1)       # the loose count's (a) line is not repeated
+
+    def test_the_informative_rule_text_differs_and_has_no_choice_last_line(self):
+        t = R.rule_text(True)
+        self.assertNotEqual(t, R.RULE_TEXT)
+        self.assertEqual(R.rule_text(False), R.RULE_TEXT)
+        self.assertTrue(t.rstrip().splitlines()[-1].startswith("The last line of the log and of the report is INFORMATIVE RUN DONE"))
+        self.assertFalse([l for l in t.splitlines() if l.startswith("CHOICE")])
+
+    def test_the_rule_in_informative_mode_prints_a_reading_and_no_choice_line(self):
+        m = measures(g2=variant(P=0.72, S=2.0, Sf=4.0), g3=variant(P=0.70, S=2.0, Sf=2.5))
+        p = Path(self.td.name) / "m.json"
+        p.write_text(json.dumps(m))
+        code, out, _ = run_main(["rule", "--measures", str(p), "--informative"])
+        lines = out.splitlines()
+        self.assertEqual(code, 0)
+        self.assertFalse([l for l in lines if l.startswith("CHOICE")], out)
+        self.assertIn("Reading as written: grounded-g2", lines)
+        self.assertIn("Reading with (b) on the frozen pack: grounded-g3", lines)
+        self.assertIn("The rule's reading (decides nothing)", out)
+        self.assertEqual(sum(1 for l in lines if l.startswith("Variant ")), 4)     # both variants under both readings
+        man, rec, out_p = Path(self.td.name) / "man.json", Path(self.td.name) / "rec.json", Path(self.td.name) / "reading.json"
+        man.write_text("{}")
+        rec.write_text(json.dumps({"setting": "r4g2", "settings_sha256": "s"}))
+        code, _, _ = run_main(["candidate", "--measures", str(p), "--record", str(rec), "--manifest", str(man), "--out", str(out_p), "--report", "r.md", "--informative", "why"])
+        self.assertEqual(code, 0)
+        c = json.load(open(out_p))
+        self.assertEqual((c["mode"], c["choice_b_on_frozen_pack"], c["informative"]), ("grounded-g2", "grounded-g3", "why"))
+        self.assertTrue(c["verdict_line"].startswith("rule reading"))
+        none = measures(g2=variant(P=0.1), g3=variant(P=0.1))
+        p.write_text(json.dumps(none))
+        out_n = Path(self.td.name) / "reading_n.json"
+        run_main(["candidate", "--measures", str(p), "--record", str(rec), "--manifest", str(man), "--out", str(out_n), "--report", "r.md", "--informative", "why"])
+        self.assertEqual(json.load(open(out_n))["mode"], "neither")        # the reading is written even when neither is eligible
+
+    def test_the_two_options_together_and_an_empty_reason_are_refused_without_writing(self):
+        with tempfile.TemporaryDirectory() as td:
+            w = Path(td) / "w"
+            r = sh(["--dry-run", "--work", str(w), "--funnel-work", td, "--informative", "a reason", "--without-b4", "other"])
+            self.assertEqual(r.returncode, 2)
+            self.assertIn("together", r.stderr)
+            r = sh(["--dry-run", "--work", str(w), "--funnel-work", td, "--informative", "  "])
+            self.assertEqual(r.returncode, 2)
+            self.assertIn("non-empty reason", r.stderr)
+            self.assertFalse(w.exists())
+
+    def test_the_by_kind_split_is_in_the_measures_text(self):
+        m = {"setting": "r4g2", "sizes": {"D5": 2, "mech": {}}, "expansion_median_s": 1.0, "retrieval_timing_n": 20, "retrieval_median_s": {"frozen": 4.0, "r4g2": 8.0},
+             "stored_retrieval_medians_b1_b2": [4.27, 4.01], "variants": {}, "served": {"indexed_points": 1, "strict": {"frozen": 1, "r4g2": 1, "gained": 0, "lost": 0},
+             "loose": {"frozen": 1, "r4g2": 1}, "pack_size_median": {"frozen": 6, "r4g2": 10}}, "mech_packs": {"items": 116, "chosen_size_median": 9, "stored_size_median": 6, "gained_a_chunk": 100},
+             "by_kind": {"coding": {"n": 10, "P_default": 0.5, "g2": {"P": 0.6, "diff": 0.1, "se": 0.05}, "g3": {"P": 0.4, "diff": -0.1, "se": 0.06}}}}
+        txt = R.measures_md(m)
+        self.assertIn("SMALL SAMPLES", txt)
+        self.assertIn("| coding | 10 |", txt)
+
+
 IMPORT_TRACE = """
 import sys, os, importlib
 sys.path[:0] = ['scripts', '.']
@@ -580,6 +673,39 @@ class EndToEndDryRun(unittest.TestCase):
             r2 = sh(args)
             self.assertEqual(r2.returncode, 0, r2.stdout[-800:] + r2.stderr[-800:])
             self.assertEqual(before, snap())
+
+
+@unittest.skipUnless(os.environ.get("M6_DA_E2E") == "1", "opt-in (about 3 minutes): set M6_DA_E2E=1")
+class InformativeEndToEnd(unittest.TestCase):
+    def test_a_failed_b4_marker_is_refused_and_the_informative_run_ends_in_its_line_without_a_candidate_file(self):
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            f = subprocess.run(["sh", str(ROOT / "scripts/m6_d5_funnel.sh"), "--dry-run", "--work", str(td / "f")], cwd=ROOT, capture_output=True, text=True, timeout=600)
+            self.assertEqual(f.returncode, 0, f.stdout[-800:] + f.stderr[-800:])
+            b = subprocess.run(["sh", str(ROOT / "scripts/m5_b4_check.sh"), "--decide", "strict", "--setting", "r4g2", "--dry-run", "--work", str(td / "b"),
+                                "--used-marker", str(td / "b/B4_USED")], cwd=ROOT, capture_output=True, text=True, timeout=600)
+            self.assertEqual(b.returncode, 0, b.stdout[-800:] + b.stderr[-800:])
+            self.assertIn("verdict FAIL", (td / "b/B4_USED").read_text())
+            rec = json.load(open(td / "f/RETRIEVAL_CHOSEN.json"))
+            rec["verdict"] = "GO"
+            (td / "go.json").write_text(json.dumps(rec))
+            base = ["--dry-run", "--funnel-work", str(td / "f"), "--chosen-record", str(td / "go.json"), "--b4-used", str(td / "b/B4_USED"), "--b4-work", str(td / "b")]
+            r = sh(base + ["--work", str(td / "w0")])
+            self.assertEqual(r.returncode, 2)
+            r = sh(base + ["--work", str(td / "w"), "--informative", "rehearsal reason"])
+            self.assertEqual(r.returncode, 0, r.stdout[-1500:] + r.stderr[-1500:])
+            last = r.stdout.strip().splitlines()[-1]
+            self.assertRegex(last, r"^INFORMATIVE RUN DONE: rule reading as written: (grounded-g2|grounded-g3|neither); with \(b\) on the frozen pack: (grounded-g2|grounded-g3|neither)$")
+            self.assertFalse([l for l in r.stdout.splitlines() if l.startswith("CHOICE")])
+            self.assertFalse((td / "w/CANDIDATE_CHOSEN.json").exists())
+            self.assertTrue((td / "w/rule_reading.json").exists())
+            rep = (td / "w/D5_ANSWERS_from_stub_data.md").read_text().splitlines()
+            self.assertEqual(rep[0], "Informative run; decides nothing")
+            self.assertIn("rehearsal reason", rep[2])
+            self.assertEqual(rep[-1], last)
+            self.assertFalse([l for l in rep if l.startswith("CHOICE")])
+            self.assertIn("The rule's reading (decides nothing)", "\n".join(rep))
+            self.assertIn("SMALL SAMPLES", "\n".join(rep))
 
 
 if __name__ == "__main__":
