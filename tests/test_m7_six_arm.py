@@ -911,6 +911,119 @@ def statistics_median(xs):
     return statistics.median(xs)
 
 
+class PointLevelMeasures(unittest.TestCase):
+    """Synthetic scenarios s1..s3 (9 points). Packs: A frozen, E perfect. See the comments for the planted classes and transitions."""
+
+    def setUp(self):
+        sets = {"s1": [("p1", 2, [["c1"]], {}), ("p2", 1, [["c2"]], {}), ("p3", 2, [], {"not_indexed": True})],
+                "s2": [("p1", 2, [["c3"]], {}), ("p2", 1, [["c4"]], {}), ("p3", 1, [], {"no_covering_set": True})],
+                "s3": [("p1", 2, [["c5"]], {}), ("p2", 2, [["c6", "c7"]], {}), ("p3", 2, [["c8"]], {})]}
+        self.rub = [{"id": i, "must": [{"id": pid, "weight": w, "chunk_sets": cs, **extra} for pid, w, cs, extra in pts]} for i, pts in sets.items()]
+        self.packs_a = {"s1": ["c1", "x"], "s2": ["c4"], "s3": ["c5", "c6"]}             # c6 alone is not the whole set {c6, c7}
+        self.packs_e = {"s1": ["c1", "c2"], "s2": ["c3", "c4"], "s3": ["c5", "c6", "c7"]}  # c8 is in neither pack
+        self.rows_a = [{"id": i, "text": "an answer", "pack": p} for i, p in self.packs_a.items()]
+        self.rows_e = [{"id": i, "text": "an answer", "pack": p} for i, p in self.packs_e.items()]
+        self.rows_e[2] = {"id": "s3", "text": R.NO_DRAFT, "truncated": True, "cut_while_thinking": True, "pack": self.packs_e["s3"]}   # no draft: delivered as empty
+        self.res = []
+        v = lambda *a: {k: {"verdict": x} for k, x in zip(("p1", "p2", "p3"), a)}  # noqa: E731
+        P, A = "present", "absent"
+        for name, per_scenario in (("A", {"s1": [(P, A, A), (P, A, A)], "s2": [(A, P, A), (A, P, A)], "s3": [(P, A, A), (P, A, A)]}),
+                                   ("E", {"s1": [(A, P, A), (A, P, A)], "s2": [(P, P, A), (A, P, A)], "s3": [(P, P, P), (P, P, P)]})):   # E's s3 is judged present, but has no draft
+            for i, passes in per_scenario.items():
+                for k, vv in enumerate(passes):
+                    self.res.append({"id": i, "set": name, "pass": k, "valid_reply": True, "reference_given": False, "must": v(*vv)})
+
+    def pl(self, **kw):
+        return R.point_level({"A": self.rows_a, "E": self.rows_e}, self.res, self.rub, "D")
+
+    def test_the_classes_and_every_transition(self):
+        pl = self.pl()
+        self.assertEqual(pl["classes"], {"S-both": 3, "S-perfect-only": 3, "S-other": 1, "no-set": 2})
+        self.assertEqual(pl["points"], 9)
+        t = pl["transitions"][0]
+        self.assertEqual((t["candidate"], t["reference"]), ("E", "A"))
+        c = t["classes"]
+        # S-both: s1/p1 covered by A and missed by E (lost, weight 2), s2/p2 covered in both, s3/p1 covered by A, E has no draft (lost, weight 2)
+        self.assertEqual((c["S-both"]["points"], c["S-both"]["both"], c["S-both"]["lost"], c["S-both"]["w2_lost"], c["S-both"]["w2"]), (3, 1, 2, 2, 2))
+        # S-perfect-only: s1/p2 gained; s2/p1 is present in one pass of E only (disputed: counted as missed); s3/p2 missed (no draft)
+        self.assertEqual((c["S-perfect-only"]["gained"], c["S-perfect-only"]["neither"], c["S-perfect-only"]["lost"], c["S-perfect-only"]["disputed_cand"], c["S-perfect-only"]["disputed_ref"]), (1, 2, 0, 1, 0))
+        self.assertEqual(c["S-perfect-only"]["w2"], 2)
+        self.assertEqual(c["S-perfect-only"]["w2_gained"], 0)       # the gained point has weight 1
+        self.assertEqual((c["S-other"]["points"], c["S-other"]["neither"]), (1, 1))
+        self.assertEqual((c["no-set"]["points"], c["no-set"]["neither"]), (2, 2))
+        self.assertEqual(t["no_set_kinds"], {"not indexed": 1, "no covering set": 1})
+        # every point is in exactly one cell: no denominator loses a row
+        for v in c.values():
+            self.assertEqual(v["points"], v["both"] + v["neither"] + v["gained"] + v["lost"])
+
+    def test_a_regression_on_the_served_in_both_class_is_listed_by_scenario_and_point(self):
+        self.assertEqual(self.pl()["transitions"][0]["regressions_on_S_both"], ["s1/p1 (weight 2)", "s3/p1 (weight 2)"])
+
+    def test_a_no_draft_row_is_delivered_as_empty_and_stays_in_the_denominators(self):
+        sc = R.point_scores(self.res, self.rub, "E", self.rows_e)
+        self.assertEqual(len(sc), 9)                                  # every point of every scenario
+        for pid in ("p1", "p2", "p3"):
+            self.assertEqual(sc[("s3", pid)], (0.0, False, False))    # the judge said present; by code the answer is empty
+        self.assertEqual(sc[("s2", "p1")], (0.5, False, True))        # one pass of two: missed and disputed
+        self.assertEqual(sc[("s1", "p2")], (1.0, True, False))
+        # the no-draft row is a lost point of S-both, counted in the table above, not dropped
+        self.assertEqual(sum(v["points"] for v in self.pl()["transitions"][0]["classes"].values()), 9)
+
+    def test_the_clustered_interval_of_the_scores_within_a_class(self):
+        pp = self.pl()["transitions"][0]["paired"]["S-perfect-only"]
+        # per scenario (points, E score minus A score): s1 (1, 1.0), s2 (1, 0.5), s3 (1, 0.0): ratio 0.5, cluster standard error sqrt(1.5 * 0.5) / 3
+        se_ = (1.5 * 0.5) ** 0.5 / 3
+        self.assertAlmostEqual(pp["ratio"], 0.5)
+        self.assertAlmostEqual(pp["se"], se_)
+        self.assertEqual((pp["clusters"], pp["points"]), (3, 3))
+        self.assertAlmostEqual(pp["interval90"][0], 0.5 - 1.645 * se_)
+        self.assertAlmostEqual(pp["interval90"][1], 0.5 + 1.645 * se_)
+        self.assertEqual(R.ratio_se([(0, 0.0), (2, 1.0)]), (0.5, None, 1))          # a scenario without points is left out; one cluster has no standard error
+        self.assertEqual(R.ratio_se([]), (None, None, 0))
+
+    def test_the_four_evidence_classes_and_their_denominators(self):
+        ev = self.pl()["evidence"][0]
+        self.assertEqual((ev["candidate"], ev["reference"]), ("E", "A"))
+        c = ev["classes"]
+        # weight-2 points: s1/p1 {c1} in both packs; s1/p3 no set; s2/p1 {c3} in E's pack only; s3/p1 {c5} both; s3/p2 {c6, c7} E's pack only (A has c6 alone); s3/p3 {c8} in neither
+        self.assertEqual(c["both packs"], {"eligible": 2, "missed_cand": 2, "missed_ref": 0, "of_which_no_set": 0})
+        self.assertEqual(c["candidate's pack only"], {"eligible": 2, "missed_cand": 2, "missed_ref": 2, "of_which_no_set": 0})
+        self.assertEqual(c["reference's pack only"]["eligible"], 0)
+        self.assertEqual(c["neither pack"], {"eligible": 2, "missed_cand": 2, "missed_ref": 2, "of_which_no_set": 1})
+        self.assertEqual(sum(v["eligible"] for v in c.values()), 6)        # all weight-2 points, once each
+
+    def test_two_arms_on_the_same_pack_collapse_to_both_and_neither(self):
+        sc = R.point_scores(self.res, self.rub, "A", self.rows_a)
+        ev = R.evidence_table("D", "A", sc, sc, self.rub, {r["id"]: r["pack"] for r in self.rows_a}, {r["id"]: r["pack"] for r in self.rows_a})
+        self.assertEqual(ev["classes"]["candidate's pack only"]["eligible"] + ev["classes"]["reference's pack only"]["eligible"], 0)
+        self.assertEqual(ev["classes"]["both packs"]["eligible"] + ev["classes"]["neither pack"]["eligible"], 6)
+
+    def test_an_arm_pair_is_only_made_when_both_arms_exist_and_a_missing_e_is_an_error(self):
+        pl = R.point_level({"A": self.rows_a, "E": self.rows_e}, self.res, self.rub, "B")
+        self.assertEqual([(e["candidate"], e["reference"]) for e in pl["evidence"]], [("E", "A")])   # B is not an arm here
+        with self.assertRaises(R.SixError):
+            R.point_level({"A": self.rows_a}, self.res, self.rub, "D")
+
+    def test_gap_sentences_are_counted_per_arm_as_a_flag(self):
+        g = R.gap_stats([{"text": "The retrieved documentation does not cover this setting."}, {"text": "Set it to 3."}, {"text": ""}])
+        self.assertEqual((g["answers"], g["answers_with_gap"]), (3, 1))
+        self.assertGreaterEqual(g["gap_sentences"], 1)
+
+    def test_the_tables_are_printed_marked_described_not_decided_and_the_rule_ignores_them(self):
+        pl = self.pl()
+        m = {"stub": True, "variant": "V1", "think_cap": 600, "sizes": {"D5": 3, "points": 9, "points_with_set": 7, "points_without_set": 2}, "retrieval_frozen_median_s": 1.0, "retrieval_timing_n": 20,
+             "arms": {}, "pairs": {}, "mech": {}, "point_level": pl}
+        md = R.measures_md(m)
+        for needle in ("described, not decided", "Transitions of points, E against A", "Regressions on S-both", "Essential (weight-2) units by where the evidence is, E against A",
+                       "scenario-clustered SE", "Gap sentences"):
+            self.assertIn(needle, md)
+        self.assertIn("described, not decided", R.RULE_TEXT)
+        # the rule reads the same lines with and without the point-level measures
+        base = measures(variant="V1C", ea=(0.12, 0.03))
+        withpl = dict(base, point_level=pl)
+        self.assertEqual(R.evaluate(base), R.evaluate(withpl))
+
+
 class AnswerCap(unittest.TestCase):
     """K2: the ANSWER part of a thinking draft is stopped at the answer limit, exactly as a draft without thinking is cut; the thinking part is limited as before."""
 

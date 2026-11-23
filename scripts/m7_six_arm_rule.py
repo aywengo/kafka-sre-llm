@@ -156,6 +156,24 @@ B against C shows whether thinking or checking carries an effect. That compariso
 - B against C: B − A and C − A with 90 % intervals corrected for two comparisons ({Z90_2} standard errors: 0.025 each side), and B − C with the same interval; descriptive, decides nothing.
 - With and without the lookup (V7): the mechanical all-pass counts of A and D over all 116 items, and over the items that remain when the tier A kinds {", ".join(LOOKUP_KINDS)} are left
   out (K7 found that a card built from the question can state the expected answer for some of those items). This is the code's reading of V7; the report says it.
+
+**Point-level and essential-unit measures (described, not decided).** They decide nothing, they are not a condition of any row above, and they cannot change a row. They are printed
+in the measures before any answer is read, and the rule code never reads them. The judge's per-point verdicts are those of the two passes; a point is COVERED in an arm when it is present in
+every valid pass (both of them), MISSED otherwise (a point present in only one pass is counted as missed and also listed as "disputed", so that it is not hidden); a scenario with only one valid pass uses that one.
+An answer with no draft is delivered as empty: all its points are missed (and not disputed); no-draft, cut and timed-out (not checked) answers stay in every denominator of every measure below.
+- Point classes, from the covering sets and the packs the answers saw (strict count: a whole set is in the pack): S-both = a whole set in the frozen pack and in the perfect pack (the 69 of D5);
+  S-perfect-only = in the perfect pack only (the 158); no-set = no covering set, or not indexed (the 42: the "no covering set" and the "not indexed" points listed separately); S-other = any other
+  point with a set (a set in neither pack, or in the frozen pack only; expected 0 and printed). For E against A, and for F' against B (the same comparison under thinking), per class: covered in both arms,
+  missed in both, gained (missed in the reference arm, covered in the candidate), lost (covered in the reference, missed in the candidate), the points of weight 2 apart, and the regressions on S-both
+  listed by scenario and point id. The denominators are the numbers of points of the class (weight 2: the points of weight 2 of the class).
+- E - A (and F' - B) coverage within S-perfect-only and within S-both: the mean score of the points (a point's score is the share of valid passes in which it is present), as a ratio over
+  the points of the class, with the scenarios as clusters: sum of the differences over the sum of the points; the standard error is the cluster (ratio) estimator
+  sqrt(n/(n-1) * sum_i (d_i - r*m_i)^2) / sum_i m_i over the scenarios i that have points of the class; the interval is the ratio plus and minus {Z90} standard errors (a 90 % interval). No random draw is used.
+- Essential units by where the evidence is: the points of weight 2, each in one of four classes by the packs of the two arms compared: a whole covering set in both packs, in the candidate's pack only,
+  in the reference's pack only, in neither (a point with no covering set is in "neither", and counted apart there). For each class: missed of eligible (the denominator is the number of weight-2 points of the class,
+  which counts a point once where a whole set of it is in the pack; a point with evidence for one of several points is not a unit of the class). Pairs: E against A, F' against B, the thorough arm against A
+  (both frozen: the classes collapse to both and neither), and F against D when both arms exist.
+- Gap sentences (scripts/eval2_score.py gap_sentences, the scorer's own detector): the count per arm and the answers with at least one, as a flag for the reading only; never counted as a refusal or as a miss.
 A measure that is missing, not a number or not computed is an error, never a pass.
 The last line of the log and of the report is M7 SIX-ARM TEST DONE: knowledge-base row: <build|a_only|none ...>; thorough-profile row: WAITS FOR THE READING.
 """
@@ -511,6 +529,14 @@ def cmd_prompts_default(a):
 
 
 # ---------------------------------------------------------------- the measures
+def effective_verdict(e):
+    """The verdict of one judged point as the coverage counts it: an unquoted 'present' or 'contradicted' is 'unverified'."""
+    v = e["verdict"]
+    if v == "absent" and e.get("quote_ok") is False and e.get("judge_verdict") in ("present", "contradicted"):
+        v = "unverified"
+    return v
+
+
 def judged_points(results, rubrics, set_name):
     """Present must points per scenario, mean over the valid passes: {id: (present_with_set, with_set, present_without_set, without_set)}."""
     rub = {r["id"]: r for r in rubrics}
@@ -521,14 +547,173 @@ def judged_points(results, rubrics, set_name):
         pts = {p["id"]: p for p in rub[r["id"]]["must"]}
         cnt = [0, 0, 0, 0]
         for pid, e in r["must"].items():
-            v = e["verdict"]
-            if v == "absent" and e.get("quote_ok") is False and e.get("judge_verdict") in ("present", "contradicted"):
-                v = "unverified"
+            v = effective_verdict(e)
             k = 0 if S.point_sets(pts[pid]) else 2
             cnt[k + 1] += 1
             cnt[k] += v == "present"
         acc.setdefault(r["id"], []).append(cnt)
     return {i: tuple(sum(c[k] for c in v) / len(v) for k in range(4)) for i, v in acc.items()}
+
+
+# ---------------------------------------------------------------- point-level and essential-unit measures (described, not decided; the rule never reads them)
+def point_scores(results, rubrics, set_name, rows):
+    """{(scenario id, point id): (score, covered, disputed)} for one arm: score = share of the valid passes in which the point is present, covered = present in every valid pass,
+    disputed = present in some but not all. A row with no draft is delivered as empty: score 0, not covered, not disputed. No row is dropped."""
+    nodraft = {r["id"] for r in rows if is_no_draft(r)}
+    acc = {}
+    for r in results:
+        if not r.get("valid_reply") or r.get("reference_given") or r["set"] != set_name:
+            continue
+        for pid, e in r["must"].items():
+            acc.setdefault((r["id"], pid), []).append(effective_verdict(e) == "present")
+    out = {}
+    for rb in rubrics:
+        for pt in rb["must"]:
+            k = (rb["id"], pt["id"])
+            if rb["id"] in nodraft:
+                out[k] = (0.0, False, False)
+                continue
+            v = acc.get(k)
+            if not v:
+                raise SixError(f"no valid pass for the point {k[0]}/{k[1]} of set {set_name}")
+            out[k] = (sum(v) / len(v), all(v), any(v) and not all(v))
+    return out
+
+
+def point_class(pt, frozen_pack, perfect_pack):
+    """S-both, S-perfect-only, S-other (a set in the frozen pack only, or in neither), no-set."""
+    sets = S.point_sets(pt)
+    if not sets:
+        return "no-set"
+    fz, pf = S.point_flags(pt, frozen_pack)[0], S.point_flags(pt, perfect_pack)[0]
+    return "S-both" if fz and pf else "S-perfect-only" if pf else "S-other"
+
+
+def no_set_kind(pt):
+    return "not indexed" if pt.get("not_indexed") else "no covering set" if pt.get("no_covering_set") else "no set (kind not recorded)"
+
+
+def ratio_se(rows):
+    """Cluster (ratio) standard error of sum(d)/sum(m) with scenarios as clusters. rows: (points m_i, difference d_i); scenarios without points are left out. -> (ratio, se, n clusters)."""
+    rows = [(m, d) for m, d in rows if m > 0]
+    n = len(rows)
+    if n < 1:
+        return None, None, 0
+    M = sum(m for m, _ in rows)
+    r = sum(d for _, d in rows) / M
+    if n < 2:
+        return r, None, n
+    return r, math.sqrt(n / (n - 1) * sum((d - r * m) ** 2 for m, d in rows)) / M, n
+
+
+def transition_table(cand, ref, sc_c, sc_r, rubrics, packs):
+    """Transitions of the must points from the reference arm to the candidate arm, per class; packs = {id: (frozen pack, perfect pack)}."""
+    classes = ("S-both", "S-perfect-only", "S-other", "no-set")
+    T = {c: {"points": 0, "w2": 0, "both": 0, "neither": 0, "gained": 0, "lost": 0, "w2_both": 0, "w2_neither": 0, "w2_gained": 0, "w2_lost": 0,
+             "disputed_ref": 0, "disputed_cand": 0} for c in classes}
+    kinds, regress, per = {}, [], {c: {} for c in classes}
+    for rb in rubrics:
+        fz, pf = packs[rb["id"]]
+        for pt in rb["must"]:
+            k = (rb["id"], pt["id"])
+            c = point_class(pt, fz, pf)
+            t = T[c]
+            w2 = pt.get("weight") == 2
+            sr, sc = sc_r[k], sc_c[k]
+            t["points"] += 1
+            t["w2"] += w2
+            t["disputed_ref"] += sr[2]
+            t["disputed_cand"] += sc[2]
+            cell = "both" if sr[1] and sc[1] else "gained" if sc[1] else "lost" if sr[1] else "neither"
+            t[cell] += 1
+            if w2:
+                t["w2_" + cell] += 1
+            if c == "no-set":
+                kinds[no_set_kind(pt)] = kinds.get(no_set_kind(pt), 0) + 1
+            if cell == "lost" and c == "S-both":
+                regress.append(f"{rb['id']}/{pt['id']}" + (" (weight 2)" if w2 else ""))
+            pc = per[c].setdefault(rb["id"], [0, 0.0])
+            pc[0] += 1
+            pc[1] += sc[0] - sr[0]
+    clustered = {}
+    for c in ("S-perfect-only", "S-both"):
+        r_, se_, n_ = ratio_se([(m, d) for m, d in per[c].values()])
+        clustered[c] = {"ratio": r_, "se": se_, "clusters": n_, "points": sum(m for m, _ in per[c].values()),
+                        "interval90": None if se_ is None else [r_ - Z90 * se_, r_ + Z90 * se_]}
+    return {"candidate": cand, "reference": ref, "classes": T, "no_set_kinds": kinds, "regressions_on_S_both": sorted(regress), "paired": clustered}
+
+
+def evidence_table(cand, ref, sc_c, sc_r, rubrics, pk_c, pk_r):
+    """Weight-2 points by where a whole covering set is: both packs, the candidate's only, the reference's only, neither. missed = not covered; eligible = the class's weight-2 points."""
+    names = ("both packs", "candidate's pack only", "reference's pack only", "neither pack")
+    T = {n: {"eligible": 0, "missed_cand": 0, "missed_ref": 0, "of_which_no_set": 0} for n in names}
+    for rb in rubrics:
+        for pt in rb["must"]:
+            if pt.get("weight") != 2:
+                continue
+            ec, er = S.point_flags(pt, pk_c[rb["id"]])[0], S.point_flags(pt, pk_r[rb["id"]])[0]
+            n = names[0] if ec and er else names[1] if ec else names[2] if er else names[3]
+            k = (rb["id"], pt["id"])
+            t = T[n]
+            t["eligible"] += 1
+            t["missed_cand"] += not sc_c[k][1]
+            t["missed_ref"] += not sc_r[k][1]
+            t["of_which_no_set"] += not S.point_sets(pt)
+    return {"candidate": cand, "reference": ref, "classes": T}
+
+
+def gap_stats(rows):
+    import eval2_score
+    per = [len(eval2_score.gap_sentences(r.get("text") or "")) for r in rows]
+    return {"gap_sentences": sum(per), "answers_with_gap": sum(1 for x in per if x), "answers": len(rows)}
+
+
+def point_level(arm_rows, results, rubrics, thorough):
+    """All the point-level measures. Descriptive only. arm_rows: {arm name: rows}; the packs are those the answers saw (each arm's own rows)."""
+    if "A" not in arm_rows or "E" not in arm_rows:
+        raise SixError("the point-level measures need the arms A and E")
+    sc = {k: point_scores(results, rubrics, k, arm_rows[k]) for k in arm_rows}
+    pk = {k: {r["id"]: list(r["pack"]) for r in rows} for k, rows in arm_rows.items()}
+    packs = {rb["id"]: (pk["A"][rb["id"]], pk["E"][rb["id"]]) for rb in rubrics}
+    trans = [transition_table(c, r, sc[c], sc[r], rubrics, packs) for c, r in (("E", "A"), ("Fp", "B")) if c in sc and r in sc]
+    ev_pairs = [(c, r) for c, r in (("E", "A"), ("Fp", "B"), (thorough, "A"), ("F", "D")) if c in sc and r in sc and c != r]
+    ev = [evidence_table(c, r, sc[c], sc[r], rubrics, pk[c], pk[r]) for c, r in ev_pairs]
+    cls = {}
+    for rb in rubrics:
+        for pt in rb["must"]:
+            c = point_class(pt, *packs[rb["id"]])
+            cls[c] = cls.get(c, 0) + 1
+    return {"classes": cls, "points": sum(cls.values()), "transitions": trans, "evidence": ev, "gaps": {k: gap_stats(rows) for k, rows in arm_rows.items()}}
+
+
+def point_level_md(pl):
+    L = ["", "**Point-level and essential-unit measures (described, not decided; nothing here enters the rule).** A point is covered when it is present in every valid pass of the judge, "
+         "missed otherwise (a point present in one pass only is counted as missed and shown as disputed). No-draft, cut and timed-out answers are scored as delivered (no-draft as empty); none is dropped.", ""]
+    c = pl["classes"]
+    L.append(f"Point classes ({pl['points']} must points; strict count, a whole covering set in the pack the answers saw): " + ", ".join(f"{k} {c.get(k, 0)}" for k in ("S-both", "S-perfect-only", "S-other", "no-set")) + ".")
+    for t in pl["transitions"]:
+        cand, ref = t["candidate"], t["reference"]
+        nk = ", ".join(f"{k} {v}" for k, v in sorted(t["no_set_kinds"].items())) or "none"
+        L += ["", f"Transitions of points, {cand} against {ref} (both = covered in both arms, neither = missed in both; weight-2 points in brackets; no-set kinds: {nk}):", "",
+              f"| class | points (w2) | both | neither | gained | lost | disputed {ref} / {cand} |", "|---|---|---|---|---|---|---|"]
+        for k, v in t["classes"].items():
+            L.append(f"| {k} | {v['points']} ({v['w2']}) | {v['both']} ({v['w2_both']}) | {v['neither']} ({v['w2_neither']}) | {v['gained']} ({v['w2_gained']}) | {v['lost']} ({v['w2_lost']}) | {v['disputed_ref']} / {v['disputed_cand']} |")
+        L.append("")
+        L.append(f"Regressions on S-both ({cand} loses a point that {ref} covered): " + (", ".join(t["regressions_on_S_both"]) if t["regressions_on_S_both"] else "none"))
+        for k, v in t["paired"].items():
+            iv = v["interval90"]
+            rr = "n/a" if v["ratio"] is None else "%+.3f" % v["ratio"]
+            L.append(f"- {cand} - {ref} score within {k}: {rr} per point over {v['points']} points in {v['clusters']} scenarios "
+                     f"(scenario-clustered SE {f2(v['se'])}, 90 % interval {('[%+.3f, %+.3f]' % tuple(iv)) if iv else 'n/a'})")
+    for e in pl["evidence"]:
+        cand, ref = e["candidate"], e["reference"]
+        L += ["", f"Essential (weight-2) units by where the evidence is, {cand} against {ref} (missed of eligible; eligible = weight-2 points of the class; a point with no covering set is in neither pack):", "",
+              f"| evidence (a whole covering set) | eligible | missed by {cand} | missed by {ref} | of which no covering set |", "|---|---|---|---|---|"]
+        for k, v in e["classes"].items():
+            L.append(f"| {k} | {v['eligible']} | {v['missed_cand']} of {v['eligible']} | {v['missed_ref']} of {v['eligible']} | {v['of_which_no_set']} |")
+    L += ["", "Gap sentences (the scorer's detector; a flag for the reading only, never a refusal or a miss): " + "; ".join(
+        f"{k}: {v['gap_sentences']} in {v['answers_with_gap']} of {v['answers']} answers" for k, v in pl["gaps"].items())]
+    return L
 
 
 def arm_time(rows, exp_s, retr_s):
@@ -661,6 +846,8 @@ def cmd_measures(a):
     pairs = [("E", "A"), (thorough, "A"), ("B", "A"), ("Fp", "E")]
     if variant != "none":
         pairs += [("C", "A"), ("D", "B"), ("D", "C"), ("B", "C"), ("F", "E"), ("F", "Fp")]
+    arm_rows = {name: rd(W / f"ans_d5_{stem}.jsonl") for name, stem in stems.items()}
+    m["point_level"] = point_level(arm_rows, results, rub, thorough)   # described, not decided: the rule never reads it
     m["pairs"] = {f"{x}-{y}": pair(m, x, y) for x, y in pairs if x in m["arms"] and y in m["arms"] and x != y}
     kinds = {}
     for f in ("items_ma.jsonl", "items_m3.jsonl"):
@@ -705,6 +892,7 @@ def measures_md(m):
         L.append(f"- {k}: median {f2(v.get('answer_tokens_median'), 0)} tokens ({v.get('answer_tokens_known')} answers measured), over {ANSWER_LIMIT}: {v.get('answer_over_limit')}, "
                  f"stopped at the answer cap: {v.get('answer_cap_hits')}; first token median {f2(v.get('ttft_median_s'), 2)} s ({v.get('ttft_reported')} reported); "
                  f"cached prompt tokens: {v.get('cached_reported')} reported, median {f2(v.get('cached_median'), 0)}, {v.get('cached_any')} with any")
+    L += point_level_md(m["point_level"]) if m.get("point_level") else []
     nd = {k: v.get("no_draft_ids") for k, v in m["arms"].items() if v.get("no_draft_ids")}
     L += ["", "Answers with no draft (cut while thinking; counted as cut and empty, P 0): " + (", ".join(f"{k}: {len(x)}" for k, x in nd.items()) if nd else "none")]
     L += ["", "Checking pass (arms with a check): status counts, proposed and accepted changes, answers with an accepted change:", ""]
