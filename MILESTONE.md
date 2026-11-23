@@ -334,4 +334,9 @@ candidate C becomes the default, after the look.
   time); (2) the pilot also runs the pass with the lookup cards of the draft in its
   input, because the cards turn silent specific claims into contradictions; (3) the
   test's bar of −2.0 stays as agreed; (4) a rejected change shows nothing to the reader.
+- 2026-11-23 09:43: the Owner agreed with the conductor's four decisions on the checking
+  pass. The thorough profile's code (the checking pass with its acceptance rules,
+  thinking per call, the lookup cards in the check, the profile's switches, the
+  harness's rows) is being built in an isolated git worktree, because M6's running
+  chain pins the runtime's files in the main tree; it is merged after that chain ends.
 
