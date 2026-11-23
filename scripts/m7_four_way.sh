@@ -23,7 +23,8 @@
 #   2. Report header runs/m7/M7_SIX_ARM.md with the rule's text, the run parameters and their sources (written once, before any answer exists).
 #   3. prepare: harness items, the 116 mechanical items (96 + 20) with their stored frozen packs, the D5 frozen packs in the replay format. 3b. retrieval timing (CPU, guarded, no server call):
 #      the whole frozen retrieval on the funnel's 20 timing questions from its stored expansions (the time with search adds it to each answer's seconds, with the stored search-terms seconds).
-#   4. Answers, one request at a time, in this order: A (D5, 96 + 20 mechanical), C (the checking pass on A's D5 drafts), E, D (D5 and the mechanical items), F. After each set: the packs of every
+#   4. Answers, one request at a time, in this order: D (D5 and the mechanical items), F, A (D5, 96 + 20 mechanical), C (the checking pass on A's D5 drafts), E. D and F run first so that the server's prompt
+#      cache (A's draft prompt equals D's) cannot make D look faster than it would be in use; each draft records its time to the first token and its cached prompt tokens. After each set: the packs of every
 #      answer equal the pack file; every profile row is whole (streamed draft, prompt hash, token detail; in real runs the request-body hash); the calls the set made equal the expected count.
 #   5. Derived sets: B and F' from D's and F's rows, C's answers from A's rows and the check records. Then the prompt check: every draft prompt hash is the default prompt on the row's own pack,
 #      equal to A's on the same pack (the arms differ only in their switch), E and F differ from A only by the pack.
@@ -33,26 +34,33 @@
 #   8. Reading prep: blind bundles of A, D, E, F (all four answers of a scenario in one bundle, names drawn per scenario from the seed in the rule text), first-reader and second-reader (a quarter)
 #      bundles and the session plan; no reading is done here.
 #   9. The rule by code (scripts/m7_six_arm_rule.py rule): coverage rows applied; the wrong-statement and harmful rows are printed as "needs the reading"; no final choice for rows that wait for it.
-#      Report, done marker runs/m7/logs/m7_six_arm.done (or .failed).
-# A state left by a stopped run (work folder, manifest, report, failed marker) is refused by the start check; the refusal prints the mv lines.
+#      Report, done marker runs/m7/logs/m7_four_way.done (or .failed).
+# A stopped run resumes: running the script again removes the failed marker after the start check, and the stage markers decide what is done. Only a state the start check cannot accept (a changed
+#   pinned file or input, another manifest, a changed output) is refused; then the refusal prints the mv lines. A changed option (for example another --think-cap) is refused without mv lines: give the stored value.
+# The server (real runs): another client's model is never unloaded (the Owner did not extend M6's go to M7): when a model that is not this chain's (the 4-bit model, the judge) is loaded, or a request is
+#   active or waiting, the script refuses (exit 2, naming the model) and waits for the Owner; only this chain's own 4-bit and judge models are unloaded between stages.
 #
 #   scripts/m7_four_way.sh --check-variant V1C --think-cap 1500 --check-variant-source "..." --think-cap-source "..." > runs/m7/logs/m7_six_arm.out 2>&1 &     (real, K5)
 #   scripts/m7_four_way.sh --dry-run --work DIR --check-variant V1|V1C|none --think-cap N       # stub model, stub judge, stand-in reranker and inputs, no server; nothing is written outside DIR
-# Options: --dry-run, --work DIR, --report FILE, --check-variant V, --think-cap N, --check-variant-source TXT, --think-cap-source TXT, --perfect-packs F, --ids FILE, --max-unjudged N
-#   (default 0), --fail-after STAGE (dry runs only: plant a failure after that stage, to rehearse a restart), --dry-items N (dry runs: stand-in scenarios, default 8).
-# The server address and key come from OMLX_URL and OMLX_API_KEY or ~/.config/kafka-sre-llm/. Markers: runs/m7/logs/m7_six_arm.done or .failed (a dry run: in its own DIR).
+# Options: --dry-run, --work DIR, --report FILE, --check-variant V, --think-cap N, --check-variant-source TXT, --think-cap-source TXT, --pilot-report FILE (default runs/m7/M7_PILOT.md; pinned by its sha256;
+#   a real run refuses without it or with a dry-run record; a dry run uses a stub), --perfect-packs F, --ids FILE, --max-unjudged N (default 0), and for dry runs only: --fail-after STAGE (plant a failure
+#   after that stage, to rehearse a restart), --dry-items N (stand-in scenarios, default 8), --plant-cut SUBSTRINGS (comma-separated substrings of a question: the thinking drafts of those scenarios are
+#   cut while thinking), --plant-check-fail SUBSTRINGS (the checking calls of those scenarios fail, every time).
+# The server address and key come from OMLX_URL and OMLX_API_KEY or ~/.config/kafka-sre-llm/. Markers: runs/m7/logs/m7_four_way.done or .failed (a dry run: in its own DIR).
 #
 # Estimated duration of the real run: printed as "planned:" below (inferred from the development check's and the plan's rates, not measured with thinking on this build; the plan says
 # 10 to 14 server hours).
 set -e
 DRY=no; WSET=no; W=work/m7/six_arm; REPORT=runs/m7/M7_SIX_ARM.md; RSET=no; VARIANT=; CAP=; VSRC=; CSRC=; PERFECT=work/m7/packs_perfect.jsonl; MAXU=0; FAILAFTER=; DRYITEMS=8; PSET=no
+PILOT=runs/m7/M7_PILOT.md; PLANTCUT=; PLANTCHK=
 IDS=eval/m4/g_dev_ids.json; ITEMS=eval/m6/d5/items.jsonl; RUBS=eval/m6/d5/rubrics.jsonl; CC=eval/m6/d5/CHUNK_CHECK.json; FW=work/m6/d5_funnel
 while [ $# -gt 0 ]; do case $1 in
   --dry-run) DRY=yes;;
   --work) W=${2:?}; WSET=yes; shift;; --report) REPORT=${2:?}; RSET=yes; shift;;
   --check-variant) VARIANT=${2:?}; shift;; --think-cap) CAP=${2:?}; shift;; --check-variant-source) VSRC=${2:?}; shift;; --think-cap-source) CSRC=${2:?}; shift;;
   --perfect-packs) PERFECT=${2:?}; PSET=yes; shift;; --ids) IDS=${2:?}; shift;; --max-unjudged) MAXU=${2:?}; shift;; --fail-after) FAILAFTER=${2:?}; shift;; --dry-items) DRYITEMS=${2:?}; shift;;
-  *) echo "usage: scripts/m7_four_way.sh [--dry-run] [--work DIR] [--report FILE] --check-variant V1|V1C|none --think-cap N [--check-variant-source TXT --think-cap-source TXT] [--perfect-packs F] [--ids FILE] [--max-unjudged N] (see the header)" >&2; exit 2;; esac
+  --pilot-report) PILOT=${2:?}; shift;; --plant-cut) PLANTCUT=${2:?}; shift;; --plant-check-fail) PLANTCHK=${2:?}; shift;;
+  *) echo "usage: scripts/m7_four_way.sh [--dry-run] [--work DIR] [--report FILE] --check-variant V1|V1C|none --think-cap N [--check-variant-source TXT --think-cap-source TXT] [--perfect-packs F] [--ids FILE] [--pilot-report F] [--max-unjudged N] (see the header)" >&2; exit 2;; esac
   shift; done
 refuse() { echo "REFUSED: $1; nothing started" >&2; exit 2; }
 R=scripts/m7_six_arm_rule.py; GR=scripts/m5_g_rule.py; R6=scripts/m6_d5_rule.py; N=m7_four_way; L=runs/m7/logs
@@ -65,6 +73,8 @@ if [ $DRY = no ]; then
   case "$VSRC" in *[![:space:]]*) ;; *) refuse "--check-variant-source is required in a real run (where the variant comes from, e.g. the pilot's report)";; esac
   case "$CSRC" in *[![:space:]]*) ;; *) refuse "--think-cap-source is required in a real run (where the cap comes from, e.g. the pilot's report)";; esac
   [ -z "$FAILAFTER" ] || refuse "--fail-after is for dry runs only"
+  [ -z "$PLANTCUT$PLANTCHK" ] || refuse "--plant-cut and --plant-check-fail are for dry runs only"
+  .venv/bin/python $R pilot-check --file "$PILOT" || refuse "the pilot's report is not usable (see above)"
 else
   [ -n "$VSRC" ] || VSRC="dry run: none"; [ -n "$CSRC" ] || CSRC="dry run: none"
 fi
@@ -88,6 +98,9 @@ if [ $DRY = yes ]; then
   IN=$W/in
   [ -s $IN/items.jsonl ] || .venv/bin/python $R dry-inputs --dir $IN --items $DRYITEMS > /dev/null || refuse "the stand-in inputs could not be made"
   ITEMS=$IN/items.jsonl; RUBS=$IN/rubrics.jsonl; CC=$IN/CHUNK_CHECK.json; FW=$IN; PERFECT=$IN/packs_perfect.jsonl
+  [ -s $IN/M7_PILOT_stub.md ] || echo "stand-in for the pilot's report in a dry run (no pilot exists here)" > $IN/M7_PILOT_stub.md
+  PILOT=$IN/M7_PILOT_stub.md
+  export M7_STUB_CUT_WHILE_THINKING="$PLANTCUT" M7_STUB_CHECK_FAIL="$PLANTCHK"
   G="scripts/run_guarded.py --other-retries 0"; STANDIN="--stand-in"; DRYFLAG="--dry"
 else
   [ $WSET = no ] || [ "$W" = work/m7/six_arm ] || echo "note: a real run into $W"
@@ -109,16 +122,19 @@ moveaside() { # the lines that move the state of a stopped run out of the way (p
   echo "to start again, first move the stopped run's files aside (the chain never moves or deletes them):" >&2
   for f in $W $REPORT $L/$N.failed; do [ -e $f ] && echo "  mv $f $f.$STOPPED_SUFFIX" >&2; done
   echo "  (and runs/m7/logs/m7_six_arm.out, if it holds the stopped run's output, before the next start redirects into it)" >&2; return 0; }
-fail() { if [ $DRY = yes ]; then echo "DRY RUN FAILED: $1"; exit 1; fi
-  hb "$N: STOPPED: $1" yes; echo "$1" >> $L/$N.failed
+fail() { if [ $DRY = yes ]; then echo "DRY RUN FAILED: $1"; mkdir -p $L; echo "$1" >> $L/$N.failed; exit 1; fi
+  hb "$N: STOPPED: $1" yes; mkdir -p $L; echo "$1" >> $L/$N.failed
   status STOPPED yes "$N stopped: $1; marker $L/$N.failed; models loaded by this chain may still be loaded"; echo "STOPPED: $1"; exit 1; }
+refuse_late() { # the server gate after the chain started (another client appeared): exit 2, as at the gate; nothing is unloaded
+  hb "$N: REFUSED: $1" yes; mkdir -p $L; echo "REFUSED: $1" >> $L/$N.failed
+  status STOPPED yes "$N refused: $1; marker $L/$N.failed"; echo "REFUSED: $1" >&2; exit 2; }
 planted() { [ "$FAILAFTER" != "$1" ] || fail "planted failure after the stage $1 (a dry run's rehearsal of a restart)"; }
 
 # ---------------------------------------------------------------- 1. the gate (CPU; nothing is written before the checks pass, except $W itself)
 for f in $ITEMS $RUBS $CC $FW/DF_MANIFEST.json $FW/packs.jsonl $FW/expansions.jsonl $PERFECT $PERFECT.manifest.json $IDS $TA_ITEMS $TA3_ITEMS $TA_ANS $TA_ANS.manifest.json $TA3_ANS $TA3_ANS.manifest.json \
          $CHUNKS $FROZEN $CATS/CATALOGUES.json runs/v3/INDEX_FROZEN.json kafka_sre_rag/prompts.py kafka_sre_rag/retrieval.py kafka_sre_rag/profiles.py kafka_sre_rag/verify_pass.py kafka_sre_rag/kb_lookup.py \
          kafka_sre_rag/evalhooks.py scripts/eval2.py scripts/eval2_judge.py scripts/eval2_idcheck.py scripts/eval2_score.py scripts/eval2_compare.py scripts/eval2_blind.py scripts/run_guarded.py \
-         scripts/m5_g_rule.py scripts/m5_b4_served.py scripts/m6_d5_funnel.py scripts/m6_d5_rule.py scripts/m7_four_way.sh $R; do
+         scripts/m5_g_rule.py scripts/m5_b4_served.py scripts/m6_d5_funnel.py scripts/m6_d5_rule.py scripts/m7_four_way.sh $R $PILOT; do
   [ -s $f ] || refuse "input $f is missing or empty"
 done
 .venv/bin/python $R gate-inputs --items $ITEMS --rubrics $RUBS --chunk-check $CC --funnel-work $FW --perfect $PERFECT --check-variant "$VARIANT" --think-cap "$CAP" $DRYFLAG \
@@ -155,15 +171,12 @@ unload_now() { # any model; only when no request is active or waiting (the Owner
     *) hb "$N: unload of $1 FAILED (the server answered $ucode: ${ubody:-no body})" yes; fail "the unload of $1 was not accepted (the server answered $ucode)";;
   esac; }
 unload() { [ "$(loaded $1)" = "yes" ] || return 0; unload_now $1; }
-clear_server() { # before the first request: no active or waiting request; every loaded model but the 4-bit model is unloaded (each unload checked and logged)
-  idle
-  for m in $(loaded_list); do
-    [ "$m" = "$Q4" ] && continue
-    [ "$m" = "status-unreadable" ] && fail "the server status is unreadable"
-    unload_now $m
-  done
-  left=$(for m in $(loaded_list); do [ "$m" = "$Q4" ] || echo $m; done)
-  [ -z "$left" ] || fail "models are still loaded after the unloads: $left"; }
+server_gate() { # check|clear: before the first request (real runs): a request active or waiting, or a model that is not ours loaded, refuses (exit 2, the model named); nothing of another client is unloaded.
+  # Ours: the 4-bit model and the judge. A judge model left loaded is unloaded (it cannot share the memory with the 4-bit model).
+  api /api/status > $SJSON 2>/dev/null || true
+  gout=$(.venv/bin/python $R server-gate --status $SJSON --keep "$Q4" --ours "$Q4" "$DS" 2>&1) || { echo "$gout" >&2; return 2; }
+  [ "$1" = clear ] || return 0
+  for m in $(echo "$gout" | sed -n 's/^UNLOAD //p'); do unload_now $m; done; return 0; }
 others() { pgrep -fl 'scripts/(m4|m5|m6|m7|s1)_[a-z0-9_]*\.sh|run_guarded\.py' | grep -v "$N" || true; }
 wait_others() { # before anything loads a reranker or a model: no other chain and no guarded job (real runs)
   [ $DRY = yes ] && return 0
@@ -176,13 +189,17 @@ else
   api /v1/models > $MJSON 2>/dev/null || true
   Q4=${M7_Q4_MODEL:-$(.venv/bin/python scripts/eval2_compare.py pick-model --kind q4 < $MJSON)} || refuse "the 4-bit model is not listed by the server (or ambiguous)"
   [ "$Q4" = "$FUNNEL_MODEL" ] || refuse "the 4-bit model on the server ($Q4) is not the one the D5 funnel's expansions were made with ($FUNNEL_MODEL)"
+  .venv/bin/python $R models-check --models $MJSON --need "$Q4" "$DS" || refuse "a model this chain needs is not listed by the server (the 4-bit model and the judge $DS)"
+  SJSON=$(mktemp "${TMPDIR:-/tmp}/m7_six_status.XXXXXX")
+  SN=no; for st in rettime ans_a ans_c ans_e ans_d ans_f judge; do [ -f $W/stage_$st.done ] || SN=yes; done
+  if [ $SN = yes ]; then server_gate check || refuse "the server is not free for this chain (another client's model or request; see above)"; fi
 fi
 
 # the gate has passed: from here on the work folder and the log folder are written
 mkdir -p $W $L
 # the manifest and the start check
 PINS="--pin $ITEMS --pin $RUBS --pin $CC --pin $FW/DF_MANIFEST.json --pin $FW/packs.jsonl --pin $FW/expansions.jsonl --pin $PERFECT --pin $PERFECT.manifest.json --pin $IDS \
-  --pin $TA_ITEMS --pin $TA3_ITEMS --pin $TA_ANS --pin $TA_ANS.manifest.json --pin $TA3_ANS --pin $TA3_ANS.manifest.json --pin $CATS/CATALOGUES.json --pin runs/v3/INDEX_FROZEN.json"
+  --pin $TA_ITEMS --pin $TA3_ITEMS --pin $TA_ANS --pin $TA_ANS.manifest.json --pin $TA3_ANS --pin $TA3_ANS.manifest.json --pin $CATS/CATALOGUES.json --pin runs/v3/INDEX_FROZEN.json --pin $PILOT"
 for f in $(.venv/bin/python $R code-pins) $FROZEN; do     # the code the answer, check, judge, scorer and identifier-check paths import
   [ -f $f ] || refuse "pinned code file $f is missing"
   PINS="$PINS --pin $f"; done
@@ -190,10 +207,19 @@ GIT_HEAD=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)   # recorded 
 gstate() { # SUBCOMMAND [EXTRA...]: the manifest and the start check take the same state
   sub=$1; shift
   .venv/bin/python $R "$sub" --manifest $W/MANIFEST.json --work $W $PINS --frozen $FROZEN $DRYFLAG --opt "model=$Q4" --opt "check_variant=$VARIANT" --opt "think_cap=$CAP" \
-    --opt "check_variant_source=$VSRC" --opt "think_cap_source=$CSRC" --opt "bundle_seed=20261123" \
+    --opt "check_variant_source=$VSRC" --opt "think_cap_source=$CSRC" --opt "bundle_seed=20261123" --opt "pilot_report=$PILOT" \
     --info "git_head=$GIT_HEAD" --info "max_unjudged=$MAXU" --judge-arg "model=$DS" --judge-arg "setting=$JSETTING" --judge-arg "extra_body=$JEB" --judge-arg "source_chars=$SRC" \
     --judge-arg "instruction=v2" --judge-arg "passes=1 2" --judge-arg "role=coverage" "$@"; }
-gstate start-check || { moveaside; refuse "the start check failed (see above; nothing was moved or deleted)"; }
+SCOUT=$(mktemp "${TMPDIR:-/tmp}/m7_six_startcheck.XXXXXX")
+if ! gstate start-check > $SCOUT 2>&1; then
+  cat $SCOUT >&2
+  # only an option that differs (a mistyped --think-cap, another variant): nothing to move, give the stored value; any other difference: the lines that move the stopped run aside
+  if grep -q '^  options\.' $SCOUT && ! grep '^  ' $SCOUT | grep -vq '^  options\.'; then refuse "an option differs from the stored manifest (see above: give the stored value; nothing was moved or deleted)"; fi
+  moveaside; refuse "the start check failed (see above; nothing was moved or deleted)"
+fi
+cat $SCOUT
+# a rerun after a stop: the failed marker is removed after the start check (its text is shown); the stage markers decide what is done, so finished stages are kept
+if [ -f $L/$N.failed ]; then echo "rerun after a stop; the earlier failure was: $(tail -n 1 $L/$N.failed)"; rm -f $L/$N.failed; fi
 gstate manifest
 mkdir -p "$(dirname $REPORT)"
 recheck() { # NAME: the start check again before a stage, so that a change of a pinned file, an option or an output between stages stops the chain
@@ -226,7 +252,7 @@ if ! stage_done header; then
     echo
     echo "Written by \`scripts/m7_four_way.sh\` on $(date +%Y-%m-%d), 4-bit model \`$Q4\`. Manifest hash $(.venv/bin/python -c 'import hashlib,json,sys; print(hashlib.sha256(json.dumps({k: v for k, v in json.load(open(sys.argv[1])).items() if k != "accepted_code_changes"}, sort_keys=True).encode()).hexdigest()[:16])' $W/MANIFEST.json). Ids of the mechanical sample: \`$IDS\`. Rule: \`$R\`."
     echo
-    echo "**Run parameters (from the pilot).** Checking-pass variant: \`$VARIANT\` (source: $VSRC). Thinking cap: $CAP tokens added to the 2,048-token answer limit (source: $CSRC). Judged sets: $(echo $SETNAMES | sed 's/Fp/F-prime/;s/ /, /g')."
+    echo "**Run parameters (from the pilot).** Checking-pass variant: \`$VARIANT\` (source: $VSRC). Thinking cap: $CAP tokens added to the 2,048-token answer limit (source: $CSRC). Pilot report: \`$([ $DRY = yes ] && echo 'a stand-in (dry run)' || echo $PILOT)\` (pinned by its sha256 in the manifest). Judged sets: $(echo $SETNAMES | sed 's/Fp/F-prime/;s/ /, /g')."
     echo
     .venv/bin/python $R rule-text
     echo
@@ -253,12 +279,12 @@ echo "sets: D5 $ND, tier_a part $NMA, tier_a3 part $NM3"
 if [ $DRY = no ] && [ $SERVER_NEEDED = yes ]; then
   hb "$N: waiting until no other chain (scripts/m4_*.sh, m5_*.sh, m6_*.sh, m7_*.sh, s1_*.sh) and no guarded job runs, then the server check"
   status RUNNING no "$N waiting for other chains to end; markers $L/$N.done / .failed"
-  rm -f $L/$N.failed $L/$N.done
+  rm -f $L/$N.done
   wait_others
   hb "$N: started; 4-bit model $Q4, arms $(echo $SETNAMES | tr ' ' ','), check variant $VARIANT, thinking cap $CAP: D5 ($ND) and the mechanical sample (116); judge $DS (coverage role, instruction v2, $JSETTING)"
   status RUNNING no "$N running: answers, judging, scoring; markers $L/$N.done / .failed"
-  clear_server
-  hb "$N: the server is idle and no model but $Q4 is loaded; the 4-bit model loads on the first request"
+  server_gate clear || refuse_late "the server is not free for this chain (another client's model or request appeared while it waited)"
+  hb "$N: the server is idle and no model of another client is loaded; the 4-bit model loads on the first request"
 fi
 
 # ---------------------------------------------------------------- the whole frozen retrieval timed (CPU, guarded, the server idle, no server call)
@@ -276,23 +302,35 @@ fi
 # ---------------------------------------------------------------- answers (one request at a time; the 4-bit model)
 if [ $DRY = yes ]; then GA="--backend stub --no-rerank"; VA="--dry-run"; else GA="--backend openai --model $Q4"; VA="--backend openai --model $Q4"; fi
 REALFLAG=""; [ $DRY = yes ] || REALFLAG="--real"
-ECHOREF=$W/ans_d5_A.jsonl.manifest.json
+REDO_PASSES=$(.venv/bin/python -c 'import sys; sys.path.insert(0, "scripts"); import m7_six_arm_rule as r; print(r.REDO_PASSES, r.CHECK_ERROR_LIMIT)')
+CHECK_LIMIT=${REDO_PASSES#* }; REDO_PASSES=${REDO_PASSES% *}
+ECHOREF=$W/ans_d5_D.jsonl.manifest.json     # the first answers of this run (D runs first)
 echo_check() { # the model the server echoed equals the first answers' of this run (and the stored mechanical references' where this run replays one)
   .venv/bin/python $GR check-echo --stored $ECHOREF $echo_extra --new $out.manifest.json $( [ $DRY = yes ] && echo --dry ) \
     || fail "answers $config: the server echoed another model than the first answers of this run (the answer sets are not comparable)"; }
-answer_run() { # OUT ITEMS REPLAY EXPECT CONFIG "PROFILE ARGS" [STORED_MANIFEST]: all items, one request at a time
+answer_run() { # OUT ITEMS REPLAY EXPECT CONFIG "PROFILE ARGS" [STORED_MANIFEST]: all items, one request at a time. A row whose checking call ended with status error is redone (REDO_PASSES passes; the count is kept in OUT.redo)
   out=$1; items=$2; replay=$3; expect=$4; config=$5; pargs=$6; echo_extra=$7
-  if .venv/bin/python $GR check-answers --file $out --expect $expect --mode default > $W/check.out 2>&1 && .venv/bin/python $R check-rows --file $out --expect $expect $REALFLAG >> $W/check.out 2>&1; then
-    echo "skip answers: $(cat $W/check.out | tr '\n' ' ')"; echo_check; return 0; fi
-  tries=0
+  CK=yes; case "$pargs" in *--no-verify*) CK=no;; esac
+  redo=$(cat $out.redo 2>/dev/null || echo 0); bad=0
   while :; do
+    if .venv/bin/python $GR check-answers --file $out --expect $expect --mode default > $W/check.out 2>&1 && .venv/bin/python $R check-rows --file $out --expect $expect $REALFLAG >> $W/check.out 2>&1; then
+      echo "answers $config: complete: $(cat $W/check.out | tr '\n' ' ')"
+      [ $CK = yes ] || break
+      nerr=$(.venv/bin/python $R check-errors --file $out --kind answers | sed -n 's/^check_errors=//p')
+      [ "$nerr" != 0 ] || break
+      if [ $redo -ge $REDO_PASSES ]; then echo "answers $config: $nerr checks still have status error after $redo redo passes; the rule marks the arm if there are more than $CHECK_LIMIT"; break; fi
+      redo=$((redo+1)); echo $redo > $out.redo
+      .venv/bin/python $R check-errors --file $out --kind answers --drop > /dev/null
+      echo "answers $config: redo pass $redo of the $nerr rows whose checking call failed (the rows are kept in $out.redo_dropped.jsonl)"
+    else
+      [ $bad -lt 3 ] || fail "answers $config: incomplete, with errors, empty, without a pack or without a whole profile row after $bad passes ($out)"
+      bad=$((bad+1))
+    fi
     [ $DRY = yes ] || idle
     hb "$N: answers $config started ($expect items; $pargs)"
     $G --stall-min 40 --log $L/$N.$config.log -- .venv/bin/python scripts/eval2.py answer --items $items --out $out --config $config $GA \
       --extra-body "$EB" --mode default --replay-packs $replay --catalogue $CATS --host-class "Mac Studio" --allow-commit-change --answer-profile thorough $pargs \
       || fail "answers $config: failed (see $L/$N.$config.log)"
-    { .venv/bin/python $GR check-answers --file $out --expect $expect --mode default && .venv/bin/python $R check-rows --file $out --expect $expect $REALFLAG; } && break
-    tries=$((tries+1)); [ $tries -lt 3 ] || fail "answers $config: incomplete, with errors, empty, without a pack or without a whole profile row after $tries passes ($out)"
   done
   .venv/bin/python $GR packs-equal --a $replay --b $out || fail "answers $config: the packs differ from the pack file (replay failed)"
   echo_check
@@ -304,41 +342,7 @@ esac                                                               # arms D and 
 if [ $CHECKING = yes ]; then CHK_EXPECT_D5=$ND; CHK_EXPECT_M=$((NMA + NM3)); else CHK_EXPECT_D5=0; CHK_EXPECT_M=0; fi
 calls() { # STAGE EXPECT_DRAFTS EXPECT_CHECKS FILES...   the model calls the set made against the expected count (strict in a dry run)
   st=$1; ed=$2; ec=$3; shift 3
-  .venv/bin/python $R stage-calls --stage $st --files "$@" --expect-drafts $ed --expect-checks $ec $([ $DRY = yes ] && echo --strict) || fail "the calls of the stage $st do not match the expected count"; }
-
-if ! stage_done ans_a; then
-  recheck ans_a
-  answer_run $W/ans_d5_A.jsonl $W/items_d5_h.jsonl $W/packs_frozen_d5.jsonl $ND m7-six-d5-A "$PA"
-  answer_run $W/ans_ma_A.jsonl $W/items_ma.jsonl $TA_ANS $NMA m7-six-ma-A "$PA" "--stored $TA_ANS.manifest.json"
-  answer_run $W/ans_m3_A.jsonl $W/items_m3.jsonl $TA3_ANS $NM3 m7-six-m3-A "$PA" "--stored $TA3_ANS.manifest.json"
-  calls ans_a $((ND + NMA + NM3)) 0 $W/ans_d5_A.jsonl $W/ans_ma_A.jsonl $W/ans_m3_A.jsonl
-  mark ans_a $W/ans_d5_A.jsonl $W/ans_ma_A.jsonl $W/ans_m3_A.jsonl
-  hb "$N: arm A answers done (D5 $ND, tier_a part $NMA, tier_a3 part $NM3)"
-fi
-
-# ---------------------------------------------------------------- C: the checking pass on A's D5 drafts (the same 4-bit model; thinking off per call)
-if [ $CHECKING = yes ] && ! stage_done ans_c; then
-  recheck ans_c
-  tries=0
-  until .venv/bin/python $R check-verify --file $W/check_d5_C.jsonl --answers $W/ans_d5_A.jsonl --expect $ND; do
-    tries=$((tries+1)); [ $tries -le 3 ] || fail "the checking pass on A's drafts is incomplete or has errors after 3 passes ($W/check_d5_C.jsonl)"
-    [ $DRY = yes ] || idle
-    hb "$N: the checking pass on A's drafts started ($ND answers; variant $VARIANT)"
-    $G --stall-min 40 --log $L/$N.check_C.log -- .venv/bin/python -m kafka_sre_rag.verify_pass run --answers $W/ans_d5_A.jsonl --items $ITEMS --out $W/check_d5_C.jsonl \
-      --catalogues $CATS $VA --extra-body "$EB" $([ $VARIANT = V1C ] && echo --cards) || fail "the checking pass on A's drafts failed (see $L/$N.check_C.log)"
-  done
-  calls ans_c 0 $ND $W/check_d5_C.jsonl --kind checks
-  mark ans_c $W/check_d5_C.jsonl
-  hb "$N: the checking pass on A's drafts done (arm C)"
-fi
-
-if ! stage_done ans_e; then
-  recheck ans_e
-  answer_run $W/ans_d5_E.jsonl $W/items_d5_h.jsonl $PERFECT $ND m7-six-d5-E "$PA"
-  calls ans_e $ND 0 $W/ans_d5_E.jsonl
-  mark ans_e $W/ans_d5_E.jsonl
-  hb "$N: arm E answers done (perfect packs, D5 $ND)"
-fi
+  .venv/bin/python $R stage-calls --stage $st --files "$@" --expect-drafts $ed --expect-checks $ec $([ $DRY = yes ] && [ -z "$PLANTCUT" ] && echo --strict) || fail "the calls of the stage $st do not match the expected count"; }
 
 if ! stage_done ans_d; then
   recheck ans_d
@@ -356,6 +360,49 @@ if ! stage_done ans_f; then
   calls ans_f $ND $CHK_EXPECT_D5 $W/ans_d5_F.jsonl
   mark ans_f $W/ans_d5_F.jsonl
   hb "$N: arm F answers done (perfect packs, thinking$([ $CHECKING = yes ] && echo ', then the checking pass'); D5 $ND)"
+fi
+
+if ! stage_done ans_a; then
+  recheck ans_a
+  answer_run $W/ans_d5_A.jsonl $W/items_d5_h.jsonl $W/packs_frozen_d5.jsonl $ND m7-six-d5-A "$PA"
+  answer_run $W/ans_ma_A.jsonl $W/items_ma.jsonl $TA_ANS $NMA m7-six-ma-A "$PA" "--stored $TA_ANS.manifest.json"
+  answer_run $W/ans_m3_A.jsonl $W/items_m3.jsonl $TA3_ANS $NM3 m7-six-m3-A "$PA" "--stored $TA3_ANS.manifest.json"
+  calls ans_a $((ND + NMA + NM3)) 0 $W/ans_d5_A.jsonl $W/ans_ma_A.jsonl $W/ans_m3_A.jsonl
+  mark ans_a $W/ans_d5_A.jsonl $W/ans_ma_A.jsonl $W/ans_m3_A.jsonl
+  hb "$N: arm A answers done (D5 $ND, tier_a part $NMA, tier_a3 part $NM3)"
+fi
+
+# ---------------------------------------------------------------- C: the checking pass on A's D5 drafts (the same 4-bit model; thinking off per call). A record whose checking call ended with status error is redone (REDO_PASSES passes)
+if [ $CHECKING = yes ] && ! stage_done ans_c; then
+  recheck ans_c
+  bad=0; redo=$(cat $W/check_d5_C.jsonl.redo 2>/dev/null || echo 0)
+  while :; do
+    if .venv/bin/python $R check-verify --file $W/check_d5_C.jsonl --answers $W/ans_d5_A.jsonl --expect $ND; then
+      nerr=$(.venv/bin/python $R check-errors --file $W/check_d5_C.jsonl --kind verify | sed -n 's/^check_errors=//p')
+      [ "$nerr" != 0 ] && [ $redo -lt $REDO_PASSES ] || { [ "$nerr" = 0 ] || echo "the checking pass on A's drafts: $nerr checks still have status error after $redo redo passes; the rule marks the arm if there are more than $CHECK_LIMIT"; break; }
+      redo=$((redo+1)); echo $redo > $W/check_d5_C.jsonl.redo
+      .venv/bin/python $R check-errors --file $W/check_d5_C.jsonl --kind verify --drop > /dev/null
+      echo "the checking pass on A's drafts: redo pass $redo of the $nerr records whose checking call failed (kept in $W/check_d5_C.jsonl.redo_dropped.jsonl)"
+    else
+      [ $bad -lt 3 ] || fail "the checking pass on A's drafts is incomplete or has errors after 3 passes ($W/check_d5_C.jsonl)"
+      bad=$((bad+1))
+    fi
+    [ $DRY = yes ] || idle
+    hb "$N: the checking pass on A's drafts started ($ND answers; variant $VARIANT)"
+    $G --stall-min 40 --log $L/$N.check_C.log -- .venv/bin/python -m kafka_sre_rag.verify_pass run --answers $W/ans_d5_A.jsonl --items $ITEMS --out $W/check_d5_C.jsonl \
+      --catalogues $CATS $VA --extra-body "$EB" $([ $VARIANT = V1C ] && echo --cards) || fail "the checking pass on A's drafts failed (see $L/$N.check_C.log)"
+  done
+  calls ans_c 0 $ND $W/check_d5_C.jsonl --kind checks
+  mark ans_c $W/check_d5_C.jsonl
+  hb "$N: the checking pass on A's drafts done (arm C)"
+fi
+
+if ! stage_done ans_e; then
+  recheck ans_e
+  answer_run $W/ans_d5_E.jsonl $W/items_d5_h.jsonl $PERFECT $ND m7-six-d5-E "$PA"
+  calls ans_e $ND 0 $W/ans_d5_E.jsonl
+  mark ans_e $W/ans_d5_E.jsonl
+  hb "$N: arm E answers done (perfect packs, D5 $ND)"
 fi
 
 # ---------------------------------------------------------------- derived sets (B and F' from the thorough rows, C's answers from A's rows) and the prompt check (CPU)
@@ -379,6 +426,11 @@ if ! stage_done derive; then
   pc .venv/bin/python $R prompts-relation --a $W/ans_d5_E.jsonl --b $W/ans_d5_F.jsonl --expect-same-pack
   pc .venv/bin/python $R prompts-relation --a $W/ans_d5_A.jsonl --b $W/ans_d5_E.jsonl
   pc .venv/bin/python $R prompts-relation --a $W/ans_d5_D.jsonl --b $W/ans_d5_F.jsonl
+  # the request bodies of the drafts: A and D (and E and F) differ in the thinking switch and the token limit (plus the cap) only; A and E (D and F) in the messages only, where the packs differ
+  for part in d5 ma m3; do pc .venv/bin/python $R bodies-relation --a $W/ans_${part}_A.jsonl --b $W/ans_${part}_D.jsonl --thinking-differs --think-cap $CAP; done
+  pc .venv/bin/python $R bodies-relation --a $W/ans_d5_E.jsonl --b $W/ans_d5_F.jsonl --thinking-differs --think-cap $CAP
+  pc .venv/bin/python $R bodies-relation --a $W/ans_d5_A.jsonl --b $W/ans_d5_E.jsonl
+  pc .venv/bin/python $R bodies-relation --a $W/ans_d5_D.jsonl --b $W/ans_d5_F.jsonl
   [ $PCFAIL = 0 ] || { cat $W/prompts_check.txt; fail "the prompt check failed: an arm answered with another prompt than the default on its pack, or the arms differ in more than their switch (see above)"; }
   cat $W/prompts_check.txt
   .venv/bin/python $GR packs-equal --a $W/packs_frozen_d5.jsonl --b $W/ans_d5_A.jsonl > /dev/null && .venv/bin/python $GR packs-equal --a $PERFECT --b $W/ans_d5_E.jsonl > /dev/null \
@@ -459,24 +511,26 @@ fi
 recheck measures
 .venv/bin/python $R measures --work $W --ids $IDS --d5-rubrics $RUBS --d5-items $ITEMS --funnel-work $FW --check-variant $VARIANT --think-cap $CAP --max-unjudged $MAXU \
   $([ $DRY = yes ] && echo --stub) > $W/measures.out || { tail -3 $W/measures.out; fail "the measures could not be computed (a missing input is an error, see above)"; }
+RCOPY=$W/reading_for_readers; [ $DRY = yes ] || RCOPY=$(dirname $W)/$(basename $W)_reading     # a copy of the bundles for the readers, outside the work folder: no key, no answer file
 if ! stage_done reading; then
   RD=$W/reading; mkdir -p $RD
-  RSETS=""
   case $VARIANT in none) RSETS="A=$W/ans_d5_A.jsonl B=$W/ans_d5_D.jsonl E=$W/ans_d5_E.jsonl Fp=$W/ans_d5_F.jsonl";; *) RSETS="A=$W/ans_d5_A.jsonl D=$W/ans_d5_D.jsonl E=$W/ans_d5_E.jsonl F=$W/ans_d5_F.jsonl";; esac
-  rm -rf $RD/first $RD/second $RD/KEY.json $RD/sessions.json
+  rm -rf $RD/first $RD/second $RD/KEY.json $RD/sessions.json $RCOPY
+  # a scenario where one of the four answers has no draft (cut while thinking) is not read: the notice would name the arm; the key lists it, the rule counts it as empty
+  NODRAFT=$(.venv/bin/python $R no-draft-ids --answers $RSETS 2> $RD/no_draft.err) || fail "the scan for answers with no draft failed"
+  cat $RD/no_draft.err
+  ONLY=$(.venv/bin/python -c 'import json,sys; no=set(sys.argv[2:]); print(" ".join(r["id"] for r in (json.loads(l) for l in open(sys.argv[1]) if l.strip()) if r["id"] not in no))' $ITEMS $NODRAFT)
+  [ -n "$ONLY" ] || fail "every scenario has an answer with no draft: nothing to read"
   .venv/bin/python scripts/eval2_blind.py bundle --items $ITEMS --rubrics $RUBS --answers $RSETS --chunks $CHUNKS --out $RD/first --key $RD/KEY.json --seed 20261123 \
-    --second-reader 0.25 --second-out $RD/second > $RD/bundle.out || fail "the blind bundles could not be made"
+    --second-reader 0.25 --second-out $RD/second --only $ONLY > $RD/bundle.out || fail "the blind bundles could not be made"
   tail -3 $RD/bundle.out
+  .venv/bin/python $R no-draft-ids --answers $RSETS --key $RD/KEY.json > /dev/null 2>&1 || fail "the no-draft answers could not be recorded in the key"
   .venv/bin/python $R reading-plan --key $RD/KEY.json --out $RD/sessions.json || fail "the reading plan could not be made"
   # the key is written outside every bundle folder; nothing of the configuration is in a bundle (eval2_blind.py); no reading is done here
-  .venv/bin/python - $RD <<'PY' || fail "a bundle names a configuration (a switch or the profile)"
-import pathlib, sys
-bad = ("answer_profile", "--answer-profile", "enable_thinking", "think-cap", "check-variant", "no-verify")
-for f in pathlib.Path(sys.argv[1]).glob("*/*.md"):
-    t = f.read_text(encoding="utf-8")
-    if any(b in t for b in bad):
-        print("a bundle file names a configuration:", f); sys.exit(1)
-PY
+  .venv/bin/python $R leak-check --dir $RD || fail "a bundle names a configuration (a switch, the profile or the notice of a cut draft)"
+  mkdir -p $RCOPY && cp -R $RD/first $RD/second $RD/sessions.json $RCOPY/
+  .venv/bin/python $R leak-check --dir $RCOPY || fail "the readers' copy names a configuration"
+  echo "bundles for the readers (no key): $RCOPY"
   mark reading $RD/KEY.json $RD/sessions.json
 fi
 RULE_RC=0; .venv/bin/python $R rule --measures $W/measures.json > $W/rule_out.txt 2> $W/rule_out.err || RULE_RC=$?
@@ -503,7 +557,7 @@ FINAL=$(sed -n 's/^\(M7 SIX-ARM TEST DONE: .*\)$/\1/p' $W/rule_out.txt | tail -n
   echo
   echo "### What this report does not show"
   echo
-  echo "Wrong, invented and harmful statements (blind readings of A, D, E and F wait: bundles in \`$W/reading/first\`, the second reader's quarter in \`$W/reading/second\`, the plan in \`$W/reading/sessions.json\`, the key in \`$W/reading/KEY.json\`, which no reader opens); the deadline of the profile counts from the call, not from the question (the replay has no search); the 4-bit build's honouring of the thinking switch is seen in the rows' reasoning tokens, not assumed. Development data only (D5 is worn after M6); the hidden part is not involved."
+  echo "Wrong, invented and harmful statements (blind readings of A, D, E and F wait: the readers' copy of the bundles, without the key, in \`$RCOPY\`; the work folder's bundles in \`$W/reading/first\`, the second reader's quarter in \`$W/reading/second\`, the plan in \`$W/reading/sessions.json\`, the key, which lists the scenarios left out because an answer had no draft, in \`$W/reading/KEY.json\`, which no reader opens). A \"build\" of the knowledge base does not settle (b): decision V8 leaves the writers and the licences to the Owner; the deadline of the profile counts from the call, not from the question (the replay has no search); the 4-bit build's honouring of the thinking switch is seen in the rows' reasoning tokens, not assumed. Development data only (D5 is worn after M6); the hidden part is not involved."
   echo
   echo "### Files"
   echo

@@ -40,7 +40,7 @@ def run_main(argv):
 
 
 def arm(P=0.5, cut=0, med=100.0, p90=150.0, ident=1.0):
-    return {"P": P, "cut": cut, "idents_per10": ident, "time": {"median_s": med, "p90_s": p90}}
+    return {"P": P, "cut": cut, "idents_per10": ident, "answer_over_limit": 0, "time": {"median_s": med, "p90_s": p90}}
 
 
 def measures(variant="V1C", ea=(0.0, 0.03), da=(0.0, 0.03), cut=0, med=100.0, p90=150.0, ident=None):
@@ -72,17 +72,86 @@ class RuleTests(unittest.TestCase):
         for d in (0.04, 0.07, 0.0999):
             self.assertEqual(self.ev(ea=(d, 0.03))[1]["kb"], "a_only", d)
 
-    def test_knowledge_base_row_3_and_the_lookup_clause(self):
-        # below +0.04: (a) only if the lookup lowers the nonexistent identifiers (cards in the test: V1C, on both pairs)
-        _, res = self.ev(ea=(0.039, 0.03), ident={"A": 2.0, "B": 2.0, "C": 1.0, "D": 1.5})
-        self.assertEqual(res["kb"], "none_lookup_helps")
-        _, res = self.ev(ea=(0.0, 0.03), ident={"A": 2.0, "B": 2.0, "C": 1.0, "D": 2.0})
-        self.assertEqual(res["kb"], "none_lookup_no_help")
-        _, res = self.ev(ea=(0.0, 0.03), ident={"A": 2.0, "B": 2.0, "C": 2.0, "D": 2.0})
-        self.assertEqual(res["kb"], "none_lookup_no_help")
-        for v in ("V1", "none"):
-            _, res = self.ev(variant=v, ea=(0.0, 0.03))
-            self.assertEqual(res["kb"], "none_lookup_not_tested", v)
+    def test_knowledge_base_row_3_never_claims_a_lookup_decision(self):
+        # review should-fix 1: (a) means cards in the draft prompt and no arm has them: "not tested by this test" in every variant, the identifier differences as description only
+        for v in ("V1", "V1C", "none"):
+            for ident in ({"A": 2.0, "B": 2.0, "C": 1.0, "D": 1.5}, {"A": 2.0, "B": 2.1, "C": 1.9, "D": 2.0}, {"A": 2.0, "B": 2.0, "C": 2.0, "D": 2.0}):
+                L, res = self.ev(variant=v, ea=(0.039, 0.03), ident=ident)
+                self.assertEqual(res["kb"], "none_lookup_not_tested", (v, ident))
+                text = "\n".join(L)
+                self.assertIn("is not tested by this test", text)
+                self.assertNotIn("(a) only\n", text)
+                self.assertNotIn("the lookup lowers them", text)
+        L, _ = self.ev(variant="V1C", ea=(0.0, 0.03), ident={"A": 2.0, "B": 2.0, "C": 1.0, "D": 1.5})
+        self.assertIn("description only, decides nothing", "\n".join(L))
+        self.assertIn("C - A -1.00", "\n".join(L))
+
+    def test_a_build_does_not_settle_b(self):
+        L, _ = self.ev(ea=(0.12, 0.03))
+        self.assertIn("does not settle (b)", "\n".join(L))
+        self.assertIn("V8", "\n".join(L))
+
+    def test_the_owners_decisions_of_2026_11_23(self):
+        # (1) narrow: a cut failure that comes with a time failure is "neither"
+        L, res = self.ev(cut=6, med=200.0)
+        self.assertEqual(len(res["thorough_possible"]), 1)
+        self.assertTrue(res["thorough_possible"][0].startswith("neither"))
+        # a time failure alone is the second row
+        _, res = self.ev(med=200.0)
+        self.assertTrue(any(p.startswith("time_fails") for p in res["thorough_possible"]))
+        # the single place for the other reading: TIME_FAIL_TAKES_CUT
+        old = R.TIME_FAIL_TAKES_CUT
+        try:
+            R.TIME_FAIL_TAKES_CUT = True
+            _, res = self.ev(cut=6, med=200.0)
+            self.assertTrue(any(p.startswith("time_fails") for p in res["thorough_possible"]))
+            _, res = self.ev(cut=6)                                         # cut alone still fails: neither
+            self.assertTrue(res["thorough_possible"][0].startswith("neither"))
+        finally:
+            R.TIME_FAIL_TAKES_CUT = old
+        # (2) under none, thinking alone MAY go on to B4, and the printed outcome says so
+        _, res = self.ev(variant="none")
+        self.assertTrue(res["thorough_possible"][0].startswith("goes_on_to_B4"))
+        self.assertIn("thinking alone MAY go on to B4", res["thorough_possible"][0])
+        old = R.NONE_THINKING_MAY_GO_TO_B4
+        try:
+            R.NONE_THINKING_MAY_GO_TO_B4 = False
+            _, res = self.ev(variant="none")
+            self.assertTrue(res["thorough_possible"][0].startswith("waits for the Owner"))
+        finally:
+            R.NONE_THINKING_MAY_GO_TO_B4 = old
+        self.assertIn("TIME_FAIL_TAKES_CUT", R.RULE_TEXT)
+        self.assertIn("NONE_THINKING_MAY_GO_TO_B4", R.RULE_TEXT)
+        self.assertIn("stays NARROW", R.RULE_TEXT)
+        self.assertNotIn("unload-others", (ROOT / "scripts/m7_four_way.sh").read_text(encoding="utf-8"))
+
+    def test_checking_failures_above_the_limit_mark_the_arm(self):
+        m = measures()
+        for k, e in (("C", 2), ("D", 3), ("F", 0)):
+            m["arms"].setdefault(k, arm())
+            m["arms"][k]["check"] = {"status": {"error": e, "not_json": 1, "cut": 0, "no_patch": 49 - e}}
+        L, res = R.evaluate(m)
+        self.assertEqual(res["check_failures_above_limit"], ["D"])            # more than 2 of 50: 3; exactly 2 is at the limit
+        text = "\n".join(L)
+        self.assertIn("arm D: error 3, not_json 1, cut 0", text)
+        self.assertIn("CHECK FAILURES ABOVE LIMIT", text)
+        p = Path(tempfile.mkdtemp()) / "m.json"
+        p.write_text(json.dumps(m))
+        code, out, _ = run_main(["rule", "--measures", str(p)])
+        self.assertEqual(code, 0)
+        self.assertTrue(out.strip().splitlines()[-1].endswith("check failures above limit: D"))
+        shutil.rmtree(p.parent, True)
+
+    def test_an_answer_over_the_limit_stops_the_rule(self):
+        m = measures()
+        m["arms"]["D"]["answer_over_limit"] = 1
+        with self.assertRaises(R.SixError) as cm:
+            R.evaluate(m)
+        self.assertIn("arm D: 1 answers over", str(cm.exception))
+        m = measures()
+        del m["arms"]["E"]["answer_over_limit"]
+        with self.assertRaises(R.SixError):                                  # a missing measure is not a pass
+            R.evaluate(m)
 
     def test_the_thorough_row_waits_for_the_reading_and_prints_no_final_choice(self):
         L, res = self.ev()
@@ -451,6 +520,30 @@ class ScriptTests(unittest.TestCase):
         r = self.sh("--dry-run", "--check-variant", "V1", "--think-cap", "100", "--report", "runs/m7/M7_SIX_ARM.md", "--work", tempfile.mkdtemp())
         self.assertEqual(r.returncode, 2)
 
+    def test_a_real_run_needs_the_pilots_report_and_refuses_a_dry_run_record_and_the_plants(self):
+        base = ("--check-variant", "V1", "--think-cap", "100", "--check-variant-source", "a", "--think-cap-source", "b")
+        r = self.sh(*base, "--pilot-report", "/nonexistent/M7_PILOT.md")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("pilot's report", r.stderr)
+        td = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, td, True)
+        (td / "p.md").write_text("# M7 pilot (DRY RUN: stub model; no number below is a measurement)\n", encoding="utf-8")
+        r = self.sh(*base, "--pilot-report", str(td / "p.md"))
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("dry run", r.stderr)
+        r = self.sh(*base, "--plant-cut", "x")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("dry runs only", r.stderr)
+        text = SCRIPT.read_text(encoding="utf-8")
+        for needle in ("pilot-check", "models-check", "server-gate", "--pin $PILOT", "pilot_report=$PILOT", "leak-check", "bodies-relation", "check-errors"):
+            self.assertIn(needle, text)
+
+    def test_the_arms_run_in_the_order_d_f_a_c_e(self):
+        text = SCRIPT.read_text(encoding="utf-8")
+        pos = [text.index(f"if ! stage_done {st}; then") if st != "ans_c" else text.index("&& ! stage_done ans_c") for st in ("ans_d", "ans_f", "ans_a", "ans_c", "ans_e")]
+        self.assertEqual(pos, sorted(pos))
+        self.assertIn("ECHOREF=$W/ans_d5_D.jsonl.manifest.json", text)
+
     def test_fail_after_is_for_dry_runs_only(self):
         r = self.sh("--check-variant", "V1", "--think-cap", "100", "--check-variant-source", "a", "--think-cap-source", "b", "--fail-after", "ans_a")
         self.assertEqual(r.returncode, 2)
@@ -542,6 +635,400 @@ class SmallChangesToExistingCode(unittest.TestCase):
             t.tearDown()
 
 
+class ChecksOfTheShellScript(unittest.TestCase):
+    """Every check the shell script makes, run with a planted mismatch (review: a removed check must fail a default test)."""
+
+    def setUp(self):
+        self.td = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.td, True)
+
+    def rows(self, name, rows, manifest=None):
+        p = self.td / name
+        p.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+        if manifest is not None:
+            Path(str(p) + ".manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        return p
+
+    def g(self, *argv):
+        r = subprocess.run([sys.executable, str(ROOT / "scripts/m5_g_rule.py"), *argv], cwd=str(ROOT), capture_output=True, text=True, timeout=60)
+        return r.returncode
+
+    # --- the commands of m5_g_rule.py the chain calls
+    def test_check_answers_packs_equal_and_check_echo_fail_on_a_planted_mismatch(self):
+        good = self.rows("a.jsonl", [{"id": "1", "text": "t", "pack": ["x"], "error": None}], {"mode": "default", "ended": "t", "model_echoed": "m"})
+        self.assertEqual(self.g("check-answers", "--file", str(good), "--expect", "1", "--mode", "default"), 0)
+        self.assertEqual(self.g("check-answers", "--file", str(good), "--expect", "2", "--mode", "default"), 1)         # a row missing
+        self.assertEqual(self.g("check-answers", "--file", str(good), "--expect", "1", "--mode", "closed"), 1)          # another mode
+        empty = self.rows("e.jsonl", [{"id": "1", "text": " ", "pack": ["x"], "error": None}], {"mode": "default", "ended": "t"})
+        self.assertEqual(self.g("check-answers", "--file", str(empty), "--expect", "1", "--mode", "default"), 1)        # an empty answer
+        packs = self.rows("p.jsonl", [{"id": "1", "pack": ["x"]}])
+        self.assertEqual(self.g("packs-equal", "--a", str(packs), "--b", str(good)), 0)
+        other = self.rows("o.jsonl", [{"id": "1", "pack": ["y"]}])
+        self.assertEqual(self.g("packs-equal", "--a", str(other), "--b", str(good)), 1)                                 # the replay used another pack
+        m2 = self.td / "m2.json"
+        m2.write_text(json.dumps({"model_echoed": "other"}))
+        self.assertEqual(self.g("check-echo", "--stored", str(good) + ".manifest.json", "--new", str(good) + ".manifest.json"), 0)
+        self.assertEqual(self.g("check-echo", "--stored", str(good) + ".manifest.json", "--new", str(m2)), 1)           # another model echoed
+
+    # --- the leak check of the bundles
+    def test_leak_check_names_a_planted_configuration(self):
+        d = self.td / "first"
+        (d / "excerpts").mkdir(parents=True)
+        (d / "s-1.md").write_text("# Item s-1\n\nAn answer about consumer lag.\n", encoding="utf-8")
+        self.assertEqual(run_main(["leak-check", "--dir", str(d)])[0], 0)
+        for planted in ("Ask again, or without --answer-profile.", "thorough profile, EXPERIMENTAL", R.NO_DRAFT, "--think-cap 600", "enable_thinking"):
+            with self.subTest(planted=planted):
+                (d / "excerpts" / "x.md").write_text("text " + planted, encoding="utf-8")
+                code, out, _ = run_main(["leak-check", "--dir", str(d)])
+                self.assertEqual(code, 1)
+                self.assertIn("names a configuration", out)
+
+    def test_a_no_draft_row_is_left_out_of_the_bundles_and_recorded_in_the_key(self):
+        a = self.rows("A.jsonl", [{"id": "s-1", "text": "fine"}, {"id": "s-2", "text": "fine"}])
+        d = self.rows("D.jsonl", [{"id": "s-1", "text": "fine"}, {"id": "s-2", "text": R.NO_DRAFT, "cut_while_thinking": True, "truncated": True}])
+        key = self.td / "KEY.json"
+        key.write_text(json.dumps({"items": ["s-1"], "aid": {}}))
+        code, out, err = run_main(["no-draft-ids", "--answers", f"A={a}", f"D={d}", "--key", str(key)])
+        self.assertEqual(code, 0)
+        self.assertEqual(out.split(), ["s-2"])
+        k = json.load(open(key))
+        self.assertEqual(k["no_draft"], {"A": [], "D": ["s-2"]})
+        self.assertEqual(k["left_out_of_the_bundles"], ["s-2"])
+
+    # --- the request bodies of two arms' drafts
+    def parts(self, think, max_tokens, messages="m", rest="r"):
+        return {"draft_info": {"request_body_parts": {"messages_sha256": messages, "max_tokens": max_tokens, "enable_thinking": think, "rest_sha256": rest}}}
+
+    def test_bodies_relation_fails_on_each_planted_difference(self):
+        a = self.rows("A.jsonl", [{"id": "1", "pack": ["x"], **self.parts(False, 2048)}])
+        ok = self.rows("D.jsonl", [{"id": "1", "pack": ["x"], **self.parts(True, 2648)}])
+        base = ["bodies-relation", "--a", str(a), "--thinking-differs", "--think-cap", "600", "--b"]
+        self.assertEqual(run_main(base + [str(ok)])[0], 0)
+        planted = {"another rest of the body": self.parts(True, 2648, rest="r2"), "another message on the same pack": self.parts(True, 2648, messages="m2"),
+                   "thinking not switched on": self.parts(False, 2648), "another token limit": self.parts(True, 2600)}
+        for name, parts in planted.items():
+            with self.subTest(planted=name):
+                f = self.rows("x.jsonl", [{"id": "1", "pack": ["x"], **parts}])
+                code, out, _ = run_main(base + [str(f)])
+                self.assertEqual(code, 1, out)
+        f = self.rows("none.jsonl", [{"id": "1", "pack": ["x"], "draft_info": {}}])
+        self.assertEqual(run_main(base + [str(f)])[0], 1)                                  # no recorded parts is not a pass
+        # A against E (no thinking difference; other pack, other messages): the messages may differ only where the packs differ
+        e = self.rows("E.jsonl", [{"id": "1", "pack": ["y"], **self.parts(False, 2048, messages="m9")}])
+        self.assertEqual(run_main(["bodies-relation", "--a", str(a), "--b", str(e)])[0], 0)
+        e2 = self.rows("E2.jsonl", [{"id": "1", "pack": ["y"], **self.parts(False, 2048)}])  # another pack but the same messages
+        self.assertEqual(run_main(["bodies-relation", "--a", str(a), "--b", str(e2)])[0], 1)
+        e3 = self.rows("E3.jsonl", [{"id": "1", "pack": ["y"], **self.parts(True, 2048, messages="m9")}])
+        self.assertEqual(run_main(["bodies-relation", "--a", str(a), "--b", str(e3)])[0], 1)
+
+    def test_body_parts_differ_only_where_the_arms_differ(self):
+        mk = lambda think, mt, msgs=("q",): GEN.OpenAIChatGenerator("http://example.invalid/v1", "m1", api_key="k", extra_body={"chat_template_kwargs": {"enable_thinking": False, "z": 1}}).request_body(  # noqa: E731
+            [{"role": "user", "content": x} for x in msgs], mt, think)
+        a, d = GEN.body_parts(mk(False, 2048)), GEN.body_parts(mk(True, 2648))
+        self.assertEqual(a["rest_sha256"], d["rest_sha256"])
+        self.assertEqual(a["messages_sha256"], d["messages_sha256"])
+        self.assertEqual((a["enable_thinking"], d["enable_thinking"], a["max_tokens"], d["max_tokens"]), (False, True, 2048, 2648))
+        self.assertNotEqual(a["messages_sha256"], GEN.body_parts(mk(False, 2048, ("other",)))["messages_sha256"])
+        other_extra = GEN.OpenAIChatGenerator("http://example.invalid/v1", "m1", api_key="k", extra_body={"chat_template_kwargs": {"enable_thinking": False, "z": 2}}).request_body(
+            [{"role": "user", "content": "q"}], 2048, False)
+        self.assertNotEqual(a["rest_sha256"], GEN.body_parts(other_extra)["rest_sha256"])
+
+    # --- the pilot's report, the models and the server
+    def test_pilot_check(self):
+        self.assertEqual(run_main(["pilot-check", "--file", str(self.td / "none.md")])[0], 2)           # missing
+        (self.td / "e.md").write_text("", encoding="utf-8")
+        self.assertEqual(run_main(["pilot-check", "--file", str(self.td / "e.md")])[0], 2)              # empty
+        (self.td / "d.md").write_text("# M7 pilot: thinking (DRY RUN: stub model; no number below is a measurement)\n", encoding="utf-8")
+        code, _, err = run_main(["pilot-check", "--file", str(self.td / "d.md")])
+        self.assertEqual(code, 2)
+        self.assertIn("dry run", err)
+        (self.td / "r.md").write_text("# M7 pilot: thinking, and the checking pass on stored drafts\n\nResult.\n", encoding="utf-8")
+        self.assertEqual(run_main(["pilot-check", "--file", str(self.td / "r.md")])[0], 0)
+        self.assertEqual(run_main(["pilot-check", "--file", str(self.td / "none.md"), "--dry"])[0], 0)
+
+    def test_models_check_names_a_model_the_server_does_not_list(self):
+        f = self.td / "models.json"
+        f.write_text(json.dumps({"data": [{"id": "Qwen-4bit"}, {"id": "Judge-1"}]}))
+        self.assertEqual(run_main(["models-check", "--models", str(f), "--need", "Qwen-4bit", "Judge-1"])[0], 0)
+        code, _, err = run_main(["models-check", "--models", str(f), "--need", "Qwen-4bit", "Judge-2"])
+        self.assertEqual(code, 2)
+        self.assertIn("Judge-2", err)
+
+    def test_server_gate_never_unloads_another_clients_model(self):
+        st = self.td / "status.json"
+        base = ["server-gate", "--status", str(st), "--keep", "Q4", "--ours", "Q4", "Judge"]
+        st.write_text(json.dumps({"active_requests": 0, "waiting_requests": 0, "loaded_models": []}))
+        self.assertEqual(run_main(base)[0], 0)
+        st.write_text(json.dumps({"active_requests": 0, "waiting_requests": 0, "loaded_models": ["Q4"]}))
+        self.assertEqual(run_main(base), (0, "", ""))
+        st.write_text(json.dumps({"active_requests": 0, "waiting_requests": 0, "loaded_models": ["Judge"]}))
+        code, out, _ = run_main(base)
+        self.assertEqual((code, out.strip()), (0, "UNLOAD Judge"))                            # our own judge model is unloaded
+        st.write_text(json.dumps({"active_requests": 0, "waiting_requests": 0, "loaded_models": ["Q4", "GLM-other"]}))
+        code, out, err = run_main(base)
+        self.assertEqual(code, 2)
+        self.assertIn("GLM-other", err)                                                       # the message names the model
+        self.assertNotIn("UNLOAD", out)                                                       # and nothing is unloaded
+        st.write_text(json.dumps({"active_requests": 1, "waiting_requests": 0, "loaded_models": ["Q4"]}))
+        self.assertEqual(run_main(base)[0], 2)
+        st.write_text(json.dumps({"active_requests": 0, "waiting_requests": 2, "loaded_models": []}))
+        self.assertEqual(run_main(base)[0], 2)
+        st.write_text("not json")
+        self.assertEqual(run_main(base)[0], 2)
+        self.assertNotIn("--unload-others", subprocess.run(["sh", str(SCRIPT), "--help-nothing"], capture_output=True, text=True).stderr)
+
+    # --- redoing a failed checking call
+    def test_check_errors_counts_and_drops_rows_whose_check_failed(self):
+        rows = [{"id": "1", "thorough": {"r2": {"status": "error"}}}, {"id": "2", "thorough": {"r2": {"status": "no_patch"}}}, {"id": "3", "thorough": None}]
+        f = self.rows("D.jsonl", rows)
+        code, out, _ = run_main(["check-errors", "--file", str(f), "--kind", "answers"])
+        self.assertEqual(out.strip(), "check_errors=1")
+        run_main(["check-errors", "--file", str(f), "--kind", "answers", "--drop"])
+        self.assertEqual([r["id"] for r in R.rd(f)], ["2", "3"])
+        self.assertEqual([r["id"] for r in R.rd(str(f) + ".redo_dropped.jsonl")], ["1"])      # kept, never deleted
+        v = self.rows("C.jsonl", [{"id": "1", "r2": {"status": "error"}}, {"id": "2", "r2": {"status": "accepted"}}])
+        self.assertEqual(run_main(["check-errors", "--file", str(v), "--kind", "verify"])[1].strip(), "check_errors=1")
+
+    def test_check_verify_wants_every_record_without_an_error(self):
+        a = self.rows("A.jsonl", [{"id": "1"}, {"id": "2"}])
+        c = self.rows("c.jsonl", [{"id": "1", "error": None}, {"id": "2", "error": None}])
+        self.assertEqual(run_main(["check-verify", "--file", str(c), "--answers", str(a), "--expect", "2"])[0], 0)
+        self.assertEqual(run_main(["check-verify", "--file", str(c), "--answers", str(a), "--expect", "3"])[0], 1)
+        self.assertEqual(run_main(["check-verify", "--file", str(self.td / "none.jsonl"), "--answers", str(a), "--expect", "2"])[0], 1)
+        bad = self.rows("b.jsonl", [{"id": "1", "error": None}, {"id": "2", "error": "boom"}])
+        self.assertEqual(run_main(["check-verify", "--file", str(bad), "--answers", str(a), "--expect", "2"])[0], 1)
+        missing = self.rows("m.jsonl", [{"id": "1", "error": None}, {"id": "9", "error": None}])
+        self.assertEqual(run_main(["check-verify", "--file", str(missing), "--answers", str(a), "--expect", "2"])[0], 1)
+
+    def test_reading_plan_has_13_first_and_4_second_sessions_for_50_scenarios(self):
+        ids = [f"s-{i:02d}" for i in range(50)]
+        key = self.td / "KEY.json"
+        key.write_text(json.dumps({"items": ids, "second_reader_ids": ids[:13]}))
+        out = self.td / "sessions.json"
+        self.assertEqual(run_main(["reading-plan", "--key", str(key), "--out", str(out)])[0], 0)
+        plan = json.load(open(out))
+        self.assertEqual((len(plan["first_reader_sessions"]), len(plan["second_reader_sessions"])), (13, 4))
+        self.assertEqual(sorted(i for s_ in plan["first_reader_sessions"] for i in s_), ids)
+        self.assertEqual(max(len(s_) for s_ in plan["first_reader_sessions"]), 4)
+
+    def test_prompts_default_fails_on_a_planted_prompt(self):
+        from unittest import mock
+        import eval2
+        from kafka_sre_rag import evalhooks, prompts
+        from test_verify_pass import CHUNKS
+        item = {"id": "s-1", "question": "Why is lag growing?"}
+        items = self.rows("items.jsonl", [item])
+        with mock.patch.object(evalhooks, "chunks_by_ids", lambda ids: [c for i in ids for c in CHUNKS if c["id"] == i]):
+            pack = [CHUNKS[0]["id"]]
+            h = eval2.messages_fingerprint(prompts.answer_messages(eval2.full_question(item), CHUNKS[:1]))[0]
+            good = self.rows("good.jsonl", [{"id": "s-1", "pack": pack, "prompt_sha256": h}])
+            bad = self.rows("bad.jsonl", [{"id": "s-1", "pack": pack, "prompt_sha256": "0" * 64}])
+            self.assertEqual(run_main(["prompts-default", "--items", str(items), "--answers", str(good)])[0], 0)
+            self.assertEqual(run_main(["prompts-default", "--items", str(items), "--answers", str(bad)])[0], 1)
+
+
+class MeasuresOfTheChain(unittest.TestCase):
+    def test_a_cut_while_thinking_row_counts_as_cut_and_empty_and_has_no_answer_tokens(self):
+        rows = [{"id": "1", "text": "fine", "truncated": False}, {"id": "2", "text": R.NO_DRAFT, "truncated": True, "cut_while_thinking": True},
+                {"id": "3", "text": "long answer cut at the limit", "truncated": True}, {"id": "4", "text": "", "truncated": False}]
+        c = R.row_counts(rows)
+        self.assertEqual((c["cut"], c["cut_while_thinking"], c["empty"], c["no_draft_ids"]), (2, 1, 2, ["2"]))
+        self.assertTrue(R.is_no_draft(rows[1]))
+        self.assertIsNone(R.answer_tokens(rows[1]))
+        # the empty count follows the text of verify_pass.NO_DRAFT, imported, not a copy
+        self.assertTrue(R.is_no_draft({"id": "5", "text": R.NO_DRAFT}))
+        self.assertFalse(R.is_no_draft({"id": "6", "text": "No answer was found in the excerpts."}))
+
+    def test_answer_tokens(self):
+        self.assertEqual(R.answer_tokens({"tokens_detail": {"draft": 1500}, "draft_info": {"reasoning_tokens": 400}}), 1100)             # the server's own counts
+        self.assertEqual(R.answer_tokens({"tokens_detail": {"draft": 1500}, "draft_info": {"answer_chunks": 1000}}), 1000)               # the chunk count
+        self.assertEqual(R.answer_tokens({"tokens_detail": {"draft": 2048}, "draft_info": {}}), 2048)                                    # an arm without thinking
+        self.assertEqual(R.answer_tokens({"tokens_detail": {"draft": 3000}, "draft_info": {"answer_cap_hit": True, "answer_chunks": 2048}}), 2048)
+        self.assertIsNone(R.answer_tokens({"tokens_detail": {}, "draft_info": {}}))
+
+    def test_arm_time_adds_search_retrieval_draft_and_check_and_needs_the_draft_seconds(self):
+        rows = [{"id": "a", "seconds": {"draft": 40.0, "thinking": 10.0, "check": 5.0}}, {"id": "b", "seconds": {"draft": 20.0, "check": 0.0}}]
+        t = R.arm_time(rows, {"a": 6.0, "b": 8.0}, 2.0)
+        self.assertEqual(t["median_s"], statistics_median([6.0 + 2.0 + 40.0 + 5.0, 8.0 + 2.0 + 20.0]))
+        self.assertEqual((t["draft_median_s"], t["thinking_median_s"], t["check_median_s"], t["checked"]), (30.0, 10.0, 2.5, 1))
+        with self.assertRaises(R.SixError):
+            R.arm_time([{"id": "a", "seconds": {}}], {"a": 1.0}, 1.0)
+
+    def test_judged_points_split_and_the_unverified_verdict(self):
+        rub = [{"id": "s-1", "must": [{"id": "p1", "chunk_sets": [["c1"]]}, {"id": "p2", "chunk_sets": []}, {"id": "p3", "chunk_sets": [["c2"]]}]}]
+        res = [{"id": "s-1", "set": "A", "valid_reply": True, "reference_given": False,
+                "must": {"p1": {"verdict": "present"}, "p2": {"verdict": "absent"}, "p3": {"verdict": "absent", "quote_ok": False, "judge_verdict": "present"}}},
+               {"id": "s-1", "set": "A", "valid_reply": True, "reference_given": False,
+                "must": {"p1": {"verdict": "present"}, "p2": {"verdict": "present"}, "p3": {"verdict": "absent"}}},
+               {"id": "s-1", "set": "A", "valid_reply": False, "reference_given": False, "must": {"p1": {"verdict": "present"}, "p2": {"verdict": "present"}, "p3": {"verdict": "present"}}},
+               {"id": "s-1", "set": "B", "valid_reply": True, "reference_given": False, "must": {"p1": {"verdict": "present"}, "p2": {"verdict": "present"}, "p3": {"verdict": "present"}}}]
+        # pass 1: with a covering set 1 of 2 present (p3 is "unverified", not present), without 0 of 1; pass 2: with 1 of 2, without 1 of 1; invalid and other-set rows left out
+        self.assertEqual(R.judged_points(res, rub, "A"), {"s-1": (1.0, 2.0, 0.5, 1.0)})
+        self.assertEqual(R.judged_points(res, rub, "B"), {"s-1": (2.0, 2.0, 1.0, 1.0)})
+
+    @unittest.skipUnless((ROOT / "eval/m6/d5/rubrics.jsonl").is_file(), "D5 rubrics not in this tree")
+    def test_the_d5_points_split_269_227_42(self):
+        self.assertEqual(R.point_counts(R.rd(ROOT / "eval/m6/d5/rubrics.jsonl")), (269, 227, 42))
+
+    def test_mech_arm_leaves_out_the_lookup_kinds(self):
+        td = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, td, True)
+        ids = {"M1": ["a1", "a2"], "M2": ["b1"], "M3": ["c1"]}
+        kinds = {"a1": "name_setting", "a2": "other", "b1": "is_real", "c1": "x"}
+        mk = lambda name, rows: (td / name).write_text("".join(json.dumps({"format_ok": True, "outcome": "answered", **r}) + "\n" for r in rows), encoding="utf-8")  # noqa: E731
+        mk("score_ma_D.jsonl", [{"id": "a1", "all_pass": True}, {"id": "a2", "all_pass": False}, {"id": "b1", "all_pass": True}])
+        mk("score_m3_D.jsonl", [{"id": "c1", "all_pass": True}])
+        out = R.mech_arm(td, "D", ids, kinds)
+        self.assertEqual((out["n"], out["pass_all"], out["n_without_lookup"], out["pass_without_lookup"]), (4, 3, 2, 1))
+        self.assertEqual(set(R.LOOKUP_KINDS), {"name_setting", "error_name", "is_real", "version_trap", "connect_rest"})
+
+    def test_the_1_96_intervals_of_b_against_c(self):
+        mk = lambda P: {"P_by_id": dict(P)}  # noqa: E731
+        m = {"arms": {"A": mk({"1": 0.2, "2": 0.4, "3": 0.6}), "B": mk({"1": 0.3, "2": 0.5, "3": 0.9}), "C": mk({"1": 0.2, "2": 0.5, "3": 0.6})}}
+        p = R.pair(m, "B", "A")
+        d = [0.1, 0.1, 0.3]
+        mean_ = sum(d) / 3
+        se_ = R.se(d)
+        self.assertAlmostEqual(p["ci196"][0], mean_ - 1.96 * se_)
+        self.assertAlmostEqual(p["ci196"][1], mean_ + 1.96 * se_)
+        self.assertEqual(R.Z90_2, 1.96)
+        self.assertEqual(R.pair(m, "B", "C")["n"], 3)
+        full = lambda **kw: {"P": 0.5, "P_by_id": {}, "points": {k: {"present": 1.0, "of": 2} for k in ("all", "with_set", "without_set")}, "cut": 0, "cut_while_thinking": 0, "empty": 0,  # noqa: E731
+                             "idents_per10": 1.0, "time": {"median_s": 1.0, "p90_s": 1.0, "draft_median_s": 1.0, "thinking_median_s": None, "check_median_s": 0.0}, "check": {"status": {}}, **kw}
+        mm = {"stub": True, "variant": "V1C", "think_cap": 600, "sizes": {"D5": 8, "points": 35, "points_with_set": 24, "points_without_set": 11},
+              "retrieval_frozen_median_s": 1.0, "retrieval_timing_n": 20, "arms": {"A": full(), "B": full()},
+              "pairs": {"B-A": {"mean": 0.1, "se": 0.05, "n": 8, "ci196": [0.002, 0.198]}, "C-A": {"mean": 0.0, "se": 0.04, "n": 8, "ci196": [-0.078, 0.078]}, "B-C": {"mean": 0.1, "se": 0.03, "n": 8, "ci196": [0.04, 0.16]}},
+              "mech": {}}
+        md = R.measures_md(mm)
+        self.assertIn("P (8 answers, 2 passes)", md)                 # the size comes from the data, not from a constant
+        self.assertIn("B-A: +0.100, interval [+0.002, +0.198]", md)
+        self.assertIn("B-C: +0.100, interval [+0.040, +0.160]", md)
+        self.assertIn("0.025 each side", md)
+
+
+def statistics_median(xs):
+    import statistics
+    return statistics.median(xs)
+
+
+class AnswerCap(unittest.TestCase):
+    """K2: the ANSWER part of a thinking draft is stopped at the answer limit, exactly as a draft without thinking is cut; the thinking part is limited as before."""
+
+    @staticmethod
+    def stream(events):
+        body = "".join("data: %s\n\n" % json.dumps(dict(e, model="m1")) for e in events) + "data: [DONE]\n\n"
+        return httpx.Response(200, text=body)
+
+    def gen(self, events, sent=None):
+        def respond(req):
+            if req.url.path.endswith("/models"):
+                return httpx.Response(404)
+            if sent is not None:
+                sent.append(req.content)
+            return self.stream(events)
+        g = GEN.OpenAIChatGenerator("http://example.invalid/v1", "m1", api_key="k", extra_body={"chat_template_kwargs": {"enable_thinking": False}})
+        g.client = httpx.Client(transport=httpx.MockTransport(respond))
+        return g
+
+    MSGS = [{"role": "user", "content": "q"}]
+
+    def test_a_long_answer_after_short_thinking_is_cut_at_2048_answer_tokens(self):
+        events = [{"choices": [{"delta": {"reasoning_content": "t"}}]} for _ in range(20)]
+        events += [{"choices": [{"delta": {"content": "w%d " % i}}]} for i in range(3000)]
+        events += [{"choices": [{"delta": {}, "finish_reason": "stop"}]}]
+        shown, info = [], {}
+        text, toks, trunc = self.gen(events).chat(self.MSGS, 2048 + 1500, shown.append, thinking=True, info=info, answer_cap=2048)
+        self.assertEqual(len(shown), 2048)
+        self.assertEqual(text.split()[-1], "w2047")
+        self.assertTrue(trunc)                                              # marked cut, as a draft cut by max_tokens is
+        self.assertEqual((info["finish_reason"], info["answer_chunks"], info["answer_cap_hit"], info["cut_while_thinking"]), ("length", 2048, True, False))
+        self.assertEqual(toks, 2048 + 20)                                   # no usage arrived: the chunks read stand in for it
+
+    def test_the_same_stream_without_the_cap_is_read_to_its_end(self):
+        events = [{"choices": [{"delta": {"reasoning_content": "t"}}]}] + [{"choices": [{"delta": {"content": "w "}}]} for _ in range(100)] + [{"choices": [{"delta": {}, "finish_reason": "stop"}]}]
+        info = {}
+        text, _, trunc = self.gen(events).chat(self.MSGS, 3000, lambda s: None, thinking=True, info=info)
+        self.assertEqual((len(text.split()), trunc, info["answer_chunks"], info["answer_cap_hit"]), (100, False, 100, False))
+
+    def test_an_answer_under_the_cap_is_not_cut_and_the_cap_does_not_count_the_thinking(self):
+        events = [{"choices": [{"delta": {"reasoning_content": "t"}}]} for _ in range(30)] + [{"choices": [{"delta": {"content": "w "}}]} for _ in range(5)]
+        events += [{"choices": [{"delta": {}, "finish_reason": "stop"}]}]
+        info = {}
+        text, _, trunc = self.gen(events).chat(self.MSGS, 3000, lambda s: None, thinking=True, info=info, answer_cap=10)
+        self.assertEqual((len(text.split()), trunc, info["answer_cap_hit"]), (5, False, False))
+
+    def test_inline_think_block_counts_after_the_closing_tag_only(self):
+        events = [{"choices": [{"delta": {"content": "<think>"}}]}] + [{"choices": [{"delta": {"content": "x "}}]} for _ in range(50)]
+        events += [{"choices": [{"delta": {"content": "</think>"}}]}] + [{"choices": [{"delta": {"content": "a "}}]} for _ in range(40)]
+        info = {}
+        text, _, trunc = self.gen(events).chat(self.MSGS, 3000, lambda s: None, thinking=True, info=info, answer_cap=10)
+        self.assertTrue(trunc)
+        self.assertEqual(info["answer_chunks"], 10)
+        self.assertEqual(text.split(), ["a"] * 9)                           # the chunk with the tag is the first of the ten and is no text
+
+    def test_thinking_that_never_ends_is_cut_while_thinking_as_before(self):
+        events = [{"choices": [{"delta": {"reasoning_content": "t"}}]} for _ in range(40)] + [{"choices": [{"delta": {}, "finish_reason": "length"}]}]
+        info = {}
+        with self.assertRaises(GEN.EmptyAnswerError):
+            self.gen(events).chat(self.MSGS, 30, lambda s: None, thinking=True, info=info, answer_cap=10)
+        self.assertTrue(info["cut_while_thinking"])
+        self.assertFalse(info["answer_cap_hit"])
+
+    def test_the_cap_changes_nothing_that_is_sent_and_a_call_without_thinking_is_unchanged_byte_for_byte(self):
+        events = [{"choices": [{"delta": {"content": "w "}}]} for _ in range(30)] + [{"choices": [{"delta": {}, "finish_reason": "stop"}]}]
+        s1, s2, s3 = [], [], []
+        i1, i3 = {}, {}
+        r1 = self.gen(events, s1).chat(self.MSGS, 2048, lambda s: None, thinking=False, info=i1)
+        r2 = self.gen(events, s2).chat(self.MSGS, 2048, lambda s: None, thinking=False, info={}, answer_cap=2048)
+        self.assertEqual(r1, r2)
+        self.assertEqual(s1, s2)
+        r3 = self.gen(events, s3).chat(self.MSGS, 2048, lambda s: None, thinking=True, info=i3, answer_cap=2048)
+        self.assertEqual(r3[0], r1[0])
+        self.assertEqual(GEN.body_parts(json.loads(s3[0]))["rest_sha256"], GEN.body_parts(json.loads(s1[0]))["rest_sha256"])
+        self.assertEqual(i1["request_body_parts"]["max_tokens"], 2048)
+
+    def test_the_profile_passes_the_cap_to_a_thinking_draft_only(self):
+        from kafka_sre_rag import verify_pass as vp
+        from test_thorough_profile import Gen
+        from test_verify_pass import CHUNKS, Q
+        g = Gen()
+        vp.draft_and_check(Q, [{"role": "user", "content": "q"}], CHUNKS, g, 2048, vp.Profile(thinking=True, verify=False, thinking_tokens=600), None)
+        self.assertEqual(g.calls[-1]["kw"]["answer_cap"], 2048)
+        self.assertEqual(g.calls[-1]["max_tokens"], 2048 + 600)
+        g = Gen()
+        vp.draft_and_check(Q, [{"role": "user", "content": "q"}], CHUNKS, g, 2048, vp.Profile(thinking=False, verify=False), None)
+        self.assertNotIn("answer_cap", g.calls[-1]["kw"])                   # arm A: the call is as before
+        self.assertEqual(g.calls[-1]["max_tokens"], 2048)
+
+    def test_time_to_first_token_and_cached_prompt_tokens_are_recorded(self):
+        events = [{"choices": [{"delta": {"content": "A"}}]}, {"choices": [{"delta": {}, "finish_reason": "stop"}]},
+                  {"choices": [], "usage": {"completion_tokens": 1, "prompt_tokens": 900, "prompt_tokens_details": {"cached_tokens": 850}}}]
+        info = {}
+        self.gen(events).chat(self.MSGS, 50, lambda s: None, thinking=False, info=info)
+        self.assertEqual(info["cached_prompt_tokens"], 850)
+        self.assertGreaterEqual(info["ttft_s"], 0)
+        info2 = {}
+        self.gen([{"choices": [{"delta": {"content": "A"}, "finish_reason": "stop"}]}]).chat(self.MSGS, 50, lambda s: None, thinking=False, info=info2)
+        self.assertIsNone(info2["cached_prompt_tokens"])                    # the server did not report it
+
+    def test_mlx_generator_cap_counts_tokens_after_the_close_tag(self):
+        class Tok:
+            def apply_chat_template(self, messages, add_generation_prompt, tokenize, enable_thinking):
+                return "P"
+
+        class Piece:
+            def __init__(self, text, n, finish=None):
+                self.text, self.generation_tokens, self.finish_reason, self.prompt_tokens = text, n, finish, 5
+
+        pieces = [Piece("<think>", 1)] + [Piece("x", 1 + i) for i in range(1, 20)] + [Piece("</think>", 21)] + [Piece("a ", 21 + i) for i in range(1, 100)]
+        g = object.__new__(GEN.MLXGenerator)
+        g.tok, g.model, g._stream = Tok(), None, lambda *a, **k: iter(pieces)
+        text, toks, trunc = g.chat([{"role": "user", "content": "q"}], 3000, thinking=True, answer_cap=10)
+        self.assertTrue(trunc)
+        self.assertEqual(len(text.split()), 10)
+        self.assertEqual(toks, 31)
+
+
 @unittest.skipUnless(os.environ.get("M7_SIX_E2E") == "1", "opt-in: about 1.5 minutes per variant (M7_SIX_E2E=1)")
 class EndToEndDryRun(unittest.TestCase):
     def run_dry(self, variant, *extra):
@@ -555,18 +1042,57 @@ class EndToEndDryRun(unittest.TestCase):
             with self.subTest(variant=variant):
                 td, r = self.run_dry(variant)
                 self.assertEqual(r.returncode, 0, r.stdout[-2000:] + r.stderr[-2000:])
-                self.assertEqual(r.stdout.strip().splitlines()[-1], "M7 SIX-ARM TEST DONE: knowledge-base row: " + r.stdout.strip().splitlines()[-1].split("row: ")[1])
+                self.assertRegex(r.stdout.strip().splitlines()[-1], r"^M7 SIX-ARM TEST DONE: knowledge-base row: \S+; thorough-profile row: WAITS FOR THE READING")
                 self.assertIn("thorough-profile row: WAITS FOR THE READING", r.stdout)
                 self.assertNotIn("DRY RUN FAILED", r.stdout)
 
     def test_a_planted_failure_and_a_restart_keep_the_finished_stages(self):
-        td, r = self.run_dry("V1", "--fail-after", "ans_d")
+        td, r = self.run_dry("V1", "--fail-after", "ans_a")          # D, F and A are done (the order is D, F, A, C, E)
         self.assertEqual(r.returncode, 1)
         w = Path(td) / "w"
-        before = {p: R.sha256_file(w / p) for p in ("ans_d5_A.jsonl", "ans_d5_D.jsonl", "check_d5_C.jsonl", "stage_ans_d.done")}
+        self.assertTrue((w / "logs/m7_four_way.failed").is_file())
+        before = {p: R.sha256_file(w / p) for p in ("ans_d5_A.jsonl", "ans_d5_D.jsonl", "ans_d5_F.jsonl", "stage_ans_d.done", "stage_ans_f.done", "stage_ans_a.done")}
         r2 = subprocess.run(["sh", str(SCRIPT), "--dry-run", "--work", str(w), "--check-variant", "V1", "--think-cap", "600"], cwd=str(ROOT), capture_output=True, text=True, timeout=1500)
         self.assertEqual(r2.returncode, 0, r2.stdout[-2000:])
         self.assertEqual(before, {p: R.sha256_file(w / p) for p in before})
+        self.assertFalse((w / "logs/m7_four_way.failed").exists())          # the restart cleared the failed marker
+
+    def test_a_planted_failure_leaves_the_failed_marker_until_a_restart(self):
+        td, r = self.run_dry("none", "--fail-after", "ans_f")
+        self.assertEqual(r.returncode, 1)
+        self.assertTrue((Path(td) / "w/logs/m7_four_way.failed").is_file())
+
+    def test_a_draft_cut_while_thinking_completes_the_chain_without_a_leak(self):
+        td, r = self.run_dry("V1C", "--plant-cut", "Synthetic question 2:")
+        self.assertEqual(r.returncode, 0, r.stdout[-2500:] + r.stderr[-2000:])
+        w = Path(td) / "w"
+        key = json.load(open(w / "reading/KEY.json"))
+        self.assertEqual(key["left_out_of_the_bundles"], ["syn-02"])
+        self.assertNotIn("syn-02", key["items"])
+        self.assertEqual(run_main(["leak-check", "--dir", str(w / "reading_for_readers")])[0], 0)
+        self.assertFalse((w / "reading_for_readers/KEY.json").exists())
+        m = json.load(open(w / "measures.json"))
+        self.assertEqual((m["arms"]["D"]["cut"], m["arms"]["D"]["cut_while_thinking"], m["arms"]["D"]["empty"]), (1, 1, 1))
+        self.assertEqual(m["arms"]["D"]["no_draft_ids"], ["syn-02"])
+        self.assertEqual(m["arms"]["A"]["empty"], 0)
+
+    def test_a_check_that_keeps_failing_is_redone_and_then_marked(self):
+        td, r = self.run_dry("V1C", "--plant-check-fail", "Synthetic question 1:,Synthetic question 3:,Synthetic question 4:")
+        self.assertEqual(r.returncode, 0, r.stdout[-2500:] + r.stderr[-2000:])
+        self.assertIn("redo pass 2", r.stdout)
+        self.assertIn("CHECK FAILURES ABOVE LIMIT", r.stdout)
+        self.assertIn("check failures above limit: C, D, F", r.stdout)
+        self.assertTrue((Path(td) / "w/check_d5_C.jsonl.redo_dropped.jsonl").is_file())
+
+    def test_a_second_invocation_changes_nothing(self):
+        td, r = self.run_dry("V1")
+        self.assertEqual(r.returncode, 0)
+        w = Path(td) / "w"
+        snap = lambda: {str(p.relative_to(w)): R.sha256_file(p) for p in sorted(w.rglob("*")) if p.is_file() and "logs" not in p.parts}  # noqa: E731
+        before = snap()
+        r2 = subprocess.run(["sh", str(SCRIPT), "--dry-run", "--work", str(w), "--check-variant", "V1", "--think-cap", "600"], cwd=str(ROOT), capture_output=True, text=True, timeout=1500)
+        self.assertEqual(r2.returncode, 0, r2.stdout[-2000:])
+        self.assertEqual(before, snap())
 
 
 if __name__ == "__main__":

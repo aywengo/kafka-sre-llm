@@ -563,11 +563,24 @@ class StubGen:
     identity = {"backend": "stub", "model": "stub", "adapter": None}
 
     def chat(self, messages, max_tokens, on_token=None, **kw):
-        from kafka_sre_rag import prompts
+        from kafka_sre_rag import generators, prompts
+        user = messages[-1]["content"] if messages else ""
+        # M7 K4, dry runs only: a failure planted by the chain's --plant-* options (environment variables read here, comma-separated substrings of a question)
+        hit = lambda var: any(x and x in user for x in os.environ.get(var, "").split(","))  # noqa: E731
         if messages[0]["content"] == prompts.EXPAND_SYSTEM:
             return "consumer group, kafka-consumer-groups.sh, --describe", 0, False
         if messages[0]["content"] == prompts.VERIFY_SYSTEM:  # the checking pass of the thorough profile
+            if hit("M7_STUB_CHECK_FAIL"):
+                raise RuntimeError("planted failure of the checking call (dry run)")
             return '{"replacements": []}', 0, False
+        info = kw.get("info")
+        if isinstance(info, dict):   # what the real generator records of the request, so that the chain's checks of the request bodies run in a dry run too
+            body = generators.OpenAIChatGenerator("http://example.invalid/v1", "stub", extra_body={"chat_template_kwargs": {"enable_thinking": False}}).request_body(
+                messages, max_tokens, kw.get("thinking"))
+            info["request_body_parts"] = generators.body_parts(body)
+            if kw.get("thinking") and hit("M7_STUB_CUT_WHILE_THINKING"):
+                info["cut_while_thinking"] = True
+                raise generators.EmptyAnswerError("planted: cut while thinking (dry run)")
         return "[stub answer: no model was called]", 0, False
 
 

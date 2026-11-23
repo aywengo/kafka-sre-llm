@@ -22,6 +22,8 @@ statements, harmful statements) are printed as "needs the reading"; the code nev
   rule --measures F                           the rule by code
   reading-plan --key F --out F                the session plan of the blind reading (nothing is read here)
   call-counts ...                             expected and found model calls per stage
+  leak-check, no-draft-ids, bodies-relation, check-errors, pilot-check, models-check, server-gate
+                                              the checks the shell script makes, as commands (each tested with a planted mismatch)
 
 Exit codes: 0 done; 1 a check failed; 2 refused or an input is missing (a missing input is never a pass).
 """
@@ -42,16 +44,19 @@ sys.path.insert(0, str(ROOT))
 import m5_g_rule as G  # noqa: E402  (the development check's helpers: called, not copied)
 import m5_b4_served as S  # noqa: E402
 import m6_d5_rule as R6  # noqa: E402
+from kafka_sre_rag.verify_pass import NO_DRAFT  # noqa: E402  (the text of a draft cut while thinking: imported, never copied)
 
 SCHEMA = 1
 VARIANTS = ("V1", "V1C", "none")
 BUNDLE_SEED = 20261123           # drawn before any answer exists (it is in the rule text); the names of the answers of a scenario come from it
 Z90 = 1.645                      # a 90 % interval, one comparison
-Z90_2 = 1.960                    # a 90 % interval corrected for two comparisons (0.05 each side)
+Z90_2 = 1.960                    # a 90 % interval corrected for two comparisons (0.025 each side)
 KB_BUILD, KB_BUILD_LOWER, KB_A_ONLY = 0.10, 0.04, 0.04
 D_WRONG_MAX, D_COV_MIN, D_HARM_PLUS, D_CUT_PCT, D_MED_S, D_P90_S = -2.0, -0.04, 2, 10, 180.0, 270.0
 LOOKUP_KINDS = ("name_setting", "error_name", "is_real", "version_trap", "connect_rest")   # tier A kinds where a card built from the question alone can state the expected answer (K7)
-NO_DRAFT_PREFIX = "No answer: the model was cut off by the token limit while thinking"
+ANSWER_LIMIT = 2048              # the answer limit of every arm (tokens); a thinking arm's answer PART is stopped here too (generators answer_cap)
+CHECK_ERROR_LIMIT = 2            # of 50 answers: more checking calls with status error than this after the redo passes mark the arm "check failures above limit"
+REDO_PASSES = 2                  # a check status error is redone on resume (C, D, F) this many times; the shell script uses the same number
 STUB_NOTE = "DRY RUN: stub model, stub judge, stand-in reranker; no number below is a measurement"
 
 # the sets that are judged, by variant: set name -> file stem of its D5 answers
@@ -63,13 +68,22 @@ CODE_PINS = tuple(p for p in R6.CODE_PINS if p != "scripts/m6_d5_answers.sh") + 
     "kafka_sre_rag/verify_pass.py", "kafka_sre_rag/kb_lookup.py", "scripts/eval2_blind.py", "scripts/m7_perfect_packs.py",
     "scripts/m7_four_way.sh", "scripts/m7_six_arm_rule.py")
 CODE_FILES = ("m7_four_way.sh", "m7_six_arm_rule.py")
+# The two questions the Owner decided on 2026-11-23 (each a single place; the text of the decision is in RULE_TEXT):
+TIME_FAIL_TAKES_CUT = False      # "Errors improve but time fails" stays NARROW: a cut failure that comes with a time failure is "neither"
+NONE_THINKING_MAY_GO_TO_B4 = True   # under --check-variant none the thorough row is applied to B (thinking only) and a pass MAY go on to B4
 
 RULE_TEXT = f"""\
 ## The rule of the six-arm test on D5 (fixed before the first answer; agents/m7-plan.md section 3; MILESTONE.md decisions V1 to V9)
 
 D5 (eval/m6/d5, 50 scenarios, 269 must points) is worn development data after M6. The test is a screen: it decides only whether work continues, and it allows no
 out-of-sample claim and no tuning on D5 items. Every arm uses the default prompt, the frozen search terms and replayed packs (no search call in an answer), the 4-bit model,
-the 2,048-token answer limit, one request at a time, and the same transport (the draft is streamed in every arm, thinking switched on or off per call).
+one request at a time, and the same transport (the draft is streamed in every arm, thinking switched on or off per call).
+
+**The answer limit is the same in every arm ({ANSWER_LIMIT} tokens).** An arm without thinking (A, E) is limited by the server's token limit of {ANSWER_LIMIT}. An arm with thinking (B, D, F, F') has two
+limits: the draft's total limit is {ANSWER_LIMIT} plus the thinking cap (a draft whose reasoning uses all of it is cut while thinking: no draft), and the ANSWER part, counted after the reasoning ended, is
+stopped at {ANSWER_LIMIT} tokens by the reader of the stream and marked cut, exactly as an arm without thinking is cut. The server reports token counts only at the end of a stream, so the answer part is counted
+in content chunks (one per token on this server; a chunk of two tokens would make the cap looser, never stricter). The report prints, per arm, the median answer-part tokens and the number of answers
+over {ANSWER_LIMIT} (taken from the server's own counts where it reports reasoning tokens, else the chunk count); that number must be 0 for every arm, and the rule stops with an error if it is not.
 
 | Arm | Pack | Call |
 |---|---|---|
@@ -81,7 +95,7 @@ the 2,048-token answer limit, one request at a time, and the same transport (the
 | F | perfect | as D; its draft is arm F' |
 
 The checking pass's variant (`--check-variant`: V1 without reference cards, V1C with the draft's cards, none: no checking pass, then C, D and F are dropped, D is thinking only
-and is B, F is thinking only and is F') and the thinking cap (`--think-cap`: tokens of thinking added to the 2,048-token answer limit) come from the pilot; both and their
+and is B, F is thinking only and is F') and the thinking cap (`--think-cap`: tokens of thinking added to the {ANSWER_LIMIT}-token answer limit) come from the pilot (`--pilot-report`, pinned by its sha256); both and their
 sources are in the manifest and in this report. A and D are also answered on the 116 mechanical items of the development sample (scripts/m5_g_rule.py, M1 56, M2 40, M3 20);
 the packs of those items are the stored frozen packs.
 
@@ -117,18 +131,29 @@ B against C shows whether thinking or checking carries an effect. That compariso
 
 **How the code reads the table (the plan's words are not changed; these are the readings the code needs):**
 - Coverage means the judged coverage P of an answer (the development check's score), mean over the two passes, mean over the scenarios; E − A is the mean of the paired
-  differences, its standard error is the standard deviation of the 50 differences over the square root of 50, and the lower end is the mean minus {Z90} standard errors (a 90 % interval).
+  differences, its standard error is the standard deviation of the paired differences over the square root of their number (50), and the lower end is the mean minus {Z90} standard errors (a 90 % interval).
   E − A at least +0.10 with a lower end above +0.04 is the first row; E − A at least +0.04 but not the first row is the second ("between +0.04 and +0.10", also when the lower end
-  of a difference above +0.10 is not above +0.04); E − A below +0.04 is the third. "Lowers nonexistent identifiers" is read as: with the cards in the test (V1C) the identifiers per 10 answers
-  of C are below A's and those of D below B's; with V1 or none the cards are not in the test and the question stays open.
+  of a difference above +0.10 is not above +0.04); E − A below +0.04 is the third. In the third row "(a) only if it lowers nonexistent identifiers" is NOT TESTED by this test in any variant:
+  (a) means reference cards in the draft prompt (plan section 5) and no arm has them (V1C puts cards only into the checking pass, so C against A and D against B would measure the check and the
+  cards together). The identifiers per 10 answers of every arm, and the differences C − A and D − B, are printed as description only and decide nothing. A "build" in the first row does not settle (b):
+  decision V8 leaves the writers and the licences to the Owner.
 - D − A is the difference of the arm D (in the variant none: B, thinking only) from A. Coverage at least -0.04 is the paired mean difference of P. Cut is the share of D5 answers
   truncated at the token limit (cut while thinking included), at most {D_CUT_PCT} % (integer arithmetic). Median and 90th percentile are of the seconds per D5 answer with search:
   the scenario's search-terms seconds from the D5 funnel's stored expansions, plus the median seconds of the whole frozen retrieval measured in this chain, plus the answer's own
   draft (thinking included) and check seconds; the 90th percentile is the value at position floor(0.9 n) of the n sorted times (the fifth largest of 50). The deadline of the profile
-  counts from the call here, not from the question (the replay has no search), so it is slightly looser than in use.
+  counts from the call here, not from the question (the replay has no search), so it is slightly looser than in use. The seconds also record the time to the first token and the cached prompt
+  tokens of each draft (when the server reports them), so that an effect of the server's prompt cache can be seen; D and F run before A and E for the same reason.
+- The Owner's decisions of 2026-11-23 on the two readings: (1) "Errors improve but time fails" stays NARROW: it is the case where coverage and cut pass and only the median or the 90th percentile fails;
+  a cut failure that comes with a time failure is "neither" (constant TIME_FAIL_TAKES_CUT in the rule script). (2) Under `--check-variant none` the thorough row is applied to B (thinking only) and a pass
+  MAY go on to B4 (constant NONE_THINKING_MAY_GO_TO_B4).
+- An answer with no draft (cut while thinking) is an empty answer: it is counted as cut and as empty, its judged coverage P is set to 0 and its points count as absent (by code, whatever the judge said of
+  the notice text), and it is left out of the blind bundles: a scenario where any of A, D, E, F has no draft is not read, and the key lists it. The readings therefore compare only scenarios in which all four
+  arms have a draft; the no-draft counts are reported apart and are never counted as an improvement of the wrong statements.
+- Checking-pass failures: the statuses error, not_json, cut and not_checked are counted per arm. A checking call with status error is redone on resume ({REDO_PASSES} redo passes, for C, D and F); an arm where
+  more than {CHECK_ERROR_LIMIT} of the 50 answers still have status error after that is marked "check failures above limit" in the rule output and is not read as a clean measurement.
 - Wrong statements and harmful statements are counted by the readers. The code prints those conditions as "needs the reading" and, from the conditions that are measured, which
   outcomes are still possible. The combined rows ("Both of the above", "Neither") are read as the combination of the knowledge-base rows (E − A) and the thorough-profile rows (D − A).
-- B against C: B − A and C − A with 90 % intervals corrected for two comparisons ({Z90_2} standard errors), and B − C directly; descriptive, decides nothing.
+- B against C: B − A and C − A with 90 % intervals corrected for two comparisons ({Z90_2} standard errors: 0.025 each side), and B − C with the same interval; descriptive, decides nothing.
 - With and without the lookup (V7): the mechanical all-pass counts of A and D over all 116 items, and over the items that remain when the tier A kinds {", ".join(LOOKUP_KINDS)} are left
   out (K7 found that a card built from the question can state the expected answer for some of those items). This is the code's reading of V7; the report says it.
 A measure that is missing, not a number or not computed is an error, never a pass.
@@ -172,6 +197,37 @@ def se(xs):
 
 def rule_text():
     return RULE_TEXT
+
+
+def is_no_draft(r):
+    """A draft cut by the token limit while thinking: the row holds the notice, not an answer."""
+    return bool(r.get("cut_while_thinking")) or (r.get("text") or "").strip().startswith(NO_DRAFT[:60])
+
+
+def answer_tokens(r):
+    """Tokens of the ANSWER part of a draft: the server's completion tokens less its reasoning tokens when it reports both, else the chunk count of the
+    answer part the stream reader kept, else the completion tokens (an arm without thinking). None for a no-draft row."""
+    if is_no_draft(r):
+        return None
+    di = r.get("draft_info") or {}
+    comp, rea, ch = (r.get("tokens_detail") or {}).get("draft"), di.get("reasoning_tokens"), di.get("answer_chunks")
+    if di.get("answer_cap_hit"):
+        return ch if num(ch) else comp
+    if num(comp) and num(rea):
+        return comp - rea
+    if num(ch):
+        return ch
+    return comp if num(comp) else None
+
+
+def row_counts(rows):
+    """Cut (at the token limit, a draft cut while thinking included), cut while thinking, empty (no text, or no draft) and the ids with no draft."""
+    return {"cut": sum(1 for r in rows if r.get("truncated")), "cut_while_thinking": sum(1 for r in rows if r.get("cut_while_thinking")),
+            "empty": sum(1 for r in rows if not (r.get("text") or "").strip() or is_no_draft(r)), "no_draft_ids": sorted(r["id"] for r in rows if is_no_draft(r))}
+
+
+def interval(mean_, se_, z):
+    return None if se_ is None else [mean_ - z * se_, mean_ + z * se_]
 
 
 # ---------------------------------------------------------------- gates
@@ -522,16 +578,29 @@ def set_stats(name, rows, a, rub, results, exp_s, retr_s, stub):
     pts = judged_points(results, rub, name)
     if sorted(pts) != sorted(P):
         raise SixError(f"no valid pass for every scenario of {name} on the point counts")
+    nodraft = sorted(r["id"] for r in rows if is_no_draft(r))
+    rubs = {r["id"]: r for r in rub}
+    for i in nodraft:   # an answer with no draft is an empty answer: P 0 and no point present, by code (the rule text says so)
+        P[i] = 0.0
+        w = sum(1 for pt in rubs[i]["must"] if S.point_sets(pt))
+        pts[i] = (0.0, w, 0.0, len(rubs[i]["must"]) - w)
     tot = [sum(v[k] for v in pts.values()) for k in range(4)]
     nid, kid = G.parse_idcheck(Path(a.work) / f"idcheck_d5_{name}.txt")
     toks = [(r.get("tokens_detail") or {}).get("draft") if not stub else max(1, len(r.get("text") or "") // 4) for r in rows]
+    atoks = [answer_tokens(r) for r in rows]
+    atoks_n = [x for x in atoks if num(x)]
+    dinfo = [r.get("draft_info") or {} for r in rows]
+    ttft = [d.get("ttft_s") for d in dinfo if num(d.get("ttft_s"))]
+    cached = [d.get("cached_prompt_tokens") for d in dinfo if num(d.get("cached_prompt_tokens"))]
     if any(not num(x) for x in toks):
         raise SixError(f"set {name}: a row has no draft token count")
     reas = [(r.get("draft_info") or {}).get("reasoning_tokens") for r in rows]
     out = {"n": n, "P": mean(list(P.values())), "P_by_id": P,
            "points": {"all": {"present": tot[0] + tot[2], "of": tot[1] + tot[3]}, "with_set": {"present": tot[0], "of": tot[1]}, "without_set": {"present": tot[2], "of": tot[3]}},
-           "cut": sum(1 for r in rows if r.get("truncated")), "cut_while_thinking": sum(1 for r in rows if r.get("cut_while_thinking")),
-           "empty": sum(1 for r in rows if not (r.get("text") or "").strip() or (r.get("text") or "").startswith(NO_DRAFT_PREFIX)),
+           **row_counts(rows),
+           "answer_tokens_median": median(atoks_n), "answer_over_limit": sum(1 for x in atoks_n if x > ANSWER_LIMIT), "answer_tokens_known": len(atoks_n),
+           "answer_cap_hits": sum(1 for d in dinfo if d.get("answer_cap_hit")),
+           "ttft_median_s": median(ttft), "ttft_reported": len(ttft), "cached_reported": len(cached), "cached_median": median(cached), "cached_any": sum(1 for x in cached if x > 0),
            "idents": kid, "idents_answers": nid, "idents_per10": 10 * kid / nid if nid else None,
            "median_draft_tokens": median(toks), "median_reasoning_tokens": median([x for x in reas if num(x)]), "reasoning_tokens_reported": sum(1 for x in reas if num(x)),
            "median_chars": median([len(r.get("text") or "") for r in rows]), "time": arm_time(rows, exp_s, retr_s), "check": check_stats(rows)}
@@ -541,7 +610,8 @@ def set_stats(name, rows, a, rub, results, exp_s, retr_s, stub):
 def pair(m, x, y):
     px, py = m["arms"][x]["P_by_id"], m["arms"][y]["P_by_id"]
     d = [px[i] - py[i] for i in px]
-    return {"mean": mean(d), "se": se(d), "n": len(d)}
+    m_, s_ = mean(d), se(d)
+    return {"mean": m_, "se": s_, "n": len(d), "ci196": interval(m_, s_, Z90_2)}
 
 
 def mech_arm(work, arm, ids, items_kinds):
@@ -613,7 +683,7 @@ def measures_md(m):
     s = m["sizes"]
     L += [f"Check variant {m['variant']}, thinking cap {m['think_cap']}. D5 {s['D5']} scenarios, {s['points']} points ({s['points_with_set']} with a covering set, {s['points_without_set']} without); "
           f"frozen retrieval median {f2(m['retrieval_frozen_median_s'], 2)} s ({m['retrieval_timing_n']} timing questions).", ""]
-    L += ["| set | P (50 answers, 2 passes) | points present all | with set | without set | cut | cut while thinking | empty | idents per 10 | median s | p90 s | draft s | thinking s | check s |",
+    L += [f"| set | P ({s['D5']} answers, 2 passes) | points present all | with set | without set | cut | cut while thinking | empty | idents per 10 | median s | p90 s | draft s | thinking s | check s |",
           "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for k, v in m["arms"].items():
         p, t = v["points"], v["time"]
@@ -623,11 +693,27 @@ def measures_md(m):
     L += ["", "Paired differences of P (mean, standard error, n):", ""]
     for k, v in m["pairs"].items():
         L.append(f"- {k}: {v['mean']:+.3f} (SE {f2(v['se'])}, n {v['n']})")
+    L += ["", f"B against C (descriptive, two comparisons: intervals of {Z90_2} standard errors, 0.025 each side; nothing is decided by them):", ""]
+    for k in ("B-A", "C-A", "B-C"):
+        v = m["pairs"].get(k)
+        if v is None:
+            continue
+        ci = v.get("ci196")
+        L.append(f"- {k}: {v['mean']:+.3f}, interval {('[%+.3f, %+.3f]' % tuple(ci)) if ci else 'n/a'}")
+    L += ["", "Answer length (answer part, tokens; every arm must have 0 answers over the limit) and the time to the first token of the draft:", ""]
+    for k, v in m["arms"].items():
+        L.append(f"- {k}: median {f2(v.get('answer_tokens_median'), 0)} tokens ({v.get('answer_tokens_known')} answers measured), over {ANSWER_LIMIT}: {v.get('answer_over_limit')}, "
+                 f"stopped at the answer cap: {v.get('answer_cap_hits')}; first token median {f2(v.get('ttft_median_s'), 2)} s ({v.get('ttft_reported')} reported); "
+                 f"cached prompt tokens: {v.get('cached_reported')} reported, median {f2(v.get('cached_median'), 0)}, {v.get('cached_any')} with any")
+    nd = {k: v.get("no_draft_ids") for k, v in m["arms"].items() if v.get("no_draft_ids")}
+    L += ["", "Answers with no draft (cut while thinking; counted as cut and empty, P 0): " + (", ".join(f"{k}: {len(x)}" for k, x in nd.items()) if nd else "none")]
     L += ["", "Checking pass (arms with a check): status counts, proposed and accepted changes, answers with an accepted change:", ""]
     for k, v in m["arms"].items():
         if v["check"]["status"]:
             c = v["check"]
-            L.append(f"- {k}: {c['status']}; {c['proposed']} proposed, {c['accepted']} accepted, {c['answers_with_accepted']} of {v['n']} answers")
+            st = c["status"]
+            L.append(f"- {k}: {st}; error {st.get('error', 0)}, not_json {st.get('not_json', 0)}, cut {st.get('cut', 0)}, not_checked {st.get('not_checked', 0)}; "
+                     f"{c['proposed']} proposed, {c['accepted']} accepted, {c['answers_with_accepted']} of {v['n']} answers")
     L += ["", "Mechanical items (all-pass counts; format failures; with and without the lookup, decision V7):", ""]
     for k, v in m["mech"].items():
         L.append(f"- {k}: {v['pass_all']} of {v['n']} all-pass ({v['all_pass']}); format failures {v['format_failures']}; "
@@ -648,32 +734,35 @@ def need(m, *path):
 
 
 def evaluate(m):
-    """-> (lines, result) with result = {"kb": build|a_only|none_lookup_helps|none_lookup_not_tested|none_lookup_no_help, "thorough_possible": [...], "mech_pass": {...}}.
+    """-> (lines, result) with result = {"kb": build|a_only|none_lookup_not_tested, "thorough_possible": [...], "conditions": {...}, "check_failures_above_limit": [...]}.
     The thorough row's wrong and harmful conditions wait for the reading: no final choice for that row."""
     variant, n = m.get("variant"), need(m, "sizes", "D5")
     if variant not in VARIANTS:
         raise SixError("input missing: variant")
     L, eps = [], 1e-9
+    over = [(k, int(need(m, "arms", k, "answer_over_limit"))) for k in sorted(m.get("arms") or {})]   # the length check: a measure that is missing is an error
+    over = [(k, n_) for k, n_ in over if n_]
+    if over:
+        raise SixError("the answer limit of %d tokens is broken: %s (an arm's answers are longer than the others' may be; the arms are not comparable)" % (
+            ANSWER_LIMIT, ", ".join(f"arm {k}: {n_} answers over" for k, n_ in over)))
     d, sd = need(m, "pairs", "E-A", "mean"), need(m, "pairs", "E-A", "se")
     lo = d - Z90 * sd
     L.append("Knowledge-base rows (E, the perfect pack, against A, the frozen pack, same call):")
     L.append(f"  E - A judged coverage {d:+.3f}, standard error {sd:.3f}, lower end of a 90 % interval {lo:+.3f} ({int(n)} scenarios)")
     if d >= KB_BUILD - eps and lo > KB_BUILD_LOWER + eps:
         kb = "build"
-        L.append("  => ROW 1: build the knowledge base: (a), then a pilot of (b)")
+        L.append("  => ROW 1: build the knowledge base: (a), then a pilot of (b). A \"build\" does not settle (b): decision V8 leaves the writers and the licences to the Owner")
     elif d >= KB_A_ONLY - eps:
         kb = "a_only"
         L.append("  => ROW 2: (a) only (E - A at least +0.04 and not row 1)")
     else:
-        if variant == "V1C":
-            ia, ic, ib, idd = (need(m, "arms", k, "idents_per10") for k in ("A", "C", "B", "D"))
-            helps = ic < ia - eps and idd < ib - eps
-            kb = "none_lookup_helps" if helps else "none_lookup_no_help"
-            L.append(f"  => ROW 3: no knowledge base for coverage. Nonexistent identifiers per 10: C {ic:.2f} against A {ia:.2f}, D {idd:.2f} against B {ib:.2f}: "
-                     f"{'the lookup lowers them: (a) only' if helps else 'the lookup does not lower them on both pairs: no (a) either'}")
-        else:
-            kb = "none_lookup_not_tested"
-            L.append(f"  => ROW 3: no knowledge base for coverage. Whether (a) lowers nonexistent identifiers cannot be seen: the cards are not in this test (check variant {variant})")
+        kb = "none_lookup_not_tested"
+        L.append("  => ROW 3: no knowledge base for coverage. \"(a) only if it lowers nonexistent identifiers\" is not tested by this test: no arm has reference cards in the draft prompt "
+                 f"(check variant {variant})")
+        idn = {k: m.get("arms", {}).get(k, {}).get("idents_per10") for k in ("A", "B", "C", "D")}
+        if all(num(v) for v in idn.values()):
+            L.append(f"     description only, decides nothing: nonexistent identifiers per 10 answers C {idn['C']:.2f} against A {idn['A']:.2f} (C - A {idn['C'] - idn['A']:+.2f}), "
+                     f"D {idn['D']:.2f} against B {idn['B']:.2f} (D - B {idn['D'] - idn['B']:+.2f}); these differences are the check and the cards together")
     L.append("")
     t = m.get("thorough_arm")
     cov, se_ = need(m, "pairs", f"{t}-A", "mean"), need(m, "pairs", f"{t}-A", "se")
@@ -690,16 +779,36 @@ def evaluate(m):
     time_ok = cond["median"] and cond["p90"]
     base = cond["coverage"] and cond["cut"]
     no_gain = "neither (if the readings do not show the errors improving)"
+    time_fail_row = cond["coverage"] and not time_ok and (cond["cut"] or TIME_FAIL_TAKES_CUT)   # the Owner's decision of 2026-11-23: narrow (TIME_FAIL_TAKES_CUT False)
+    where = "thinking, then the checking pass" if t == "D" else "thinking alone"
     if base and time_ok:
-        possible = ["goes_on_to_B4 (if the readings give wrong statements at most -2.0 per 10 and harmful at most A + 2)", no_gain]
-    elif base:
+        possible = [f"goes_on_to_B4 ({where}; if the readings give wrong statements at most -2.0 per 10 and harmful at most A + 2)" + (
+            "; under --check-variant none thinking alone MAY go on to B4 (the Owner's decision of 2026-11-23)" if t == "B" and NONE_THINKING_MAY_GO_TO_B4 else ""), no_gain]
+        if t == "B" and not NONE_THINKING_MAY_GO_TO_B4:
+            possible[0] = "waits for the Owner (whether thinking alone may go on to B4 is not decided)"
+    elif time_fail_row:
         possible = ["time_fails (if the readings give the errors improving: one g2-based thorough arm on worn data, then B4)", no_gain]
     else:
-        possible = ["neither (a measured condition other than time fails; the reading cannot change that)"]
+        possible = ["neither (a measured condition other than time fails, or a cut failure that comes with a time failure; the reading cannot change that)"]
     L.append("  => the row waits for the reading; the outcomes still possible: " + "; ".join(possible))
     L.append("")
     L.append("Combined rows (\"Both of the above\", \"Neither\"): wait for the reading of the thorough-profile row.")
-    return L, {"kb": kb, "thorough_possible": possible, "conditions": cond}
+    L.append("")
+    L.append(f"Checking-pass failures (a status error is redone on resume, {REDO_PASSES} passes; more than {CHECK_ERROR_LIMIT} of {int(n)} still error marks the arm):")
+    above = []
+    for k in sorted(m.get("arms") or {}):
+        st = ((m["arms"][k].get("check") or {}).get("status")) or {}
+        if not st:
+            continue
+        e = st.get("error", 0)
+        flag = e > CHECK_ERROR_LIMIT
+        if flag:
+            above.append(k)
+        L.append(f"  arm {k}: error {e}, not_json {st.get('not_json', 0)}, cut {st.get('cut', 0)}, not_checked {st.get('not_checked', 0)}" + (
+            f"  => CHECK FAILURES ABOVE LIMIT (more than {CHECK_ERROR_LIMIT} of {int(n)}): not a clean measurement of the checking pass" if flag else ""))
+    if not any((m["arms"][k].get("check") or {}).get("status") for k in m.get("arms") or {}):
+        L.append("  (no arm with a checking pass in this variant)")
+    return L, {"kb": kb, "thorough_possible": possible, "conditions": cond, "check_failures_above_limit": above}
 
 
 def cmd_rule(a):
@@ -710,7 +819,8 @@ def cmd_rule(a):
         print(f"ERROR: {e}; a missing input is not a pass; no verdict", file=sys.stderr)
         return 2
     print("\n".join(L))
-    print(f"M7 SIX-ARM TEST DONE: knowledge-base row: {res['kb']}; thorough-profile row: WAITS FOR THE READING")
+    print(f"M7 SIX-ARM TEST DONE: knowledge-base row: {res['kb']}; thorough-profile row: WAITS FOR THE READING"
+          + (f"; check failures above limit: {', '.join(res['check_failures_above_limit'])}" if res["check_failures_above_limit"] else ""))
     return 0
 
 
@@ -768,6 +878,149 @@ def cmd_stage_calls(a):
     return 0 if ok else 1
 
 
+# ---------------------------------------------------------------- checks the shell script makes, as commands (so each can be tested with a planted mismatch)
+LEAK_TERMS = ("answer_profile", "--answer-profile", "enable_thinking", "think-cap", "check-variant", "no-verify", "thorough profile", "EXPERIMENTAL", "cut off by the token limit while thinking")
+
+
+def cmd_leak_check(a):
+    """No file of a reading bundle names a configuration (a switch, the profile, the notice of a draft cut while thinking)."""
+    bad = []
+    for f in sorted(Path(a.dir).rglob("*.md")):
+        t = f.read_text(encoding="utf-8")
+        hit = [x for x in LEAK_TERMS if x in t]
+        if hit:
+            bad.append((str(f), hit))
+    for f, hit in bad:
+        print(f"a bundle file names a configuration: {f}: {', '.join(hit)}")
+    print(f"leak check {a.dir}: {len(bad)} files name a configuration")
+    return 1 if bad else 0
+
+
+def cmd_no_draft_ids(a):
+    """The scenarios where any of the named answer sets has no draft (cut while thinking): printed one per line; with --key they are recorded in the key
+    (they are left out of the bundles; the key says which arm had no draft)."""
+    sets = dict(x.split("=", 1) for x in a.answers)
+    per = {name: sorted(r["id"] for r in rd(f) if is_no_draft(r)) for name, f in sets.items()}
+    ids = sorted({i for v in per.values() for i in v})
+    if a.key:
+        key = json.load(open(a.key, encoding="utf-8"))
+        key["no_draft"] = per
+        key["left_out_of_the_bundles"] = ids
+        Path(a.key).write_text(json.dumps(key, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+    print("\n".join(ids))
+    print(f"no-draft: {len(ids)} scenarios left out of the bundles ({', '.join(f'{k}: {len(v)}' for k, v in per.items())})", file=sys.stderr)
+    return 0
+
+
+def cmd_bodies_relation(a):
+    """The request bodies of two arms' drafts (the parts recorded in each row: generators.body_parts). Allowed to differ: the thinking switch and the token limit (the
+    thinking arm's limit is the other's plus the cap), and the messages where the packs differ. Everything else (model, temperature, stream flags, other extra-body
+    keys) is equal. With --thinking-differs the second set is the thinking arm of the first."""
+    A = {r["id"]: r for r in rd(a.a)}
+    B = {r["id"]: r for r in rd(a.b)}
+    if sorted(A) != sorted(B):
+        print("bodies relation: the two sets do not hold the same ids")
+        return 1
+    bad = []
+    for i in A:
+        pa, pb = ((A[i].get("draft_info") or {}).get("request_body_parts"), (B[i].get("draft_info") or {}).get("request_body_parts"))
+        if not pa or not pb:
+            bad.append((i, "no request body parts recorded"))
+            continue
+        why = []
+        if pa["rest_sha256"] != pb["rest_sha256"]:
+            why.append("the rest of the body (model, temperature, stream flags, other extra-body keys) differs")
+        same_pack = A[i].get("pack") == B[i].get("pack")
+        if (pa["messages_sha256"] == pb["messages_sha256"]) != same_pack:
+            why.append("the messages are %s on %s packs" % ("equal" if not same_pack else "different", "different" if not same_pack else "the same"))
+        if a.thinking_differs:
+            if (pa["enable_thinking"], pb["enable_thinking"]) != (False, True):
+                why.append("the thinking switch is not off then on")
+            if pb["max_tokens"] != pa["max_tokens"] + a.think_cap:
+                why.append("the second token limit is not the first plus the cap %d" % a.think_cap)
+        else:
+            if pa["enable_thinking"] != pb["enable_thinking"] or pa["max_tokens"] != pb["max_tokens"]:
+                why.append("the thinking switch or the token limit differs")
+        if why:
+            bad.append((i, "; ".join(why)))
+    for i, w in bad[:5]:
+        print(f"bodies relation {i}: {w}")
+    print(f"bodies relation {Path(a.a).name} / {Path(a.b).name}: {len(A) - len(bad)} of {len(A)} ids as promised "
+          f"(allowed to differ: {'the thinking switch off/on and the token limit plus the cap, ' if a.thinking_differs else ''}the messages where the packs differ)")
+    return 1 if bad else 0
+
+
+def _check_status(r, kind):
+    return ((r.get("r2") if kind == "verify" else (r.get("thorough") or {}).get("r2")) or {}).get("status")
+
+
+def cmd_check_errors(a):
+    """Rows whose checking call ended with status error (a stored answer with a failed check): counted; with --drop moved to FILE.redo_dropped.jsonl and removed from FILE,
+    so that the resume of the run redoes them. Prints check_errors=N."""
+    rows = rd(a.file) if Path(a.file).is_file() else []
+    bad = [r for r in rows if _check_status(r, a.kind) == "error"]
+    if a.drop and bad:
+        keep = [r for r in rows if _check_status(r, a.kind) != "error"]
+        with open(str(a.file) + ".redo_dropped.jsonl", "a", encoding="utf-8") as f:
+            f.write("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in bad))
+        Path(a.file).write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in keep), encoding="utf-8")
+    print(f"check_errors={len(bad)}")
+    return 0
+
+
+def cmd_pilot_check(a):
+    """The pilot's report the run parameters come from: a real run needs the file, not a dry-run record. A dry run needs none (the chain writes a stub)."""
+    p = Path(a.file)
+    if a.dry:
+        print(f"pilot report: dry run, stub {p}")
+        return 0
+    if not p.is_file() or not p.read_text(encoding="utf-8").strip():
+        print(f"REFUSED: the pilot's report {p} is missing or empty; the check variant and the thinking cap come from it (--pilot-report FILE)", file=sys.stderr)
+        return 2
+    head = "\n".join(p.read_text(encoding="utf-8").splitlines()[:5])
+    if "DRY RUN" in head or "from stub data" in head or "stub model" in head:
+        print(f"REFUSED: {p} is the record of a dry run, not a measurement", file=sys.stderr)
+        return 2
+    print(f"pilot report: {p} sha256 {sha256_file(p)}")
+    return 0
+
+
+def cmd_models_check(a):
+    """Every model this chain needs is listed by the server (/v1/models): the 4-bit model and the judge."""
+    d = json.load(open(a.models, encoding="utf-8"))
+    names = {m.get("id") for m in (d.get("data") or []) if isinstance(m, dict)}
+    miss = [n for n in a.need if n not in names]
+    if miss:
+        print(f"REFUSED: the server does not list the model {', '.join(miss)}", file=sys.stderr)
+        return 2
+    print(f"models: all {len(a.need)} needed models are listed")
+    return 0
+
+
+def cmd_server_gate(a):
+    """The server before the chain uses it (the Owner's decision of 2026-11-23: the unload go of M6 was not extended to M7). Refuses (exit 2) when a request is
+    active or waiting, or when a model that is not ours is loaded; the message names it and nothing is unloaded. The models this chain needs (the 4-bit model
+    and the judge) are ours; a judge model left loaded is printed as UNLOAD <name> (the chain unloads it before the first request)."""
+    try:
+        st = json.load(open(a.status, encoding="utf-8"))
+        busy = int(st.get("active_requests", 1)) + int(st.get("waiting_requests", 0))
+        loaded = list(st.get("loaded_models") or [])
+    except (OSError, ValueError, TypeError):
+        print("REFUSED: the server status is unreadable", file=sys.stderr)
+        return 2
+    foreign = [m for m in loaded if m not in a.ours]
+    if foreign:
+        print(f"REFUSED: the model {', '.join(foreign)} is loaded by another client; this chain never unloads a model it did not load (wait for its owner); nothing was started", file=sys.stderr)
+        return 2
+    if busy:
+        print(f"REFUSED: the server has {busy} active or waiting requests (another client); wait until it is idle; nothing was started", file=sys.stderr)
+        return 2
+    for m in loaded:
+        if m != a.keep:
+            print(f"UNLOAD {m}")
+    return 0
+
+
 def build_parser():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -808,6 +1061,30 @@ def build_parser():
     q.add_argument("--a", required=True)
     q.add_argument("--b", required=True)
     q.add_argument("--expect-same-pack", action="store_true")
+    q = sub.add_parser("leak-check")
+    q.add_argument("--dir", required=True)
+    q = sub.add_parser("no-draft-ids")
+    q.add_argument("--answers", nargs="+", required=True, metavar="NAME=FILE")
+    q.add_argument("--key", default=None)
+    q = sub.add_parser("bodies-relation")
+    q.add_argument("--a", required=True)
+    q.add_argument("--b", required=True)
+    q.add_argument("--thinking-differs", action="store_true")
+    q.add_argument("--think-cap", type=int, default=0)
+    q = sub.add_parser("check-errors")
+    q.add_argument("--file", required=True)
+    q.add_argument("--kind", choices=("verify", "answers"), required=True)
+    q.add_argument("--drop", action="store_true")
+    q = sub.add_parser("pilot-check")
+    q.add_argument("--file", required=True)
+    q.add_argument("--dry", action="store_true")
+    q = sub.add_parser("models-check")
+    q.add_argument("--models", required=True)
+    q.add_argument("--need", nargs="+", required=True)
+    q = sub.add_parser("server-gate")
+    q.add_argument("--status", required=True)
+    q.add_argument("--keep", required=True, help="the 4-bit model")
+    q.add_argument("--ours", nargs="+", required=True)
     q = sub.add_parser("prompts-default")
     q.add_argument("--items", required=True)
     q.add_argument("--answers", required=True)
@@ -852,7 +1129,8 @@ def main(argv=None):
               "start-check": cmd_start_check, "derive-draft": cmd_derive_draft, "derive-check": cmd_derive_check, "check-verify": cmd_check_verify,
               "check-rows": cmd_check_rows, "prompts-relation": cmd_prompts_relation, "prompts-default": cmd_prompts_default, "measures": cmd_measures,
               "rule": cmd_rule, "reading-plan": cmd_reading_plan, "call-counts": cmd_call_counts,
-              "stage-calls": cmd_stage_calls}[a.cmd]
+              "stage-calls": cmd_stage_calls, "leak-check": cmd_leak_check, "no-draft-ids": cmd_no_draft_ids, "bodies-relation": cmd_bodies_relation,
+              "check-errors": cmd_check_errors, "pilot-check": cmd_pilot_check, "models-check": cmd_models_check, "server-gate": cmd_server_gate}[a.cmd]
         return fn(a)
     except (SixError, G.RuleError, R6.DaError, OSError, KeyError, ValueError) as e:
         print(f"ERROR: {type(e).__name__}: {e}", file=sys.stderr)

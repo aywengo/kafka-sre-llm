@@ -778,14 +778,20 @@ def draft_and_check(question: str, msgs, chunks, gen, answer_max_tokens: int, pr
 
     The draft is streamed internally in every arm of the profile, thinking on or off (review S7: the arms differ only
     in their switch), so the seconds of thinking can be measured; nothing is shown. A draft cut by the token limit
-    while thinking is no draft (review S1): the answer says so and nothing is checked."""
+    while thinking is no draft (review S1): the answer says so and nothing is checked.
+
+    Two limits with thinking on (M7 K4, review K2): the total token limit is the answer limit plus the thinking cap (a draft whose
+    reasoning uses it all is cut while thinking), and the ANSWER part, counted after the reasoning ended, is stopped at the answer limit
+    itself (generators answer_cap), so an answer is never longer than the answer of an arm without thinking; a draft stopped there is
+    marked truncated, as such an arm's is. Without thinking no cap is passed: the request and the result are as before."""
     t_start = time.monotonic() if t_start is None else t_start
     info: Dict[str, Any] = {}
     mt = answer_max_tokens + (profile.thinking_tokens if profile.thinking else 0)
     t0 = time.monotonic()
     cut, text, toks, trunc = False, None, 0, False
     try:
-        text, toks, trunc = gen.chat(msgs, mt, lambda s: None, thinking=bool(profile.thinking), info=info)
+        kw = {"answer_cap": answer_max_tokens} if profile.thinking else {}   # M7 K4: the answer part is cut where an arm without thinking is cut
+        text, toks, trunc = gen.chat(msgs, mt, lambda s: None, thinking=bool(profile.thinking), info=info, **kw)
         cut = bool(profile.thinking and info.get("cut_while_thinking"))
     except EmptyAnswerError:
         if not (profile.thinking and info.get("cut_while_thinking")):
@@ -821,6 +827,9 @@ class StubGenerator:
     identity = {"backend": "stub", "model": "stub", "adapter": None}
 
     def chat(self, messages, max_tokens, on_token=None, **kw):
+        user = messages[-1]["content"] if messages else ""   # M7 K4, dry runs: a failure planted by the six-arm chain's --plant-check-fail
+        if any(x and x in user for x in os.environ.get("M7_STUB_CHECK_FAIL", "").split(",")):
+            raise RuntimeError("planted failure of the checking call (dry run)")
         return '{"replacements": []}', 0, False
 
 
