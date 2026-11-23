@@ -144,7 +144,8 @@ B against C shows whether thinking or checking carries an effect. That compariso
 
 **Amended by the Owner's decisions of 2026-11-23 (W5 time, W6 harm; the plan's table above is kept word for word, these two cells are read as follows):**
 - W11 (the Owner, 2026-11-23): Qwen's thinking arms B, D, F and F' are dropped from the planned test (the pilot showed every thinking draft cut). The run passes `--thinking-models none`; the code paths of the thinking arms stay (tested) but are not part of the planned run. The thorough candidate is
-  the checking pass alone, arm C (the checking pass on A's drafts), applied on the same row the plan gave D: C - A coverage at least {D_COV_MIN:+.2f}, cut at most {D_CUT_PCT} %, wrong statements at most {D_WRONG_MAX:+.1f} per 10 and 0 confirmed new harmful consequences go on to B4; time is reported (W5). Under `--check-variant none` there is no checking pass and no thorough candidate: that row is NOT RUN.
+  the checking pass alone, arm C (the checking pass on A's drafts), applied on the same row the plan gave D: C - A coverage at least {D_COV_MIN:+.2f}, cut at most {D_CUT_PCT} %, wrong statements at most {D_WRONG_MAX:+.1f} per 10 and 0 confirmed new harmful consequences go on to B4; time is reported (W5). Under `--check-variant none` there is no checking pass and no thorough candidate: that row is NOT TESTED.
+- W11 and the pilot (2026-11-23): neither checking variant cleared its bars in the pilot, so arm C is dropped too. **The planned run is `--thinking-models none --check-variant none`: Qwen A, E, R; each Gemma model A and E.** The thorough-profile row is "not tested (W11 and the pilot)". The code paths of C, D, F and the thinking arms stay tested but are out of the planned run.
 - W5, time is reported, not decided. The median and the 90th percentile of the thorough-profile row (the plan's bars were {PLAN_MED_S:.0f} s and {PLAN_P90_S:.0f} s) are printed as "reported" with their values and never as PASS or FAIL. The operational deadline stays
   (the profile's {DEADLINE_S:.0f} s start-by of the checking call) and the number of answers it cut short (check status not_checked) is reported. The row "Errors improve but time fails" can therefore no longer arise: no time value decides a row. The
   thorough-profile row is decided by coverage, cut, wrong statements and harm only.
@@ -226,7 +227,7 @@ An answer with no draft is delivered as empty: all its points are missed (and no
 pass its id and refuses the placeholder). `--models` takes a list of them (all three by default; Qwen must be in it, the rule is Qwen's). Every model gets arms A and E, with the same call, decoding, 2,048-token answer limit and packs as Qwen's A and E, and its A runs on the 116 mechanical items. The
 2,048-token limit is the same number of tokens in every model, but a token is a different length of text under each model's tokenizer (fair by tokens, not by text); the report prints the words per answer and the wrong statements per 1,000 words next to the rate per 10 answers.
 The thinking arms (B, D, F, F', and for a model other than Qwen also C) run for a model only when `--thinking-models` names it: a comma list, or `none` (the default; the real run passes it explicitly and it is recorded in the manifest and in this header). With `none`
-Qwen answers A, E and R, and, when the variant has a checking pass, C (the checking pass on A's drafts; it needs no thinking); the thorough-profile row is then NOT RUN, and C - A is printed as description only. A thinking Gemma model is not planned (the conductor's decision of 2026-11-23): the
+Qwen answers A, E and R, and, when the variant has a checking pass, C (the checking pass on A's drafts; it needs no thinking); the thorough-profile row is then NOT TESTED, and C - A is printed as description only. A thinking Gemma model is not planned (the conductor's decision of 2026-11-23): the
 thinking probe still runs for each other model before any answer, and its result is reported; a model whose switch is not honoured, or whose thinking arrives in a format the stream reader does not know, gets no thinking arm (the chain refuses it before any answer). Each model is loaded alone and unloaded after its stages, in the order gemma31, gemma26, qwen (inside Qwen the order is unchanged); the server gate
 never unloads a model another client loaded (W2). Read blind: Qwen's A, D, E, F (A and E without thinking), each Gemma model's A and E, and its D when it ran. For each Gemma model against Qwen, on the same arm (A with A, E with E, D with D when both ran), the report prints:
 - wrong statements per 10 answers, paired by scenario, with a 90 % interval ({Z90} standard errors) (needs the reading);
@@ -1544,7 +1545,7 @@ def _arm_notes(m, over_d):
 def _evaluate_no_thinking(m, L, kb, n, variant, over_d):
     """No thinking arm in the run (--thinking-models none, or without qwen): the knowledge-base rows are applied, the thorough-profile row is NOT RUN. C (the checking pass on A's drafts) is
     described as C - A when the variant has a checking pass."""
-    L.append("Thorough-profile rows: NOT RUN. No thinking arm and no checking pass in this run (W11: --check-variant none), so the plan's table row for the thorough profile has nothing to apply to.")
+    L.append("Thorough-profile rows: NOT TESTED (W11 and the pilot). No thinking arm and no checking pass in this run (--thinking-models none --check-variant none), so the plan's table row for the thorough profile has nothing to apply to.")
     c = (m.get("pairs") or {}).get("C-A")
     if c:
         L.append(f"  description only, decides nothing: the checking pass alone (C, A's drafts checked), C - A judged coverage {c['mean']:+.3f}, standard error {f2(c['se'])} ({c['n']} scenarios); "
@@ -1577,7 +1578,7 @@ def cmd_rule(a):
         print(f"ERROR: {e}; a missing input is not a pass; no verdict", file=sys.stderr)
         return 2
     print("\n".join(L))
-    print(f"M7 SIX-ARM TEST DONE: knowledge-base row: {res['kb']}; thorough-profile row: {'NOT RUN (no thinking arm)' if res['time_reported'] is None else 'WAITS FOR THE READING'}"
+    print(f"M7 SIX-ARM TEST DONE: knowledge-base row: {res['kb']}; thorough-profile row: {'NOT TESTED (W11 and the pilot)' if res['time_reported'] is None else 'WAITS FOR THE READING'}"
           + (f"; check failures above limit: {', '.join(res['check_failures_above_limit'])}" if res["check_failures_above_limit"] else ""))
     return 0
 
