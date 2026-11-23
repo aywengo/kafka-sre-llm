@@ -159,6 +159,7 @@ goes to G2.
 | 2026-11-22 | S8 | The seven hidden items of the same family as a D5 scenario are tagged; the hidden look runs on the new hidden judged part, and the existing 61 are reported beside it (this replaces the second half of S5) |
 | 2026-11-23 | U1 | After the failed B4 check the stop is accepted: no hidden look for the combination in M6 (four looks stay unspent). The D5 answers are run once as an informative run that decides nothing |
 | 2026-11-23 | U2 | The sealed sessions' transcripts of the hidden part's writing are deleted |
+| 2026-11-23 | V1 to V9 | **M7 is agreed** (plan `agents/m7-plan.md`): the go for the plan and for loading the 4-bit base model in M7's measurement runs (V1); the thorough profile's time bar (median at most 180 s, 90th percentile at most 300 s) is recorded in `GOAL.md` as proposed and becomes agreed only after it is measured (V2); the test on D5 has six arms (V3); the perfect pack is padded with the frozen pack to the same length (V4); the thorough profile is built on the default prompt, on the grounded one only if time fails (V5); B4 is used once more, as the out-of-sample answer check, its scenarios never having been answered (V6); the runtime may use the catalogues at answer time, the mechanical tier then reported with and without the lookup (V7); who writes model-written fact entries, and their licences, is decided only if the test supports them (V8); one hidden look on the new hidden part after B4, at least two looks kept (V9) |
 | 2026-11-22 | conductor | The covering test reads a chunk as the model receives it, with its title line |
 | 2026-11-22 | conductor | After M0: S3's limit stands; the Qwen reranker at full precision is measured on D5's funnel for information only; only a setting within the limit goes on to B4 and the hidden look |
 | 2026-11-22 | conductor | The decline detector stays as it is: counting a gap sentence followed by a concrete answer as an answer would change six stored M4 outcomes (five strict answers and one a3 answer would turn from declines into wrong answers) and turn most grounded correct declines into wrong answers. Stored and new runs stay comparable; reports keep the sentence on the detector's bias, and a reader checks the answers counted as wrong declines before a failure of that condition is acted on |
@@ -304,4 +305,13 @@ candidate C becomes the default, after the look.
   session's scratch folder; nothing matching the 27 ids is left. Not deleted, because
   outside U2's wording: the transcripts of the two earlier sealed family checks of this
   milestone and of M5 (B4 and D5 against the existing hidden items).
+- 2026-11-23 09:15: **the Owner agreed with V1 to V9: M7 is planned and agreed**
+  (`agents/m7-plan.md`, commit `be56c47`), from his two ideas of the morning (a longer
+  time budget; a knowledge base in place of classic retrieval) and the conductor's
+  answer (the time for checking, not for length; the knowledge base beside the index;
+  one six-arm test on D5 first). `GOAL.md` carries the thorough profile's bar as
+  proposed. M7's first slice runs on the CPU beside M6's last run, in new files only:
+  the perfect packs of D5 (K0), the design of the checking pass (K1), the catalogue
+  lookup module (K7). M6 closes when the informative D5 run and its reading are in;
+  this document then moves to `milestones/M6.md`.
 

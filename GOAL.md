@@ -46,7 +46,7 @@ assistant may use part of the memory, not all of it.
 | Memory the assistant may hold | about 20 GB | about 10 GB |
 | Model | 27B class at 4-bit (about 15 to 17 GB, an estimate to verify) | a smaller model, to be chosen |
 | Network | none needed after installation | same |
-| Time to a complete answer | median under 60 s | same |
+| Time to a complete answer | fast profile (the default): median under 60 s. Proposed 2026-11-23, not yet agreed: a thorough profile (opt-in, the extra time spent on checking, not on longer answers) with a median of at most 180 s and a 90th percentile of at most 300 s | same |
 | Installation | one documented command sequence, under 30 minutes | same |
 
 Platforms:
@@ -146,7 +146,8 @@ to build or tune the assistant.
 | Property | Measure | Bar | Status |
 |---|---|---|---|
 | Nothing invented | A reviewer's reading of answers: invented or wrong items | At most 2 per 10 answers, none that would do damage | agreed |
-| Fast enough | Time to a complete answer | Median under 60 s | agreed |
+| Fast enough | Time to a complete answer | Fast profile (the default): median under 60 s | agreed |
+| Fast enough, thorough profile | Time to a complete answer in the opt-in thorough profile | Median at most 180 s, 90th percentile at most 300 s | proposed 2026-11-23 (the Owner's decision V2 of M7: recorded as proposed now, agreed only after the profile is measured) |
 | Fits | Memory held, network off | The table above | agreed |
 | Helps | Judged score against the same model without the index, per task type | A gain beyond noise on every task type | agreed |
 | Costs little to shrink | The same evaluation for the shipped quantisation and for the full-precision 27B, same index, same serving path | Loss inside a margin fixed before the run (5 points on the mechanical tier of the M4 evaluation), or a stated and accepted loss | agreed; wording amended 2026-11-18 |
