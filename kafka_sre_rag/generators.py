@@ -101,13 +101,16 @@ def thinking_answer(raw, cut_by_limit, separate_reasoning):
     return out, cut
 
 
-def request_info(info, usage, reasoning_text, raw_content, finish_reason, thinking, seconds, think_seconds):
+def request_info(info, usage, reasoning_text, raw_content, finish_reason, thinking, seconds, think_seconds, ttft=None):
     """Fill `info` (a dict) with what one call reported. The reasoning is never part of the answer text; only its size
     is kept. reasoning_tokens is the server's own count (usage.completion_tokens_details.reasoning_tokens, the OpenAI
     convention) or None when the server does not report one. think_s: seconds from the first reasoning piece to the
-    first answer piece; only a streamed call can measure it (None otherwise)."""
+    first answer piece; only a streamed call can measure it (None otherwise). M7 K4: ttft_s (streamed calls: seconds to the first
+    piece of reasoning or answer) and cached_prompt_tokens (usage.prompt_tokens_details.cached_tokens, the OpenAI convention; None when
+    the server does not report it) say whether the server's prompt cache made a call faster."""
     usage = usage or {}
     details = usage.get("completion_tokens_details") or {}
+    pdetails = usage.get("prompt_tokens_details") or {}
     inline = "".join(m[len("<think>"):-len("</think>")] for m in _THINK.findall(raw_content or ""))
     info.update({
         "thinking_requested": thinking,
@@ -119,8 +122,28 @@ def request_info(info, usage, reasoning_text, raw_content, finish_reason, thinki
         "finish_reason": finish_reason,
         "seconds": seconds,
         "think_s": think_seconds,
+        "ttft_s": ttft,
+        "cached_prompt_tokens": pdetails.get("cached_tokens") if isinstance(pdetails, dict) else None,
     })
     return info
+
+
+def body_parts(body):
+    """M7 K4: the request body in the parts a comparison between arms needs (recorded in the call's info, never sent): the hash of the messages, the
+    token limit, the thinking switch, and the hash of everything else (model, temperature, the other extra-body keys, stream flags). Two arms'
+    drafts may differ in the thinking switch and the token limit only, and in the messages when their packs differ."""
+    kw = dict((body.get("chat_template_kwargs") or {}))
+    sw = kw.pop("enable_thinking", None)
+    rest = {k: v for k, v in body.items() if k not in ("messages", "max_tokens", "chat_template_kwargs")}
+    rest["chat_template_kwargs_other"] = kw
+    return {"messages_sha256": body_sha256(body.get("messages")), "max_tokens": body.get("max_tokens"), "enable_thinking": sw,
+            "rest_sha256": body_sha256(rest)}
+
+
+def body_sha256(body):
+    """sha256 of a request body in a canonical JSON form (M7 K4: recorded in the call's info, never sent)."""
+    import hashlib
+    return hashlib.sha256(json.dumps(body, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")).hexdigest()
 
 
 class OpenAIChatGenerator:
@@ -188,16 +211,20 @@ class OpenAIChatGenerator:
     def identity(self):
         return {"backend": self.backend, "model": self.model, "adapter": None}
 
-    def chat(self, messages, max_tokens, on_token=None, *, thinking=None, info=None, timeout=None):
+    def chat(self, messages, max_tokens, on_token=None, *, thinking=None, info=None, timeout=None, answer_cap=None):
         """thinking None (the default) sends today's request unchanged: whatever extra_body says. True or False sets
         chat_template_kwargs.enable_thinking for this call only (the key the Qwen3 chat template reads; the scripts of
         this repository send the same key through --extra-body). info: a dict that receives what the server reported
         about the call (see request_info); passing it changes nothing in the request. With thinking True, a reply cut
         before its </think> is handled by thinking_answer() and info["cut_while_thinking"] says so. timeout: seconds
-        for this call only (None: the client's timeout); when it runs out, CallTimeout is raised."""
+        for this call only (None: the client's timeout); when it runs out, CallTimeout is raised. answer_cap (M7 K4, streamed calls only): stop
+        the stream when the ANSWER part (the content after the reasoning ended) reaches this many tokens, and report the call as cut by the token
+        limit (finish_reason length), as a call limited by max_tokens is. The server sends token counts only at the end of a stream, so the
+        count is the number of content chunks (one per token on this server; a chunk that carries two tokens would make the cap looser, never
+        stricter); the chunk in which </think> arrives counts as the first. Nothing is sent differently: the cap only ends the reading."""
         self._check_model_listed()
         try:
-            return self._chat(messages, max_tokens, on_token, thinking, info, timeout)
+            return self._chat(messages, max_tokens, on_token, thinking, info, timeout, answer_cap)
         except httpx.TimeoutException as e:
             if timeout is not None:
                 raise CallTimeout(f"the call to {self.base} did not finish within {timeout:.0f} s") from None
@@ -215,11 +242,14 @@ class OpenAIChatGenerator:
             body["chat_template_kwargs"] = kw
         return body
 
-    def _chat(self, messages, max_tokens, on_token, thinking=None, info=None, timeout=None):
+    def _chat(self, messages, max_tokens, on_token, thinking=None, info=None, timeout=None, answer_cap=None):
         body = self.request_body(messages, max_tokens, thinking)
         t_start = time.monotonic()
         tkw = {} if timeout is None else {"timeout": timeout}  # None: the request is sent exactly as before
         if on_token is None:
+            if info is not None:  # M7 K4: the hash of the body as sent (a record for the reader; nothing is sent differently)
+                info["request_body_sha256"] = body_sha256(body)
+                info["request_body_parts"] = body_parts(body)
             r = self.client.post(self.url, json=body, headers=self.headers, **tkw)
             self._check_status(r)
             d = r.json()
@@ -245,8 +275,12 @@ class OpenAIChatGenerator:
                 raise _empty_error(max_tokens, trunc, sep)
             return out, toks, trunc
         body.update(stream=True, stream_options={"include_usage": True})
+        if info is not None:
+            info["request_body_sha256"] = body_sha256(body)
+            info["request_body_parts"] = body_parts(body)
         text, toks, finish, reasoning = "", 0, None, False
         rtext, usage, t_r0, t_c0 = "", None, None, None
+        t_first, all_chunks, ans_chunks, capped = None, 0, 0, False
         with self.client.stream("POST", self.url, json=body, headers=self.headers, **tkw) as r:
             self._check_status(r)
             for line in r.iter_lines():
@@ -265,15 +299,28 @@ class OpenAIChatGenerator:
                         rtext += rpiece
                         t_r0 = time.monotonic() if t_r0 is None else t_r0
                     piece = delta.get("content") or ""
+                    finish = ch.get("finish_reason") or finish
+                    if (rpiece or piece) and t_first is None:
+                        t_first = time.monotonic()
+                    all_chunks += bool(rpiece or piece)
                     if piece:
                         text += piece
                         on_token(piece)
+                        # the answer part: content chunks once the reasoning has ended (reasoning apart, or after </think>)
+                        if reasoning or "</think>" in text or not (thinking or text.lstrip().startswith("<think>")):
+                            ans_chunks += 1
+                            if answer_cap and ans_chunks >= answer_cap and finish is None:
+                                capped = True
                         # the answer starts: at once when the server sends reasoning apart, else after </think>
                         if info is not None and t_c0 is None and (
                                 t_r0 is not None or "</think>" in text
                                 or not (thinking or text.lstrip().startswith("<think>"))):
                             t_c0 = time.monotonic()
-                    finish = ch.get("finish_reason") or finish
+                if capped:
+                    break
+        if capped:  # the reading stopped at the answer limit: a cut, as max_tokens would have made it; the server sent no usage yet
+            finish = "length"
+            toks = toks or all_chunks
         if info is not None:
             t_end = time.monotonic()
             think_s = None
@@ -282,7 +329,10 @@ class OpenAIChatGenerator:
             elif "</think>" in text or text.lstrip().startswith("<think>"):  # inline: from the start to </think>
                 think_s = (t_c0 or t_end) - t_start
             request_info(info, usage, rtext, open_think(text) if thinking else text, finish, thinking,
-                         t_end - t_start, think_s)
+                         t_end - t_start, think_s, None if t_first is None else t_first - t_start)
+            info["answer_chunks"] = ans_chunks
+            info["answer_cap"] = answer_cap
+            info["answer_cap_hit"] = capped
         if thinking:
             out, cut = thinking_answer(text, finish == "length", reasoning)
             if info is not None:
@@ -309,20 +359,26 @@ class MLXGenerator:
     def identity(self):
         return {"backend": self.backend, "model": self.model_path, "adapter": self.adapter}
 
-    def chat(self, messages, max_tokens, on_token=None, *, thinking=None, info=None, timeout=None):
+    def chat(self, messages, max_tokens, on_token=None, *, thinking=None, info=None, timeout=None, answer_cap=None):
         """thinking None or False: today's prompt (enable_thinking=False); True: enable_thinking=True for this call.
-        timeout: accepted for the common interface; an in-process call is not bounded by it."""
+        timeout: accepted for the common interface; an in-process call is not bounded by it. answer_cap (M7 K4): with thinking on, stop at
+        this many tokens after </think> (exact: the generation's own token count) and report the call as cut by the token limit."""
         prompt = self.tok.apply_chat_template(messages, add_generation_prompt=True, tokenize=False,
                                               enable_thinking=bool(thinking))
         text, last = "", None
         t0 = time.monotonic()
-        t_c0 = None
+        t_c0, gt_close, capped = None, None, False
         for last in self._stream(self.model, self.tok, prompt=prompt, max_tokens=max_tokens):
             text += last.text
             if on_token and last.text:
                 on_token(last.text)
-            if info is not None and t_c0 is None and "</think>" in text:
+            if t_c0 is None and "</think>" in text:
                 t_c0 = time.monotonic()
+                gt_close = last.generation_tokens
+            if answer_cap and thinking and gt_close is not None and last.generation_tokens - gt_close >= answer_cap \
+                    and last.finish_reason is None:
+                capped = True
+                break
         if thinking and prompt.rstrip().endswith("<think>") and "<think>" not in text:
             text = "<think>" + text  # the template opened the block in the prompt: the reply starts inside it
         if info is not None:
@@ -331,7 +387,7 @@ class MLXGenerator:
             request_info(info, {"completion_tokens": last.generation_tokens,
                                 "prompt_tokens": getattr(last, "prompt_tokens", None)},
                          "", text, last.finish_reason, thinking, t_end - t0, think_s)
-        trunc = last.finish_reason == "length"
+        trunc = last.finish_reason == "length" or capped
         if not thinking:
             return strip_think(text), last.generation_tokens, trunc
         out, cut = thinking_answer(text, trunc, False)

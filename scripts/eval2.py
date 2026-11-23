@@ -563,11 +563,24 @@ class StubGen:
     identity = {"backend": "stub", "model": "stub", "adapter": None}
 
     def chat(self, messages, max_tokens, on_token=None, **kw):
-        from kafka_sre_rag import prompts
+        from kafka_sre_rag import generators, prompts
+        user = messages[-1]["content"] if messages else ""
+        # M7 K4, dry runs only: a failure planted by the chain's --plant-* options (environment variables read here, comma-separated substrings of a question)
+        hit = lambda var: any(x and x in user for x in os.environ.get(var, "").split(","))  # noqa: E731
         if messages[0]["content"] == prompts.EXPAND_SYSTEM:
             return "consumer group, kafka-consumer-groups.sh, --describe", 0, False
         if messages[0]["content"] == prompts.VERIFY_SYSTEM:  # the checking pass of the thorough profile
+            if hit("M7_STUB_CHECK_FAIL"):
+                raise RuntimeError("planted failure of the checking call (dry run)")
             return '{"replacements": []}', 0, False
+        info = kw.get("info")
+        if isinstance(info, dict):   # what the real generator records of the request, so that the chain's checks of the request bodies run in a dry run too
+            body = generators.OpenAIChatGenerator("http://example.invalid/v1", "stub", extra_body={"chat_template_kwargs": {"enable_thinking": False}}).request_body(
+                messages, max_tokens, kw.get("thinking"))
+            info["request_body_parts"] = generators.body_parts(body)
+            if kw.get("thinking") and hit("M7_STUB_CUT_WHILE_THINKING"):
+                info["cut_while_thinking"] = True
+                raise generators.EmptyAnswerError("planted: cut while thinking (dry run)")
         return "[stub answer: no model was called]", 0, False
 
 
@@ -576,7 +589,8 @@ def thorough_profile(a):
     if not getattr(a, "answer_profile", None):
         return None
     from kafka_sre_rag.verify_pass import Profile
-    return Profile(thinking=not a.no_thinking, verify=not a.no_verify, cards=not a.no_cards)
+    kw = {} if getattr(a, "think_cap", None) is None else {"thinking_tokens": a.think_cap}   # M7 K4: the thinking cap (tokens added to the answer limit)
+    return Profile(thinking=not a.no_thinking, verify=not a.no_verify, cards=not a.no_cards, **kw)
 
 
 def thorough_row(r):
@@ -809,8 +823,8 @@ def cmd_answer(a, out=sys.stdout):
         from kafka_sre_rag import service
         if closed:
             raise EvalError("--answer-profile needs excerpts; it cannot be used with --mode closed")
-        if a.no_thinking and a.no_verify:
-            raise EvalError("--no-thinking with --no-verify leaves nothing of the answer profile")
+        # M7 K4: --no-thinking with --no-verify is allowed here (arm A of the six-arm test: today's call on the profile's transport, so that every arm
+        # shares it); ask and chat still refuse it
         if not a.catalogue:
             raise EvalError("--answer-profile needs --catalogue DIR (the catalogues of the checking pass)")
         ctk = (a.extra_body or {}).get("chat_template_kwargs") if isinstance(a.extra_body, dict) else None
@@ -827,8 +841,9 @@ def cmd_answer(a, out=sys.stdout):
             from kafka_sre_rag.kb_lookup import KbLookup
             ck = th_kw["thorough_checker"]
             th_kw["kb"] = KbLookup(ck.cats, ck.directory, verify=True)
-    elif getattr(a, "no_thinking", False) or getattr(a, "no_verify", False) or getattr(a, "no_cards", False):
-        raise EvalError("--no-thinking, --no-verify and --no-cards need --answer-profile thorough")
+    elif (getattr(a, "no_thinking", False) or getattr(a, "no_verify", False) or getattr(a, "no_cards", False)
+          or getattr(a, "think_cap", None) is not None):
+        raise EvalError("--no-thinking, --no-verify, --no-cards and --think-cap need --answer-profile thorough")
     replay, replay_info = None, None
     if a.replay_packs:
         if is_hidden(a.replay_packs) != hidden:
@@ -1093,6 +1108,8 @@ def build_parser():
     an.add_argument("--no-thinking", action="store_true", help="with --answer-profile: check only (draft without thinking)")
     an.add_argument("--no-verify", action="store_true", help="with --answer-profile: thinking only (no checking pass)")
     an.add_argument("--no-cards", action="store_true", help="with --answer-profile: no reference cards in the check")
+    an.add_argument("--think-cap", type=int, default=None, metavar="N",
+                    help="with --answer-profile: tokens of thinking added to the answer limit (default: the profile's 1,500)")
     an.add_argument("--r2", action="store_true",
                     help="with --revise-from: also the R2 patch call (one model call per flagged answer; "
                          "--backend and --model as for answers)")
