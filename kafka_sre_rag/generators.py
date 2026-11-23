@@ -123,6 +123,12 @@ def request_info(info, usage, reasoning_text, raw_content, finish_reason, thinki
     return info
 
 
+def body_sha256(body):
+    """sha256 of a request body in a canonical JSON form (M7 K4: recorded in the call's info, never sent)."""
+    import hashlib
+    return hashlib.sha256(json.dumps(body, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
 class OpenAIChatGenerator:
     """Any OpenAI-compatible /v1/chat/completions server. Temperature 0. Thinking must be switched off per
     server through extra_body; a <think> block in the reply is stripped in any case."""
@@ -220,6 +226,8 @@ class OpenAIChatGenerator:
         t_start = time.monotonic()
         tkw = {} if timeout is None else {"timeout": timeout}  # None: the request is sent exactly as before
         if on_token is None:
+            if info is not None:  # M7 K4: the hash of the body as sent (a record for the reader; nothing is sent differently)
+                info["request_body_sha256"] = body_sha256(body)
             r = self.client.post(self.url, json=body, headers=self.headers, **tkw)
             self._check_status(r)
             d = r.json()
@@ -245,6 +253,8 @@ class OpenAIChatGenerator:
                 raise _empty_error(max_tokens, trunc, sep)
             return out, toks, trunc
         body.update(stream=True, stream_options={"include_usage": True})
+        if info is not None:
+            info["request_body_sha256"] = body_sha256(body)
         text, toks, finish, reasoning = "", 0, None, False
         rtext, usage, t_r0, t_c0 = "", None, None, None
         with self.client.stream("POST", self.url, json=body, headers=self.headers, **tkw) as r:
