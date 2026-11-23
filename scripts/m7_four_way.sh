@@ -206,7 +206,8 @@ unload_now() { # any model; only when no request is active or waiting (the Owner
   ucode=$(printf '%s' "$uresp" | tail -n 1); ubody=$(printf '%s' "$uresp" | sed '$d' | tr '\n' ' ' | cut -c1-160 | sed 's/ *$//')
   case $ucode in [0-9][0-9][0-9]) ;; *) ucode=000;; esac
   case $ucode in
-    2??) hb "$N: unloaded $1 (no active or waiting requests; the server answered $ucode: ${ubody:-no body})";;
+    2??) uw=0; while [ "$(loaded $1)" = "yes" ]; do sleep 5; uw=$((uw+5)); [ $uw -lt 600 ] || fail "the unload of $1 was accepted but the model is still loaded after 600 s"; done   # the server unloads asynchronously (202 "unloading"): wait until it is gone, or the next gate sees a model without our marker (2026-11-23)
+         hb "$N: unloaded $1 (no active or waiting requests; the server answered $ucode: ${ubody:-no body}; gone after ${uw} s)";;
     *) hb "$N: unload of $1 FAILED (the server answered $ucode: ${ubody:-no body})" yes; fail "the unload of $1 was not accepted (the server answered $ucode)";;
   esac; }
 unload() { [ "$(loaded $1)" = "yes" ] || return 0; unload_now $1; }

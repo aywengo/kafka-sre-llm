@@ -2231,3 +2231,17 @@ class EndToEndDryRun(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class UnloadWaitsUntilGone(unittest.TestCase):
+    """The server unloads asynchronously (202 "unloading"); on 2026-11-23 the next model's gate saw the 31B still loaded after
+    its marker was removed and refused it as another client's model. unload_now must wait until the model is gone."""
+
+    def test_unload_now_polls_until_the_model_is_gone(self):
+        text = (ROOT / "scripts" / "m7_four_way.sh").read_text()
+        body = text[text.index("unload_now() {"):text.index("unload() {")]
+        self.assertIn('while [ "$(loaded $1)" = "yes" ]', body)
+        self.assertIn("still loaded after 600 s", body)
+        # the marker is dropped only after unload() returns, so after the wait
+        fin = text[text.index("finish_model() {"):text.index("model_group() {")]
+        self.assertLess(fin.index("unload $MID"), fin.index("rm -f $W/loaded_$1"))
