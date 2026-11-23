@@ -573,6 +573,8 @@ class StubGen:
             if hit("M7_STUB_CHECK_FAIL"):
                 raise RuntimeError("planted failure of the checking call (dry run)")
             return '{"replacements": []}', 0, False
+        if os.environ.get("M7_STUB_ANSWER_FAIL"):   # a persistent error planted by the chain's --plant-answer-error (dry runs only): every answer call of the planted model fails
+            raise RuntimeError("planted persistent error of the answer call (dry run)")
         info = kw.get("info")
         if isinstance(info, dict):   # what the real generator records of the request, so that the chain's checks of the request bodies run in a dry run too
             body = generators.OpenAIChatGenerator("http://example.invalid/v1", "stub", extra_body={"chat_template_kwargs": {"enable_thinking": False}}).request_body(

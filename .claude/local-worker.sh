@@ -18,8 +18,8 @@ URL=${OMLX_URL:-$(cat "$CFG/omlx_url")}
 KEY=$(cat "$CFG/judge_key")
 PREFER=${LOCAL_WORKER_MODEL:-GLM-5.3-Flash-oQ8e-mtp}
 
-# Pipeline jobs own the GPU and the server while they run.
-if pgrep -f "run_guarded.py|eval/compare.py|rag_answers.py|generate_qa.py|mlx_lm|phase0.*\.sh" >/dev/null; then
+# Pipeline jobs own the GPU and the server while they run. A chain script (scripts/m4_*.sh to m7_*.sh) counts too: between two of its stages no guarded job runs, but it is about to load the next model.
+if pgrep -f "run_guarded.py|eval/compare.py|rag_answers.py|generate_qa.py|mlx_lm|phase0.*\.sh|scripts/m[4-7]_[a-z0-9_]*\.sh" >/dev/null; then
   echo "BUSY: a pipeline job is running" >&2; exit 3
 fi
 

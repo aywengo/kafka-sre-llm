@@ -66,14 +66,14 @@
 # 10 to 14 server hours).
 set -e
 DRY=no; WSET=no; W=work/m7/six_arm; REPORT=runs/m7/M7_SIX_ARM.md; RSET=no; VARIANT=; CAP=; VSRC=; CSRC=; PERFECT=work/m7/packs_perfect.jsonl; MAXU=0; FAILAFTER=; DRYITEMS=8; PSET=no
-PILOT=runs/m7/M7_PILOT.md; PLANTCUT=; PLANTCHK=; MODELS=qwen,gemma26,gemma31; THINK=none; THSET=no; THMECH=yes; QID=; G26ID=; G31ID=; SPS=0
+PILOT=runs/m7/M7_PILOT.md; PLANTCUT=; PLANTCHK=; PLANTERR=; MODELS=qwen,gemma26,gemma31; THINK=none; THSET=no; THMECH=yes; QID=; G26ID=; G31ID=; SPS=0
 IDS=eval/m4/g_dev_ids.json; ITEMS=eval/m6/d5/items.jsonl; RUBS=eval/m6/d5/rubrics.jsonl; CC=eval/m6/d5/CHUNK_CHECK.json; FW=work/m6/d5_funnel
 while [ $# -gt 0 ]; do case $1 in
   --dry-run) DRY=yes;;
   --work) W=${2:?}; WSET=yes; shift;; --report) REPORT=${2:?}; RSET=yes; shift;;
   --check-variant) VARIANT=${2:?}; shift;; --think-cap) CAP=${2:?}; shift;; --check-variant-source) VSRC=${2:?}; shift;; --think-cap-source) CSRC=${2:?}; shift;;
   --perfect-packs) PERFECT=${2:?}; PSET=yes; shift;; --ids) IDS=${2:?}; shift;; --max-unjudged) MAXU=${2:?}; shift;; --fail-after) FAILAFTER=${2:?}; shift;; --dry-items) DRYITEMS=${2:?}; shift;;
-  --pilot-report) PILOT=${2:?}; shift;; --plant-cut) PLANTCUT=${2:?}; shift;; --plant-check-fail) PLANTCHK=${2:?}; shift;;
+  --pilot-report) PILOT=${2:?}; shift;; --plant-cut) PLANTCUT=${2:?}; shift;; --plant-check-fail) PLANTCHK=${2:?}; shift;; --plant-answer-error) PLANTERR=${2:?}; shift;;
   --models) MODELS=${2:?}; shift;; --thinking-models) THINK=${2:?}; THSET=yes; shift;; --thinking-mech) THMECH=${2:?}; shift;; --qwen-model) QID=${2:?}; shift;; --gemma26-model) G26ID=${2:?}; shift;; --gemma31-model) G31ID=${2:?}; shift;;
   --scenarios-per-session) SPS=${2:?}; shift;;
   *) echo "usage: scripts/m7_four_way.sh [--dry-run] [--work DIR] [--report FILE] --check-variant V1|V1C|none --think-cap N [--check-variant-source TXT --think-cap-source TXT] [--perfect-packs F] [--ids FILE] [--pilot-report F] [--max-unjudged N] [--models LIST] [--thinking-models LIST] [--thinking-mech yes|no] [--gemma31-model ID] (see the header)" >&2; exit 2;; esac
@@ -87,6 +87,7 @@ MARGS="--models $MODELS --thinking-models $THINK --thinking-mech $THMECH"
 if [ -n "$QID" ]; then MARGS="$MARGS --qwen-model $QID"; fi
 if [ -n "$G26ID" ]; then MARGS="$MARGS --gemma26-model $G26ID"; fi
 if [ -n "$G31ID" ]; then MARGS="$MARGS --gemma31-model $G31ID"; fi
+case "$PLANTERR" in ""|gemma26|gemma31) ;; *) refuse "--plant-answer-error names gemma26 or gemma31 (Qwen's failure stops the run)";; esac
 GMFLAG=; if [ $DRY = yes ]; then GMFLAG=--dry; fi
 .venv/bin/python $R gate-models $MARGS $GMFLAG || refuse "the models are not usable (see above: the list, the thinking list, a placeholder id)"
 case $MAXU in ''|*[!0-9]*) refuse "--max-unjudged is a whole number (0 or more)";; esac
@@ -96,7 +97,7 @@ if [ $DRY = no ]; then
   case "$VSRC" in *[![:space:]]*) ;; *) refuse "--check-variant-source is required in a real run (where the variant comes from, e.g. the pilot's report)";; esac
   case "$CSRC" in *[![:space:]]*) ;; *) refuse "--think-cap-source is required in a real run (where the cap comes from, e.g. the pilot's report)";; esac
   [ -z "$FAILAFTER" ] || refuse "--fail-after is for dry runs only"
-  [ -z "$PLANTCUT$PLANTCHK" ] || refuse "--plant-cut and --plant-check-fail are for dry runs only"
+  [ -z "$PLANTCUT$PLANTCHK$PLANTERR" ] || refuse "--plant-cut, --plant-check-fail and --plant-answer-error are for dry runs only"
   [ $THSET = yes ] || refuse "--thinking-models LIST|none is required in a real run (the default is none: whether Qwen's thinking arms run at all is the Owner's decision; the value is recorded in the manifest and the header)"
   .venv/bin/python $R pilot-check --file "$PILOT" || refuse "the pilot's report is not usable (see above)"
 else
@@ -109,12 +110,15 @@ EB='{"chat_template_kwargs": {"enable_thinking": false}}'
 JEB='{"chat_template_kwargs": {"thinking_mode": "chat"}, "max_tokens": 4096}'
 JSETTING=deepseek-nothink-12k; SRC=12000
 case $VARIANT in none) CHECKING=no;; *) CHECKING=yes;; esac
+derive_sets() { # the sets, the order and the counts of the models that answer (K4b: after a model's answer stage failed, the run goes on without it: this is called again with the reduced MARGS)
 SETLINES=$(.venv/bin/python $R sets --check-variant $VARIANT $MARGS) || refuse "the judged sets could not be listed"
-SETNAMES=$(echo "$SETLINES" | awk '{print $1}' | tr '\n' ' ')
-DECSETS=$(echo "$SETLINES" | awk '$3=="decided"{print $1}' | tr '\n' ' '); DESCSETS=$(echo "$SETLINES" | awk '$3=="described"{print $1}' | tr '\n' ' ')     # Qwen's sets decide the rows; R and the other models' sets are described (K4b)
-NSETS=$(echo $SETNAMES | wc -w | tr -d ' ')
-stem_of() { echo "$SETLINES" | awk -v n=$1 '$1==n{print $2}'; }     # the file stem of a set's D5 answers
-MODELORDER=$(.venv/bin/python $R model-order $MARGS) || refuse "the model order could not be made"     # e.g. gemma31:no gemma26:no qwen:yes
+  SETNAMES=$(echo "$SETLINES" | awk '{print $1}' | tr '\n' ' ')
+  DECSETS=$(echo "$SETLINES" | awk '$3=="decided"{print $1}' | tr '\n' ' '); DESCSETS=$(echo "$SETLINES" | awk '$3=="described"{print $1}' | tr '\n' ' ')     # Qwen's sets decide the rows; R and the other models' sets are described (K4b)
+  NSETS=$(echo $SETNAMES | wc -w | tr -d ' ')
+  stem_of() { echo "$SETLINES" | awk -v n=$1 '$1==n{print $2}'; }     # the file stem of a set's D5 answers
+  MODELORDER=$(.venv/bin/python $R model-order $MARGS) || refuse "the model order could not be made"     # e.g. gemma31:no gemma26:no qwen:yes
+}
+derive_sets
 MODELKEYS=$(echo $MODELORDER | tr ' ' '\n' | sed 's/:.*//' | tr '\n' ' ')
 hasf() { [ $1 = qwen ] || [ $CHECKING = yes ]; }       # does a thinking model have the perfect-pack thinking arm F? (a thinking Gemma model under none has B only)
 hasm() { [ $1 = qwen ] || [ $THMECH = yes ]; }         # does a thinking model's D (B under none) answer the 116 mechanical items?
@@ -158,6 +162,11 @@ fail() { if [ $DRY = yes ]; then echo "DRY RUN FAILED: $1"; mkdir -p $L; echo "$
 refuse_late() { # the server gate after the chain started (another client appeared): exit 2, as at the gate; nothing is unloaded
   hb "$N: REFUSED: $1" yes; mkdir -p $L; echo "REFUSED: $1" >> $L/$N.failed
   status STOPPED yes "$N refused: $1; marker $L/$N.failed"; echo "REFUSED: $1" >&2; exit 2; }
+afail() { # the answer stage of a model other than Qwen failed after its retries (SOFTK is set): the model ends as "not available" (a marker), the chain goes on without it; Qwen's failure stops the run (fail)
+  [ -n "$SOFTK" ] || fail "$1"
+  .venv/bin/python $R model-failed --work $W --model $SOFTK --thinking $SOFTTH --why "$1" || fail "$1"
+  hb "$N: the answer stage of $SOFTK failed after its retries and the model is NOT AVAILABLE; the run goes on with the other models: $1" yes
+  echo "MODEL NOT AVAILABLE: $SOFTK: $1"; exit 3; }
 planted() { [ "$FAILAFTER" != "$1" ] || fail "planted failure after the stage $1 (a dry run's rehearsal of a restart)"; }
 
 # ---------------------------------------------------------------- 1. the gate (CPU; nothing is written before the checks pass, except $W itself)
@@ -352,13 +361,14 @@ REDO_PASSES=$(.venv/bin/python -c 'import sys; sys.path.insert(0, "scripts"); im
 CHECK_LIMIT=${REDO_PASSES#* }; REDO_PASSES=${REDO_PASSES% *}
 echo_check() { # the model the server echoed equals the first answers' of this run for this model (and the stored mechanical references' where this run replays one: Qwen only)
   .venv/bin/python $GR check-echo --stored $ECHOREF $echo_extra --new $out.manifest.json $( [ $DRY = yes ] && echo --dry ) \
-    || fail "answers $config: the server echoed another model than the first answers of this run for this model (the answer sets are not comparable)"; }
+    || afail "answers $config: the server echoed another model than the first answers of this run for this model (the answer sets are not comparable)"; }
 answer_run() { # OUT ITEMS REPLAY EXPECT CONFIG "PROFILE ARGS" [STORED_MANIFEST] [MODE]: all items, one request at a time. A row whose checking call ended with status error is redone (REDO_PASSES passes; the count is kept in OUT.redo)
   out=$1; items=$2; replay=$3; expect=$4; config=$5; pargs=$6; echo_extra=$7; amode=${8:-default}
   CK=yes; case "$pargs" in *--no-verify*) CK=no;; esac
+  NOTHINK=; case "$pargs" in *--no-thinking*) NOTHINK=--no-thinking;; esac      # a no-thinking arm (A, E, R) must show no reasoning tokens or characters (check-rows refuses it)
   redo=$(cat $out.redo 2>/dev/null || echo 0); bad=0
   while :; do
-    if .venv/bin/python $GR check-answers --file $out --expect $expect --mode $amode > $W/check.out 2>&1 && .venv/bin/python $R check-rows --file $out --expect $expect $REALFLAG >> $W/check.out 2>&1; then
+    if .venv/bin/python $GR check-answers --file $out --expect $expect --mode $amode > $W/check.out 2>&1 && .venv/bin/python $R check-rows --file $out --expect $expect $REALFLAG $NOTHINK >> $W/check.out 2>&1; then
       echo "answers $config: complete: $(cat $W/check.out | tr '\n' ' ')"
       [ $CK = yes ] || break
       nerr=$(.venv/bin/python $R check-errors --file $out --kind answers | sed -n 's/^check_errors=//p')
@@ -368,16 +378,16 @@ answer_run() { # OUT ITEMS REPLAY EXPECT CONFIG "PROFILE ARGS" [STORED_MANIFEST]
       .venv/bin/python $R check-errors --file $out --kind answers --drop > /dev/null
       echo "answers $config: redo pass $redo of the $nerr rows whose checking call failed (the rows are kept in $out.redo_dropped.jsonl)"
     else
-      [ $bad -lt 3 ] || fail "answers $config: incomplete, with errors, empty, without a pack or without a whole profile row after $bad passes ($out)"
+      [ $bad -lt 3 ] || afail "answers $config: incomplete, with errors, empty, without a pack or without a whole profile row after $bad passes ($out)"
       bad=$((bad+1))
     fi
     [ $DRY = yes ] || idle
     hb "$N: answers $config started ($expect items; $pargs; mode $amode)"
     $G --stall-min 40 --log $L/$N.$config.log -- .venv/bin/python scripts/eval2.py answer --items $items --out $out --config $config $GA \
       --extra-body "$EB" --mode $amode --replay-packs $replay --catalogue $CATS --host-class "Mac Studio" --allow-commit-change --answer-profile thorough $pargs \
-      || fail "answers $config: failed (see $L/$N.$config.log)"
+      || afail "answers $config: failed (see $L/$N.$config.log)"
   done
-  .venv/bin/python $GR packs-equal --a $replay --b $out || fail "answers $config: the packs differ from the pack file (replay failed)"
+  .venv/bin/python $GR packs-equal --a $replay --b $out || afail "answers $config: the packs differ from the pack file (replay failed)"
   echo_check
 }
 PA="--no-thinking --no-verify"                                     # arms A, E and R: today's call on the profile's transport
@@ -428,7 +438,7 @@ cross_pc() { # OTHER_SFX THIS_SFX: two models' A and E are the same call: the sa
   return 0; }
 use_model() { # KEY: the model of the answers that follow (SFX is the suffix of its files and stages; empty for qwen)
   mk=$1; MID=$(mid_of $mk); SFX=; [ $mk = qwen ] || SFX=_$mk
-  if [ $DRY = yes ]; then GA="--backend stub --no-rerank"; VA="--dry-run"; else GA="--backend openai --model $MID"; VA="--backend openai --model $MID"; fi
+  if [ $DRY = yes ]; then export M7_STUB_ANSWER_FAIL=; [ "$mk" != "$PLANTERR" ] || export M7_STUB_ANSWER_FAIL=1; GA="--backend stub --no-rerank"; VA="--dry-run"; else GA="--backend openai --model $MID"; VA="--backend openai --model $MID"; fi
   ECH_MA=; ECH_M3=; if [ $mk = qwen ]; then ECH_MA="--stored $TA_ANS.manifest.json"; ECH_M3="--stored $TA3_ANS.manifest.json"; fi   # the stored mechanical references are Qwen's answers
   return 0; }
 prepare_model() { # KEY (real runs): only models of this chain may be loaded when this model's first request comes (the others of ours are unloaded); a model of another client stops the chain (exit 2, nothing unloaded)
@@ -576,8 +586,30 @@ if ! stage_done probes; then
   mark probes $W/probes.txt
   hb "$N: thinking probes done (every model other than Qwen, before any answer): $(tr '\n' ' ' < $W/probes.txt | cut -c1-300)"
 fi
-PREVK=; PREVSFX=
-for mo in $MODELORDER; do model_group ${mo%%:*} ${mo#*:}; PREVK=${mo%%:*}; PREVSFX=; [ $PREVK = qwen ] || PREVSFX=_$PREVK; done
+PREVK=; PREVSFX=; SOFTK=; SOFTTH=no
+for mo in $MODELORDER; do
+  mk_=${mo%%:*}
+  if [ $mk_ != qwen ] && [ -f $W/model_failed_$mk_.json ]; then echo "model $mk_: its answer stage failed in an earlier invocation: not available (marker $W/model_failed_$mk_.json; remove it to try again)"; continue; fi
+  if [ $mk_ = qwen ]; then model_group $mk_ ${mo#*:}
+  else
+    # a model other than Qwen runs in a background subshell (its own set -e): a failure after its retries ends as "not available" for that model (exit 3); any other failure stops the run as before
+    ( SOFTK=$mk_; SOFTTH=${mo#*:}; model_group $mk_ ${mo#*:} ) & mrc=0; wait $! || mrc=$?
+    case $mrc in 0) ;; 3) use_model $mk_; finish_model $mk_; continue;; *) exit $mrc;; esac
+  fi
+  PREVK=$mk_; PREVSFX=; [ $PREVK = qwen ] || PREVSFX=_$PREVK
+done
+# K4b: the models whose answer stage failed are left out of everything that follows (their rows and comparisons print "not available: answer stage failed")
+FAILEDK=; for k in gemma26 gemma31; do [ ! -f $W/model_failed_$k.json ] || FAILEDK="$FAILEDK $k"; done
+if [ -n "$FAILEDK" ]; then
+  OKM=; for t in $(echo $MODELS | tr ',' ' '); do case " $FAILEDK " in *" $t "*) ;; *) OKM="$OKM,$t";; esac; done; OKM=${OKM#,}
+  OKT=; for t in $(echo $THINK | tr ',' ' '); do case " $FAILEDK " in *" $t "*) ;; *) [ "$t" = none ] || OKT="$OKT,$t";; esac; done; OKT=${OKT#,}; [ -n "$OKT" ] || OKT=none
+  MARGS="--models $OKM --thinking-models $OKT --thinking-mech $THMECH"
+  if [ -n "$QID" ]; then MARGS="$MARGS --qwen-model $QID"; fi
+  if [ -n "$G26ID" ]; then MARGS="$MARGS --gemma26-model $G26ID"; fi
+  if [ -n "$G31ID" ]; then MARGS="$MARGS --gemma31-model $G31ID"; fi
+  derive_sets
+  echo "models not available (answer stage failed):$FAILEDK; the run goes on with: $MODELORDER (sets $(echo $SETNAMES | tr ' ' ','))"
+fi
 
 # ---------------------------------------------------------------- derived sets (B and F' from the thorough rows, C's answers from A's rows) and the prompt check (CPU)
 if ! stage_done derive; then
@@ -753,7 +785,7 @@ FINAL=$(sed -n 's/^\(M7 SIX-ARM TEST DONE: .*\)$/\1/p' $W/rule_out.txt | tail -n
   echo
   echo "### What this report does not show"
   echo
-  echo "Wrong, invented and harmful statements, and the consequence of every harmful one (blind readings of Qwen's A, D, E and F, each other model's A and E and its D, or B under none, when it ran wait; \`$R thorough-rows --measures $W/measures.json --findings F --reads R --first-reader NAME --second-reader NAME\` applies each thinking Gemma model's thorough row with the findings; with the findings, \`$R harm-match\` matches the harm by consequence and \`$R compare-models\` prints the whole comparison with the reading's parts; a new harmful consequence goes to the second reader beyond the quarter: \`scripts/eval2_blind.py extra-second --key $W/reading/KEY.json --items ITEMS --rubrics RUBRICS --answers NAME=PATH... --out DIR --ids ID...\` writes a further bundle with the same blind names and widens the key's second-reader scope (\`reading-sets\` lists the NAME=PATH pairs), and \`scripts/eval2_blind.py merge --findings F1 F2 --reads R1 R2 --out F --reads-out R\` joins the two unblinded files for \`harm-match\`: the blind names stay the same: the readers' copy of the bundles, without the key, in \`$RCOPY\`; the work folder's bundles in \`$W/reading/first\`, the second reader's quarter in \`$W/reading/second\`, the plan in \`$W/reading/sessions.json\`, the key, which lists the scenarios left out because an answer had no draft, in \`$W/reading/KEY.json\`, which no reader opens). A \"build\" of the knowledge base does not settle (b): decision V8 leaves the writers and the licences to the Owner; the deadline of the profile counts from the call, not from the question (the replay has no search); the 4-bit build's honouring of the thinking switch is seen in the rows' reasoning tokens, not assumed. Development data only (D5 is worn after M6); the hidden part is not involved."
+  echo "Wrong, invented and harmful statements, and the consequence of every harmful one (the readers' findings are unblinded with \`scripts/eval2_blind.py unblind --key $W/reading/KEY.json ... --require-consequence\`, which refuses a harmful finding without a consequence from the closed list or \"other: ...\", before anything below is run; blind readings of Qwen's A, D, E and F, each other model's A and E and its D, or B under none, when it ran wait; \`$R thorough-rows --measures $W/measures.json --findings F --reads R --first-reader NAME --second-reader NAME\` applies each thinking Gemma model's thorough row with the findings; with the findings, \`$R harm-match\` matches the harm by consequence and \`$R compare-models\` prints the whole comparison with the reading's parts; a new harmful consequence goes to the second reader beyond the quarter: \`scripts/eval2_blind.py extra-second --key $W/reading/KEY.json --items ITEMS --rubrics RUBRICS --answers NAME=PATH... --out DIR --ids ID...\` writes a further bundle with the same blind names and widens the key's second-reader scope (\`reading-sets\` lists the NAME=PATH pairs), and \`scripts/eval2_blind.py merge --findings F1 F2 --reads R1 R2 --out F --reads-out R\` joins the two unblinded files for \`harm-match\`: the blind names stay the same: the readers' copy of the bundles, without the key, in \`$RCOPY\`; the work folder's bundles in \`$W/reading/first\`, the second reader's quarter in \`$W/reading/second\`, the plan in \`$W/reading/sessions.json\`, the key, which lists the scenarios left out because an answer had no draft, in \`$W/reading/KEY.json\`, which no reader opens). A \"build\" of the knowledge base does not settle (b): decision V8 leaves the writers and the licences to the Owner; the deadline of the profile counts from the call, not from the question (the replay has no search); the 4-bit build's honouring of the thinking switch is seen in the rows' reasoning tokens, not assumed. Development data only (D5 is worn after M6); the hidden part is not involved."
   echo
   echo "### Files"
   echo
