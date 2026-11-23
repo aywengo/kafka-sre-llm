@@ -136,8 +136,9 @@ def body_parts(body):
     sw = kw.pop("enable_thinking", None)
     rest = {k: v for k, v in body.items() if k not in ("messages", "max_tokens", "chat_template_kwargs")}
     rest["chat_template_kwargs_other"] = kw
+    nomodel = {k: v for k, v in rest.items() if k != "model"}     # K4b: the same hash without the model, so that the bodies of different models can be compared
     return {"messages_sha256": body_sha256(body.get("messages")), "max_tokens": body.get("max_tokens"), "enable_thinking": sw,
-            "rest_sha256": body_sha256(rest)}
+            "rest_sha256": body_sha256(rest), "rest_nomodel_sha256": body_sha256(nomodel)}
 
 
 def body_sha256(body):
