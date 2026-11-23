@@ -314,4 +314,24 @@ candidate C becomes the default, after the look.
   the perfect packs of D5 (K0), the design of the checking pass (K1), the catalogue
   lookup module (K7). M6 closes when the informative D5 run and its reading are in;
   this document then moves to `milestones/M6.md`.
+- 2026-11-23 09:35, M7's first slice is in. K0 (`4a09010`): the perfect packs serve all
+  227 points with a covering set (frozen 69, r4g2 112); median 4 chunks from the sets.
+  K7 (`f24370a`): the lookup module gives 1.3 to 2.2 cards per question and about 11
+  per draft answer, under 12 ms per call. K1 (`runs/m7/reports/k1_check_design.md`):
+  the checking pass is designed as "change only what an excerpt contradicts or a
+  checker finding names, with a word-for-word quote, each change accepted by itself
+  under mechanical rules". Its reach is small and the design says so: about 16 % of
+  the errors readers found on B1 are contradicted by an excerpt (14 of 90 in M4's
+  classification; 5 of 30 in a fresh sample), a third are specific claims the excerpts
+  are silent on (about half of those decidable from the catalogues), and of T's 28
+  harmful statements the excerpts state the danger for 3 to 5. Expected effect of the
+  pass alone: 0.5 to 1.3 fewer wrong statements per 10 (inferred), against the test's
+  bar of 2.0, so thinking has to carry most of any gain.
+  The conductor's decisions on the design: (1) the pass enters the six-arm test only if
+  a pilot on worn data (stored drafts of B1, pilot2, B2 and T; about 3 server hours and
+  4 reader sessions) clears the bars the design fixes (at least +0.5 net catches per 10
+  answers, damage to correct lines at most half the catches, no new harmful statement,
+  time); (2) the pilot also runs the pass with the lookup cards of the draft in its
+  input, because the cards turn silent specific claims into contradictions; (3) the
+  test's bar of −2.0 stays as agreed; (4) a rejected change shows nothing to the reader.
 
