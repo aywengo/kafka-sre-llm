@@ -33,7 +33,7 @@ The base model stays Qwen3.8-27B at 4-bit.
 | # | Criterion | Bar | State |
 |---|---|---|---|
 | Y1 | Ranking | On B4, strict count, once: served must points at least +15.0 percentage points over the frozen retrieval, at most 5 % of the frozen-served points lost | **not met** (2026-11-22 23:57, `runs/m5/B4_CHECK.md`): +10.7 percentage points (65 against 50 of 140 points with a covering set; standard error 3.6), nothing lost; the bar was +15.0. B4 is used |
-| Y2 | Combined candidate | The hidden look's rule (below), on the new hidden judged part | open |
+| Y2 | Combined candidate | The hidden look's rule (below), on the new hidden judged part | **not met**: stopped by the B4 rule; no hidden look (U1) |
 | Y3 | Harmful | The set T measured against default with readers; the destructive-step marking with its recall reported; no claim beyond what T shows | **measured** (2026-11-23, `runs/m6/reports/rt_reading_result.md`): on T's 41 scenarios the readers found 14 harmful statements in the default's answers and 14 in the grounded mode's (11 answers each; 3.41 per 10 answers, 90 % interval 2.06 to 5.34; paired difference 0.00, −2.20 to +2.20). The marking catches 7 of the 15 harmful statements that are destructive steps (4 of 8 and 3 of 7) and none of the 13 others. Nothing more is claimed: T is built to tempt |
 | Y4 | Time and fit | Median answer at most 60 s with search; the second reranker within 1.5 GB of added memory (S3); the whole footprint reported against `GOAL.md`'s "about 20 GB" | open |
 | Y5 | Repairs | Items 1 to 5 of the plan's list, with tests, before any hidden run | open |
@@ -98,6 +98,24 @@ T); the marks in answers without a harmful finding. Nothing here decides a defau
 what may be said afterwards is limited as in Y3: T is built to tempt, a mark is not a
 reduction of harm, 41 scenarios leave wide intervals.
 
+## The informative D5 run (U1; defined 2026-11-23 07:56, before it starts; decides nothing)
+
+The chain of task DA runs once with its informative mode: the default on the frozen
+packs as the reference answered in the same run; grounded-g2 and grounded-g3 on the
+r4g2 packs of the funnel; two judge passes; the 116 mechanical items. The rule of the
+steps is computed and printed as a reading, under both bases of the supported-miss
+condition, and decides nothing; no candidate record is written. Then one blind reading
+of D5 (S6 asked for it before a look; it now serves as the only estimate of wrong
+statements on fresh data): the default's 50 answers against the 50 of the variant that
+the rule's reading with the supported misses on the frozen pack names, or grounded-g2
+if it names none; both answers of a scenario in one bundle under blind names (seed
+20261124); six first-reader bundles, a second reader on a quarter. Reported: judged
+coverage and its paired difference (the combination, prompt and packs together);
+served points; time; wrong, invented and harmful statements per 10 answers with the
+paired difference and its interval; omissions; the readers' agreement. What may be said
+afterwards: what the combination does on 50 fresh scenarios, with its intervals; not
+that it would have passed or failed a hidden look.
+
 ## Work packages
 
 | Task | What | Role | Needs | State |
@@ -112,9 +130,9 @@ reduction of harm, 41 scenarios leave wide intervals.
 | HP | The new hidden judged part (ids `h6-NN`): 60 scenarios, twelve per task type, with covering sets under the corrected test; written, reviewed and set-checked in sealed sessions, with family checks against every open batch (pilot2, B1, B2, B4, D5, T), the existing hidden items and within the part | sealed writers, reviewers, checkers | Claude workers | **done** 2026-11-23 00:31 (commit `689e1ad`: `eval/hidden/tier_b_h6_{items,rubrics}_final.jsonl.enc`, counts in `eval/m6/h6/CHUNK_CHECK.json`): 320 must points in 299 units (132 of weight 2); 256 points with at least one covering set rated ok by an independent sealed checker (387 sets, 39 of two chunks, 37 found by the checkers), 37 not indexed, 27 with no covering set; first independent count 231 of 273 points with sets (84.6 %), no set rated wrong; ten scenarios replaced and put through the same review and check; the harness accepts all 60 rubrics. Two rubrics (h6-04, h6-08) have more than one weight-2 unit without a covering set |
 | DF | D5 funnel, strict count: r4g2 (within the memory limit) and, for information only, the Qwen reranker at full precision | job-operator | CPU, reranker | **done** 2026-11-22 23:46 (`runs/m6/D5_FUNNEL.md`, `runs/m6/RETRIEVAL_CHOSEN.json`): **r4g2 goes on to B4**. Strict count over 227 points with a covering set: frozen 69 (30.4 %), r4g2 112 (49.3 %), gain +18.9 percentage points (standard error 3.4; needed +15.0); no frozen-served point lost; second call 2.25 s median, 2.37 s at the 90th percentile (20 questions). For information: the Qwen reranker serves 120 (+22.5 over frozen; +3.5 over r4g2 with standard error 3.1, gained 18 and lost 10), second call 4.76 s median |
 | B4 | The one-time check of the chosen retrieval setting on B4 | job-operator | server 0.2 to 0.5 h | **done, FAIL** 2026-11-22 23:47 to 23:57 (`runs/m5/B4_CHECK.md`, marker `runs/m6/B4_USED`): strict count over 140 points with a covering set: frozen 50 (35.7 %), r4g2 65 (46.4 %), gain +10.7 percentage points (standard error 3.6; needed +15.0), gained 15, lost 0 (part (b) holds); weight-2 points +12.8 (34 against 24 of 78); loose count +10.0. **The combination stops here until the Owner has seen it** |
-| DA | D5 answers: default on the frozen packs as the reference in the same run; G2 and G3 on the chosen packs; two judge passes; the 116 mechanical items | job-operator | server 4 to 5.5 h | after DF |
+| DA | D5 answers, as an informative run that decides nothing (U1): default on the frozen packs as the reference in the same run; G2 and G3 on the r4g2 packs; two judge passes; the 116 mechanical items | job-operator | server 4 to 5.5 h | chain built, reviewed and committed (`a20f97b`); its informative mode is being added; then the run |
 | RD, RT | Blind readings of D5 (S6) and of T | readers | about 8 and 5 sessions; server 2 to 2.5 h for T's answers | **RT done** 2026-11-23 02:02 to 02:14 (seven reader sessions; totals `work/m6/t/reading/totals.json`; result `runs/m6/reports/rt_reading_result.md`). RD waits for D5's answers, which wait for the Owner (U1) |
-| H | The hidden look on the new hidden part; ledger row first | job-operator, sealed readers | server 5 to 7 h | after everything above |
+| H | The hidden look on the new hidden part | - | - | **not run in M6** (U1): the combination was stopped by the B4 rule; the new hidden part and four looks stay unspent |
 
 Rules of the steps (from the plan, fixed before each result): the D5 funnel lets a
 retrieval setting go on if it gains at least +15 percentage points over frozen on the
@@ -139,6 +157,8 @@ goes to G2.
 | 2026-11-22 | S6 | D5 is read blind before the hidden look |
 | 2026-11-22 | S7 | A checker's mark on a destructive step counts as "marked" under `GOAL.md`'s rule on harmful advice, as marking only, never reported as a reduction in harm |
 | 2026-11-22 | S8 | The seven hidden items of the same family as a D5 scenario are tagged; the hidden look runs on the new hidden judged part, and the existing 61 are reported beside it (this replaces the second half of S5) |
+| 2026-11-23 | U1 | After the failed B4 check the stop is accepted: no hidden look for the combination in M6 (four looks stay unspent). The D5 answers are run once as an informative run that decides nothing |
+| 2026-11-23 | U2 | The sealed sessions' transcripts of the hidden part's writing are deleted |
 | 2026-11-22 | conductor | The covering test reads a chunk as the model receives it, with its title line |
 | 2026-11-22 | conductor | After M0: S3's limit stands; the Qwen reranker at full precision is measured on D5's funnel for information only; only a setting within the limit goes on to B4 and the hidden look |
 | 2026-11-22 | conductor | The decline detector stays as it is: counting a gap sentence followed by a concrete answer as an answer would change six stored M4 outcomes (five strict answers and one a3 answer would turn from declines into wrong answers) and turn most grounded correct declines into wrong answers. Stored and new runs stay comparable; reports keep the sentence on the detector's bias, and a reader checks the answers counted as wrong declines before a failure of that condition is acted on |
@@ -146,21 +166,7 @@ goes to G2.
 
 ## Waiting for the Owner
 
-**U1 (2026-11-22 23:58): the B4 check failed, so by the plan the combination stops.** r4g2's
-gain on the fresh open batches is real but uneven: +18.9 points on D5 (227 points) and
-+10.7 on B4 (140 points); pooled 58 more of 367 points served, +15.8. The rule asked for
-+15.0 on B4 alone. Options: (a) accept the stop: no hidden look for the combination in
-M6; run the D5 answers once as an informative run that decides nothing (recommended);
-(b) amend the rule and let the combination go on to the D5 answers and the hidden look;
-(c) stop without the informative run. The hidden part (HP), the set T and its reading
-go on in every case. **T1** (the base of the supported-miss condition) only matters
-under (b).
-
-**U2 (2026-11-23): the sealed sessions' transcripts of the hidden part's writing** (about
-25 sessions, plain text of hidden items in the session's task-output folder outside the
-repository). In M4 the Owner had them deleted after the hidden runs. Recommended: delete
-them now; the encrypted files hold everything a later sealed session needs. Until then
-nobody opens them.
+Nothing blocks the work now (U1 and U2 answered on 2026-11-23; T1 fell away with U1).
 
 Still open from earlier milestones, none blocking:
 
@@ -288,4 +294,14 @@ candidate C becomes the default, after the look.
   test there is, and a fix made from its misses could not be tested again in M6. The
   misses are listed in the report for a later milestone. The marking stays experimental
   and off by default; its in-sample recall of 9 of 9 (H1) did not hold on fresh data.
+- 2026-11-23 07:50: **the Owner chose U1 (a) and agreed with U2.** The combination's
+  stop is accepted; Y2 is not met; no hidden look in M6. The D5 answers run once as an
+  informative run (defined in the section above before it starts).
+- 2026-11-23 07:54: U2 carried out: the transcripts of the 27 sealed sessions of the
+  hidden part's writing (8 writers, 8 reviews, 8 set checks, 2 family checks, the
+  assembly) are deleted: 81 files (transcript, its metadata and its task-output link per
+  session), 3 tool outputs those sessions had saved, and their helper scripts in the
+  session's scratch folder; nothing matching the 27 ids is left. Not deleted, because
+  outside U2's wording: the transcripts of the two earlier sealed family checks of this
+  milestone and of M5 (B4 and D5 against the existing hidden items).
 
