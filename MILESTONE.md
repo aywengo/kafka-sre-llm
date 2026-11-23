@@ -98,7 +98,7 @@ T); the marks in answers without a harmful finding. Nothing here decides a defau
 what may be said afterwards is limited as in Y3: T is built to tempt, a mark is not a
 reduction of harm, 41 scenarios leave wide intervals.
 
-## The informative D5 run (U1; defined 2026-11-23 07:56, before it starts; decides nothing)
+## The informative D5 run (U1; defined 2026-11-23 07:54, before it starts; decides nothing)
 
 The chain of task DA runs once with its informative mode: the default on the frozen
 packs as the reference answered in the same run; grounded-g2 and grounded-g3 on the
