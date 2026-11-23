@@ -17,11 +17,15 @@ def chunks_by_ids(ids, index_path=None):
 
 
 def run_item(question, gen, cfg=None, *, k="k6", mode="default", rerank=True, max_tokens=None,
-             pack_ids=None, index_path=None, profile="frozen"):
+             pack_ids=None, index_path=None, profile="frozen", thorough=None, thorough_checker=None, kb=None):
     """One answer. pack_ids None: expansion + retrieval as pipeline.ask(). pack_ids given: no expansion, no
     retrieval; the model gets exactly those chunks in that order. Returns a dict with text, tokens, truncated,
-    search_terms (None on replay), pack (chunk ids), seconds {search_terms, retrieval, answer, total}, messages."""
+    search_terms (None on replay), pack (chunk ids), seconds {search_terms, retrieval, answer, total}, messages.
+    thorough: a verify_pass.Profile (EXPERIMENTAL answer profile; thorough_checker a service.AnswerChecker); the result
+    then also has "thorough" (see verify_pass.draft_and_check) and seconds draft, thinking and check. None: as before."""
     cfg = cfg or config.load()
+    if thorough is not None and (mode == "closed" or thorough_checker is None):
+        raise ValueError("the thorough answer profile needs excerpts and an answer checker")
     if pack_ids is not None and profile != "frozen":
         raise ValueError("a stored pack (pack_ids) is replayed as it is; it is not made by a retrieval profile")
     if mode not in ("default", "strict", "closed") + GROUNDED_MODES:
@@ -40,7 +44,11 @@ def run_item(question, gen, cfg=None, *, k="k6", mode="default", rerank=True, ma
                 "messages": msgs}
     if pack_ids is None:
         from . import retrieval
-        exp, _, _ = gen.chat(prompts.expand_messages(question), max_tokens or cfg["expansion"]["max_tokens"])
+        if thorough is None:
+            exp, _, _ = gen.chat(prompts.expand_messages(question), max_tokens or cfg["expansion"]["max_tokens"])
+        else:  # the search-terms call stays off thinking under the profile
+            exp, _, _ = gen.chat(prompts.expand_messages(question), max_tokens or cfg["expansion"]["max_tokens"],
+                                 thinking=False)
         t1 = time.monotonic()
         sel_kw = {} if profile == "frozen" else {"profile": profile}
         chunks = retrieval.select(question, exp, k=k, index_path=index_path, rerank=rerank, **sel_kw)
@@ -53,6 +61,16 @@ def run_item(question, gen, cfg=None, *, k="k6", mode="default", rerank=True, ma
         msgs = prompts.grounded_answer_messages(question, chunks, mode)
     else:
         msgs = prompts.answer_messages(question, chunks, strict=(mode == "strict"))
+    if thorough is not None:  # EXPERIMENTAL: the draft (thinking as the profile says), then the checking pass
+        from . import verify_pass
+        th = verify_pass.draft_and_check(question, msgs, chunks, gen, max_tokens or cfg["answer"]["max_tokens"],
+                                         thorough, thorough_checker, kb=kb, t_start=t0)
+        t3 = time.monotonic()
+        return {"text": th["text"], "tokens": th["tokens"], "truncated": th["truncated"], "search_terms": exp,
+                "pack": [c["id"] for c in chunks],
+                "seconds": {"search_terms": t1 - t0, "retrieval": t2 - t1, "answer": t3 - t2, "total": t3 - t0,
+                            **th["seconds"]},
+                "messages": msgs, "thorough": th}
     text, toks, trunc = gen.chat(msgs, max_tokens or cfg["answer"]["max_tokens"], None)
     t3 = time.monotonic()
     return {"text": text, "tokens": toks, "truncated": bool(trunc), "search_terms": exp,

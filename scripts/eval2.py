@@ -449,6 +449,9 @@ def build_manifest(a, gen, cfg, items_file, n_items, subset, replay_info):
     profile = getattr(a, "profile", "frozen")
     if profile != "frozen":
         reasons.append(profiles.unmeasured_reason(profile))
+    thorough = thorough_profile(a)
+    if thorough is not None:
+        reasons.append(thorough.unmeasured_reason())
     m = {
         "harness": "eval2", "config": a.config, "backend": ident.get("backend"),
         "model_requested": ident.get("model"),
@@ -479,6 +482,8 @@ def build_manifest(a, gen, cfg, items_file, n_items, subset, replay_info):
                             "system_prompt_sha256": sha256_bytes(prompts.SYSTEM_PROMPT.encode("utf-8")),
                             "search_terms_call": False, "retrieval": False, "pack": "empty"}
     m.update(profiles.manifest_fields(profile))  # nothing is added for the frozen profile
+    if thorough is not None:  # nothing is added without the answer profile
+        m["answer_profile"] = thorough.manifest()
     rec = items_files_record(items_file)
     if rec is not None:
         m["items_files"] = rec
@@ -557,11 +562,36 @@ class StubGen:
     backend = "stub"
     identity = {"backend": "stub", "model": "stub", "adapter": None}
 
-    def chat(self, messages, max_tokens, on_token=None):
+    def chat(self, messages, max_tokens, on_token=None, **kw):
         from kafka_sre_rag import prompts
         if messages[0]["content"] == prompts.EXPAND_SYSTEM:
             return "consumer group, kafka-consumer-groups.sh, --describe", 0, False
+        if messages[0]["content"] == prompts.VERIFY_SYSTEM:  # the checking pass of the thorough profile
+            return '{"replacements": []}', 0, False
         return "[stub answer: no model was called]", 0, False
+
+
+def thorough_profile(a):
+    """The EXPERIMENTAL answer profile of the options (kafka_sre_rag.verify_pass.Profile), or None when it is off."""
+    if not getattr(a, "answer_profile", None):
+        return None
+    from kafka_sre_rag.verify_pass import Profile
+    return Profile(thinking=not a.no_thinking, verify=not a.no_verify, cards=not a.no_cards)
+
+
+def thorough_row(r):
+    """The fields an answer row gets under the answer profile (none without it)."""
+    from kafka_sre_rag import verify_pass
+    th = r["thorough"]
+    info = th["draft_info"] or {}
+    rec = th["record"]
+    return {"first_pass_text": th["first_pass_text"],
+            "tokens_detail": {"draft": th["tokens"], "draft_reasoning": info.get("reasoning_tokens"),
+                              "draft_reasoning_chars": info.get("reasoning_chars"),
+                              "draft_max_tokens": th["max_tokens"],
+                              "check": (rec or {}).get("r2", {}).get("tokens")},
+            "thorough": verify_pass.compact(rec), "thorough_note": verify_pass.summary_line(rec),
+            "draft_info": info}
 
 
 def make_generator(a):
@@ -742,6 +772,8 @@ def cmd_revise(a, out=sys.stdout):
 
 def cmd_answer(a, out=sys.stdout):
     if getattr(a, "revise_from", None):
+        if getattr(a, "answer_profile", None):
+            raise EvalError("--answer-profile cannot be used with --revise-from (use python -m kafka_sre_rag.verify_pass run)")
         return cmd_revise(a, out)
     if not a.out:
         raise EvalError("--out is required")
@@ -771,6 +803,26 @@ def cmd_answer(a, out=sys.stdout):
         raise EvalError("--replay-packs is refused for a closed-book run (no packs are used)")
     if closed and (profile != "frozen" or a.k != "k6" or a.no_rerank):
         raise EvalError("--mode closed uses no retrieval: --profile, --k and --no-rerank do not apply")
+    thorough = thorough_profile(a)
+    th_kw = {}
+    if thorough is not None:  # EXPERIMENTAL answer profile; without it nothing below changes
+        from kafka_sre_rag import service
+        if closed:
+            raise EvalError("--answer-profile needs excerpts; it cannot be used with --mode closed")
+        if a.no_thinking and a.no_verify:
+            raise EvalError("--no-thinking with --no-verify leaves nothing of the answer profile")
+        if not a.catalogue:
+            raise EvalError("--answer-profile needs --catalogue DIR (the catalogues of the checking pass)")
+        try:
+            th_kw = {"thorough": thorough, "thorough_checker": service.AnswerChecker(a.catalogue)}
+        except service.CatalogueError as e:
+            raise EvalError(str(e))
+        if thorough.verify and thorough.cards:  # the lookup is loaded once for the run (hash checked)
+            from kafka_sre_rag.kb_lookup import KbLookup
+            ck = th_kw["thorough_checker"]
+            th_kw["kb"] = KbLookup(ck.cats, ck.directory, verify=True)
+    elif getattr(a, "no_thinking", False) or getattr(a, "no_verify", False) or getattr(a, "no_cards", False):
+        raise EvalError("--no-thinking, --no-verify and --no-cards need --answer-profile thorough")
     replay, replay_info = None, None
     if a.replay_packs:
         if is_hidden(a.replay_packs) != hidden:
@@ -821,9 +873,11 @@ def cmd_answer(a, out=sys.stdout):
         try:
             r = evalhooks.run_item(full_question(it), rec, cfg, k=a.k, mode=a.mode, rerank=not a.no_rerank,
                                    max_tokens=a.max_tokens, pack_ids=None if replay is None else replay[it["id"]],
-                                   **({} if profile == "frozen" else {"profile": profile}))
+                                   **({} if profile == "frozen" else {"profile": profile}), **th_kw)
             row.update(text=r["text"], tokens=r["tokens"] or None, truncated=r["truncated"],
                        seconds=r["seconds"], search_terms=r["search_terms"], pack=r["pack"])
+            if "thorough" in r:
+                row.update(thorough_row(r))
             row["prompt_sha256"], row["prompt_chars"] = messages_fingerprint(r["messages"])
             if rec.expand_messages is not None:
                 row["search_terms_prompt_sha256"], row["search_terms_prompt_chars"] = messages_fingerprint(rec.expand_messages)
@@ -1026,6 +1080,13 @@ def build_parser():
     an.add_argument("--revise-from", metavar="ANSWERS",
                     help="run the revise step (R1 marks) on the stored answers and packs of this answers file; "
                          "no generation; records go to --out (default: next to the answers). Needs --catalogue")
+    an.add_argument("--answer-profile", choices=["thorough"], default=None,
+                    help="EXPERIMENTAL, unmeasured: the draft with thinking on, then the checking pass "
+                         "(kafka_sre_rag/verify_pass.py); needs --catalogue. Rows then also carry first_pass_text, "
+                         "tokens_detail, the pass's record (thorough) and seconds draft, thinking and check")
+    an.add_argument("--no-thinking", action="store_true", help="with --answer-profile: check only (draft without thinking)")
+    an.add_argument("--no-verify", action="store_true", help="with --answer-profile: thinking only (no checking pass)")
+    an.add_argument("--no-cards", action="store_true", help="with --answer-profile: no reference cards in the check")
     an.add_argument("--r2", action="store_true",
                     help="with --revise-from: also the R2 patch call (one model call per flagged answer; "
                          "--backend and --model as for answers)")
