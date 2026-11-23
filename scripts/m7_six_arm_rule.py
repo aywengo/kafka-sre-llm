@@ -44,15 +44,19 @@ sys.path.insert(0, str(ROOT))
 import m5_g_rule as G  # noqa: E402  (the development check's helpers: called, not copied)
 import m5_b4_served as S  # noqa: E402
 import m6_d5_rule as R6  # noqa: E402
-from kafka_sre_rag.verify_pass import NO_DRAFT  # noqa: E402  (the text of a draft cut while thinking: imported, never copied)
+from kafka_sre_rag.verify_pass import NO_DRAFT, DEADLINE_S  # noqa: E402  (the text of a draft cut while thinking and the check's start-by deadline: imported, never copied)
 
 SCHEMA = 1
+RPACK_KEY = "r4g2"               # the funnel's pack setting arm R (grounded-g3) replays (W7; as scripts/m6_d5_answers.sh read it)
 VARIANTS = ("V1", "V1C", "none")
 BUNDLE_SEED = 20261123           # drawn before any answer exists (it is in the rule text); the names of the answers of a scenario come from it
 Z90 = 1.645                      # a 90 % interval, one comparison
 Z90_2 = 1.960                    # a 90 % interval corrected for two comparisons (0.025 each side)
 KB_BUILD, KB_BUILD_LOWER, KB_A_ONLY = 0.10, 0.04, 0.04
-D_WRONG_MAX, D_COV_MIN, D_HARM_PLUS, D_CUT_PCT, D_MED_S, D_P90_S = -2.0, -0.04, 2, 10, 180.0, 270.0
+D_WRONG_MAX, D_COV_MIN, D_CUT_PCT = -2.0, -0.04, 10
+D_HARM_NEW_MAX = 0               # W6: confirmed new harmful consequences of the thorough arm against A (replaces the plan's "harmful at most A + 2")
+PLAN_MED_S, PLAN_P90_S = 180.0, 270.0   # W5: the plan's time bars; the time is REPORTED against them, never decided
+CMP_COV_MIN, CMP_COV_LOWER, CMP_MECH_LOWER = -0.04, -0.10, -3.0   # W10: the "clean winner" line (described, decides nothing)
 LOOKUP_KINDS = ("name_setting", "error_name", "is_real", "version_trap", "connect_rest")   # tier A kinds where a card built from the question alone can state the expected answer (K7)
 ANSWER_LIMIT = 2048              # the answer limit of every arm (tokens); a thinking arm's answer PART is stopped here too (generators answer_cap)
 CHECK_ERROR_LIMIT = 2            # of 50 answers: more checking calls with status error than this after the redo passes mark the arm "check failures above limit"
@@ -63,7 +67,19 @@ STUB_NOTE = "DRY RUN: stub model, stub judge, stand-in reranker; no number below
 SET_STEMS = {"V1": {"A": "A", "B": "B", "C": "C", "D": "D", "E": "E", "F": "F", "Fp": "Fp"},
              "V1C": {"A": "A", "B": "B", "C": "C", "D": "D", "E": "E", "F": "F", "Fp": "Fp"},
              "none": {"A": "A", "B": "D", "E": "E", "Fp": "F"}}
-READ_SETS = {"V1": ("A", "D", "E", "F"), "V1C": ("A", "D", "E", "F"), "none": ("A", "B", "E", "Fp")}   # the sets of the blind bundles
+READ_SETS = {"V1": ("A", "D", "E", "F"), "V1C": ("A", "D", "E", "F"), "none": ("A", "B", "E", "Fp")}   # Qwen's sets of the blind bundles
+READ_GEMMA_SETS = {"V1": ("A", "E"), "V1C": ("A", "E"), "none": ("A", "E")}   # a Gemma model's sets of the bundles; its thorough arm (D, or B under none) is added when it ran
+# The base models of the test (W8, W9). Every model gets A and E; the thorough arms run for a model only when --thinking-models names it.
+MODEL_KEYS = ("qwen", "gemma26", "gemma31")
+ANSWER_ORDER = ("gemma31", "gemma26", "qwen")        # answer stages are grouped by model: each model alone on the server, unloaded after its stages
+GEMMA31_PLACEHOLDER = "PLACEHOLDER-gemma31-4bit-id-from-task-G0"   # the 4-bit build of the 31B is made later (task G0): the real run must pass its id
+DEFAULT_MODEL_IDS = {"qwen": "Qwen3.8-27B-4bit", "gemma26": "gemma-4-26B-A4B-it-QAT-MLX-4bit", "gemma31": GEMMA31_PLACEHOLDER}
+DEFAULT_THINKING = ("qwen",)
+READ_ANSWERS_PER_SESSION = 16    # the reading sessions hold about this many answers when --scenarios-per-session is not given (4 scenarios of 4 answers before the models were added)
+# W6: the consequence of a harmful finding, a closed list plus "other: ..." (the reader's instructions in the bundles carry the same list: scripts/eval2_blind.py)
+CONSEQUENCES = ("data loss", "topic deleted", "consumer group offsets lost", "outage of the cluster", "outage of a broker or node", "outage of an application or service",
+                "credentials exposed", "security controls weakened", "messages lost or duplicated", "resource exhaustion", "bad change rolled out to production",
+                "configuration lost or overwritten")
 CODE_PINS = tuple(p for p in R6.CODE_PINS if p != "scripts/m6_d5_answers.sh") + (
     "kafka_sre_rag/verify_pass.py", "kafka_sre_rag/kb_lookup.py", "scripts/eval2_blind.py", "scripts/m7_perfect_packs.py",
     "scripts/m7_four_way.sh", "scripts/m7_six_arm_rule.py")
@@ -76,8 +92,8 @@ RULE_TEXT = f"""\
 ## The rule of the six-arm test on D5 (fixed before the first answer; agents/m7-plan.md section 3; MILESTONE.md decisions V1 to V9)
 
 D5 (eval/m6/d5, 50 scenarios, 269 must points) is worn development data after M6. The test is a screen: it decides only whether work continues, and it allows no
-out-of-sample claim and no tuning on D5 items. Every arm uses the default prompt, the frozen search terms and replayed packs (no search call in an answer), the 4-bit model,
-one request at a time, and the same transport (the draft is streamed in every arm, thinking switched on or off per call).
+out-of-sample claim and no tuning on D5 items. Every arm uses the default prompt (arm R excepted, see the table), the frozen search terms and replayed packs (no search call in an answer),
+one request at a time, and the same transport (the draft is streamed in every arm, thinking switched on or off per call). The decided rows are Qwen's; the Gemma models and arm R are described, not decided (below).
 
 **The answer limit is the same in every arm ({ANSWER_LIMIT} tokens).** An arm without thinking (A, E) is limited by the server's token limit of {ANSWER_LIMIT}. An arm with thinking (B, D, F, F') has two
 limits: the draft's total limit is {ANSWER_LIMIT} plus the thinking cap (a draft whose reasoning uses all of it is cut while thinking: no draft), and the ANSWER part, counted after the reasoning ended, is
@@ -93,6 +109,7 @@ over {ANSWER_LIMIT} (taken from the server's own counts where it reports reasoni
 | D | frozen | thinking, then the checking pass |
 | E | perfect (padded; `work/m7/packs_perfect.jsonl`) | as A |
 | F | perfect | as D; its draft is arm F' |
+| R | the D5 funnel's r4g2 packs (W7) | grounded-g3 (`--mode grounded-g3`) on the r4g2 packs, otherwise as A. Judged only, outside every decided row, not read |
 
 The checking pass's variant (`--check-variant`: V1 without reference cards, V1C with the draft's cards, none: no checking pass, then C, D and F are dropped, D is thinking only
 and is B, F is thinking only and is F') and the thinking cap (`--think-cap`: tokens of thinking added to the {ANSWER_LIMIT}-token answer limit) come from the pilot (`--pilot-report`, pinned by its sha256); both and their
@@ -113,6 +130,14 @@ the packs of those items are the stored frozen packs.
 
 B against C shows whether thinking or checking carries an effect. That comparison is descriptive and corrected for two comparisons.
 
+**Amended by the Owner's decisions of 2026-11-23 (W5 time, W6 harm; the plan's table above is kept word for word, these two cells are read as follows):**
+- W5, time is reported, not decided. The median and the 90th percentile of the thorough-profile row (the plan's bars were {PLAN_MED_S:.0f} s and {PLAN_P90_S:.0f} s) are printed as "reported" with their values and never as PASS or FAIL. The operational deadline stays
+  (the profile's {DEADLINE_S:.0f} s start-by of the checking call) and the number of answers it cut short (check status not_checked) is reported. The row "Errors improve but time fails" can therefore no longer arise: no time value decides a row. The
+  thorough-profile row is decided by coverage, cut, wrong statements and harm only.
+- W6, harm is matched by consequence. A harmful finding in a candidate's answer is NEW when the reference answer to the same scenario has no harmful finding with the same consequence (the reader records a `consequence` for every harmful finding, from a closed list of {len(CONSEQUENCES)}
+  consequences or "other: ..."). The thorough row's harm condition is: confirmed new harmful consequences of the thorough arm against A = 0; each new one goes to the second reader and is confirmed when the second reader also marks it harmful with the same consequence. This replaces
+  "harmful at most A + 2" and is the conductor's reading of W6 together with the Owner's handoff ("no confirmed newly introduced severe harm"). The raw counts (harmful findings of each arm, new, confirmed, not confirmed, not yet read by the second reader) are printed too.
+
 **What is measured:**
 - judged coverage (the coverage role of the development check's judge, DeepSeek, setting deepseek-nothink-12k, instruction v2, two passes), over all 269 points and over the 227
   with a covering set and the 42 without separately; the paired difference per scenario with its standard error;
@@ -120,8 +145,8 @@ B against C shows whether thinking or checking carries an effect. That compariso
 - time per part (search terms, whole retrieval, draft with its thinking, check), the median and the 90th percentile of the time with search;
 - nonexistent identifiers per 10 answers (scripts/eval2_idcheck.py), per arm;
 - the 116 mechanical items for A and D (scripts/eval2_score.py), with and without the lookup (decision V7);
-- a blind reading of A, D, E and F (all four answers of a scenario in one bundle, names drawn per scenario from the seed {BUNDLE_SEED}; wrong, invented and harmful
-  statements by the readers; a quarter read by a second reader). B, C and F' are judged only. The reading is not part of this chain.
+- a blind reading of Qwen's A, D, E and F, each Gemma model's A and E, and its D when it ran (all answers of a scenario in one bundle, names drawn per scenario from the seed {BUNDLE_SEED}; wrong, invented and
+  harmful statements by the readers, a consequence for every harmful one; a quarter read by a second reader; the model's name is in no bundle). B, C, F' and R are judged only. The reading is not part of this chain.
 
 **What 50 scenarios can show (sample-size limits):**
 - Paired coverage has a standard error of about 0.025 to 0.04, so differences under about 0.06 are not resolved.
@@ -138,20 +163,20 @@ B against C shows whether thinking or checking carries an effect. That compariso
   cards together). The identifiers per 10 answers of every arm, and the differences C − A and D − B, are printed as description only and decide nothing. A "build" in the first row does not settle (b):
   decision V8 leaves the writers and the licences to the Owner.
 - D − A is the difference of the arm D (in the variant none: B, thinking only) from A. Coverage at least -0.04 is the paired mean difference of P. Cut is the share of D5 answers
-  truncated at the token limit (cut while thinking included), at most {D_CUT_PCT} % (integer arithmetic). Median and 90th percentile are of the seconds per D5 answer with search:
+  truncated at the token limit (cut while thinking included), at most {D_CUT_PCT} % (integer arithmetic). Median and 90th percentile (REPORTED, not decided: W5) are of the seconds per D5 answer with search:
   the scenario's search-terms seconds from the D5 funnel's stored expansions, plus the median seconds of the whole frozen retrieval measured in this chain, plus the answer's own
   draft (thinking included) and check seconds; the 90th percentile is the value at position floor(0.9 n) of the n sorted times (the fifth largest of 50). The deadline of the profile
-  counts from the call here, not from the question (the replay has no search), so it is slightly looser than in use. The seconds also record the time to the first token and the cached prompt
+  ({DEADLINE_S:.0f} s start-by of the check) counts from the call here, not from the question (the replay has no search), so it is slightly looser than in use. The seconds also record the time to the first token and the cached prompt
   tokens of each draft (when the server reports them), so that an effect of the server's prompt cache can be seen; D and F run before A and E for the same reason.
-- The Owner's decisions of 2026-11-23 on the two readings: (1) "Errors improve but time fails" stays NARROW: it is the case where coverage and cut pass and only the median or the 90th percentile fails;
-  a cut failure that comes with a time failure is "neither" (constant TIME_FAIL_TAKES_CUT in the rule script). (2) Under `--check-variant none` the thorough row is applied to B (thinking only) and a pass
+- The Owner's decisions of 2026-11-23 on the two readings: (1) (W3) "Errors improve but time fails" stays NARROW: it is the case where coverage and cut pass and only the median or the 90th percentile fails;
+  a cut failure that comes with a time failure is "neither" (constant TIME_FAIL_TAKES_CUT in the rule script, kept as recorded). Since W5 no time value decides a row, so this case no longer arises and the constant has no effect on the outcome. (2) (W4) Under `--check-variant none` the thorough row is applied to B (thinking only) and a pass
   MAY go on to B4 (constant NONE_THINKING_MAY_GO_TO_B4).
 - An answer with no draft (cut while thinking) is an empty answer: it is counted as cut and as empty, its judged coverage P is set to 0 and its points count as absent (by code, whatever the judge said of
   the notice text), and it is left out of the blind bundles: a scenario where any of A, D, E, F has no draft is not read, and the key lists it. The readings therefore compare only scenarios in which all four
   arms have a draft; the no-draft counts are reported apart and are never counted as an improvement of the wrong statements.
 - Checking-pass failures: the statuses error, not_json, cut and not_checked are counted per arm. A checking call with status error is redone on resume ({REDO_PASSES} redo passes, for C, D and F); an arm where
   more than {CHECK_ERROR_LIMIT} of the 50 answers still have status error after that is marked "check failures above limit" in the rule output and is not read as a clean measurement.
-- Wrong statements and harmful statements are counted by the readers. The code prints those conditions as "needs the reading" and, from the conditions that are measured, which
+- Wrong statements are counted by the readers (the first reader's non-minor findings of the kinds wrong, invented and harmful, as in the sealed reading of M4) and harmful statements by consequence (W6, above). The code prints those conditions as "needs the reading" and, from the conditions that are measured, which
   outcomes are still possible. The combined rows ("Both of the above", "Neither") are read as the combination of the knowledge-base rows (E − A) and the thorough-profile rows (D − A).
 - B against C: B − A and C − A with 90 % intervals corrected for two comparisons ({Z90_2} standard errors: 0.025 each side), and B − C with the same interval; descriptive, decides nothing.
 - With and without the lookup (V7): the mechanical all-pass counts of A and D over all 116 items, and over the items that remain when the tier A kinds {", ".join(LOOKUP_KINDS)} are left
@@ -174,6 +199,20 @@ An answer with no draft is delivered as empty: all its points are missed (and no
   which counts a point once where a whole set of it is in the pack; a point with evidence for one of several points is not a unit of the class). Pairs: E against A, F' against B, the thorough arm against A
   (both frozen: the classes collapse to both and neither), and F against D when both arms exist.
 - Gap sentences (scripts/eval2_score.py gap_sentences, the scorer's own detector): the count per arm and the answers with at least one, as a flag for the reading only; never counted as a refusal or as a miss.
+
+**Models and the comparison with Qwen (W8, W9, W10; described, not decided).** The test answers on up to three base models: `qwen` (`Qwen3.8-27B-4bit`, the arms above), `gemma26` (Gemma 4 26B-A4B, M4's 4-bit build) and `gemma31` (Gemma 4 31B, 4-bit, built later in task G0; the real run must
+pass its id and refuses the placeholder). `--models` takes a list of them (all three by default; Qwen must be in it, the rule is Qwen's). Every model gets arms A and E, with the same call, decoding, 2,048-token answer limit and packs as Qwen's A and E, and its A runs on the 116 mechanical items. The
+thorough arms (B, C, D, F, F') run for a model only when `--thinking-models` names it (default: qwen; Qwen's checking arms follow `--check-variant`). Each model is loaded alone and unloaded after its stages, in the order gemma31, gemma26, qwen (inside Qwen the order is unchanged); the server gate
+never unloads a model another client loaded (W2). Read blind: Qwen's A, D, E, F, each Gemma model's A and E, and its D when it ran. For each Gemma model against Qwen, on the same arm (A with A, E with E, D with D when both ran), the report prints:
+- wrong statements per 10 answers, paired by scenario, with a 90 % interval ({Z90} standard errors) (needs the reading);
+- judged coverage, paired by scenario, with its standard error and a 90 % interval;
+- new harmful consequences both ways (the Gemma answer's against Qwen's answer to the same scenario, and Qwen's against Gemma's), confirmed by the second reader as above (needs the reading);
+- mechanical all-pass on the 116 items and without the tier A kinds {", ".join(LOOKUP_KINDS)}, as a paired difference in percentage points per item with a 90 % interval (arm E has no mechanical items: arm A's are used for it);
+- cut answers, answers whose check missed the deadline, and the time (median and 90th percentile, reported).
+The line "clean winner against Qwen on arm X: yes/no" is yes only when ALL of these hold: the upper end of the wrong-statement difference is below 0; the coverage difference is at least {CMP_COV_MIN:+.2f} with its lower end above {CMP_COV_LOWER:+.2f};
+there are 0 confirmed new harmful consequences (the Gemma answers' against Qwen's); the lower end of the mechanical difference is above {CMP_MECH_LOWER:+.0f} points (read here on both counts, with and without the lookup kinds: the stricter reading of the one line). A condition that waits for the reading
+or for the second reader is printed as waiting, not as a pass. **The comparison decides nothing: the Owner decides publishing after the tests (W10).**
+Point-level measures of E against A are printed for every model. Arm R (grounded-g3 on the r4g2 packs, W7) is judged only: its coverage against A is printed as description and it is in no decided row and not read.
 A measure that is missing, not a number or not computed is an error, never a pass.
 The last line of the log and of the report is M7 SIX-ARM TEST DONE: knowledge-base row: <build|a_only|none ...>; thorough-profile row: WAITS FOR THE READING.
 """
@@ -215,6 +254,72 @@ def se(xs):
 
 def rule_text():
     return RULE_TEXT
+
+
+# ---------------------------------------------------------------- the models and their sets (W8, W9)
+def parse_key_list(s, what):
+    keys = [x.strip() for x in str(s if s is not None else "").split(",") if x.strip()]
+    if not keys:
+        raise SixError(f"{what} names no model (a comma list from {', '.join(MODEL_KEYS)})")
+    bad = [k for k in keys if k not in MODEL_KEYS]
+    if bad:
+        raise SixError(f"{what}: unknown model {bad[0]!r} (one of {', '.join(MODEL_KEYS)})")
+    if len(set(keys)) != len(keys):
+        raise SixError(f"{what} names a model twice")
+    return keys
+
+
+def is_placeholder(model_id):
+    return not str(model_id or "").strip() or "placeholder" in str(model_id).lower()
+
+
+def plan_models(models, thinking=None, ids=None, dry=False):
+    """The models of the run in the order their answers are made (gemma31, gemma26, qwen): [{"key", "id", "thinking"}]. Refuses (SixError): an unknown or repeated model, a
+    --models list without qwen (the rule and every comparison are Qwen's), a --thinking-models list that is not inside --models or lacks qwen (the decided rows need Qwen's thorough
+    arms), and, in a real run, a placeholder or empty model id (the 31B's 4-bit build is made later, task G0) or two models with one id."""
+    ms = parse_key_list(models, "--models")
+    th = parse_key_list(thinking if thinking not in (None, "") else ",".join(DEFAULT_THINKING), "--thinking-models")
+    if "qwen" not in ms:
+        raise SixError("--models must include qwen: the rule and the comparisons are Qwen's")
+    if any(k not in ms for k in th):
+        raise SixError("--thinking-models names a model that --models does not")
+    if "qwen" not in th:
+        raise SixError("--thinking-models must include qwen: the decided rows need Qwen's thorough arms")
+    mid = {**DEFAULT_MODEL_IDS, **{k: v for k, v in (ids or {}).items() if v}}
+    plan = [{"key": k, "id": mid[k], "thinking": k in th} for k in ANSWER_ORDER if k in ms]
+    if not dry:
+        for m in plan:
+            if is_placeholder(m["id"]):
+                raise SixError(f"the model id of {m['key']} is a placeholder ({m['id']!r}): the real run must pass its id (--{m['key']}-model ID)")
+        if len({m["id"] for m in plan}) != len(plan):
+            raise SixError("two models have the same id")
+    return plan
+
+
+def set_name(arm, model):
+    return arm if model == "qwen" else f"{arm}_{model}"
+
+
+def model_set_stems(variant, model, thinking):
+    """{set name: file stem of its D5 answers} of one model. Qwen: the variant's sets (and R, the comparison arm). A Gemma model: A and E, and the thorough sets when it thinks."""
+    base = dict(SET_STEMS[variant]) if (thinking or model == "qwen") else {"A": "A", "E": "E"}
+    out = {set_name(k, model): (v if model == "qwen" else f"{v}_{model}") for k, v in base.items()}
+    if model == "qwen":
+        out["R"] = "R"
+    return out
+
+
+def all_set_stems(variant, plan):
+    """Every judged set of the run, Qwen first: {set name: stem}."""
+    out = {}
+    for m in sorted(plan, key=lambda m: (m["key"] != "qwen", m["key"])):
+        out.update(model_set_stems(variant, m["key"], m["thinking"]))
+    return out
+
+
+def plan_from_args(a, dry=False):
+    ids = {"qwen": getattr(a, "qwen_model", None), "gemma26": getattr(a, "gemma26_model", None), "gemma31": getattr(a, "gemma31_model", None)}
+    return plan_models(getattr(a, "models", None) or ",".join(MODEL_KEYS), getattr(a, "thinking_models", None), ids, dry)
 
 
 def is_no_draft(r):
@@ -318,6 +423,38 @@ def cmd_gate_params(a):
     return 0
 
 
+def cmd_gate_models(a):
+    """The models of the run (refusal exit 2): the list, the thinking list, the ids; the real run refuses a placeholder id."""
+    try:
+        plan = plan_from_args(a, dry=a.dry)
+    except SixError as e:
+        print(f"REFUSED: {e}", file=sys.stderr)
+        return 2
+    print("models in the order of their answers: " + "; ".join(f"{m['key']} ({m['id'] if not a.dry else 'stub'}; arms A, E{', thorough arms' if m['thinking'] else ''})" for m in plan))
+    return 0
+
+
+def cmd_model_ids(a):
+    """KEY=ID per selected model (the ids given, else the defaults); no space in an id."""
+    for m in plan_from_args(a, dry=True):
+        print(f"{m['key']}={m['id']}")
+    return 0
+
+
+def cmd_model_order(a):
+    """One line for the shell: KEY:yes|no (thinking) in the order of the answers."""
+    print(" ".join(f"{m['key']}:{'yes' if m['thinking'] else 'no'}" for m in plan_from_args(a, dry=True)))
+    return 0
+
+
+def cmd_sets(a):
+    """The judged sets of the run, one 'NAME STEM' per line (Qwen first)."""
+    variant, _ = check_params(a.check_variant, 1)
+    for k, v in all_set_stems(variant, plan_from_args(a, dry=True)).items():
+        print(f"{k} {v}")
+    return 0
+
+
 def cmd_gate_inputs(a):
     try:
         check_params(a.check_variant, a.think_cap)
@@ -331,9 +468,10 @@ def cmd_gate_inputs(a):
         if S.cmd_gate_files(argparse.Namespace(items=a.items, rubrics=a.rubrics, chunk_check=a.chunk_check)) != 0:
             raise SixError("the D5 files differ from the hashes in the chunk check")
         fp = {r["id"]: r for r in rd(Path(a.funnel_work) / "packs.jsonl")}
-        miss = [i for i in ids if not isinstance(fp.get(i, {}).get("frozen"), list) or not fp[i]["frozen"]]
-        if miss:
-            raise SixError(f"the funnel's packs lack a frozen pack for {len(miss)} scenarios (first: {miss[0]})")
+        for key in ("frozen", RPACK_KEY):   # arm R replays the funnel's r4g2 packs (W7)
+            miss = [i for i in ids if not isinstance(fp.get(i, {}).get(key), list) or not fp[i][key]]
+            if miss:
+                raise SixError(f"the funnel's packs lack a {key} pack for {len(miss)} scenarios (first: {miss[0]})")
         man = gate_perfect(a.perfect, ids)
         if not a.dry:   # the perfect packs were made from this funnel file
             want = (man.get("inputs_sha256") or {}).get("funnel_packs")
@@ -349,8 +487,9 @@ def cmd_gate_inputs(a):
 def cmd_frozen_packs(a):
     items = [r["id"] for r in rd(a.items)]
     packs = {r["id"]: r for r in rd(Path(a.funnel_work) / "packs.jsonl")}
-    R6.write_pack_file(a.out, [(i, list(packs[i]["frozen"])) for i in items], {"source": "the D5 funnel's packs.jsonl", "source_sha256": sha256_file(Path(a.funnel_work) / "packs.jsonl"), "setting": "frozen"})
-    print(f"frozen packs: wrote {a.out} ({len(items)} scenarios)")
+    key = a.key or "frozen"
+    R6.write_pack_file(a.out, [(i, list(packs[i][key])) for i in items], {"source": "the D5 funnel's packs.jsonl", "source_sha256": sha256_file(Path(a.funnel_work) / "packs.jsonl"), "setting": key})
+    print(f"{key} packs: wrote {a.out} ({len(items)} scenarios)")
     return 0
 
 
@@ -668,11 +807,13 @@ def gap_stats(rows):
     return {"gap_sentences": sum(per), "answers_with_gap": sum(1 for x in per if x), "answers": len(rows)}
 
 
-def point_level(arm_rows, results, rubrics, thorough):
-    """All the point-level measures. Descriptive only. arm_rows: {arm name: rows}; the packs are those the answers saw (each arm's own rows)."""
+def point_level(arm_rows, results, rubrics, thorough, names=None):
+    """All the point-level measures. Descriptive only. arm_rows: {arm name: rows}; the packs are those the answers saw (each arm's own rows). names: {arm name: the set name
+    in the judge's results} where it differs (a Gemma model's sets carry a suffix); the arm names stay A, B, D, E, F, F' in every table."""
+    names = names or {}
     if "A" not in arm_rows or "E" not in arm_rows:
         raise SixError("the point-level measures need the arms A and E")
-    sc = {k: point_scores(results, rubrics, k, arm_rows[k]) for k in arm_rows}
+    sc = {k: point_scores(results, rubrics, names.get(k, k), arm_rows[k]) for k in arm_rows}
     pk = {k: {r["id"]: list(r["pack"]) for r in rows} for k, rows in arm_rows.items()}
     packs = {rb["id"]: (pk["A"][rb["id"]], pk["E"][rb["id"]]) for rb in rubrics}
     trans = [transition_table(c, r, sc[c], sc[r], rubrics, packs) for c, r in (("E", "A"), ("Fp", "B")) if c in sc and r in sc]
@@ -796,7 +937,7 @@ def pair(m, x, y):
     px, py = m["arms"][x]["P_by_id"], m["arms"][y]["P_by_id"]
     d = [px[i] - py[i] for i in px]
     m_, s_ = mean(d), se(d)
-    return {"mean": m_, "se": s_, "n": len(d), "ci196": interval(m_, s_, Z90_2)}
+    return {"mean": m_, "se": s_, "n": len(d), "ci196": interval(m_, s_, Z90_2), "ci90": interval(m_, s_, Z90)}
 
 
 def mech_arm(work, arm, ids, items_kinds):
@@ -811,6 +952,9 @@ def mech_arm(work, arm, ids, items_kinds):
         for i in want:
             out["n"] += 1
             out["pass_all"] += bool(rows[i]["all_pass"])
+            out.setdefault("pass_by_id", {})[i] = int(bool(rows[i]["all_pass"]))
+            if items_kinds.get(i) in LOOKUP_KINDS:
+                out.setdefault("lookup_ids", []).append(i)
             if items_kinds.get(i) not in LOOKUP_KINDS:
                 out["n_without_lookup"] += 1
                 out["pass_without_lookup"] += bool(rows[i]["all_pass"])
@@ -820,7 +964,8 @@ def mech_arm(work, arm, ids, items_kinds):
 def cmd_measures(a):
     W = Path(a.work)
     variant, cap = check_params(a.check_variant, a.think_cap)
-    stems = SET_STEMS[variant]
+    plan = plan_from_args(a, dry=True)
+    stems = all_set_stems(variant, plan)
     rub = rd(a.d5_rubrics)
     items = rd(a.d5_items)
     exp_s = {r["id"]: r["seconds"] for r in rd(Path(a.funnel_work) / "expansions.jsonl")}
@@ -836,23 +981,44 @@ def cmd_measures(a):
     n_all, n_set, n_no = point_counts(rub)
     m = {"schema": SCHEMA, "variant": variant, "think_cap": cap, "stub": bool(a.stub), "sizes": {"D5": len(rub), "points": n_all, "points_with_set": n_set, "points_without_set": n_no,
                                                                                                 "mech": {k: len(ids[k]) for k in ("M1", "M2", "M3")}},
-         "retrieval_frozen_median_s": retr_s, "retrieval_timing_n": len(tids), "arms": {}}
+         "retrieval_frozen_median_s": retr_s, "retrieval_timing_n": len(tids), "arms": {},
+         "models": [{"key": mm["key"], "thinking": mm["thinking"]} for mm in plan]}
     for name, stem in stems.items():
         rows = rd(W / f"ans_d5_{stem}.jsonl")
         m["arms"][name] = set_stats(name, rows, a, rub, results, exp_s, retr_s, a.stub)
         m["arms"][name]["file"] = f"ans_d5_{stem}.jsonl"
     thorough = "D" if variant != "none" else "B"
     m["thorough_arm"] = thorough
-    pairs = [("E", "A"), (thorough, "A"), ("B", "A"), ("Fp", "E")]
+    pairs = [("E", "A"), (thorough, "A"), ("B", "A"), ("Fp", "E"), ("R", "A")]   # R - A: description only (W7)
     if variant != "none":
         pairs += [("C", "A"), ("D", "B"), ("D", "C"), ("B", "C"), ("F", "E"), ("F", "Fp")]
     arm_rows = {name: rd(W / f"ans_d5_{stem}.jsonl") for name, stem in stems.items()}
-    m["point_level"] = point_level(arm_rows, results, rub, thorough)   # described, not decided: the rule never reads it
+    qsets = model_set_stems(variant, "qwen", True)
+    m["point_level"] = point_level({k: v for k, v in arm_rows.items() if k in qsets and k != "R"}, results, rub, thorough)   # described, not decided: the rule never reads it
+    m["point_level_models"] = {}
+    for mm in plan:   # the point-level measures of E against A apply to every model
+        if mm["key"] == "qwen":
+            continue
+        gs = model_set_stems(variant, mm["key"], mm["thinking"])
+        names = {k[: -len(mm["key"]) - 1]: k for k in gs}
+        m["point_level_models"][mm["key"]] = point_level({pk: arm_rows[sn] for pk, sn in names.items()}, results, rub, thorough, names)
     m["pairs"] = {f"{x}-{y}": pair(m, x, y) for x, y in pairs if x in m["arms"] and y in m["arms"] and x != y}
+    for mm in plan:    # a Gemma model against Qwen on the same arm: the paired coverage differences (W10; described, decides nothing)
+        if mm["key"] == "qwen":
+            continue
+        for k in model_set_stems(variant, mm["key"], mm["thinking"]):
+            plain = k[: -len(mm["key"]) - 1]
+            if plain in m["arms"]:
+                m["pairs"][f"{k}-{plain}"] = pair(m, k, plain)
     kinds = {}
     for f in ("items_ma.jsonl", "items_m3.jsonl"):
         kinds.update({r["id"]: r.get("kind") for r in rd(W / f)})
     m["mech"] = {"A": mech_arm(W, "A", ids, kinds), "D": mech_arm(W, "D", ids, kinds)}   # D is the thinking-only run in the variant none
+    for mm in plan:    # each model's A on the 116 mechanical items, and its D when it ran
+        if mm["key"] != "qwen":
+            for v in ("A", "D") if mm["thinking"] else ("A",):
+                m["mech"][f"{v}_{mm['key']}"] = mech_arm(W, f"{v}_{mm['key']}", ids, kinds)
+    m["compare"] = compare_block(m, plan)
     (W / "measures.json").write_text(json.dumps(m, indent=1, sort_keys=True) + "\n", encoding="utf-8")
     (W / "measures.md").write_text(measures_md(m), encoding="utf-8")
     print(measures_md(m))
@@ -870,7 +1036,8 @@ def measures_md(m):
     s = m["sizes"]
     L += [f"Check variant {m['variant']}, thinking cap {m['think_cap']}. D5 {s['D5']} scenarios, {s['points']} points ({s['points_with_set']} with a covering set, {s['points_without_set']} without); "
           f"frozen retrieval median {f2(m['retrieval_frozen_median_s'], 2)} s ({m['retrieval_timing_n']} timing questions).", ""]
-    L += [f"| set | P ({s['D5']} answers, 2 passes) | points present all | with set | without set | cut | cut while thinking | empty | idents per 10 | median s | p90 s | draft s | thinking s | check s |",
+    L += [f"(median s and p90 s are reported, not decided: W5)", "",
+          f"| set | P ({s['D5']} answers, 2 passes) | points present all | with set | without set | cut | cut while thinking | empty | idents per 10 | median s | p90 s | draft s | thinking s | check s |",
           "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for k, v in m["arms"].items():
         p, t = v["points"], v["time"]
@@ -893,6 +1060,8 @@ def measures_md(m):
                  f"stopped at the answer cap: {v.get('answer_cap_hits')}; first token median {f2(v.get('ttft_median_s'), 2)} s ({v.get('ttft_reported')} reported); "
                  f"cached prompt tokens: {v.get('cached_reported')} reported, median {f2(v.get('cached_median'), 0)}, {v.get('cached_any')} with any")
     L += point_level_md(m["point_level"]) if m.get("point_level") else []
+    for g, pl in (m.get("point_level_models") or {}).items():
+        L += ["", f"**Model {g}: the same point-level measures (E against A{', F-prime against B' if any(x['candidate'] == 'Fp' for x in pl['transitions']) else ''}).**"] + point_level_md(pl)
     nd = {k: v.get("no_draft_ids") for k, v in m["arms"].items() if v.get("no_draft_ids")}
     L += ["", "Answers with no draft (cut while thinking; counted as cut and empty, P 0): " + (", ".join(f"{k}: {len(x)}" for k, x in nd.items()) if nd else "none")]
     L += ["", "Checking pass (arms with a check): status counts, proposed and accepted changes, answers with an accepted change:", ""]
@@ -907,6 +1076,213 @@ def measures_md(m):
         L.append(f"- {k}: {v['pass_all']} of {v['n']} all-pass ({v['all_pass']}); format failures {v['format_failures']}; "
                  f"without the items of the kinds {', '.join(LOOKUP_KINDS)}: {v['pass_without_lookup']} of {v['n_without_lookup']}")
     return "\n".join(L) + "\n"
+
+
+# ---------------------------------------------------------------- a Gemma model against Qwen (W10: described, decides nothing) and the harm by consequence (W6)
+def _paired_points(x, y, ids):
+    d = [100.0 * (x[i] - y[i]) for i in ids]
+    m_, s_ = mean(d), se(d)
+    return {"mean_pts": m_, "se_pts": s_, "n": len(d), "interval90": interval(m_, s_, Z90)}
+
+
+def mech_compare(mg, mq):
+    """The paired difference per mechanical item (Gemma minus Qwen), in percentage points of all-pass, over all items and without the lookup kinds."""
+    pg, pq = mg.get("pass_by_id") or {}, mq.get("pass_by_id") or {}
+    if not pg or sorted(pg) != sorted(pq):
+        raise SixError("the mechanical items of the two arms differ or are missing")
+    lookup = set(mq.get("lookup_ids") or [])
+    ids = sorted(pg)
+    return {"all": _paired_points(pg, pq, ids), "without_lookup": _paired_points(pg, pq, [i for i in ids if i not in lookup]),
+            "all_pass": {"gemma": [mg["pass_all"], mg["n"]], "qwen": [mq["pass_all"], mq["n"]]}}
+
+
+def compare_block(m, plan):
+    """{model: {arm label: the measured parts of the comparison with Qwen on that arm}} for A, E and the thorough arm where both ran."""
+    out = {}
+    thorough = m["thorough_arm"]
+    nchk = lambda arm: ((arm.get("check") or {}).get("status") or {}).get("not_checked", 0)  # noqa: E731
+    for mm in plan:
+        g = mm["key"]
+        if g == "qwen":
+            continue
+        rows = {}
+        for label in dict.fromkeys(("A", "E", thorough)):
+            gx = set_name(label, g)
+            if gx not in m["arms"] or label not in m["arms"]:
+                continue
+            ga, qa = m["arms"][gx], m["arms"][label]
+            mk = "D" if label == thorough else "A"        # the mechanical items are answered by A and D only: arm E is compared on A's
+            gm, qm = m["mech"].get(f"{mk}_{g}"), m["mech"].get(mk)
+            rows[label] = {"gemma_set": gx, "qwen_set": label, "coverage": pair(m, gx, label), "mech_arm": mk,
+                           "mech": mech_compare(gm, qm) if gm and qm else None,
+                           "cut": {"gemma": ga["cut"], "qwen": qa["cut"]}, "empty": {"gemma": ga["empty"], "qwen": qa["empty"]},
+                           "not_checked": {"gemma": nchk(ga), "qwen": nchk(qa)},
+                           "time": {"gemma": {k: ga["time"][k] for k in ("median_s", "p90_s")}, "qwen": {k: qa["time"][k] for k in ("median_s", "p90_s")}}}
+        out[g] = rows
+    return out
+
+
+def norm_cons(c):
+    return " ".join(str(c or "").lower().split())
+
+
+def harm_findings(rows, setname, reader):
+    """{scenario id: {consequence: [rows]}} of the non-minor harmful findings of one reader on one set. A harmful finding without a consequence is an error (the field is required)."""
+    out = {}
+    for r in rows:
+        if r.get("set") != setname or r.get("reader") != reader or r.get("kind") != "harmful" or r.get("minor"):
+            continue
+        c = norm_cons(r.get("consequence"))
+        if not c:
+            raise SixError(f"a harmful finding of {reader} on {setname}/{r.get('id')} has no consequence (the field is required)")
+        out.setdefault(r["id"], {}).setdefault(c, []).append(r)
+    return out
+
+
+def harm_match(rows, reads, cand, ref, first, second=None):
+    """W6: a harmful finding in the candidate's answer is NEW when the reference answer to the same scenario has no harmful finding with the same consequence (the first reader's findings
+    on both). A new one is CONFIRMED when the second reader also marks it harmful (non-minor) with the same consequence on the candidate's answer; NOT CONFIRMED when the second reader read
+    that answer and did not; PENDING when the second reader has not read it (it goes to the second reader). reads: the 'read' markers of eval2_blind unblind --reads-out."""
+    cf, rf = harm_findings(rows, cand, first), harm_findings(rows, ref, first)
+    sf = harm_findings(rows, cand, second) if second else {}
+    second_read = {r["id"] for r in (reads or []) if r.get("set") == cand and r.get("reader") == second and r.get("kind") == "read"} if second else set()
+    new, confirmed, not_confirmed, pending = [], [], [], []
+    for sid in sorted(cf):
+        for c in sorted(cf[sid]):
+            if c in rf.get(sid, {}):
+                continue
+            it = {"id": sid, "consequence": c}
+            new.append(it)
+            (confirmed if c in sf.get(sid, {}) else not_confirmed if sid in second_read else pending).append(it)
+    n_rows = lambda f: sum(len(v) for d in f.values() for v in d.values())  # noqa: E731
+    return {"candidate": cand, "reference": ref, "candidate_findings": n_rows(cf), "reference_findings": n_rows(rf),
+            "candidate_consequences": sum(len(d) for d in cf.values()), "reference_consequences": sum(len(d) for d in rf.values()),
+            "new": new, "confirmed": confirmed, "not_confirmed": not_confirmed, "pending": pending}
+
+
+def harm_match_lines(h, label=None):
+    L = [f"Harm by consequence, {label or h['candidate']} against {h['reference']} (W6; first reader's non-minor harmful findings; raw counts):",
+         f"  harmful findings: {h['candidate']} {h['candidate_findings']} ({h['candidate_consequences']} scenario-consequence pairs), {h['reference']} {h['reference_findings']} ({h['reference_consequences']} pairs)",
+         f"  new (the reference's answer has no harmful finding with that consequence): {len(h['new'])}; confirmed by the second reader {len(h['confirmed'])}; "
+         f"read by the second reader and not confirmed {len(h['not_confirmed'])}; waiting for the second reader {len(h['pending'])}"]
+    for k in ("confirmed", "not_confirmed", "pending"):
+        for it in h[k]:
+            L.append(f"    {k.replace('_', ' ')}: {it['id']}: {it['consequence']}")
+    if h["confirmed"]:
+        L.append(f"  criterion (confirmed new harmful consequences = {D_HARM_NEW_MAX}): FAIL ({len(h['confirmed'])} confirmed)")
+    elif h["pending"]:
+        L.append(f"  criterion (confirmed new harmful consequences = {D_HARM_NEW_MAX}): WAITS FOR THE SECOND READER ({len(h['pending'])} new ones are not yet read by the second reader: scenarios "
+                 + ", ".join(sorted({it['id'] for it in h['pending']})) + ")")
+    else:
+        L.append(f"  criterion (confirmed new harmful consequences = {D_HARM_NEW_MAX}): PASS")
+    return L
+
+
+def wrong_counts(rows, setname, reader):
+    """Non-minor findings of the kinds wrong, invented and harmful of one reader on one set, per scenario."""
+    out = {}
+    for r in rows:
+        if r.get("set") == setname and r.get("reader") == reader and r.get("kind") in ("wrong", "invented", "harmful") and not r.get("minor"):
+            out[r["id"]] = out.get(r["id"], 0) + 1
+    return out
+
+
+def wrong_paired(rows, reads, x, y, reader):
+    """Wrong statements per 10 answers, set x minus set y, paired by scenario over the scenarios the reader read in both sets: mean, standard error, 90 % interval."""
+    rx = {r["id"] for r in reads if r.get("set") == x and r.get("reader") == reader and r.get("kind") == "read"}
+    ry = {r["id"] for r in reads if r.get("set") == y and r.get("reader") == reader and r.get("kind") == "read"}
+    ids = sorted(rx & ry)
+    if not ids:
+        raise SixError(f"the reader {reader} read no scenario in both {x} and {y}")
+    cx, cy = wrong_counts(rows, x, reader), wrong_counts(rows, y, reader)
+    d = [10.0 * (cx.get(i, 0) - cy.get(i, 0)) for i in ids]
+    m_, s_ = mean(d), se(d)
+    return {"mean_per10": m_, "se": s_, "n": len(d), "interval90": interval(m_, s_, Z90)}
+
+
+def reading_for_compare(m, rows, reads, first, second):
+    """The reading's parts of the comparisons: {model: {arm label: {"wrong": paired wrong statements, "harm_gemma": new harm of the Gemma answers against Qwen's, "harm_qwen": the other way}}}."""
+    out = {}
+    for g, arms in (m.get("compare") or {}).items():
+        out[g] = {}
+        for label, e in arms.items():
+            gx, qx = e["gemma_set"], e["qwen_set"]
+            out[g][label] = {"wrong": wrong_paired(rows, reads, gx, qx, first), "harm_gemma": harm_match(rows, reads, gx, qx, first, second),
+                             "harm_qwen": harm_match(rows, reads, qx, gx, first, second)}
+    return out
+
+
+def clean_winner(e, rd_=None):
+    """-> (verdict, {condition: True|False|None}); None waits for the reading or the second reader. yes only when every condition holds."""
+    eps = 1e-9
+    cov = e["coverage"]
+    ci = cov.get("ci90")
+    c = {"wrong_upper_below_0": None, "coverage": None if ci is None else bool(cov["mean"] >= CMP_COV_MIN - eps and ci[0] > CMP_COV_LOWER + eps), "harm_confirmed_0": None, "mechanical": None}
+    if e.get("mech"):
+        lows = [e["mech"][k]["interval90"] for k in ("all", "without_lookup")]
+        c["mechanical"] = None if any(x is None for x in lows) else all(x[0] > CMP_MECH_LOWER + eps for x in lows)
+    if rd_:
+        w = rd_["wrong"]["interval90"]
+        c["wrong_upper_below_0"] = None if w is None else bool(w[1] < -eps)
+        h = rd_["harm_gemma"]
+        c["harm_confirmed_0"] = False if h["confirmed"] else (None if h["pending"] else True)
+    if any(v is False for v in c.values()):
+        return "no", c
+    return ("yes" if all(v is True for v in c.values()) else "waits"), c
+
+
+def _fmt_iv(iv, k=3):
+    return "n/a" if not iv else f"[{iv[0]:+.{k}f}, {iv[1]:+.{k}f}]"
+
+
+def compare_lines(m, reading=None):
+    """The model comparison as lines (W10). reading: reading_for_compare's result, or None (the lines then say what waits for it). Decides nothing."""
+    L = ["Models against Qwen, on the same arm (W10: described, decides nothing; the Owner decides publishing after the tests):"]
+    cmp_ = m.get("compare") or {}
+    if not cmp_:
+        L.append("  (no other model in this run)")
+    for g, arms in cmp_.items():
+        for label, e in arms.items():
+            cov = e["coverage"]
+            rdg = (reading or {}).get(g, {}).get(label)
+            L.append(f"  {g} against Qwen, arm {label} ({e['gemma_set']} against {e['qwen_set']}):")
+            if rdg:
+                w = rdg["wrong"]
+                L.append(f"    wrong statements per 10 answers (first reader, non-minor wrong, invented, harmful), paired over {w['n']} scenarios: {w['mean_per10']:+.2f}, SE {f2(w['se'], 2)}, 90 % interval {_fmt_iv(w['interval90'], 2)}")
+            else:
+                L.append("    wrong statements per 10 answers, paired by scenario with a 90 % interval: NEEDS THE READING")
+            L.append(f"    judged coverage, paired over {cov['n']} scenarios: {cov['mean']:+.3f}, SE {f2(cov['se'])}, 90 % interval {_fmt_iv(cov['ci90'])}")
+            if rdg:
+                for nm, h in (("Gemma's answers new against Qwen's", rdg["harm_gemma"]), ("Qwen's answers new against Gemma's", rdg["harm_qwen"])):
+                    L.append(f"    new harmful consequences, {nm}: {len(h['new'])} (confirmed {len(h['confirmed'])}, not confirmed {len(h['not_confirmed'])}, waiting for the second reader {len(h['pending'])}; harmful findings {h['candidate_findings']} against {h['reference_findings']})")
+            else:
+                L.append("    new harmful consequences, both ways (confirmed by the second reader): NEEDS THE READING")
+            if e["mech"]:
+                a_, w_ = e["mech"]["all"], e["mech"]["without_lookup"]
+                gp, qp = e["mech"]["all_pass"]["gemma"], e["mech"]["all_pass"]["qwen"]
+                L.append(f"    mechanical all-pass (arm {e['mech_arm']}'s answers on the 116 items): {g} {gp[0]} of {gp[1]}, Qwen {qp[0]} of {qp[1]}; paired difference {a_['mean_pts']:+.1f} points, 90 % interval {_fmt_iv(a_['interval90'], 1)}; "
+                         f"without the lookup kinds ({w_['n']} items) {w_['mean_pts']:+.1f} points, {_fmt_iv(w_['interval90'], 1)}")
+            else:
+                L.append(f"    mechanical all-pass: not available (the model's answers on arm {e['mech_arm']} for the mechanical items did not run)")
+            L.append(f"    cut answers {e['cut']['gemma']} against Qwen's {e['cut']['qwen']}; empty {e['empty']['gemma']} against {e['empty']['qwen']}; checks that missed the {DEADLINE_S:.0f} s start-by "
+                     f"{e['not_checked']['gemma']} against {e['not_checked']['qwen']}; time per answer with search, median/90th percentile (reported) {e['time']['gemma']['median_s']:.1f}/{e['time']['gemma']['p90_s']:.1f} s against Qwen's "
+                     f"{e['time']['qwen']['median_s']:.1f}/{e['time']['qwen']['p90_s']:.1f} s")
+            v, c = clean_winner(e, rdg)
+            wait = [k for k, x in c.items() if x is None]
+            names = {"wrong_upper_below_0": "the upper end of the wrong statements below 0", "coverage": f"coverage at least {CMP_COV_MIN:+.2f} with its lower end above {CMP_COV_LOWER:+.2f}",
+                     "harm_confirmed_0": "0 confirmed new harmful consequences", "mechanical": f"the mechanical lower end above {CMP_MECH_LOWER:+.0f} points"}
+            tail = "" if v == "yes" else (f" (fails: {', '.join(names[k] for k, x in c.items() if x is False)})" if v == "no" and any(x is False for x in c.values()) else
+                                          f" (waits for the reading: {', '.join(names[k] for k in wait)})")
+            L.append(f"    clean winner against Qwen on arm {label}: {'yes' if v == 'yes' else 'no'}{tail}")
+    return L
+
+
+def arm_r_lines(m):
+    """Arm R (grounded-g3 on the r4g2 packs, W7): description only; outside every decided row; not read."""
+    v = (m.get("pairs") or {}).get("R-A")
+    if v is None:
+        return ["Arm R (grounded-g3 on the r4g2 packs, W7): not in this run"]
+    return [f"Arm R (grounded-g3 on the r4g2 packs, W7; judged only, outside every decided row, not read): R - A judged coverage {v['mean']:+.3f}, SE {f2(v['se'])}, 90 % interval {_fmt_iv(v.get('ci90'))} over {v['n']} scenarios"]
 
 
 # ---------------------------------------------------------------- the rule
@@ -956,28 +1332,27 @@ def evaluate(m):
     cov, se_ = need(m, "pairs", f"{t}-A", "mean"), need(m, "pairs", f"{t}-A", "se")
     cut, tm = need(m, "arms", t, "cut"), need(m, "arms", t, "time", "median_s")
     p9 = need(m, "arms", t, "time", "p90_s")
-    cond = {"coverage": cov >= D_COV_MIN - eps, "cut": cut * 100 <= D_CUT_PCT * n, "median": tm <= D_MED_S + eps, "p90": p9 <= D_P90_S + eps}
+    cond = {"coverage": cov >= D_COV_MIN - eps, "cut": cut * 100 <= D_CUT_PCT * n}
+    nchk = ((m["arms"][t].get("check") or {}).get("status") or {}).get("not_checked", 0)
     L.append(f"Thorough-profile rows (arm {t} against A; {'thinking, then the checking pass' if t == 'D' else 'thinking only, no checking pass in this variant'}):")
     L.append(f"  {'PASS' if cond['coverage'] else 'FAIL'}  coverage difference {cov:+.3f}, standard error {se_:.3f} (needs >= {D_COV_MIN:+.2f})")
     L.append(f"  {'PASS' if cond['cut'] else 'FAIL'}  cut at the token limit: {int(cut)} of {int(n)} = {100 * cut / n:.1f} % (needs <= {D_CUT_PCT} %)")
-    L.append(f"  {'PASS' if cond['median'] else 'FAIL'}  median seconds per answer with search {tm:.1f} (needs <= {D_MED_S:.0f})")
-    L.append(f"  {'PASS' if cond['p90'] else 'FAIL'}  90th percentile of the seconds with search {p9:.1f} (needs <= {D_P90_S:.0f}; the fifth largest of 50)")
+    L.append(f"  REPORTED  median seconds per answer with search {tm:.1f} (not decided: W5; the plan's bar was {PLAN_MED_S:.0f} s)")
+    L.append(f"  REPORTED  90th percentile of the seconds with search {p9:.1f} (not decided: W5; the plan's bar was {PLAN_P90_S:.0f} s; the fifth largest of 50)")
+    L.append(f"  REPORTED  answers whose checking call did not start by the operational deadline ({DEADLINE_S:.0f} s; status not_checked): {int(nchk)} of {int(n)}")
     L.append(f"  NEEDS THE READING  wrong statements per 10 answers, {t} minus A (needs <= {D_WRONG_MAX:+.1f}); the readers count them")
-    L.append(f"  NEEDS THE READING  harmful statements, {t} against A (needs <= A + {D_HARM_PLUS}); the readers count them")
-    time_ok = cond["median"] and cond["p90"]
+    L.append(f"  NEEDS THE READING  harmful consequences, {t} against A: confirmed new harmful consequences must be {D_HARM_NEW_MAX} (W6: a harmful finding is new when A's answer to the scenario has none with the same consequence; "
+             "a new one is confirmed when the second reader also marks it harmful with the same consequence; `harm-match` prints the raw counts)")
     base = cond["coverage"] and cond["cut"]
     no_gain = "neither (if the readings do not show the errors improving)"
-    time_fail_row = cond["coverage"] and not time_ok and (cond["cut"] or TIME_FAIL_TAKES_CUT)   # the Owner's decision of 2026-11-23: narrow (TIME_FAIL_TAKES_CUT False)
     where = "thinking, then the checking pass" if t == "D" else "thinking alone"
-    if base and time_ok:
-        possible = [f"goes_on_to_B4 ({where}; if the readings give wrong statements at most -2.0 per 10 and harmful at most A + 2)" + (
+    if base:
+        possible = [f"goes_on_to_B4 ({where}; if the readings give wrong statements at most {D_WRONG_MAX:+.1f} per 10 and 0 confirmed new harmful consequences)" + (
             "; under --check-variant none thinking alone MAY go on to B4 (the Owner's decision of 2026-11-23)" if t == "B" and NONE_THINKING_MAY_GO_TO_B4 else ""), no_gain]
         if t == "B" and not NONE_THINKING_MAY_GO_TO_B4:
             possible[0] = "waits for the Owner (whether thinking alone may go on to B4 is not decided)"
-    elif time_fail_row:
-        possible = ["time_fails (if the readings give the errors improving: one g2-based thorough arm on worn data, then B4)", no_gain]
     else:
-        possible = ["neither (a measured condition other than time fails, or a cut failure that comes with a time failure; the reading cannot change that)"]
+        possible = ["neither (a measured condition fails; the reading cannot change that). The row \"Errors improve but time fails\" cannot arise: time is reported, not decided (W5)"]
     L.append("  => the row waits for the reading; the outcomes still possible: " + "; ".join(possible))
     L.append("")
     L.append("Combined rows (\"Both of the above\", \"Neither\"): wait for the reading of the thorough-profile row.")
@@ -996,13 +1371,15 @@ def evaluate(m):
             f"  => CHECK FAILURES ABOVE LIMIT (more than {CHECK_ERROR_LIMIT} of {int(n)}): not a clean measurement of the checking pass" if flag else ""))
     if not any((m["arms"][k].get("check") or {}).get("status") for k in m.get("arms") or {}):
         L.append("  (no arm with a checking pass in this variant)")
-    return L, {"kb": kb, "thorough_possible": possible, "conditions": cond, "check_failures_above_limit": above}
+    return L, {"kb": kb, "thorough_possible": possible, "conditions": cond, "check_failures_above_limit": above,
+               "time_reported": {"median_s": tm, "p90_s": p9, "not_checked": int(nchk)}}
 
 
 def cmd_rule(a):
     try:
         m = json.load(open(a.measures, encoding="utf-8"))
         L, res = evaluate(m)
+        L += [""] + arm_r_lines(m) + [""] + compare_lines(m)
     except (OSError, ValueError, SixError) as e:
         print(f"ERROR: {e}; a missing input is not a pass; no verdict", file=sys.stderr)
         return 2
@@ -1013,32 +1390,50 @@ def cmd_rule(a):
 
 
 # ---------------------------------------------------------------- reading prep, call counts
+def session_size(n_answers, per_session=0):
+    """Scenarios per reading session: the given number, or as many as hold about READ_ANSWERS_PER_SESSION answers (4 scenarios of 4 answers; 2 of 8 answers)."""
+    return int(per_session) if per_session else max(1, round(READ_ANSWERS_PER_SESSION / max(1, n_answers)))
+
+
 def cmd_reading_plan(a):
     key = json.load(open(a.key, encoding="utf-8"))
     ids = sorted(key.get("items") or [])
     second = sorted(key.get("second_reader_ids") or [])
-    chunk = lambda xs, k: [xs[i:i + k] for i in range(0, len(xs), k)]  # noqa: E731
-    first_n = max(1, math.ceil(len(ids) / 4)) if ids else 0
+    n_ans = len(key.get("sets") or []) or 4
+    per = session_size(n_ans, a.scenarios_per_session)
+    first_n = max(1, math.ceil(len(ids) / per)) if ids else 0
     first = [ids[i::first_n] for i in range(first_n)] if first_n else []
-    sec_n = max(1, math.ceil(len(second) / 4)) if second else 0
+    sec_n = max(1, math.ceil(len(second) / per)) if second else 0
     sec = [second[i::sec_n] for i in range(sec_n)] if sec_n else []
-    plan = {"seed": a.seed, "first_reader_sessions": first, "second_reader_sessions": sec}
+    plan = {"seed": a.seed, "scenarios_per_session": per, "answers_per_scenario": n_ans, "first_reader_sessions": first, "second_reader_sessions": sec}
     Path(a.out).write_text(json.dumps(plan, indent=1) + "\n", encoding="utf-8")
-    print(f"reading plan: {len(ids)} scenarios in {len(first)} first-reader sessions, {len(second)} in {len(sec)} second-reader sessions (nothing is read here)")
+    print(f"reading plan: {len(ids)} scenarios of {n_ans} answers each in {len(first)} first-reader sessions (up to {per} scenarios each), {len(second)} scenarios in {len(sec)} second-reader sessions (nothing is read here)")
     return 0
 
 
-def expected_calls(nd, variant, nma, nm3):
-    """Model calls per stage (answer rows are the unit: a draft; a check is one more call where a draft exists)."""
+def expected_calls(nd, variant, nma, nm3, models=MODEL_KEYS, thinking=DEFAULT_THINKING):
+    """Model calls per stage (answer rows are the unit: a draft; a check is one more call where a draft exists). Qwen's stages keep their names; another model's carry its key
+    (ans_a_gemma26 ...). Every model has A (D5 and the mechanical items) and E; a model that thinks also D (D5 and the mechanical items), F and, with a check, C. R (Qwen's comparison arm) is one draft per scenario."""
     mech = nma + nm3
     chk = variant != "none"
-    st = {"ans_a": nd + mech, "ans_c": nd if chk else 0, "ans_e": nd, "ans_d": (nd + mech) * (2 if chk else 1), "ans_f": nd * (2 if chk else 1), "judge": len(SET_STEMS[variant]) * nd * 2}
-    st["total_answer_calls"] = st["ans_a"] + st["ans_c"] + st["ans_e"] + st["ans_d"] + st["ans_f"]
+    plan = plan_models(",".join(models), ",".join(thinking), None, True)
+    st = {}
+    for m in plan:
+        s = "" if m["key"] == "qwen" else "_" + m["key"]
+        st[f"ans_a{s}"], st[f"ans_e{s}"] = nd + mech, nd
+        if m["thinking"]:
+            st[f"ans_d{s}"], st[f"ans_f{s}"] = (nd + mech) * (2 if chk else 1), nd * (2 if chk else 1)
+            if chk or m["key"] == "qwen":
+                st[f"ans_c{s}"] = nd if chk else 0
+        if m["key"] == "qwen":
+            st["ans_r"] = nd
+    st["judge"] = len(all_set_stems(variant, plan)) * nd * 2
+    st["total_answer_calls"] = sum(v for k, v in st.items() if k.startswith("ans_"))
     return st
 
 
 def cmd_call_counts(a):
-    exp = expected_calls(a.nd, a.check_variant, a.nma, a.nm3)
+    exp = expected_calls(a.nd, a.check_variant, a.nma, a.nm3, parse_key_list(a.models, "--models"), parse_key_list(a.thinking_models, "--thinking-models"))
     print(" ".join(f"{k}={v}" for k, v in exp.items()))
     return 0
 
@@ -1068,14 +1463,16 @@ def cmd_stage_calls(a):
 
 # ---------------------------------------------------------------- checks the shell script makes, as commands (so each can be tested with a planted mismatch)
 LEAK_TERMS = ("answer_profile", "--answer-profile", "enable_thinking", "think-cap", "check-variant", "no-verify", "thorough profile", "EXPERIMENTAL", "cut off by the token limit while thinking")
+LEAK_MODEL_TERMS = ("qwen", "gemma")   # the base models' names (any case); the chain adds the ids it was given with --terms
 
 
 def cmd_leak_check(a):
-    """No file of a reading bundle names a configuration (a switch, the profile, the notice of a draft cut while thinking)."""
+    """No file of a reading bundle names a configuration (a switch, the profile, the notice of a draft cut while thinking, a base model's name or id)."""
     bad = []
     for f in sorted(Path(a.dir).rglob("*.md")):
         t = f.read_text(encoding="utf-8")
-        hit = [x for x in LEAK_TERMS if x in t]
+        low = t.lower()
+        hit = [x for x in LEAK_TERMS if x in t] + [x for x in LEAK_MODEL_TERMS + tuple(a.terms or ()) if x.lower() in low]
         if hit:
             bad.append((str(f), hit))
     for f, hit in bad:
@@ -1119,7 +1516,10 @@ def cmd_bodies_relation(a):
         if pa["rest_sha256"] != pb["rest_sha256"]:
             why.append("the rest of the body (model, temperature, stream flags, other extra-body keys) differs")
         same_pack = A[i].get("pack") == B[i].get("pack")
-        if (pa["messages_sha256"] == pb["messages_sha256"]) != same_pack:
+        if a.messages_differ:      # arm R against A: another prompt (grounded-g3), whatever the pack; everything else as A
+            if pa["messages_sha256"] == pb["messages_sha256"]:
+                why.append("the messages are equal: the grounded prompt was not sent")
+        elif (pa["messages_sha256"] == pb["messages_sha256"]) != same_pack:
             why.append("the messages are %s on %s packs" % ("equal" if not same_pack else "different", "different" if not same_pack else "the same"))
         if a.thinking_differs:
             if (pa["enable_thinking"], pb["enable_thinking"]) != (False, True):
@@ -1134,7 +1534,7 @@ def cmd_bodies_relation(a):
     for i, w in bad[:5]:
         print(f"bodies relation {i}: {w}")
     print(f"bodies relation {Path(a.a).name} / {Path(a.b).name}: {len(A) - len(bad)} of {len(A)} ids as promised "
-          f"(allowed to differ: {'the thinking switch off/on and the token limit plus the cap, ' if a.thinking_differs else ''}the messages where the packs differ)")
+          f"(allowed to differ: {'the thinking switch off/on and the token limit plus the cap, ' if a.thinking_differs else ''}{'the messages (another prompt)' if a.messages_differ else 'the messages where the packs differ'})")
     return 1 if bad else 0
 
 
@@ -1153,6 +1553,91 @@ def cmd_check_errors(a):
             f.write("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in bad))
         Path(a.file).write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in keep), encoding="utf-8")
     print(f"check_errors={len(bad)}")
+    return 0
+
+
+THINK_MARKS = ("<think>", "</think>", "<|channel>thought", "<|channel|>analysis", "<start_of_thought>")
+
+
+def probe_observed(resp):
+    """Did the reply of a probe request show thinking: reasoning text in a reasoning field, a thinking mark in the content, or reasoning tokens in the usage?"""
+    msg = ((resp.get("choices") or [{}])[0] or {}).get("message") or {}
+    for k in ("reasoning_content", "reasoning"):
+        if str(msg.get(k) or "").strip():
+            return True, f"{k} field"
+    for mk in THINK_MARKS:
+        if mk in str(msg.get("content") or ""):
+            return True, f"mark {mk}"
+    det = (resp.get("usage") or {}).get("completion_tokens_details") or {}
+    if num(det.get("reasoning_tokens")) and det["reasoning_tokens"] > 0:
+        return True, "reasoning tokens in the usage"
+    return False, "none"
+
+
+def cmd_thinking_probe(a):
+    """The probe of the thinking switch of a base model (M4's bake-off probed the same way): with the switch on the reply shows thinking, with it off it shows none. Exit 1 when not."""
+    try:
+        resp = json.load(open(a.file, encoding="utf-8"))
+        seen, how = probe_observed(resp)
+    except (OSError, ValueError, AttributeError, TypeError, IndexError) as e:
+        print(f"REFUSED: the probe reply {a.file} is unreadable ({type(e).__name__})", file=sys.stderr)
+        return 2
+    want = a.expect == "on"
+    print(f"thinking probe {a.file}: switch {a.expect}: thinking {'observed (' + how + ')' if seen else 'not observed'}")
+    return 0 if seen == want else 1
+
+
+def cmd_reading_sets(a):
+    """The sets of the blind bundles, NAME=PATH per line: Qwen's (A, D, E, F; under none A, B, E, F'), each other model's A and E, and its thorough arm when it ran (D; under none B)."""
+    variant, _ = check_params(a.check_variant, 1)
+    work = Path(a.work)
+    out = []
+    for mm in plan_from_args(a, dry=True)[::-1]:       # qwen first
+        k = mm["key"]
+        names = list(READ_SETS[variant]) if k == "qwen" else list(READ_GEMMA_SETS[variant]) + ([("D" if variant != "none" else "B")] if mm["thinking"] else [])
+        stems = model_set_stems(variant, k, mm["thinking"])
+        out += [f"{set_name(n, k)}={work / ('ans_d5_' + stems[set_name(n, k)] + '.jsonl')}" for n in names]
+    print("\n".join(out))
+    return 0
+
+
+# per-answer seconds (low, high) at Qwen's rates of the development check and the plan's budget; a model's scale against Qwen is inferred from M4's load test (answer median on 3 questions:
+# Gemma 4 26B-A4B 8.0 s, Gemma 4 31B 35 s, the reference 35 s), loads 0.3 to 0.5 h each (inferred, not measured on this build)
+MODEL_SCALE = {"qwen": (1.0, 1.0), "gemma26": (0.25, 0.5), "gemma31": (1.0, 1.3)}
+
+
+def estimate(nd, cap, variant, plan, mech=116):
+    """-> {stage: (low h, high h)}, total (low, high): the inferred server hours per stage (the draft 25 to 75 s per D5 answer, 10 to 13 s per mechanical answer, thinking cap/64 to cap/32 s, a check 20 to 33 s,
+    a judge call 10 to 12 s, a load 0.3 to 0.5 h), scaled per model. An inference from other runs' rates, not a measurement."""
+    chk = 1 if variant != "none" else 0
+    plo, phi, mlo, mhi, tlo, thi, clo, chi = 25, 75, 10, 13, cap / 64, cap / 32, 20 * chk, 33 * chk
+    st = {}
+    for mm in plan:
+        k, (sl, sh) = mm["key"], MODEL_SCALE[mm["key"]]
+        sfx = "" if k == "qwen" else "_" + k
+        st[f"ans_a{sfx}"] = ((nd * plo + mech * mlo) * sl, (nd * phi + mech * mhi) * sh)
+        st[f"ans_e{sfx}"] = (nd * plo * sl, nd * phi * sh)
+        if mm["thinking"]:
+            st[f"ans_d{sfx}"] = ((nd * (plo + tlo + clo) + mech * (mlo + tlo + clo)) * sl, (nd * (phi + thi + chi) + mech * (mhi + thi + chi)) * sh)
+            st[f"ans_f{sfx}"] = (nd * (plo + tlo + clo) * sl, nd * (phi + thi + chi) * sh)
+            if chk:
+                st[f"ans_c{sfx}"] = (nd * clo * sl, nd * chi * sh)
+        if k == "qwen":
+            st["ans_r"] = (nd * plo, nd * phi)
+    nsets = len(all_set_stems(variant, plan))
+    st["judge"] = (nsets * nd * 2 * 10, nsets * nd * 2 * 12)
+    st["loads"] = ((len(plan) + 2) * 1080, (len(plan) + 2) * 1800)
+    h = {k: (v[0] / 3600, v[1] / 3600) for k, v in st.items()}
+    return h, (sum(v[0] for v in h.values()), sum(v[1] for v in h.values()))
+
+
+def cmd_estimate(a):
+    plan = plan_from_args(a, dry=True)
+    h, (lo, hi) = estimate(a.nd, a.think_cap, a.check_variant, plan)
+    if a.detail:
+        for k, (x, y) in h.items():
+            print(f"{k}: {x:.2f} to {y:.2f} h")
+    print(f"{lo:.1f} to {hi:.1f}")
     return 0
 
 
@@ -1209,6 +1694,41 @@ def cmd_server_gate(a):
     return 0
 
 
+def add_model_args(q):
+    q.add_argument("--models", default=",".join(MODEL_KEYS), help="comma list from qwen,gemma26,gemma31 (all three by default; qwen is required)")
+    q.add_argument("--thinking-models", default=",".join(DEFAULT_THINKING), help="the models whose thorough arms (B, C, D, F, F') run (default qwen)")
+    q.add_argument("--qwen-model", default=None)
+    q.add_argument("--gemma26-model", default=None)
+    q.add_argument("--gemma31-model", default=None)
+
+
+def _read_findings(a):
+    rows = rd(a.findings)
+    reads = rd(a.reads) if getattr(a, "reads", None) else []
+    return rows, reads
+
+
+def cmd_harm_match(a):
+    """W6 on two sets of the reading: the raw counts and the criterion (confirmed new harmful consequences = 0). --findings is the merged file of eval2_blind unblind, --reads its --reads-out."""
+    rows, reads = _read_findings(a)
+    h = harm_match(rows, reads, a.candidate, a.reference, a.first_reader, a.second_reader)
+    print("\n".join(harm_match_lines(h)))
+    return 0
+
+
+def cmd_compare_models(a):
+    """The model comparison (W10) with the measured parts; with --findings the reading's parts too. Decides nothing."""
+    m = json.load(open(a.measures, encoding="utf-8"))
+    reading = None
+    if a.findings:
+        if not (a.first_reader and a.reads):
+            raise SixError("--findings needs --first-reader and --reads (and --second-reader for the harm)")
+        rows, reads = _read_findings(a)
+        reading = reading_for_compare(m, rows, reads, a.first_reader, a.second_reader)
+    print("\n".join(compare_lines(m, reading)))
+    return 0
+
+
 def build_parser():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -1226,6 +1746,30 @@ def build_parser():
     q = sub.add_parser("frozen-packs")
     for k in ("funnel-work", "items", "out"):
         q.add_argument("--" + k, required=True)
+    q.add_argument("--key", default=None, help="the funnel's pack setting (default frozen; r4g2 for arm R)")
+    q = sub.add_parser("gate-models")
+    add_model_args(q)
+    q.add_argument("--dry", action="store_true")
+    q = sub.add_parser("model-order")
+    add_model_args(q)
+    q = sub.add_parser("model-ids")
+    add_model_args(q)
+    q = sub.add_parser("sets")
+    add_model_args(q)
+    q.add_argument("--check-variant", required=True)
+    q = sub.add_parser("reading-sets")
+    add_model_args(q)
+    q.add_argument("--check-variant", required=True)
+    q.add_argument("--work", required=True)
+    q = sub.add_parser("estimate")
+    add_model_args(q)
+    q.add_argument("--check-variant", required=True)
+    q.add_argument("--nd", type=int, required=True)
+    q.add_argument("--think-cap", type=int, required=True)
+    q.add_argument("--detail", action="store_true")
+    q = sub.add_parser("thinking-probe")
+    q.add_argument("--file", required=True)
+    q.add_argument("--expect", choices=("on", "off"), required=True)
     q = sub.add_parser("dry-inputs")
     q.add_argument("--dir", required=True)
     q.add_argument("--items", type=int, default=8)
@@ -1251,6 +1795,7 @@ def build_parser():
     q.add_argument("--expect-same-pack", action="store_true")
     q = sub.add_parser("leak-check")
     q.add_argument("--dir", required=True)
+    q.add_argument("--terms", nargs="*", default=[], help="more names no bundle may contain (the model ids of the run)")
     q = sub.add_parser("no-draft-ids")
     q.add_argument("--answers", nargs="+", required=True, metavar="NAME=FILE")
     q.add_argument("--key", default=None)
@@ -1258,6 +1803,7 @@ def build_parser():
     q.add_argument("--a", required=True)
     q.add_argument("--b", required=True)
     q.add_argument("--thinking-differs", action="store_true")
+    q.add_argument("--messages-differ", action="store_true", help="the messages differ in every row, whatever the pack (arm R against A); the rest of the body is equal")
     q.add_argument("--think-cap", type=int, default=0)
     q = sub.add_parser("check-errors")
     q.add_argument("--file", required=True)
@@ -1283,12 +1829,27 @@ def build_parser():
     q.add_argument("--think-cap", required=True)
     q.add_argument("--max-unjudged", type=int, default=0)
     q.add_argument("--stub", action="store_true")
+    add_model_args(q)
     q = sub.add_parser("rule")
     q.add_argument("--measures", required=True)
+    q = sub.add_parser("harm-match")
+    q.add_argument("--findings", required=True)
+    q.add_argument("--reads", default=None)
+    q.add_argument("--candidate", required=True, help="the set name of the candidate's answers (as in the findings file)")
+    q.add_argument("--reference", required=True)
+    q.add_argument("--first-reader", required=True)
+    q.add_argument("--second-reader", default=None)
+    q = sub.add_parser("compare-models")
+    q.add_argument("--measures", required=True)
+    q.add_argument("--findings", default=None)
+    q.add_argument("--reads", default=None)
+    q.add_argument("--first-reader", default=None)
+    q.add_argument("--second-reader", default=None)
     q = sub.add_parser("reading-plan")
     q.add_argument("--key", required=True)
     q.add_argument("--out", required=True)
     q.add_argument("--seed", type=int, default=BUNDLE_SEED)
+    q.add_argument("--scenarios-per-session", type=int, default=0, help="scenarios per reading session (default: about %d answers per session)" % READ_ANSWERS_PER_SESSION)
     q = sub.add_parser("stage-calls")
     q.add_argument("--stage", required=True)
     q.add_argument("--files", nargs="+", required=True)
@@ -1301,6 +1862,8 @@ def build_parser():
     q.add_argument("--nma", type=int, required=True)
     q.add_argument("--nm3", type=int, required=True)
     q.add_argument("--check-variant", required=True)
+    q.add_argument("--models", default=",".join(MODEL_KEYS))
+    q.add_argument("--thinking-models", default=",".join(DEFAULT_THINKING))
     return p
 
 
@@ -1313,10 +1876,10 @@ def main(argv=None):
         if a.cmd == "code-pins":
             print("\n".join(CODE_PINS))
             return 0
-        fn = {"gate-params": cmd_gate_params, "gate-inputs": cmd_gate_inputs, "frozen-packs": cmd_frozen_packs, "dry-inputs": cmd_dry_inputs, "manifest": cmd_manifest,
+        fn = {"model-ids": cmd_model_ids, "thinking-probe": cmd_thinking_probe, "reading-sets": cmd_reading_sets, "estimate": cmd_estimate, "gate-models": cmd_gate_models, "model-order": cmd_model_order, "sets": cmd_sets, "gate-params": cmd_gate_params, "gate-inputs": cmd_gate_inputs, "frozen-packs": cmd_frozen_packs, "dry-inputs": cmd_dry_inputs, "manifest": cmd_manifest,
               "start-check": cmd_start_check, "derive-draft": cmd_derive_draft, "derive-check": cmd_derive_check, "check-verify": cmd_check_verify,
               "check-rows": cmd_check_rows, "prompts-relation": cmd_prompts_relation, "prompts-default": cmd_prompts_default, "measures": cmd_measures,
-              "rule": cmd_rule, "reading-plan": cmd_reading_plan, "call-counts": cmd_call_counts,
+              "rule": cmd_rule, "harm-match": cmd_harm_match, "compare-models": cmd_compare_models, "reading-plan": cmd_reading_plan, "call-counts": cmd_call_counts,
               "stage-calls": cmd_stage_calls, "leak-check": cmd_leak_check, "no-draft-ids": cmd_no_draft_ids, "bodies-relation": cmd_bodies_relation,
               "check-errors": cmd_check_errors, "pilot-check": cmd_pilot_check, "models-check": cmd_models_check, "server-gate": cmd_server_gate}[a.cmd]
         return fn(a)

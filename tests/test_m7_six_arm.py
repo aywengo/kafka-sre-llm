@@ -96,17 +96,17 @@ class RuleTests(unittest.TestCase):
         L, res = self.ev(cut=6, med=200.0)
         self.assertEqual(len(res["thorough_possible"]), 1)
         self.assertTrue(res["thorough_possible"][0].startswith("neither"))
-        # a time failure alone is the second row
+        # W5: a time value alone decides nothing, so "errors improve but time fails" no longer arises (the constant of W3 is kept as recorded and has no effect on the outcome)
         _, res = self.ev(med=200.0)
-        self.assertTrue(any(p.startswith("time_fails") for p in res["thorough_possible"]))
-        # the single place for the other reading: TIME_FAIL_TAKES_CUT
+        self.assertTrue(res["thorough_possible"][0].startswith("goes_on_to_B4"))
+        self.assertFalse(any(p.startswith("time_fails") for p in res["thorough_possible"]))
         old = R.TIME_FAIL_TAKES_CUT
         try:
             R.TIME_FAIL_TAKES_CUT = True
             _, res = self.ev(cut=6, med=200.0)
-            self.assertTrue(any(p.startswith("time_fails") for p in res["thorough_possible"]))
-            _, res = self.ev(cut=6)                                         # cut alone still fails: neither
             self.assertTrue(res["thorough_possible"][0].startswith("neither"))
+            _, res = self.ev(med=200.0)
+            self.assertTrue(res["thorough_possible"][0].startswith("goes_on_to_B4"))
         finally:
             R.TIME_FAIL_TAKES_CUT = old
         # (2) under none, thinking alone MAY go on to B4, and the printed outcome says so
@@ -123,6 +123,8 @@ class RuleTests(unittest.TestCase):
         self.assertIn("TIME_FAIL_TAKES_CUT", R.RULE_TEXT)
         self.assertIn("NONE_THINKING_MAY_GO_TO_B4", R.RULE_TEXT)
         self.assertIn("stays NARROW", R.RULE_TEXT)
+        self.assertIn("W5", R.RULE_TEXT)
+        self.assertIn("no longer arises", R.RULE_TEXT)
         self.assertNotIn("unload-others", (ROOT / "scripts/m7_four_way.sh").read_text(encoding="utf-8"))
 
     def test_checking_failures_above_the_limit_mark_the_arm(self):
@@ -158,29 +160,72 @@ class RuleTests(unittest.TestCase):
         text = "\n".join(L)
         self.assertEqual(text.count("NEEDS THE READING"), 2)
         self.assertIn("wrong statements", text)
-        self.assertIn("harmful statements", text)
+        self.assertIn("harmful consequences", text)
         self.assertNotIn("CHOICE", text)
         self.assertIn("waits for the reading", text)
         self.assertTrue(any(p.startswith("goes_on_to_B4") for p in res["thorough_possible"]))
         self.assertFalse(any(p.startswith("time_fails") for p in res["thorough_possible"]))
 
     def test_each_measured_condition_of_the_thorough_row(self):
-        cases = {"coverage": dict(da=(-0.0401, 0.03)), "cut": dict(cut=6), "median": dict(med=180.1), "p90": dict(p90=270.1)}
+        cases = {"coverage": dict(da=(-0.0401, 0.03)), "cut": dict(cut=6)}
         for key, kw in cases.items():
             with self.subTest(failing=key):
                 L, res = self.ev(**kw)
                 fails = [l for l in L if l.strip().startswith("FAIL")]
                 self.assertEqual(len(fails), 1, fails)
                 self.assertEqual(res["conditions"][key], False)
-                if key in ("median", "p90"):      # time fails: the second thorough row is still possible
-                    self.assertTrue(any(p.startswith("time_fails") for p in res["thorough_possible"]))
-                    self.assertFalse(any(p.startswith("goes_on") for p in res["thorough_possible"]))
-                else:                             # coverage or cut fails: only "neither" is possible
-                    self.assertEqual(len(res["thorough_possible"]), 1)
-                    self.assertTrue(res["thorough_possible"][0].startswith("neither"))
-        # the edges pass: -0.04 exactly, cut 5 of 50 (10 %), 180 s, 270 s
-        _, res = self.ev(da=(-0.04, 0.03), cut=5, med=180.0, p90=270.0)
-        self.assertEqual(res["conditions"], {"coverage": True, "cut": True, "median": True, "p90": True})
+                self.assertEqual(len(res["thorough_possible"]), 1)      # coverage or cut fails: only "neither" is possible
+                self.assertTrue(res["thorough_possible"][0].startswith("neither"))
+        # the edges pass: -0.04 exactly, cut 5 of 50 (10 %)
+        _, res = self.ev(da=(-0.04, 0.03), cut=5)
+        self.assertEqual(res["conditions"], {"coverage": True, "cut": True})
+
+    def test_time_is_reported_never_passed_or_failed_and_the_deadline_cuts_are_counted(self):     # W5
+        for kw in (dict(med=100.0, p90=150.0), dict(med=999.0, p90=9999.0)):
+            with self.subTest(**kw):
+                L, res = self.ev(**kw)
+                text = "\n".join(L)
+                self.assertRegex(text, r"REPORTED  median seconds per answer with search %.1f" % kw["med"])
+                self.assertRegex(text, r"REPORTED  90th percentile of the seconds with search %.1f" % kw["p90"])
+                for line in L:
+                    if "median seconds" in line or "90th percentile" in line:
+                        self.assertNotIn("PASS", line)
+                        self.assertNotIn("FAIL", line)
+                self.assertEqual(set(res["conditions"]), {"coverage", "cut"})
+                self.assertTrue(res["thorough_possible"][0].startswith("goes_on_to_B4"))      # no time value changes the outcome
+                self.assertEqual(res["time_reported"], {"median_s": kw["med"], "p90_s": kw["p90"], "not_checked": 0})
+        m = measures()
+        m["arms"]["D"]["check"] = {"status": {"not_checked": 3, "no_patch": 47}}
+        L, res = R.evaluate(m)
+        self.assertIn("did not start by the operational deadline (240 s; status not_checked): 3 of 50", "\n".join(L))
+        self.assertEqual(res["time_reported"]["not_checked"], 3)
+        self.assertIn("The row \"Errors improve but time fails\" cannot arise", "\n".join(R.evaluate(measures(cut=6))[0]))
+        self.assertIn("W5", R.RULE_TEXT)
+
+    def test_arm_r_is_outside_every_decided_row(self):      # W7
+        base = self.ev()
+        m = measures()
+        m["pairs"]["R-A"] = {"mean": 0.5, "se": 0.01, "n": 50, "ci90": [0.48, 0.52]}
+        m["arms"]["R"] = arm(P=0.99, cut=40, med=9999.0, p90=9999.0)       # a very good (or very bad) R changes nothing
+        L, res = R.evaluate(m)
+        self.assertEqual((L, res), base)
+        self.assertEqual(R.arm_r_lines(m)[0].split(":")[0], "Arm R (grounded-g3 on the r4g2 packs, W7; judged only, outside every decided row, not read)")
+        self.assertIn("R - A judged coverage +0.500", R.arm_r_lines(m)[0])
+        self.assertIn("not in this run", R.arm_r_lines(measures())[0])
+        self.assertIn("outside every decided row", R.RULE_TEXT)
+        self.assertIn("grounded-g3", R.RULE_TEXT)
+        self.assertNotIn("R", {k for k in res["conditions"]})
+        code, out, _ = run_main(["rule", "--measures", self.write_json(m)])
+        self.assertEqual(code, 0)
+        self.assertIn("Arm R (grounded-g3 on the r4g2 packs", out)
+        self.assertEqual(out.strip().splitlines()[-1], "M7 SIX-ARM TEST DONE: knowledge-base row: none_lookup_not_tested; thorough-profile row: WAITS FOR THE READING")
+
+    def write_json(self, m):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        p = Path(d) / "m.json"
+        p.write_text(json.dumps(m))
+        return str(p)
 
     def test_the_variant_none_reads_the_thorough_row_on_b(self):
         L, res = self.ev(variant="none")
@@ -243,10 +288,19 @@ class Helpers(unittest.TestCase):
                 R.check_params(v, c)
 
     def test_expected_calls(self):
-        e = R.expected_calls(50, "V1C", 96, 20)
-        self.assertEqual((e["ans_a"], e["ans_c"], e["ans_e"], e["ans_d"], e["ans_f"], e["judge"]), (166, 50, 50, 332, 100, 700))
-        e = R.expected_calls(50, "none", 96, 20)
-        self.assertEqual((e["ans_c"], e["ans_d"], e["ans_f"], e["judge"]), (0, 166, 50, 400))
+        e = R.expected_calls(50, "V1C", 96, 20, ("qwen",), ("qwen",))             # Qwen alone: the old counts, plus arm R (50 drafts) and its judge rows (8 sets)
+        self.assertEqual((e["ans_a"], e["ans_c"], e["ans_e"], e["ans_d"], e["ans_f"], e["ans_r"], e["judge"]), (166, 50, 50, 332, 100, 50, 800))
+        e = R.expected_calls(50, "none", 96, 20, ("qwen",), ("qwen",))
+        self.assertEqual((e["ans_c"], e["ans_d"], e["ans_f"], e["judge"]), (0, 166, 50, 500))
+        e = R.expected_calls(50, "V1C", 96, 20)                                   # the default: three models, only Qwen thinks
+        self.assertEqual((e["ans_a_gemma31"], e["ans_e_gemma31"], e["ans_a_gemma26"], e["ans_e_gemma26"]), (166, 50, 166, 50))
+        self.assertNotIn("ans_d_gemma26", e)
+        self.assertEqual(e["judge"], (8 + 2 + 2) * 50 * 2)
+        self.assertEqual(e["total_answer_calls"], 166 + 50 + 166 + 50 + 166 + 50 + 332 + 100 + 50 + 50)
+        e = R.expected_calls(50, "V1C", 96, 20, R.MODEL_KEYS, ("qwen", "gemma31"))   # gemma31 thinks: D, F and C as Qwen's
+        self.assertEqual((e["ans_d_gemma31"], e["ans_f_gemma31"], e["ans_c_gemma31"], e["judge"]), (332, 100, 50, (8 + 7 + 2) * 100))
+        e = R.expected_calls(50, "none", 96, 20, R.MODEL_KEYS, ("qwen", "gemma26"))
+        self.assertEqual((e["ans_d_gemma26"], e["ans_f_gemma26"], "ans_c_gemma26" in e), (166, 50, False))
 
     def test_the_judged_sets_by_variant(self):
         self.assertEqual(list(R.SET_STEMS["V1"]), ["A", "B", "C", "D", "E", "F", "Fp"])
@@ -504,10 +558,10 @@ class ScriptTests(unittest.TestCase):
         self.assertEqual({p for p in ("runs/m7", "work/m7/six_arm") if (ROOT / p).exists()}, before)
 
     def test_a_real_run_needs_the_sources_of_both_parameters(self):
-        r = self.sh("--check-variant", "V1C", "--think-cap", "1500")
+        r = self.sh("--check-variant", "V1C", "--think-cap", "1500", "--gemma31-model", "g31-test")
         self.assertEqual(r.returncode, 2)
         self.assertIn("--check-variant-source is required", r.stderr)
-        r = self.sh("--check-variant", "V1C", "--think-cap", "1500", "--check-variant-source", "pilot report")
+        r = self.sh("--check-variant", "V1C", "--think-cap", "1500", "--gemma31-model", "g31-test", "--check-variant-source", "pilot report")
         self.assertEqual(r.returncode, 2)
         self.assertIn("--think-cap-source is required", r.stderr)
 
@@ -521,7 +575,7 @@ class ScriptTests(unittest.TestCase):
         self.assertEqual(r.returncode, 2)
 
     def test_a_real_run_needs_the_pilots_report_and_refuses_a_dry_run_record_and_the_plants(self):
-        base = ("--check-variant", "V1", "--think-cap", "100", "--check-variant-source", "a", "--think-cap-source", "b")
+        base = ("--check-variant", "V1", "--think-cap", "100", "--check-variant-source", "a", "--think-cap-source", "b", "--gemma31-model", "g31-test")
         r = self.sh(*base, "--pilot-report", "/nonexistent/M7_PILOT.md")
         self.assertEqual(r.returncode, 2)
         self.assertIn("pilot's report", r.stderr)
@@ -538,14 +592,14 @@ class ScriptTests(unittest.TestCase):
         for needle in ("pilot-check", "models-check", "server-gate", "--pin $PILOT", "pilot_report=$PILOT", "leak-check", "bodies-relation", "check-errors"):
             self.assertIn(needle, text)
 
-    def test_the_arms_run_in_the_order_d_f_a_c_e(self):
+    def test_the_arms_run_in_the_order_d_f_a_c_e_r_inside_a_model(self):
         text = SCRIPT.read_text(encoding="utf-8")
-        pos = [text.index(f"if ! stage_done {st}; then") if st != "ans_c" else text.index("&& ! stage_done ans_c") for st in ("ans_d", "ans_f", "ans_a", "ans_c", "ans_e")]
+        pos = [text.index(f"! stage_done {st}$SFX; then") if st != "ans_r" else text.index("! stage_done ans_r; then") for st in ("ans_d", "ans_f", "ans_a", "ans_c", "ans_e", "ans_r")]
         self.assertEqual(pos, sorted(pos))
-        self.assertIn("ECHOREF=$W/ans_d5_D.jsonl.manifest.json", text)
+        self.assertIn("ECHOREF=$W/ans_d5_D$SFX.jsonl.manifest.json", text)
 
     def test_fail_after_is_for_dry_runs_only(self):
-        r = self.sh("--check-variant", "V1", "--think-cap", "100", "--check-variant-source", "a", "--think-cap-source", "b", "--fail-after", "ans_a")
+        r = self.sh("--check-variant", "V1", "--think-cap", "100", "--check-variant-source", "a", "--think-cap-source", "b", "--gemma31-model", "g31-test", "--fail-after", "ans_a")
         self.assertEqual(r.returncode, 2)
         self.assertIn("dry runs only", r.stderr)
 
@@ -1143,6 +1197,340 @@ class AnswerCap(unittest.TestCase):
         self.assertEqual(toks, 31)
 
 
+class ModelsAndComparison(unittest.TestCase):
+    """K4b: three base models (W8, W9), the comparison with Qwen (W10), harm by consequence (W6), the reading's size."""
+
+    def test_the_model_list_and_the_order_of_the_answers(self):
+        plan = R.plan_models("qwen,gemma26,gemma31", None, {"gemma31": "g31-4bit"})
+        self.assertEqual([m["key"] for m in plan], ["gemma31", "gemma26", "qwen"])            # each model alone, the order gemma31, gemma26, qwen
+        self.assertEqual([m["thinking"] for m in plan], [False, False, True])                 # only Qwen's thorough arms by default
+        self.assertEqual(R.plan_models("gemma26,qwen", "qwen", None, True)[0]["key"], "gemma26")
+        self.assertEqual([m["key"] for m in R.plan_models("qwen", None, None, True)], ["qwen"])
+        self.assertEqual(R.DEFAULT_MODEL_IDS["qwen"], "Qwen3.8-27B-4bit")
+        self.assertEqual(R.DEFAULT_MODEL_IDS["gemma26"], "gemma-4-26B-A4B-it-QAT-MLX-4bit")
+        th = R.plan_models("qwen,gemma26,gemma31", "qwen,gemma31", {"gemma31": "x"})
+        self.assertEqual({m["key"]: m["thinking"] for m in th}, {"gemma31": True, "gemma26": False, "qwen": True})
+        for models, thinking in (("gemma26", None), ("qwen,gpt", None), ("qwen,qwen", None), ("", None), ("qwen,gemma26", "gemma26"), ("qwen", "qwen,gemma31"), ("qwen,gemma26", "gemma26,qwen,x")):
+            with self.subTest(models=models, thinking=thinking), self.assertRaises(R.SixError):
+                R.plan_models(models, thinking, {"gemma31": "x"}, True)
+        code, out, _ = run_main(["model-order", "--thinking-models", "qwen,gemma26"])
+        self.assertEqual((code, out.strip()), (0, "gemma31:no gemma26:yes qwen:yes"))
+        # the sets: Qwen's A B C D E F F' and R, a model that does not think has A and E, one that thinks has Qwen's sets
+        stems = R.all_set_stems("V1C", R.plan_models("qwen,gemma26,gemma31", "qwen,gemma26", None, True))
+        self.assertEqual(list(stems), ["A", "B", "C", "D", "E", "F", "Fp", "R", "A_gemma26", "B_gemma26", "C_gemma26", "D_gemma26", "E_gemma26", "F_gemma26", "Fp_gemma26", "A_gemma31", "E_gemma31"])
+        self.assertEqual(stems["D_gemma26"], "D_gemma26")
+        none = R.all_set_stems("none", R.plan_models("qwen,gemma31", "qwen,gemma31", None, True))
+        self.assertEqual(none["B_gemma31"], "D_gemma31")                                     # under none the thinking-only run is B (and F' is the F run), as for Qwen
+        self.assertEqual(none["Fp_gemma31"], "F_gemma31")
+
+    def test_a_placeholder_model_id_is_refused_in_a_real_run(self):
+        with self.assertRaises(R.SixError) as cm:
+            R.plan_models("qwen,gemma31", None, {}, False)
+        self.assertIn("placeholder", str(cm.exception))
+        self.assertIn("--gemma31-model", str(cm.exception))
+        R.plan_models("qwen,gemma31", None, {}, True)                                         # a dry run uses stubs
+        R.plan_models("qwen,gemma26", None, {}, False)                                        # the placeholder is only checked for a model that is in the run
+        with self.assertRaises(R.SixError):
+            R.plan_models("qwen,gemma31", None, {"gemma31": "PLACEHOLDER-x"}, False)
+        with self.assertRaises(R.SixError):
+            R.plan_models("qwen,gemma26", None, {"gemma26": R.DEFAULT_MODEL_IDS["qwen"]}, False)   # two models, one id
+        code, _, err = run_main(["gate-models"])
+        self.assertEqual(code, 2)
+        self.assertIn("placeholder", err)
+        self.assertEqual(run_main(["gate-models", "--gemma31-model", "g31"])[0], 0)
+        self.assertEqual(run_main(["gate-models", "--dry"])[0], 0)
+        r = subprocess.run(["sh", str(SCRIPT), "--check-variant", "V1", "--think-cap", "100", "--check-variant-source", "a", "--think-cap-source", "b"], cwd=str(ROOT), capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("nothing started", r.stderr)
+        self.assertIn("placeholder", r.stderr)
+
+    def test_the_shell_script_groups_the_stages_by_model_and_never_unloads_another_clients_model(self):
+        text = SCRIPT.read_text(encoding="utf-8")
+        self.assertEqual(subprocess.run(["sh", "-n", str(SCRIPT)], capture_output=True).returncode, 0)
+        self.assertIn("for mo in $MODELORDER; do model_group", text)
+        self.assertIn("prepare_model $mk; probe_model $mk $mt", text)
+        self.assertIn("finish_model $mk", text)
+        self.assertIn("--ours $(ours_ids)", text)
+        self.assertIn("[ $k = qwen ] || [ ! -e $W/loaded_$k ] || o=", text)                  # a Gemma model is ours only when this chain loaded it (a marker)
+        self.assertIn('if [ $k = qwen ] || [ -e $W/loaded_$k ]; then unload', text)
+        self.assertNotIn("unload-others", text)
+        # the server gate with the models of this chain: another client's Gemma model is refused, ours (a marker) is not
+        td = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, td, True)
+        st = td / "s.json"
+        g26 = R.DEFAULT_MODEL_IDS["gemma26"]
+        st.write_text(json.dumps({"active_requests": 0, "waiting_requests": 0, "loaded_models": [g26]}))
+        q4 = R.DEFAULT_MODEL_IDS["qwen"]
+        code, _, err = run_main(["server-gate", "--status", str(st), "--keep", q4, "--ours", q4, "DS"])
+        self.assertEqual(code, 2)
+        self.assertIn(g26, err)
+        self.assertEqual(run_main(["server-gate", "--status", str(st), "--keep", q4, "--ours", q4, "DS", g26])[0], 0)
+
+    def test_the_default_reading_has_eight_answers_per_scenario_and_the_sessions_are_configurable(self):
+        td = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, td, True)
+        code, out, _ = run_main(["reading-sets", "--check-variant", "V1C", "--work", "W"])
+        sets = [l.split("=")[0] for l in out.split()]
+        self.assertEqual(sets, ["A", "D", "E", "F", "A_gemma26", "E_gemma26", "A_gemma31", "E_gemma31"])       # Qwen's A D E F and each Gemma model's A and E
+        _, out, _ = run_main(["reading-sets", "--check-variant", "V1C", "--work", "W", "--thinking-models", "qwen,gemma31"])
+        self.assertIn("D_gemma31", [l.split("=")[0] for l in out.split()])
+        self.assertEqual(len(out.split()), 9)
+        _, out, _ = run_main(["reading-sets", "--check-variant", "none", "--work", "W", "--thinking-models", "qwen,gemma26"])
+        self.assertEqual([l.split("=")[0] for l in out.split()][:4], ["A", "B", "E", "Fp"])
+        self.assertIn("B_gemma26=W/ans_d5_D_gemma26.jsonl", out.split())
+        # 50 scenarios: 8 answers each, so 2 scenarios per session (about 16 answers): 25 first-reader sessions, and the quarter (13 scenarios) in 7; the old 4 answers per scenario gave 13 and 4
+        ids = [f"s-{i:02d}" for i in range(50)]
+        key = td / "KEY.json"
+        key.write_text(json.dumps({"items": ids, "second_reader_ids": ids[:13], "sets": sets}))
+        out_ = td / "sessions.json"
+        code, text, _ = run_main(["reading-plan", "--key", str(key), "--out", str(out_)])
+        plan = json.load(open(out_))
+        self.assertEqual((len(plan["first_reader_sessions"]), len(plan["second_reader_sessions"]), plan["scenarios_per_session"], plan["answers_per_scenario"]), (25, 7, 2, 8))
+        self.assertIn("25 first-reader sessions", text)
+        self.assertIn("in 7 second-reader sessions", text)
+        run_main(["reading-plan", "--key", str(key), "--out", str(out_), "--scenarios-per-session", "5"])
+        plan = json.load(open(out_))
+        self.assertEqual((len(plan["first_reader_sessions"]), len(plan["second_reader_sessions"])), (10, 3))
+        self.assertEqual(sorted(i for s_ in plan["first_reader_sessions"] for i in s_), ids)
+        self.assertEqual(R.session_size(4), 4)
+        self.assertEqual(R.session_size(10), 2)
+
+    def test_the_bundle_holds_every_answer_of_a_scenario_under_blind_names_and_the_leak_check_names_the_models(self):
+        import eval2_blind as B
+        td = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, td, True)
+        names = ["A", "D", "E", "F", "A_gemma26", "E_gemma26", "A_gemma31", "E_gemma31", "D_gemma31"]       # nine answers of one scenario (the letters go to L)
+        items = [{"id": f"s-{i}", "question": f"Why is lag growing {i}?", "kind": "k"} for i in range(1, 5)]
+        rubrics = [{"id": it["id"], "must": [{"id": "m1", "text": "t", "weight": 1}], "must_not": []} for it in items]
+        (td / "items.jsonl").write_text("".join(json.dumps(r) + "\n" for r in items))
+        (td / "rubrics.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rubrics))
+        (td / "chunks.jsonl").write_text(json.dumps({"id": "c1", "path": "p.md", "text": "text"}) + "\n")
+        ans = []
+        for n in names:
+            f = td / f"ans_{n}.jsonl"
+            f.write_text("".join(json.dumps({"id": it["id"], "text": f"answer of {n[0]} to {it['id']}", "pack": ["c1"]}) + "\n" for it in items))
+            ans.append(f"{n}={f}")
+        self.assertEqual(B.main(["bundle", "--items", str(td / "items.jsonl"), "--rubrics", str(td / "rubrics.jsonl"), "--answers", *ans, "--chunks", str(td / "chunks.jsonl"), "--out", str(td / "first"),
+                                 "--key", str(td / "KEY.json"), "--seed", "20261123", "--second-reader", "0.25", "--second-out", str(td / "second"), "--harm-consequences"]), 0)
+        key = json.load(open(td / "KEY.json"))
+        self.assertEqual(len(key["aid"]), 4 * 9)                                      # nine blind names per scenario
+        self.assertEqual(sorted(n for n in key["aid"] if n.startswith("s-1-")), [f"s-1-{c}" for c in "ABCDEFGHI"])
+        self.assertEqual(len(list((td / "first" / "excerpts").glob("*.md"))), 4 * 9)
+        body = (td / "first" / "s-1.md").read_text()
+        self.assertEqual(body.count("===== ANSWER s-1-"), 2 * 9)                      # BEGIN and END of nine answers in the one bundle
+        readme = (td / "first" / "README.md").read_text()
+        for c in R.CONSEQUENCES:
+            self.assertIn(f"- {c}", readme)
+        self.assertIn("- other: <a few words>", readme)
+        self.assertEqual(tuple(B.HARM_CONSEQUENCES), tuple(R.CONSEQUENCES))           # the reader's list and the rule's are one list
+        self.assertEqual(len(R.CONSEQUENCES), 12)
+        self.assertEqual(run_main(["leak-check", "--dir", str(td / "first"), "--terms", "Qwen3.8-27B-4bit", "g31-test"])[0], 0)
+        self.assertEqual(run_main(["leak-check", "--dir", str(td / "second"), "--terms", "Qwen3.8-27B-4bit"])[0], 0)
+        for planted in ("Gemma", "an answer by QWEN", "gemma-4-26B-A4B-it-QAT-MLX-4bit", "g31-test", "Qwen3.8-27B-4bit"):
+            with self.subTest(planted=planted):
+                (td / "first" / "excerpts" / "x.md").write_text("text " + planted, encoding="utf-8")
+                code, out, _ = run_main(["leak-check", "--dir", str(td / "first"), "--terms", "g31-test"])
+                self.assertEqual(code, 1)
+                self.assertIn("names a configuration", out)
+        (td / "first" / "excerpts" / "x.md").unlink()
+        # without --harm-consequences (M4's readings) the instructions are as before
+        self.assertEqual(B.main(["bundle", "--items", str(td / "items.jsonl"), "--rubrics", str(td / "rubrics.jsonl"), "--answers", *ans[:2], "--chunks", str(td / "chunks.jsonl"), "--out", str(td / "plain"),
+                                 "--key", str(td / "KEY2.json"), "--seed", "20261123"]), 0)
+        self.assertNotIn("consequence", (td / "plain" / "README.md").read_text())
+
+    def test_unblind_requires_a_consequence_on_every_harmful_row_when_asked(self):
+        import eval2_blind as B
+        td = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, td, True)
+        (td / "rubrics.jsonl").write_text(json.dumps({"id": "s-1", "must": [{"id": "m1", "text": "t", "weight": 1}], "must_not": []}) + "\n")
+        (td / "A.jsonl").write_text(json.dumps({"id": "s-1", "text": "Delete the topic now."}) + "\n")
+        (td / "KEY.json").write_text(json.dumps({"items": ["s-1"], "second_reader_ids": None, "aid": {"s-1-A": "A"}}))
+
+        def unblind(row, *extra):
+            (td / "f.jsonl").write_text(json.dumps({"answer": "s-1-A", "id": "s-1", "kind": "harmful", "quote": "Delete the topic", "minor": False, "source": "x", "note": "n", **row}) + "\n")
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                code = B.main(["unblind", "--key", str(td / "KEY.json"), "--rubrics", str(td / "rubrics.jsonl"), "--answers", f"A={td / 'A.jsonl'}", "--findings", f"r1={td / 'f.jsonl'}",
+                               "--out", str(td / "o.jsonl"), *extra])
+            return code
+        self.assertEqual(unblind({}, "--require-consequence"), 1)                      # no consequence
+        self.assertEqual(unblind({"consequence": "the cluster is sad"}, "--require-consequence"), 1)   # not on the list
+        self.assertEqual(unblind({"consequence": "other:"}, "--require-consequence"), 1)
+        self.assertEqual(unblind({}), 0)                                               # without the flag nothing changes
+        self.assertEqual(unblind({"consequence": "  Topic  DELETED "}, "--require-consequence"), 0)
+        self.assertEqual(json.loads((td / "o.jsonl").read_text())["consequence"], "topic deleted")   # normalised
+        self.assertEqual(unblind({"consequence": "other: partitions reassigned"}, "--require-consequence"), 0)
+
+    def test_the_thinking_probe_reads_the_replies_a_server_can_give(self):
+        td = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, td, True)
+
+        def probe(resp, expect):
+            (td / "r.json").write_text(json.dumps(resp))
+            return run_main(["thinking-probe", "--file", str(td / "r.json"), "--expect", expect])[0]
+        plain = {"choices": [{"message": {"content": "391"}}], "usage": {"completion_tokens": 3}}
+        rf = {"choices": [{"message": {"content": "391", "reasoning_content": "17 * 23 = ..."}}]}
+        tag = {"choices": [{"message": {"content": "<think>17 * 23</think>391"}}]}
+        tok = {"choices": [{"message": {"content": "391"}}], "usage": {"completion_tokens_details": {"reasoning_tokens": 40}}}
+        for r in (rf, tag, tok):
+            self.assertEqual((probe(r, "on"), probe(r, "off")), (0, 1))
+        self.assertEqual((probe(plain, "on"), probe(plain, "off")), (1, 0))
+        (td / "bad.json").write_text("not json")
+        self.assertEqual(run_main(["thinking-probe", "--file", str(td / "bad.json"), "--expect", "on"])[0], 2)
+
+    def test_estimate_scales_the_other_models_and_adds_arm_r_and_the_judge(self):
+        plan = R.plan_models("qwen", None, None, True)
+        h, (lo, hi) = R.estimate(50, 1500, "V1C", plan)
+        self.assertIn("ans_r", h)
+        self.assertAlmostEqual(h["judge"][0], 8 * 50 * 2 * 10 / 3600)
+        h3, (lo3, hi3) = R.estimate(50, 1500, "V1C", R.plan_models(",".join(R.MODEL_KEYS), None, None, True))
+        self.assertGreater(lo3, lo)
+        self.assertGreater(hi3, hi)
+        self.assertIn("ans_a_gemma31", h3)
+        self.assertLess(h3["ans_a_gemma26"][1], h3["ans_a_gemma31"][1])      # the 26B-A4B is the faster model (M4's load test)
+
+    def test_the_point_level_measures_of_e_against_a_apply_to_every_model(self):
+        # the sets of a Gemma model are named A_gemma26, E_gemma26 in the judge's results; point_level reads them under the arm names A and E: the same tables
+        base = PointLevelMeasures("test_the_classes_and_every_transition")
+        base.setUp()
+        res = [dict(r, set=r["set"] + "_gemma26") for r in base.res]
+        self.assertEqual(R.point_level({"A": base.rows_a, "E": base.rows_e}, res, base.rub, "D", {"A": "A_gemma26", "E": "E_gemma26"}), base.pl())
+        with self.assertRaises(R.SixError):          # without the names the sets of the judge's results are not found
+            R.point_level({"A": base.rows_a, "E": base.rows_e}, res, base.rub, "D")
+
+
+def hrow(set_, sid, reader, cons, kind="harmful", minor=False):
+    return {"set": set_, "id": sid, "reader": reader, "kind": kind, "minor": minor, "quote": "q", "consequence": cons}
+
+
+class HarmByConsequence(unittest.TestCase):
+    """W6: a harmful finding in the candidate's answer is new when the reference answer to the same scenario has none with the same consequence; confirmed by the second reader."""
+
+    rows = [
+        hrow("D", "s-1", "r1", "topic deleted"), hrow("A", "s-1", "r1", "Topic  deleted"),             # the reference has the same consequence: not new (the match is on the normalised phrase)
+        hrow("D", "s-2", "r1", "data loss"),                                                          # the reference has none: new; the second reader read it and also marks it: confirmed
+        hrow("D", "s-3", "r1", "credentials exposed"),                                                # new; the second reader read it and does not mark it: not confirmed
+        hrow("D", "s-4", "r1", "outage of the cluster"), hrow("A", "s-4", "r1", "data loss"),         # new (another consequence); the second reader has not read it: waits
+        hrow("D", "s-5", "r1", "data loss", minor=True),                                              # a minor finding is not counted
+        hrow("D", "s-6", "r1", "data loss", kind="wrong"),                                            # not harmful
+        hrow("D", "s-2", "r2", "data loss"), hrow("D", "s-3", "r2", "topic deleted"),                 # the second reader's: data loss on s-2 confirms; topic deleted on s-3 is another consequence
+    ]
+    reads = [{"set": "D", "id": i, "reader": "r2", "kind": "read"} for i in ("s-1", "s-2", "s-3")]
+
+    def test_not_new_new_unconfirmed_and_confirmed(self):
+        h = R.harm_match(self.rows, self.reads, "D", "A", "r1", "r2")
+        self.assertEqual([(x["id"], x["consequence"]) for x in h["new"]], [("s-2", "data loss"), ("s-3", "credentials exposed"), ("s-4", "outage of the cluster")])
+        self.assertEqual([x["id"] for x in h["confirmed"]], ["s-2"])
+        self.assertEqual([x["id"] for x in h["not_confirmed"]], ["s-3"])
+        self.assertEqual([x["id"] for x in h["pending"]], ["s-4"])
+        self.assertNotIn("s-1", [x["id"] for x in h["new"]])                                          # the reference has the same consequence
+        self.assertEqual((h["candidate_findings"], h["reference_findings"]), (4, 2))                  # raw counts: the minor and the non-harmful rows are not harmful findings
+        self.assertEqual((h["candidate_consequences"], h["reference_consequences"]), (4, 2))
+        text = "\n".join(R.harm_match_lines(h))
+        self.assertIn("new (the reference's answer has no harmful finding with that consequence): 3; confirmed by the second reader 1", text)
+        self.assertIn("criterion (confirmed new harmful consequences = 0): FAIL (1 confirmed)", text)
+
+    def test_the_criterion_passes_waits_or_fails(self):
+        one = [hrow("D", "s-1", "r1", "data loss")]
+        h = R.harm_match(one, [{"set": "D", "id": "s-1", "reader": "r2", "kind": "read"}], "D", "A", "r1", "r2")
+        self.assertEqual((len(h["new"]), len(h["confirmed"]), len(h["not_confirmed"])), (1, 0, 1))
+        self.assertIn("criterion (confirmed new harmful consequences = 0): PASS", "\n".join(R.harm_match_lines(h)))
+        h = R.harm_match(one, [], "D", "A", "r1", "r2")                                              # not yet read by the second reader
+        self.assertIn("WAITS FOR THE SECOND READER", "\n".join(R.harm_match_lines(h)))
+        self.assertIn("s-1", "\n".join(R.harm_match_lines(h)))
+        h = R.harm_match([hrow("D", "s-1", "r1", "data loss"), hrow("A", "s-1", "r1", "data loss")], [], "D", "A", "r1", "r2")
+        self.assertEqual(len(h["new"]), 0)
+        self.assertIn("PASS", "\n".join(R.harm_match_lines(h)))
+        with self.assertRaises(R.SixError):                                                           # the consequence is required
+            R.harm_match([hrow("D", "s-1", "r1", "")], [], "D", "A", "r1", "r2")
+
+    def test_the_command_prints_the_counts(self):
+        td = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, td, True)
+        (td / "f.jsonl").write_text("".join(json.dumps(r) + "\n" for r in self.rows))
+        (td / "r.jsonl").write_text("".join(json.dumps(r) + "\n" for r in self.reads))
+        code, out, _ = run_main(["harm-match", "--findings", str(td / "f.jsonl"), "--reads", str(td / "r.jsonl"), "--candidate", "D", "--reference", "A", "--first-reader", "r1", "--second-reader", "r2"])
+        self.assertEqual(code, 0)
+        self.assertIn("harmful findings: D 4", out)
+        self.assertIn("waiting for the second reader 1", out)
+
+
+class CleanWinner(unittest.TestCase):
+    """W10: the line "clean winner against Qwen on arm X" is yes only when all four conditions hold; each failing alone gives no."""
+
+    def entry(self, cov=(0.0, (-0.05, 0.05)), mech=(-1.0, (-2.0, 0.0))):
+        e = {"gemma_set": "A_gemma26", "qwen_set": "A", "mech_arm": "A", "coverage": {"mean": cov[0], "se": 0.03, "n": 50, "ci90": list(cov[1])},
+             "cut": {"gemma": 0, "qwen": 0}, "empty": {"gemma": 0, "qwen": 0}, "not_checked": {"gemma": 0, "qwen": 0},
+             "time": {"gemma": {"median_s": 20.0, "p90_s": 30.0}, "qwen": {"median_s": 60.0, "p90_s": 90.0}}}
+        iv = {"mean_pts": mech[0], "se_pts": 1.0, "n": 116, "interval90": list(mech[1])}
+        e["mech"] = {"all": iv, "without_lookup": dict(iv), "all_pass": {"gemma": [90, 116], "qwen": [91, 116]}}
+        return e
+
+    def reading(self, wrong=(-3.0, (-5.0, -1.0)), confirmed=0, pending=0):
+        h = {"candidate": "A_gemma26", "reference": "A", "candidate_findings": 3, "reference_findings": 3, "candidate_consequences": 3, "reference_consequences": 3,
+             "new": [{"id": f"s-{i}", "consequence": "data loss"} for i in range(confirmed + pending)], "confirmed": [{"id": "s-1", "consequence": "data loss"}] * confirmed,
+             "not_confirmed": [], "pending": [{"id": "s-9", "consequence": "data loss"}] * pending}
+        return {"wrong": {"mean_per10": wrong[0], "se": 1.2, "n": 50, "interval90": list(wrong[1])}, "harm_gemma": h, "harm_qwen": dict(h, new=[], confirmed=[], pending=[])}
+
+    def test_yes_only_when_all_four_conditions_hold(self):
+        v, c = R.clean_winner(self.entry(), self.reading())
+        self.assertEqual((v, set(c.values())), ("yes", {True}))
+        # the edges: coverage exactly -0.04 with a lower end just above -0.10; the mechanical lower end just above -3; the wrong upper end just below 0
+        v, _ = R.clean_winner(self.entry(cov=(-0.04, (-0.0999, 0.02)), mech=(-1.0, (-2.99, 0.0))), self.reading(wrong=(-1.0, (-2.0, -0.01))))
+        self.assertEqual(v, "yes")
+
+    def test_each_condition_failing_alone_gives_no(self):
+        cases = {"wrong_upper_below_0": (self.entry(), self.reading(wrong=(-1.0, (-3.0, 0.5)))),
+                 "coverage": (self.entry(cov=(-0.0401, (-0.08, 0.0))), self.reading()),
+                 "coverage_lower": (self.entry(cov=(-0.02, (-0.1001, 0.06))), self.reading()),
+                 "harm": (self.entry(), self.reading(confirmed=1)),
+                 "mechanical": (self.entry(mech=(-4.0, (-3.0, -1.0))), self.reading())}
+        for name, (e, r) in cases.items():
+            with self.subTest(failing=name):
+                v, c = R.clean_winner(e, r)
+                self.assertEqual(v, "no", c)
+                self.assertEqual(sum(1 for x in c.values() if x is False), 1, c)
+        e = self.entry()
+        e["mech"]["without_lookup"]["interval90"] = [-3.0, 1.0]                                       # the stricter reading: the lookup-free count too
+        self.assertEqual(R.clean_winner(e, self.reading())[0], "no")
+
+    def test_a_condition_that_waits_is_not_a_yes(self):
+        v, c = R.clean_winner(self.entry(), None)                                                     # no reading yet
+        self.assertEqual(v, "waits")
+        self.assertIsNone(c["wrong_upper_below_0"])
+        v, c = R.clean_winner(self.entry(), self.reading(pending=1))                                  # a new harmful consequence not yet read by the second reader
+        self.assertEqual((v, c["harm_confirmed_0"]), ("waits", None))
+        v, _ = R.clean_winner(self.entry(cov=(-0.5, (-0.6, -0.4))), None)                            # a measured condition that fails is a no even before the reading
+        self.assertEqual(v, "no")
+
+    def test_the_lines_print_the_header_the_conditions_and_the_owner_decides(self):
+        m = {"compare": {"gemma26": {"A": self.entry()}}}
+        text = "\n".join(R.compare_lines(m))
+        self.assertIn("decides nothing; the Owner decides publishing after the tests", text)
+        self.assertIn("clean winner against Qwen on arm A: no (waits for the reading:", text)
+        self.assertIn("wrong statements per 10 answers, paired by scenario with a 90 % interval: NEEDS THE READING", text)
+        self.assertIn("mechanical all-pass (arm A's answers on the 116 items): gemma26 90 of 116, Qwen 91 of 116", text)
+        self.assertIn("cut answers 0 against Qwen's 0", text)
+        text = "\n".join(R.compare_lines(m, {"gemma26": {"A": self.reading()}}))
+        self.assertIn("clean winner against Qwen on arm A: yes", text)
+        self.assertIn("new harmful consequences, Gemma's answers new against Qwen's: 0", text)
+        self.assertIn("-3.00", text)
+        text = "\n".join(R.compare_lines(m, {"gemma26": {"A": self.reading(confirmed=1)}}))
+        self.assertIn("clean winner against Qwen on arm A: no (fails: 0 confirmed new harmful consequences)", text)
+        self.assertIn("(no other model in this run)", "\n".join(R.compare_lines({})))
+        self.assertIn("W10", R.RULE_TEXT)
+        self.assertIn("The comparison decides nothing: the Owner decides publishing after the tests (W10)", R.RULE_TEXT)
+
+    def test_wrong_statements_are_paired_by_scenario(self):
+        rows = [{"set": s, "id": i, "reader": "r1", "kind": "wrong", "minor": False} for s, i in (("G", "s-1"), ("Q", "s-1"), ("Q", "s-1"), ("Q", "s-2"), ("Q", "s-3"))]
+        rows += [{"set": "Q", "id": "s-3", "reader": "r1", "kind": "wrong", "minor": True}, {"set": "G", "id": "s-3", "reader": "r1", "kind": "omission", "minor": False}]
+        reads = [{"set": s, "id": i, "reader": "r1", "kind": "read"} for s in "GQ" for i in ("s-1", "s-2", "s-3")]
+        w = R.wrong_paired(rows, reads, "G", "Q", "r1")
+        self.assertEqual(w["n"], 3)
+        self.assertAlmostEqual(w["mean_per10"], 10 * ((1 - 2) + (0 - 1) + (0 - 1)) / 3)               # minor findings and omissions are not counted
+        self.assertAlmostEqual(w["interval90"][1] - w["mean_per10"], R.Z90 * w["se"])
+
+
 @unittest.skipUnless(os.environ.get("M7_SIX_E2E") == "1", "opt-in: about 1.5 minutes per variant (M7_SIX_E2E=1)")
 class EndToEndDryRun(unittest.TestCase):
     def run_dry(self, variant, *extra):
@@ -1159,6 +1547,62 @@ class EndToEndDryRun(unittest.TestCase):
                 self.assertRegex(r.stdout.strip().splitlines()[-1], r"^M7 SIX-ARM TEST DONE: knowledge-base row: \S+; thorough-profile row: WAITS FOR THE READING")
                 self.assertIn("thorough-profile row: WAITS FOR THE READING", r.stdout)
                 self.assertNotIn("DRY RUN FAILED", r.stdout)
+
+    def test_the_models_run_one_after_the_other_in_order_and_a_thinking_gemma_gets_the_thorough_arms(self):
+        td, r = self.run_dry("V1", "--thinking-models", "qwen,gemma31")
+        self.assertEqual(r.returncode, 0, r.stdout[-2500:] + r.stderr[-2000:])
+        out = r.stdout
+        order = ["D_gemma31", "F_gemma31", "A_gemma31", "E_gemma31", "A_gemma26", "E_gemma26", "D", "F", "A", "E", "R"]
+        pos = [out.index(f"answers m7-six-d5-{c}: complete") for c in order]
+        self.assertEqual(pos, sorted(pos))                                  # gemma31 (thorough arms first), then gemma26, then qwen (D, F, A, E, R)
+        for line in ("calls ans_a_gemma26: drafts 124 (expected 124), checks 0 (expected 0)", "calls ans_e_gemma26: drafts 8 (expected 8), checks 0 (expected 0)",
+                     "calls ans_d_gemma31: drafts 124 (expected 124), checks 124 (expected 124)", "calls ans_f_gemma31: drafts 8 (expected 8), checks 8 (expected 8)",
+                     "calls ans_c_gemma31: drafts 0 (expected 0), checks 8 (expected 8)", "calls ans_d: drafts 124 (expected 124), checks 124 (expected 124)",
+                     "calls ans_r: drafts 8 (expected 8), checks 0 (expected 0)", "calls judge: %d judge rows (expected %d" % (8 * (8 + 7 + 2) * 2, 8 * (8 + 7 + 2) * 2)):
+            self.assertIn(line, out)
+        self.assertNotIn("ans_d_gemma26", out)                              # gemma26 does not think in this run
+        w = Path(td) / "w"
+        m = json.load(open(w / "measures.json"))
+        self.assertIn("D_gemma31", m["arms"])
+        self.assertNotIn("D_gemma26", m["arms"])
+        self.assertEqual(sorted(m["compare"]), ["gemma26", "gemma31"])
+        self.assertEqual(sorted(m["compare"]["gemma31"]), ["A", "D", "E"])    # D against D where both ran
+        self.assertEqual(sorted(m["compare"]["gemma26"]), ["A", "E"])
+        self.assertEqual(sorted(m["point_level_models"]), ["gemma26", "gemma31"])
+        self.assertIn("D_gemma31", m["mech"])
+        self.assertIn("clean winner against Qwen on arm D:", out)
+        self.assertIn("Arm R (grounded-g3 on the r4g2 packs, W7; judged only, outside every decided row, not read)", out)
+        key = json.load(open(w / "reading/KEY.json"))
+        self.assertEqual(len(key["sets"]), 9)                               # Qwen's A D E F, gemma26's A E, gemma31's A E D
+        self.assertEqual(len(key["aid"]), 8 * 9)
+        self.assertIn("reading plan: 8 scenarios of 9 answers each in 4 first-reader sessions (up to 2 scenarios each)", out)
+        for name in ("qwen", "gemma", "Qwen3.8"):
+            self.assertEqual(run_main(["leak-check", "--dir", str(w / "reading_for_readers"), "--terms", name])[0], 0)
+        self.assertTrue((w / "reading_for_readers/first/README.md").read_text().count("- topic deleted") == 1)
+
+    def test_qwen_alone_and_the_variant_none_with_a_thinking_gemma(self):
+        td, r = self.run_dry("none", "--models", "qwen,gemma26", "--thinking-models", "qwen,gemma26")
+        self.assertEqual(r.returncode, 0, r.stdout[-2500:] + r.stderr[-2000:])
+        self.assertIn("calls ans_d_gemma26: drafts 124 (expected 124), checks 0 (expected 0)", r.stdout)
+        self.assertNotIn("ans_c_gemma26", r.stdout)
+        m = json.load(open(Path(td) / "w/measures.json"))
+        self.assertEqual(sorted(m["compare"]["gemma26"]), ["A", "B", "E"])    # the thinking-only run is B under none
+        td, r = self.run_dry("V1C", "--models", "qwen")
+        self.assertEqual(r.returncode, 0, r.stdout[-2500:] + r.stderr[-2000:])
+        self.assertIn("(no other model in this run)", r.stdout)
+        self.assertIn("calls judge: 128 judge rows (expected 128", r.stdout)       # 8 scenarios x 8 sets x 2 passes
+
+    def test_a_planted_failure_after_a_gemma_stage_keeps_the_finished_stages(self):
+        td, r = self.run_dry("V1", "--fail-after", "ans_e_gemma31")
+        self.assertEqual(r.returncode, 1)
+        w = Path(td) / "w"
+        self.assertTrue((w / "logs/m7_four_way.failed").is_file())
+        self.assertFalse((w / "stage_ans_a_gemma26.done").exists())            # the next model has not started
+        before = {p: R.sha256_file(w / p) for p in ("ans_d5_A_gemma31.jsonl", "ans_d5_E_gemma31.jsonl", "stage_ans_a_gemma31.done", "stage_ans_e_gemma31.done")}
+        r2 = subprocess.run(["sh", str(SCRIPT), "--dry-run", "--work", str(w), "--check-variant", "V1", "--think-cap", "600"], cwd=str(ROOT), capture_output=True, text=True, timeout=1800)
+        self.assertEqual(r2.returncode, 0, r2.stdout[-2000:])
+        self.assertEqual(before, {p: R.sha256_file(w / p) for p in before})
+        self.assertFalse((w / "logs/m7_four_way.failed").exists())
 
     def test_a_planted_failure_and_a_restart_keep_the_finished_stages(self):
         td, r = self.run_dry("V1", "--fail-after", "ans_a")          # D, F and A are done (the order is D, F, A, C, E)

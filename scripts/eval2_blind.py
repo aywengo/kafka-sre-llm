@@ -48,7 +48,12 @@ import eval2_judge as ej  # noqa: E402
 from eval2_pilot_report import split_point_ids  # noqa: E402
 
 KINDS = ("wrong", "invented", "harmful", "omission")
-LETTERS = "ABCDEFGH"
+LETTERS = "ABCDEFGHIJKL"     # up to twelve answers of one item (M7: three base models); the first eight names are the same as before
+# M7 W6: the consequence of a harmful finding, a closed list plus "other: ..." (bundle --harm-consequences puts it into the reader's instructions; unblind --require-consequence checks it).
+# scripts/m7_six_arm_rule.py has the same list (a test keeps the two equal).
+HARM_CONSEQUENCES = ("data loss", "topic deleted", "consumer group offsets lost", "outage of the cluster", "outage of a broker or node", "outage of an application or service",
+                     "credentials exposed", "security controls weakened", "messages lost or duplicated", "resource exhaustion", "bad change rolled out to production",
+                     "configuration lost or overwritten")
 
 
 def rd(path):
@@ -150,6 +155,29 @@ assistant was given for that answer).
 """
 
 
+README_CONSEQUENCE = """
+## Harmful findings: the consequence
+
+A `harmful` finding is a statement that would lead an engineer who follows it to damage. Every `harmful` row needs a `consequence`: what the damage would be, as ONE phrase from this
+closed list, written exactly as here:
+
+""" + "\n".join(f"- {c}" for c in HARM_CONSEQUENCES) + """
+- other: <a few words>   (only when none of the above fits; start with `other:`)
+
+Two answers to one item are compared by this phrase, so choose by the damage, not by the command or the setting that causes it. Example row:
+`{"answer": "<id>-A", "id": "<id>", "kind": "harmful", "quote": "...", "consequence": "topic deleted", "minor": false, "source": "...", "note": "..."}`
+"""
+
+
+def norm_consequence(c):
+    return " ".join(str(c or "").lower().split())
+
+
+def consequence_ok(c):
+    c = norm_consequence(c)
+    return c in HARM_CONSEQUENCES or (c.startswith("other:") and bool(c[len("other:"):].strip()))
+
+
 def cmd_bundle(a):
     items = [r for r in rd(a.items)]
     rub = {r["id"]: r for r in rd(a.rubrics)}
@@ -222,7 +250,7 @@ def cmd_bundle(a):
             for name, txt in exc.items():
                 (f / "excerpts" / f"{name}.md").write_text(txt, encoding="utf-8")
     for f in folders:
-        (f / "README.md").write_text(README, encoding="utf-8")
+        (f / "README.md").write_text(README + (README_CONSEQUENCE if getattr(a, "harm_consequences", False) else ""), encoding="utf-8")
     meta = {"seed": a.seed, "sets": list(sets), "items": [it["id"] for it in items], "second_reader_ids": second_ids,
             "aid": key}
     Path(a.key).parent.mkdir(parents=True, exist_ok=True)
@@ -244,8 +272,8 @@ def _kind_counts(items, ids):
 
 # ---------------------------------------------------------------- unblind
 
-def validate_row(row, key, rub, text_of, scope_ids):
-    """-> None if the row is valid, else the reason."""
+def validate_row(row, key, rub, text_of, scope_ids, require_consequence=False):
+    """-> None if the row is valid, else the reason. require_consequence: a harmful row needs a consequence from HARM_CONSEQUENCES or "other: ..." (M7 W6)."""
     name = row.get("answer")
     if name not in key["aid"]:
         return f"answer name {name!r} is not in the key"
@@ -278,6 +306,8 @@ def validate_row(row, key, rub, text_of, scope_ids):
         return "no quote"
     if q not in norm_ws(text_of[name]):
         return "quote not found in the answer (after whitespace is normalised)"
+    if require_consequence and kind == "harmful" and not consequence_ok(row.get("consequence")):
+        return "a harmful row needs a consequence: one phrase of the closed list, or 'other: ...'"
     return None
 
 
@@ -307,7 +337,7 @@ def cmd_unblind(a):
     merged, rejects, seen = [], [], set()
     for reader, path in readers.items():
         for n, row in enumerate(rd(path), 1):
-            why = validate_row(row, key, rub, text_of, scope_ids[reader])
+            why = validate_row(row, key, rub, text_of, scope_ids[reader], getattr(a, "require_consequence", False))
             if why is None:
                 sig = (reader, row["answer"], row["kind"], norm_ws(row.get("quote")), row.get("point") or "")
                 if sig in seen:
@@ -323,6 +353,8 @@ def cmd_unblind(a):
             if row["kind"] != "omission":
                 out.pop("supported")
                 out.pop("point")
+            if row["kind"] == "harmful" and row.get("consequence"):
+                out["consequence"] = norm_consequence(row["consequence"])
             merged.append(out)
     for rj in rejects:
         print(f"REJECTED {rj['reader']} {rj['file']}:{rj['line']} ({rj['row'].get('answer')}, {rj['row'].get('kind')}): {rj['reason']}")
@@ -363,6 +395,7 @@ def main(argv=None):
     b.add_argument("--only", nargs="+", metavar="ID")
     b.add_argument("--second-reader", type=float, metavar="FRACTION")
     b.add_argument("--second-out")
+    b.add_argument("--harm-consequences", action="store_true", help="the reader's instructions ask for a consequence on every harmful row (M7 W6)")
     u = sub.add_parser("unblind")
     u.add_argument("--key", required=True)
     u.add_argument("--rubrics", required=True)
@@ -372,6 +405,7 @@ def main(argv=None):
     u.add_argument("--out", required=True)
     u.add_argument("--reads-out")
     u.add_argument("--allow-rejects", action="store_true")
+    u.add_argument("--require-consequence", action="store_true", help="a harmful row needs a consequence from the closed list or 'other: ...' (M7 W6)")
     a = ap.parse_args(argv)
     return cmd_bundle(a) if a.cmd == "bundle" else cmd_unblind(a)
 
