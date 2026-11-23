@@ -94,13 +94,44 @@ are specific claims the excerpts are silent on (about half decidable from the ca
 and the pass alone is expected to remove 0.5 to 1.3 wrong statements per 10 (inferred).
 The test's bar of −2.0 stays (the Owner agreed); thinking has to carry most of any gain.
 
-## The test on D5
+## The test on D5 (rule fixed 2026-11-23, before any answer)
 
-Six arms as in `agents/m7-plan.md` section 3 (V3; the perfect pack padded with the frozen
-pack, V4; the thorough arms on the default prompt, V5). **Its rule is not fixed in this
-file yet**: the M7 session writes it here from the header its chain prints, before the
-run. Open with the Owner at the handover: whether grounded-g3 on the r4g2 packs joins the
-test as a further arm (asked in the M7 session), and X1 below.
+**Run:** `scripts/m7_four_way.sh --check-variant none --think-cap 8000 --thinking-models
+gemma26,gemma31 --gemma31-model gemma-4-31b-it-4bit` on main at `810ae6c` or later; D5's
+50 scenarios (worn development data) and the 116 open mechanical items. The binding text is
+the header the chain writes into `runs/m7/M7_SIX_ARM.md` before its first answer; it equals
+the dry-run rule block in `runs/m7/reports/k4b_build.md` ("Fixes after the second review").
+
+**Arms** (default prompt, frozen search terms, packs replayed, temperature 0, answer limit
+2,048 tokens): Qwen3.8-27B A (frozen packs), E (perfect packs, V4), R (grounded-g3 on the
+r4g2 packs, judged only, W7); Gemma 4 26B-A4B and Gemma 4 31B each A, E and B (thinking on,
+cap 8,000, no check). Qwen's thinking arms and the checking pass are not in the run (W11, the
+pilot). Two judge passes on 9 sets; 400 answers read blind, 8 per scenario.
+
+**Decided rows:**
+1. *Knowledge base, Qwen E − A judged coverage* (90 % interval): at least +0.10 with the
+   lower end above +0.04 → build (a), then a pilot of (b); +0.04 to +0.10 → (a) only; below
+   +0.04 → no knowledge base for coverage, and (a) is "not tested by this test" (no arm puts
+   cards in the draft).
+2. *Thorough profile, per Gemma model, its B against its own A:* coverage at least −0.04,
+   cut at most 5 of 50, wrong statements at most −2.0 per 10 (blind reading, paired), 0
+   confirmed new harmful consequences (W6: matched by consequence group against that
+   model's A; confirmed by the second reader); time reported only (W5); any answer over the
+   limit in B or A → not available. Outcome: "eligible for B4 (its B)", "neither", "waits
+   for the reading" or "not available". **Whether B4 runs, and for which model, is the
+   Owner's (W10); the base model stays Qwen3.8-27B unless he decides otherwise.** Qwen's row:
+   not tested.
+
+**Described, not decided:** each Gemma model against Qwen on the same arm (A, E; B against
+Qwen A), with a "clean winner: yes/no" line (wrong statements upper end below 0; coverage
+at least −0.04 with lower end above −0.10; 0 confirmed new harmful consequences; mechanical
+lower end above −3 on all 116 items and without the lookup kinds); arm R; point-level E
+against A (69 / 158 / 42 classes); time, cut, tokens, nonexistent identifiers. A model whose
+answer stage fails after its retries is "not available" and the run goes on (Qwen's failure
+stops it).
+
+**Estimate (inferred):** 14.9 to 28.2 server hours (the second review's recount at measured
+medians: about 17 h); 900 judge calls; about 25 first-reader and 7 second-reader sessions.
 
 ## Work packages
 

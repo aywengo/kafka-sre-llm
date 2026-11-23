@@ -112,9 +112,9 @@ class ThreeSets(unittest.TestCase):
         self.assertNotIn("one answer set only", out)
 
     def test_too_many_sets_are_refused(self):
-        rc, _, err = self.build(sets=tuple(f"S{i}" for i in range(9)))
+        rc, _, err = self.build(sets=tuple(f"S{i}" for i in range(13)))   # the blind letters grew to twelve in M7 (eval2_blind.LETTERS)
         self.assertEqual(rc, 1)
-        self.assertIn("at most 8 answer sets", err)
+        self.assertIn("at most 12 answer sets", err)
 
     def test_pooled_disagreement_does_not_net_signs_over_the_sets(self):
         self.build()

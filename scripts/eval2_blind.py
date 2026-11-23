@@ -215,6 +215,8 @@ def cmd_bundle(a):
     sets = parse_named(a.answers, "--answers")
     if len(sets) < 2:
         raise SystemExit("--answers: two or more answer sets are needed")
+    if len(sets) > len(LETTERS):
+        raise SystemExit(f"--answers: at most {len(LETTERS)} answer sets (one blind letter each)")
     answers = {s: {r["id"]: r for r in rd(p)} for s, p in sets.items()}
     chunks = {c["id"]: c for c in rd(a.chunks)}
     if a.only:
