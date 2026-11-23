@@ -85,8 +85,8 @@ it. The Owner is whoever `CODEOWNERS` names.
 Loading and unloading the three models named below is covered by the Owner's standing go, when no
 other client is active.
 For M7 the Owner's go of 2026-11-23 (V1) also covers loading the 4-bit build of the base
-model for measurement runs. What a chain of M7 does about a model that another client
-left loaded is recorded in `MILESTONE.md`. The rest of M4's wider go (the full-precision
+model for measurement runs. It does not cover unloading a model that another client left
+loaded: a chain of M7 refuses and waits for the Owner (W2 in `MILESTONE.md`). The rest of M4's wider go (the full-precision
 build, the bake-off candidates) ended with M4.
 
 ## Repository map
@@ -156,8 +156,8 @@ Commands: `.venv/bin/python -m unittest discover -s tests` (offline, seconds);
   `GLM-5.3-Flash-oQ4e`, or `GLM-5.3-Flash-oQ8e-mtp` (judge). They do not fit in memory
   together. Local generation and training never overlap with server jobs.
 - Before a load or unload, check that the server has no active or waiting request; if
-  another client is active, wait for the Owner. Unload only what we loaded, unless the
-  Owner's go for the milestone says otherwise (see "Decisions that are the Owner's"). Note every swap in
+  another client is active, wait for the Owner. Unload only what we loaded: in M7 the Owner
+  said no to unloading another client's model (W2 in `MILESTONE.md`). Note every swap in
   `HEARTBEAT.md`.
 - Keep `runs/v3/status.json` and `STATE.md` true at every milestone and whenever a job
   stops or waits for the Owner.

@@ -111,7 +111,7 @@ test as a further arm (asked in the M7 session), and X1 below.
 | K1 | Design of the checking pass | **done** 2026-11-23 (`runs/m7/reports/k1_check_design.md`) |
 | P1, K2 | The thorough profile's code: the checking pass with rules A1 to A8 and stage 2, thinking per call, the cards in the check, `--answer-profile thorough` and its switches, the harness's rows | **done and merged** 2026-11-23 (`3be10d4`; review `runs/m7/reports/p1_review.md`: no blocker, seven fixes made; full suite on the merge 2,235 tests, OK, 60 skipped). Experimental, off by default, unmeasured |
 | K3, P2, P3 | The pilot chain and its scoring | **built** (`b736ad0`, in the merge), not run |
-| K4 | The six-arm test chain | built and reviewed on branch `m7-k4-six-arm` in the M7 session; **not on main yet**: that session merges it after its own full-suite run |
+| K4 | The six-arm test chain (`scripts/m7_four_way.sh`, `scripts/m7_six_arm_rule.py`) | **built, reviewed and merged** 2026-11-23 (`f8b8770`): the review found two blockers (a draft cut while thinking leaked its arm into the reading bundles and failed the chain at its last stage; the thinking arms had a longer answer limit than A) and seven should-fix items, all fixed (the answer part of a thinking draft is cut at 2,048 like A's; no-draft rows are scored as empty and kept out of the bundles; the lookup row prints "not tested"; failed checks counted, redone and limited; the judge model checked at the gate; arm order D, F, A, C, E; the pilot's report pinned); descriptive point-level measures for E against A added from the Owner's research handoff (not decided on). full suite on the merge 2,320 tests, OK, 66 skipped, after a fix to one of its tests that leaked retrieval patches into later tests (review `runs/m7/reports/k4_review.md`, build report `runs/m7/reports/k4_build.md`). Dry runs only; not run |
 | P4 | The reading of the pilot's accepted changes | after the pilot run |
 | K5, K6 | The test's run and its blind reading | after the pilot and the rule |
 | K9, K10 | B4 as the out-of-sample answer check (V6); one hidden look on h6 (V9) | conditional on the test |
@@ -131,12 +131,11 @@ test as a further arm (asked in the M7 session), and X1 below.
 | 2026-11-23 | V9 | One hidden look on the new hidden part after B4; at least two looks are kept |
 | 2026-11-23 | W1 | Two sessions: the session that ran M4 to M6 finishes M6 and made the merge of `3be10d4`; the M7 session owns M7 from that merge on: this document, M7's runs on the model server, M7's commits and its reports to the Owner |
 | 2026-11-23 | (agreed) | On the checking pass: it enters the test only by the pilot's bars; the pilot also runs it with the lookup cards; the test's bar of −2.0 stays; a rejected change shows nothing to the reader |
+| 2026-11-23 | W2 | Unloading under M7 (asked: should the M6 go to unload a model another client loaded also hold for M7?). Answer: "No, stop and wait". M7's chains never unload a model they did not load; when one is loaded or another client is active, the gate refuses and waits for the Owner. Unloading our own 4-bit or judge model between stages stays |
+| 2026-11-23 | W3 | The six-arm test's row "errors improve but time fails" (asked: should a run where too many answers are cut AND time fails take that row?). Answer: "No, keep it narrow": a cut failure together with a time failure is "neither" |
+| 2026-11-23 | W4 | Under the check variant "none" (asked: if thinking alone clears the thorough profile's row, may it go on to B4?). Answer: "Yes, may go to B4" |
 | 2026-11-23 | conductor | The 18 departures of the checking pass's code from its design are accepted (builder's report in the session's scratch folder; the review covers them); in the cards variant of the prompt the sentence on unmentioned lines names the cards as well |
 
-Decisions the Owner gave in the M7 session on 2026-11-23 (reported by that session, to be
-recorded here by it with their wording): M7's chains never unload a model another client
-loaded; "errors improve but time fails" stays narrow; under the check variant "none",
-thinking alone may go on to B4.
 
 ## Waiting for the Owner
 
@@ -168,3 +167,12 @@ M7 session before using the server.
   over"). 13:25: the full suite on the merge passed (2,235 tests, 60 skipped); pushed.
 - 2026-11-23 13:28: this document written and handed to the M7 session. Next there: merge
   `m7-k4-six-arm` after its own full-suite run; the pilot run; then the test's rule here.
+- 2026-11-23 13:31: the M7 session merged `m7-k4-six-arm` (`f8b8770`). The full suite on it
+  failed (8 failures, 1 error in the retrieval-profile tests): one new test ran a helper
+  case's `tearDown` but not its cleanups, so its patches leaked into later tests; fixed in
+  the test. 14:50: the full suite passed (2,320 tests, 66 skipped). The Owner's answers
+  W2 to W4 recorded with their wording; `AGENTS.md` aligned with W2.
+- 2026-11-23 14:10: Gemma 4 proposed by the Owner as an alternative base model in M7 (built
+  locally, then push both or one clean winner); the M7 session's proposal (Gemma 4 31B, its
+  arms in the six-arm test, one winner by a rule fixed beforehand) waits for his answers.
+  The Part 5 article and video (M5 and M6) are handed to the Owner's bot YouTybe.

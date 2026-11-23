@@ -633,6 +633,7 @@ class SmallChangesToExistingCode(unittest.TestCase):
             shutil.rmtree(cat, True)
         finally:
             t.tearDown()
+            t.doCleanups()                                                              # Base registers its patches with addCleanup: run them, or they leak into later tests
 
 
 class ChecksOfTheShellScript(unittest.TestCase):
