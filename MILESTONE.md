@@ -177,13 +177,17 @@ medians: about 17 h); 900 judge calls; about 25 first-reader and 7 second-reader
 | 2026-11-23 | conductor | On the review of K4b (`runs/m7/reports/k4b_review.md`): W6 is read strictly (a new harm is confirmed when the second reader marks the same answer harmful with a consequence the reference lacks, or one of the same fixed group; minor harmful findings count; labels validated); the clean winner's mechanical bar holds on both counts; a thinking Gemma is not planned (its probe is reported; **replaced** by the row on Gemma's thinking below, after G0 and the Gemma thinking measurement); DeepSeek and Qwen's 4-bit build count as ours only with the chain's own load marker (W2) |
 | 2026-11-23 | conductor | The 18 departures of the checking pass's code from its design are accepted (builder's report in the session's scratch folder; the review covers them); in the cards variant of the prompt the sentence on unmentioned lines names the cards as well |
 
+| 2026-11-24 | W12 | The Owner (through LLM PM): "Knowledge base: yes, build it (the rule's BUILD outcome stands)." |
+| 2026-11-24 | W13 | The Owner (through LLM PM): publishing stays open until the knowledge base is built and measured; keep Qwen3.8-27B and Gemma 4 31B and the knowledge-base work for both in play; drop neither. |
+| 2026-11-24 | conductor | The knowledge base is built in two phases on both models: (a) the exact lookup in the answer path, measured on D5 and the mechanical items (Z3); then (b) fact entries with a separate entries index (c), judged on a new batch D7 (Z4). Arm E's perfect packs are an upper bound, not the built knowledge base: the built one is expected to give less. |
 
 ## Waiting for the Owner
 
 - **X1** (from M6's result): one hidden look on h6 for grounded-g3 on the r4g2 packs as
   the fast profile's default candidate, under the look's rule of `milestones/M6.md`.
   Recommended by the M6 session: yes; it would be a second look in M7, leaving two.
-- After the tests: which model or models to publish (W10).
+- Which model or models to publish (W10): open until the knowledge base is measured (W13).
+- For phase 2 (entries, b): who writes the entries (local teacher or Claude workers), the licences (Kubernetes CC-BY-4.0, the teacher's output terms, publishing entries in the dataset), and the go for the pilot generation (bulk generation, a new `PACK_PROMPT_VERSION`); plan decision 8.
 
 ## Rules that are shared between the two sessions
 
