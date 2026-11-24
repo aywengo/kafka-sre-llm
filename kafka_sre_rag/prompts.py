@@ -232,3 +232,93 @@ LOOKUP_CARDS_HEADER = (
     "REFERENCE CARDS from the pinned catalogues (exact names, defaults and values; these are not documentation "
     "excerpts). Use them for the exact name, default or value of what they list. A name without a card is not "
     "thereby wrong: the catalogues can be incomplete.")
+
+# M7 KB phase 2 (EXPERIMENTAL, unmeasured): the fact entries (runs/m7/reports/kb2_design.md sections 2 to 5). Added after
+# the prompts above; nothing above it changed. Writer (scripts/kb_write_entries.py, DeepSeek), checker
+# (scripts/kb_check_entries.py, GLM) and the rendering of an entry in a pack (kafka_sre_rag/kb_entry.render). Placeholders
+# are filled with one re.sub: <<WINDOW>> (kb_entry.window_text), <<TARGET>> (the target chunk id), <<ENTRIES>> (one JSON
+# object per entry). Every output row carries its version; a changed text needs a new version and a new sanity run. These
+# constants are not in frozen.json and no golden hash covers them (they are no part of the measured configuration). They
+# are written for and tried only on the slice's sanity chunks; no text of any evaluation item.
+KB_ENTRY_PROMPT_VERSION = "kbe/1"
+KB_CHECK_PROMPT_VERSION = "kbc/1"
+
+KB_WRITER_SYSTEM = (
+    "You turn pages of the Strimzi and Apache Kafka documentation into short, exact fact entries for operators. You "
+    "state only what the given text says, in its own terms. You never add knowledge from memory, never infer beyond "
+    "the text, never calculate, and never invent an example, value, flag, field or name.")
+
+KB_WRITER_USER = (
+    "Below are consecutive chunks of one documentation page, each under a header line with its id. The chunk marked "
+    "TARGET is the one you write entries for; the others are its neighbours on the same page and are there only so "
+    "that a fact split over a chunk boundary can be written once.\n\n"
+    "<<WINDOW>>\n\n"
+    "Write 0 to 8 entries for the target chunk <<TARGET>>. Prefer facts an operator needs: what a setting does, "
+    "defaults and limits, valid values and units, procedures and the order of their steps, warnings, preconditions and "
+    "\"do not\" rules, compatibility and versions. Write no entry for a table of contents, boilerplate, a list of links "
+    "or text that states no fact; then reply with an empty list.\n\n"
+    "Rules for every entry:\n"
+    "- \"kind\": one of \"fact\", \"value\" (a default, limit, unit or set of valid values), \"procedure\" (the ordered "
+    "steps of one section), \"warning\" (a risk, a precondition or a \"do not\"), \"cross\" (a fact joined from two or "
+    "three of the chunks shown).\n"
+    "- \"title\": at most 100 characters; names the subject (resource kind, setting, tool or operation).\n"
+    "- \"statement\": at most 400 characters, one to three sentences, self-contained: name the product, resource, field "
+    "or tool instead of writing \"it\". Keep every condition, negation, version and unit the text gives. Write every "
+    "number, setting, field, command, flag and other name exactly as the text writes it, with the same characters.\n"
+    "- \"applies_when\": optional, at most 200 characters: the condition or mode the text ties the fact to; leave it "
+    "out when the text ties it to none.\n"
+    "- \"sources\": the ids of the 1 to 3 chunks that state the entry; the target chunk <<TARGET>> is always one of "
+    "them. A \"cross\" entry has two or three.\n"
+    "- \"quotes\": 1 to 4 objects {\"chunk\": id, \"text\": span}; each span is copied character for character from "
+    "that chunk as shown (its first line or its text), at most 300 characters; every source has at least one quote, "
+    "and at least one quote is from the target chunk. Every claim of the statement and of \"applies_when\" is stated "
+    "by the quotes, and every number and name in them and in the title appears in a quote.\n"
+    "- A \"cross\" entry only when every part of its statement is quoted from the chunk that states it.\n\n"
+    "Reply with JSON only, one object and nothing else (no code fence, no text before or after it), in exactly this "
+    "form: {\"entries\": [{\"kind\": \"value\", \"title\": \"...\", \"statement\": \"...\", \"applies_when\": \"...\", "
+    "\"sources\": [\"<<TARGET>>\"], \"quotes\": [{\"chunk\": \"<<TARGET>>\", \"text\": \"...\"}]}]}")
+
+KB_CHECK_SYSTEM = (
+    "You check short fact entries against the documentation chunks they quote. You judge only whether each entry says "
+    "what its quoted text says. You do not rewrite entries and you do not use knowledge from memory.")
+
+KB_CHECK_USER = (
+    "Documentation chunks, each under a header line with its id:\n\n"
+    "<<WINDOW>>\n\n"
+    "Entries, one JSON object per line, each with its title, its statement, the condition it applies to (if any) and its "
+    "quotes:"
+    "\n\n<<ENTRIES>>\n\n"
+    "For each entry give one verdict:\n"
+    "- \"ok\" only when all three hold: (1) every claim of the title, of the statement and of \"applies_when\" is "
+    "stated by the quoted spans; (2) nothing is added: no extra claim, no stronger or weaker wording, no dropped condition, negation, "
+    "version or scope; (3) read in its chunk, each quote means what the statement says.\n"
+    "- \"partial\": part of it is supported, or something is added or dropped.\n"
+    "- \"wrong\": the chunks contradict it.\n"
+    "- \"unsupported\": the quotes do not state it.\n"
+    "Give one short reason per entry.\n\n"
+    "Reply with JSON only, one object and nothing else (no code fence, no text before or after it), with one row per "
+    "entry id, in exactly this form: {\"verdicts\": [{\"id\": \"kbe-...\", \"verdict\": \"ok\", \"reason\": \"...\"}]}")
+
+# The rendered form of an entry in a pack (kb_entry.render): an item for pack_text, whose first line is
+# "<source> — <title line>". <<TITLE>>, <<PRODUCT>>, <<VERSION>>, <<PATHS>>, <<STATEMENT>>, <<APPLIES>> (empty, or the
+# applies line) and <<QUOTES>> (one quote line per quote) are filled with one re.sub. At most 1,500 characters in all.
+KB_ENTRY_RENDER = {
+    "title": "Fact entry: <<TITLE>> (<<PRODUCT>> <<VERSION>>; <<PATHS>>)",
+    "text": "<<STATEMENT>><<APPLIES>>\nSource text:\n<<QUOTES>>",
+    "applies": "\nApplies when: <<APPLIES_WHEN>>",
+    "quote": "- \"<<QUOTE>>\"",
+}
+
+
+def kb_writer_messages(window, target):
+    import re
+    fill = {"WINDOW": window, "TARGET": target}
+    user = re.sub(r"<<(WINDOW|TARGET)>>", lambda m: fill[m.group(1)], KB_WRITER_USER)
+    return [{"role": "system", "content": KB_WRITER_SYSTEM}, {"role": "user", "content": user}]
+
+
+def kb_check_messages(window, entries):
+    import re
+    fill = {"WINDOW": window, "ENTRIES": entries}
+    user = re.sub(r"<<(WINDOW|ENTRIES)>>", lambda m: fill[m.group(1)], KB_CHECK_USER)
+    return [{"role": "system", "content": KB_CHECK_SYSTEM}, {"role": "user", "content": user}]
