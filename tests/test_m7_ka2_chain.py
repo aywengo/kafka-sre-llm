@@ -57,7 +57,8 @@ def measure(ident=(-3.0, 0.5), mech=(1.0, 1.0), time_med=0.4):
         return {"mean": m, "se": s, "n": 50, "ci90": [m - R.Z90 * s, m + R.Z90 * s]}
     rows = {p_: {"cut": 0, "empty": 0} for p_ in R.PARTS}
     return {"model": "qwen", "idents": {"diff_per10": p(*ident)}, "mech": {"n": 116, "diff_pts": p(*mech), "diff_pts_without_lookup": p(0.0, 1.0)},
-            "time": {"seconds_diff": {"median": time_med}}, "coverage": {"diff": p(0.01, 0.02)}, "rows": {"A": rows, "L": rows}}
+            "time": {"seconds_diff": {"median": time_med}, "seconds_diff_d5": {"median": time_med}}, "coverage": {"diff": p(0.01, 0.02)}, "rows": {"A": rows, "L": rows},
+            "control": {"n": 58, "same_text": 50, "seconds_diff": {"median": 0.1}}}
 
 
 class Rule(unittest.TestCase):
@@ -181,11 +182,38 @@ class Measures(unittest.TestCase):
             (W / f"idcheck_d5_L{x}.json").write_text(json.dumps({"answers": [{"id": i, "nonexistent": n} for i, n in zip(ids["d5"], (0, 1, 0, 0))]}))
         return S, W
 
+    @property
+    def settings(self):
+        return unittest.mock.patch.object(R, "judge_settings_check", lambda *a: (R.JUDGE_SETTING, R.JUDGE_INSTRUCTION))
+
+    def test_unpaired_identifier_answers_stop(self):
+        with tempfile.TemporaryDirectory() as d, unittest.mock.patch.object(R, "judged_p", self.judged), self.settings:
+            S, W = self.build(d)
+            (W / "idcheck_d5_L.json").write_text(json.dumps({"answers": [{"id": i, "nonexistent": 0} for i in ("d1", "d2", "d3")]}))   # d4 skipped
+            code, _, err = run(["measures", "--work", str(W), "--stored", str(S), "--rubrics", "unused"])
+            self.assertEqual(code, 2)
+            self.assertIn("skipped answers", err)
+
+    def test_judge_settings_must_match(self):
+        with tempfile.TemporaryDirectory() as d:
+            a, l_ = Path(d, "a.jsonl"), Path(d, "l.jsonl")
+            row = {"set": "A", "id": "d1", "setting": R.JUDGE_SETTING, "instruction": R.JUDGE_INSTRUCTION}
+            wl(a, [row])
+            wl(l_, [dict(row, set="L")])
+            self.assertEqual(R.judge_settings_check(a, l_, "A", "L"), (R.JUDGE_SETTING, R.JUDGE_INSTRUCTION))
+            for bad in ({"setting": "other-12k"}, {"instruction": "v1"}):
+                wl(l_, [dict(row, set="L", **bad)])
+                with self.assertRaises(R.KaError):
+                    R.judge_settings_check(a, l_, "A", "L")
+            wl(l_, [dict(row, set="L"), dict(row, set="L", id="d2", instruction="v1")])     # mixed rows on one side
+            with self.assertRaises(R.KaError):
+                R.judge_settings_check(a, l_, "A", "L")
+
     def judged(self, path, rubrics, name, ids):
         return {i: (0.5 if name.startswith("A") else 0.6) for i in ids}
 
     def test_synthetic(self):
-        with tempfile.TemporaryDirectory() as d, unittest.mock.patch.object(R, "judged_p", self.judged):
+        with tempfile.TemporaryDirectory() as d, unittest.mock.patch.object(R, "judged_p", self.judged), self.settings:
             S, W = self.build(d)
             code, out, err = run(["measures", "--work", str(W), "--stored", str(S), "--rubrics", "unused"])
             self.assertEqual(code, 0, err)
@@ -206,11 +234,14 @@ class Measures(unittest.TestCase):
             self.assertEqual(m["cards"]["d5"]["max"], 3)
             self.assertEqual(m["cards"]["all"]["with_cards"], 5)
             self.assertIn("nonexistent identifiers per 10 answers", (W / "measures.md").read_text())
+            self.assertEqual((m["control"]["n"], m["control"]["same_prompt"], m["control"]["same_text"]), (3, 0, 0))   # cards = 0 on the first answer of each part
+            self.assertAlmostEqual(m["control"]["seconds_diff"]["median"], 0.5)
+            self.assertIn("control (reported, not decided)", (W / "measures.md").read_text())
             res, c = R.evaluate(m)                                                   # 4 answers: the identifier interval reaches above 0
             self.assertEqual((res, [k for k, v in c.items() if not v[0]]), ("FAIL", ["identifiers"]))
 
     def test_missing_prompt_tokens(self):
-        with tempfile.TemporaryDirectory() as d, unittest.mock.patch.object(R, "judged_p", self.judged):
+        with tempfile.TemporaryDirectory() as d, unittest.mock.patch.object(R, "judged_p", self.judged), self.settings:
             S, W = self.build(d, drop_tokens=True)
             code, _, err = run(["measures", "--work", str(W), "--stored", str(S), "--rubrics", "unused"])
             self.assertEqual(code, 2)                                                # a real run: a missing measure is an error
@@ -219,7 +250,7 @@ class Measures(unittest.TestCase):
             self.assertEqual(code, 0)                                                # a stub reports none: counted as not reported
 
     def test_ids_must_match(self):
-        with tempfile.TemporaryDirectory() as d, unittest.mock.patch.object(R, "judged_p", self.judged):
+        with tempfile.TemporaryDirectory() as d, unittest.mock.patch.object(R, "judged_p", self.judged), self.settings:
             S, W = self.build(d)
             wl(W / "ans_m3_L.jsonl", [])
             self.assertEqual(run(["measures", "--work", str(W), "--stored", str(S), "--rubrics", "unused"])[0], 2)

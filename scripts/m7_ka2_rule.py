@@ -50,6 +50,7 @@ IDENT_UPPER_MAX = 0.0      # nonexistent identifiers per 10 answers, L - A: the 
 MECH_LOWER_MIN = -3.0      # mechanical all-pass, L - A in percentage points on all 116: the lower end of the 90 % interval above this
 TIME_MEDIAN_MAX = 1.0      # seconds per answer, L - A paired over all 166 answers: the median at most this
 EB = {"chat_template_kwargs": {"enable_thinking": False}}
+JUDGE_SETTING, JUDGE_INSTRUCTION = "deepseek-nothink-12k", "v2"   # the six-arm judge's setting and instruction; A's and L's rows must carry the same
 CODE_FILES = ("scripts/m7_ka2.sh", "scripts/m7_ka2_rule.py", "scripts/m7_kb2_rule.py")
 # manifest keys of an answer set that may differ between L and A (everything else is the same call)
 MANIFEST_FREE = {"config", "m4_config", "run", "started", "ended", "runtime_git_commit", "runtime_git_commits", "runtime_tree_dirty", "reloads",
@@ -239,6 +240,9 @@ def cmd_gate_stored(a):
             want = {(i["id"], p) for i in items["d5"] for p in (1, 2)}
             if not want <= got:
                 bad.append(f"judge_d5.jsonl: set {name} lacks a valid row for {len(want - got)} of {len(want)} scenario passes")
+            si = judge_settings(jr, name)
+            if si != {(JUDGE_SETTING, JUDGE_INSTRUCTION)}:
+                bad.append(f"judge_d5.jsonl: set {name} was judged with setting/instruction {sorted(si)}, not {(JUDGE_SETTING, JUDGE_INSTRUCTION)}")
     for b in bad[:15]:
         print(f"stored arm A: {b}", file=sys.stderr)
     if bad:
@@ -449,6 +453,20 @@ def ident_counts(path):
     return {r["id"]: int(r["nonexistent"]) for r in d["answers"]}
 
 
+def judge_settings(rows, name):
+    """{(setting, instruction)} of the judge rows of one set."""
+    return {(r.get("setting"), r.get("instruction")) for r in rows if r.get("set") == name and not r.get("reference_given")}
+
+
+def judge_settings_check(path_a, path_l, name_a, name_l):
+    """A's and L's judge rows carry one setting and one instruction, the same on both sides (the six-arm judge's): else an error, nothing is compared."""
+    sa, sl = judge_settings(rd(path_a), name_a), judge_settings(rd(path_l), name_l)
+    if len(sa) != 1 or sa != sl or sa != {(JUDGE_SETTING, JUDGE_INSTRUCTION)}:
+        raise KaError(f"the judge rows of {name_a} ({sorted(sa)}) and {name_l} ({sorted(sl)}) do not carry the same single setting and instruction "
+                      f"{(JUDGE_SETTING, JUDGE_INSTRUCTION)}; the coverage is not compared")
+    return sa.pop()
+
+
 def judged_p(path, rubrics, name, ids):
     j = G.judged(str(path), rubrics, {name})
     out = {}
@@ -500,6 +518,9 @@ def model_measures(a, model, stub):
     out["idents"] = {"A_per10": 10 * sum(ia.values()) / len(ia) if ia else None, "L_per10": 10 * sum(il.values()) / len(il) if il else None,
                      "A_total": sum(ia.values()), "L_total": sum(il.values()), "A_checked": len(ia), "L_checked": len(il),
                      "diff_per10": paired(d), "unpaired_ids": sorted(set(ia) ^ set(il))}
+    if out["idents"]["unpaired_ids"] or len(ia) != len(d5ids):
+        raise KaError(f"{model}: the identifier check skipped answers (error or no text) on one side, or checked not all {len(d5ids)}: "
+                      f"{out['idents']['unpaired_ids'][:5] or 'A ' + str(len(ia)) + ', L ' + str(len(il))}; an answer is never dropped from the pairing")
     st = S / f"idcheck_d5_A{x}.txt"
     if st.is_file():
         try:
@@ -507,6 +528,7 @@ def model_measures(a, model, stub):
         except G.RuleError:
             out["idents"]["stored_A_total"] = None
     # 2. judged coverage (reported)
+    out["judge_setting"] = list(judge_settings_check(S / "judge_d5.jsonl", W / "judge_d5.jsonl", f"A{x}", f"L{x}"))
     pa = judged_p(S / "judge_d5.jsonl", a.rubrics, f"A{x}", d5ids)
     pl = judged_p(W / "judge_d5.jsonl", a.rubrics, f"L{x}", d5ids)
     out["coverage"] = {"A": mean(list(pa.values())), "L": mean(list(pl.values())), "diff": paired(pdiff(pl, pa))}
@@ -541,6 +563,13 @@ def model_measures(a, model, stub):
             raise KaError(f"{model}: {missing} answers lack {name} in L or A (a missing measure is an error)")
         out["time"][name] = {"diff": dist([vl[k] - va[k] for k in both]), "A_median": median([va[k] for k in both]), "L_median": median([vl[k] for k in both]),
                              "missing": missing}
+    # the control (reported, not decided): the answers that got no card have A's prompt; how often L's text equals A's there, and the paired seconds
+    # there (whether the server's speed changed since the stored run)
+    nc = [k for k, r in allL.items() if not ((r.get("lookup") or {}).get("cards") or 0)]
+    out["control"] = {"n": len(nc), "same_prompt": sum(1 for k in nc if allL[k].get("prompt_sha256") and allL[k].get("prompt_sha256") == allA[k].get("prompt_sha256")),
+                      "same_text": sum(1 for k in nc if (allL[k].get("text") or "") == (allA[k].get("text") or "")),
+                      "seconds_diff": dist([sL[k] - sA[k] for k in nc]),
+                      "by_part": {p: sum(1 for k in nc if k.startswith(p + ":")) for p in PARTS}}
     lk = [(r.get("lookup") or {}) for r in allL.values()]
     if any(not num(x.get("seconds")) for x in lk):
         raise KaError(f"{model}: an L answer has no lookup seconds")
@@ -598,7 +627,7 @@ def measures_md(m):
               f"{e['mech']['L_pass_without_lookup']} | {iv(e['mech']['diff_pts_without_lookup'], 1)} points |",
               f"| seconds per answer, all 166 (median; paired difference median / 90th pct.) | {f(t['A_median_s'])} | {f(t['L_median_s'])} | "
               f"{f(t['seconds_diff']['median'])} / {f(t['seconds_diff']['p90'])} |",
-              f"| seconds per answer, D5 (paired difference median / 90th pct.) | | | {f(t['seconds_diff_d5']['median'])} / {f(t['seconds_diff_d5']['p90'])} |"]
+              f"| seconds per answer, D5 (paired difference median / 90th pct.; printed beside the bar, not decided) | | | {f(t['seconds_diff_d5']['median'])} / {f(t['seconds_diff_d5']['p90'])} |"]
         for k in ("prompt_tokens", "ttft_s", "cached_prompt_tokens"):
             v = t[k]
             L.append(f"| {k} (median; paired difference median / 90th pct.; {v['missing']} not reported) | {f(v['A_median'])} | {f(v['L_median'])} | "
@@ -610,6 +639,9 @@ def measures_md(m):
         c = e["cards"]
         L.append(f"| cards per answer (median / mean / max; answers with a card) | D5 {c['d5']['median']} / {c['d5']['mean']:.2f} / {c['d5']['max']}; {c['d5']['with_cards']} | "
                  f"mechanical {c['ma']['with_cards'] + c['m3']['with_cards']} of {e['n']['ma'] + e['n']['m3']} with a card | all {c['all']['median']} / {c['all']['mean']:.2f} / {c['all']['max']}; {c['all']['with_cards']} of 166 |")
+        k_ = e["control"]
+        L.append(f"| control (reported, not decided): the {k_['n']} answers without a card (A's prompt; D5 {k_['by_part']['d5']}, ma {k_['by_part']['ma']}, m3 {k_['by_part']['m3']}): "
+                 f"L's text equal to A's | | {k_['same_text']} of {k_['n']} | seconds, paired median {f(k_['seconds_diff']['median'])} / 90th pct. {f(k_['seconds_diff']['p90'])} |")
         if e["idents"].get("stored_A_total") is not None:
             L.append(f"\nThe stored identifier check of A counted {e['idents']['stored_A_total']} nonexistent identifiers; this chain's check of the same answers {e['idents']['A_total']} "
                      f"({'equal' if e['idents']['stored_A_total'] == e['idents']['A_total'] else 'DIFFERENT: the checker changed since the six-arm test; both arms here use the same checker'}).")
@@ -641,7 +673,9 @@ def cmd_rule(a):
             for k, (ok, txt) in c.items():
                 print(f"  {'holds' if ok else 'FAILS'}: {txt}")
             print(f"  reported: judged coverage L - A {iv(e['coverage']['diff'], 3)}; without the lookup kinds {iv(e['mech']['diff_pts_without_lookup'], 1)} points; "
-                  f"cut L {sum(e['rows']['L'][p]['cut'] for p in PARTS)}, A {sum(e['rows']['A'][p]['cut'] for p in PARTS)}")
+                  f"cut L {sum(e['rows']['L'][p]['cut'] for p in PARTS)}, A {sum(e['rows']['A'][p]['cut'] for p in PARTS)}; "
+                  f"time on D5 alone: paired median {f(e['time']['seconds_diff_d5']['median'])} s (printed, not decided); "
+                  f"control without a card: L's text equal to A's {e['control']['same_text']} of {e['control']['n']}, paired seconds median {f(e['control']['seconds_diff']['median'])}")
     except (KaError, KeyError, TypeError) as e:
         print(f"the rule could not be applied: {type(e).__name__}: {e}", file=sys.stderr)
         return 2
