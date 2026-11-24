@@ -187,6 +187,7 @@ medians: about 17 h); 900 judge calls; about 25 first-reader and 7 second-reader
 | 2026-11-24 | conductor | Licences settled for the pilot slice (`runs/m7/reports/kb_licences.md`): Apache Kafka and Strimzi docs Apache-2.0, teacher DeepSeek-V4.1-Flash MIT, checker GLM-5.3-Flash MIT; entries are derivative works, allowed; Kubernetes (CC-BY-4.0) is outside the pilot slice; `own-runbooks` (private) is excluded. Publishing entries in the dataset is a publishing choice, decided with W10. |
 | 2026-11-24 | W18 | The Owner, asked whether W14 also covers writing D7, the audit of 200 entries and the blind reading: "Entries only". Only the fact entries are written locally (DeepSeek, checked by GLM); Claude workers may read the public docs to write D7, audit entries and read answers, as in M6. |
 | 2026-11-24 | W19 | The Owner, on how Z4's +15 points is counted: "Pilot topics only": +15 points of the strict served count on the 40 D7 scenarios inside the pilot's topics (Strimzi, Kafka operations), and nothing lost over all 60. |
+| 2026-11-24 | W20 | The Owner, on the lookup cards' measurement (Z3): "Question only". On replayed packs (the six-arm test's stored arm A, whose prompts the review rebuilt identically, 404 of 404) the cards come from the question's names only; the stored arm A is the no-cards arm on Qwen and Gemma 31B. This amends `agents/m7-plan.md` section 5 (a) ("the question and the search terms") for Z3; if anything it understates the cards' effect. |
 
 ## Waiting for the Owner
 
