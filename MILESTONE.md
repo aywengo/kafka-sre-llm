@@ -185,6 +185,8 @@ medians: about 17 h); 900 judge calls; about 25 first-reader and 7 second-reader
 | 2026-11-24 | W16 | The Owner (through LLM PM): `DeepSeek-V4.1-Flash-1017-oQ4e-mtp` may be unloaded when it blocks an M7 chain, during M7 chains only, each unload logged in `runs/v3/HEARTBEAT.md`. This narrows W2 for that one model; any other model of another client still stops the chain. |
 | 2026-11-24 | W17 | The Owner (handoff from LLM PM): this session runs the knowledge-base work end to end and reports to LLM PM only at: licences settled; phase 1 result; pilot generation started; phase 2 result; a blocker it cannot clear. Publishing (W10), X1, licence points that need the Owner, changes to a bar fixed beforehand and anything that sends data off the machine stay with the Owner. |
 | 2026-11-24 | conductor | Licences settled for the pilot slice (`runs/m7/reports/kb_licences.md`): Apache Kafka and Strimzi docs Apache-2.0, teacher DeepSeek-V4.1-Flash MIT, checker GLM-5.3-Flash MIT; entries are derivative works, allowed; Kubernetes (CC-BY-4.0) is outside the pilot slice; `own-runbooks` (private) is excluded. Publishing entries in the dataset is a publishing choice, decided with W10. |
+| 2026-11-24 | W18 | The Owner, asked whether W14 also covers writing D7, the audit of 200 entries and the blind reading: "Entries only". Only the fact entries are written locally (DeepSeek, checked by GLM); Claude workers may read the public docs to write D7, audit entries and read answers, as in M6. |
+| 2026-11-24 | W19 | The Owner, on how Z4's +15 points is counted: "Pilot topics only": +15 points of the strict served count on the 40 D7 scenarios inside the pilot's topics (Strimzi, Kafka operations), and nothing lost over all 60. |
 
 ## Waiting for the Owner
 
