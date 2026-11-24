@@ -117,7 +117,7 @@ class BlockOn(unittest.TestCase):
 
     def test_info_fields(self):
         _, info = kb_lookup.answer_block(Q, "", kb=self.kb)
-        self.assertEqual(set(info), {"cards_found", "cards", "chars", "seconds", "catalogue_sha256"})
+        self.assertEqual(set(info), {"cards_found", "cards", "chars", "seconds", "catalogue_recorded_sha256"})
         self.assertGreaterEqual(info["seconds"], 0)
 
     def test_cards_hold_only_catalogue_facts_with_pin(self):
@@ -196,6 +196,7 @@ class Eval2Answer(Base):
         out = self.tmp / "a.jsonl"
         gen = Gen()
         kb = _kb()
+        kb.catalogue_sha256 = "recorded-hash"
         with mock.patch("kafka_sre_rag.service.AnswerChecker") as AC, \
                 mock.patch("kafka_sre_rag.kb_lookup.KbLookup", return_value=kb):
             AC.return_value.cats, AC.return_value.directory = object(), Path("x")
@@ -204,7 +205,12 @@ class Eval2Answer(Base):
         rows = {r["id"]: r for r in eval2.read_jsonl(out)}
         r1, r2 = rows["i001"], rows["i002"]
         self.assertGreaterEqual(r1["lookup"]["cards"], 1)
-        self.assertEqual(set(r1["lookup"]), {"cards_found", "cards", "chars", "seconds", "catalogue_sha256"})
+        self.assertEqual(set(r1["lookup"]), {"cards_found", "cards", "chars", "seconds", "catalogue_recorded_sha256",
+                                             "catalogue_files_sha256", "prompt_tokens", "ttft_s"})
+        self.assertEqual(r1["lookup"]["catalogue_files_sha256"], eval2.catalogue_hash(cat))
+        self.assertEqual(r1["lookup"]["catalogue_recorded_sha256"], "recorded-hash")   # two different hashes, two names
+        self.assertNotEqual(r1["lookup"]["catalogue_files_sha256"], r1["lookup"]["catalogue_recorded_sha256"])
+        self.assertIsNone(r1["lookup"]["prompt_tokens"])   # a stub that reports nothing
         self.assertEqual(r2["lookup"]["cards"], 0)
         answer_msgs = [m for m, _ in gen.calls if m[0]["content"] == prompts.SYSTEM_PROMPT]
         self.assertIn(prompts.LOOKUP_CARDS_HEADER, answer_msgs[0][1]["content"])
@@ -212,10 +218,51 @@ class Eval2Answer(Base):
         self.assertEqual(r1["prompt_chars"], sum(len(m["content"]) for m in answer_msgs[0]))
         m = json.loads(eval2.manifest_path(out).read_text())
         self.assertTrue(m["lookup_cards"]["enabled"])
-        self.assertEqual(m["lookup_cards"]["catalogue_sha256"], eval2.catalogue_hash(cat))
+        self.assertEqual(m["lookup_cards"]["catalogue_files_sha256"], eval2.catalogue_hash(cat))
+        self.assertEqual(m["lookup_cards"]["catalogue_recorded_sha256"], "recorded-hash")
+        self.assertNotIn("catalogue_sha256", m["lookup_cards"])
+        self.assertEqual(m["lookup_cards"]["terms"], "frozen search terms of the run")
         self.assertEqual(m["lookup_cards"]["header_sha256"],
                          hashlib.sha256(prompts.LOOKUP_CARDS_HEADER.encode()).hexdigest())
         self.assertTrue(any("lookup cards" in r for r in m["unmeasured_reasons"]))
+
+    def test_replayed_packs_say_question_only(self):
+        cat = self.tmp / "cat"
+        cat.mkdir()
+        (cat / "a.json").write_text("{}")
+        f = self.items_file([item(1, question=Q)])
+        first = self.tmp / "first.jsonl"
+        self.run_answer(f, first)
+        out = self.tmp / "rep.jsonl"
+        gen = Gen()
+        kb = _kb()
+        with mock.patch("kafka_sre_rag.service.AnswerChecker") as AC, \
+                mock.patch("kafka_sre_rag.kb_lookup.KbLookup", return_value=kb):
+            AC.return_value.cats, AC.return_value.directory = object(), Path("x")
+            rc, _ = self.run_answer(f, out, "--catalogue", str(cat), "--lookup-cards", "--replay-packs", str(first), gen=gen)
+        self.assertEqual(rc, 0)
+        m = json.loads(eval2.manifest_path(out).read_text())
+        self.assertEqual(m["lookup_cards"]["terms"], "question only (replayed packs)")
+        self.assertGreaterEqual(eval2.read_jsonl(out)[0]["lookup"]["cards"], 1)
+
+    def test_prompt_tokens_and_ttft_are_recorded_when_the_generator_reports_them(self):
+        class InfoGen(Gen):
+            def chat(self, messages, max_tokens, on_token=None, *, info=None):
+                if info is not None and messages[0]["content"] != prompts.EXPAND_SYSTEM:
+                    info.update(prompt_tokens=1234, ttft_s=0.5)
+                return super().chat(messages, max_tokens, on_token)
+        cat = self.tmp / "cat"
+        cat.mkdir()
+        (cat / "a.json").write_text("{}")
+        f = self.items_file([item(1, question=Q)])
+        out = self.tmp / "t.jsonl"
+        kb = _kb()
+        with mock.patch("kafka_sre_rag.service.AnswerChecker") as AC, \
+                mock.patch("kafka_sre_rag.kb_lookup.KbLookup", return_value=kb):
+            AC.return_value.cats, AC.return_value.directory = object(), Path("x")
+            self.run_answer(f, out, "--catalogue", str(cat), "--lookup-cards", gen=InfoGen())
+        lk = eval2.read_jsonl(out)[0]["lookup"]
+        self.assertEqual((lk["prompt_tokens"], lk["ttft_s"]), (1234, 0.5))
 
     def test_off_adds_nothing_to_rows_or_manifest(self):
         f = self.items_file([item(1, question=Q)])

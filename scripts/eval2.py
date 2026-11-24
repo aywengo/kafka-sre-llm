@@ -488,10 +488,11 @@ def build_manifest(a, gen, cfg, items_file, n_items, subset, replay_info):
         m["answer_profile"] = thorough.manifest()
     if getattr(a, "lookup_cards", False):  # nothing is added without the lookup cards (M7 KA1)
         from kafka_sre_rag import kb_lookup, prompts
-        m["lookup_cards"] = {"enabled": True, "sources": ["profiles"], "terms": "frozen search terms of the run",
+        m["lookup_cards"] = {"enabled": True, "sources": ["profiles"], "terms": ("question only (replayed packs)" if replay_info else "frozen search terms of the run"),
                              "max_chars": kb_lookup.DEFAULT_MAX_CHARS, "place": "after the excerpts, before the question",
                              "header_sha256": sha256_bytes(prompts.LOOKUP_CARDS_HEADER.encode("utf-8")),
-                             "catalogue_sha256": m["catalogue_sha256"]}
+                             "catalogue_files_sha256": m["catalogue_sha256"],   # eval2.catalogue_hash: the files of the directory
+                             "catalogue_recorded_sha256": None}                  # CATALOGUES.json's hash, set once the lookup is loaded
     rec = items_files_record(items_file)
     if rec is not None:
         m["items_files"] = rec
@@ -878,6 +879,8 @@ def cmd_answer(a, out=sys.stdout):
         replay_info = {"answers_sha256": sha256_file(a.replay_packs), "run": (src_m or {}).get("run")}
     gen = make_generator(a)
     manifest = build_manifest(a, gen, cfg, a.items, len(items), subset, replay_info)
+    if lookup_kb is not None:
+        manifest["lookup_cards"]["catalogue_recorded_sha256"] = lookup_kb.catalogue_sha256
     manifest["run"] = run_id(manifest)
     store = AnswerStore(a.out)
     old = read_manifest(a.out)
@@ -926,7 +929,7 @@ def cmd_answer(a, out=sys.stdout):
             if "thorough" in r:
                 row.update(thorough_row(r))
             if "lookup" in r:   # M7 KA1: cards found and in the block, their characters, the lookup's seconds
-                row["lookup"] = r["lookup"]
+                row["lookup"] = dict(r["lookup"], catalogue_files_sha256=manifest["catalogue_sha256"])
             row["prompt_sha256"], row["prompt_chars"] = messages_fingerprint(r["messages"])
             if rec.expand_messages is not None:
                 row["search_terms_prompt_sha256"], row["search_terms_prompt_chars"] = messages_fingerprint(rec.expand_messages)

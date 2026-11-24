@@ -16,6 +16,23 @@ def chunks_by_ids(ids, index_path=None):
     return [by_id[i] for i in ids]
 
 
+def _accepts_info(gen):
+    """True when the generator's chat takes the `info` record argument (the server generators do; stubs may not)."""
+    import inspect
+    try:
+        return "info" in inspect.signature(getattr(gen, "_gen", gen).chat).parameters
+    except (TypeError, ValueError):
+        return False
+
+
+def _timing_fields(lookup, info):
+    """M7 KA1: prompt_tokens (the server's count) and ttft_s (streamed calls only) of the answer call, next to the cards'
+    count and characters, so the cost of the longer prompt can be compared paired. None when the call did not report them."""
+    info = info or {}
+    lookup["prompt_tokens"] = info.get("prompt_tokens")
+    lookup["ttft_s"] = info.get("ttft_s")
+
+
 def run_item(question, gen, cfg=None, *, k="k6", mode="default", rerank=True, max_tokens=None,
              pack_ids=None, index_path=None, profile="frozen", thorough=None, thorough_checker=None, kb=None, lookup_kb=None):
     """One answer. pack_ids None: expansion + retrieval as pipeline.ask(). pack_ids given: no expansion, no
@@ -67,19 +84,27 @@ def run_item(question, gen, cfg=None, *, k="k6", mode="default", rerank=True, ma
         msgs = prompts.grounded_answer_messages(question, chunks, mode, cards_text=cards_text or None)
     else:
         msgs = prompts.answer_messages(question, chunks, strict=(mode == "strict"), cards_text=cards_text or None)
+    info = None
+    if lookup is not None and thorough is None and _accepts_info(gen):  # a record only: the request is not changed
+        info = {}
     extra = {} if lookup is None else {"lookup": lookup}
     if thorough is not None:  # EXPERIMENTAL: the draft (thinking as the profile says), then the checking pass
         from . import verify_pass
         th = verify_pass.draft_and_check(question, msgs, chunks, gen, max_tokens or cfg["answer"]["max_tokens"],
                                          thorough, thorough_checker, kb=kb, t_start=t0)
         t3 = time.monotonic()
+        if lookup is not None:
+            _timing_fields(lookup, th["draft_info"])
         return {"text": th["text"], "tokens": th["tokens"], "truncated": th["truncated"], "search_terms": exp,
                 "pack": [c["id"] for c in chunks],
                 "seconds": {"search_terms": t1 - t0, "retrieval": t2 - t1, "answer": t3 - t2, "total": t3 - t0,
                             **th["seconds"]},
                 "messages": msgs, "thorough": th, **extra}
-    text, toks, trunc = gen.chat(msgs, max_tokens or cfg["answer"]["max_tokens"], None)
+    text, toks, trunc = gen.chat(msgs, max_tokens or cfg["answer"]["max_tokens"], None,
+                                 **({} if info is None else {"info": info}))
     t3 = time.monotonic()
+    if lookup is not None:
+        _timing_fields(lookup, info)
     return {"text": text, "tokens": toks, "truncated": bool(trunc), "search_terms": exp,
             "pack": [c["id"] for c in chunks],
             "seconds": {"search_terms": t1 - t0, "retrieval": t2 - t1, "answer": t3 - t2, "total": t3 - t0},

@@ -398,14 +398,15 @@ def answer_block(question: str, terms: str = "", *, kb: Optional[KbLookup] = Non
     """M7 KA1: the lookup cards of an ANSWER prompt: the identifiers of the question and of the frozen search terms
     (`profiles` source), rendered under the header of prompts.LOOKUP_CARDS_HEADER within `max_chars` (header
     included). Returns (block, info); block is "" when no card was found or fits (no heading then). info:
-    cards_found, cards (in the block), chars, seconds (the whole lookup), catalogue_sha256."""
+    cards_found, cards (in the block), chars, seconds (the whole lookup), catalogue_recorded_sha256 (the catalogue hash
+    recorded in CATALOGUES.json and checked at load; not the hash of the directory files that eval2 puts in its manifest)."""
     from . import prompts
     t0 = time.monotonic()
     kb = kb or get()
     found = kb.cards(question, ("profiles",), terms or "")
     block, n = render_counted(found, max_chars, header if header is not None else prompts.LOOKUP_CARDS_HEADER)
     return block, {"cards_found": len(found), "cards": n, "chars": len(block),
-                   "seconds": round(time.monotonic() - t0, 6), "catalogue_sha256": kb.catalogue_sha256}
+                   "seconds": round(time.monotonic() - t0, 6), "catalogue_recorded_sha256": kb.catalogue_sha256}
 
 
 _kb: Optional[KbLookup] = None
