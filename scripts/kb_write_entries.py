@@ -24,8 +24,8 @@ The server address and key come from OMLX_URL / OMLX_API_KEY or ~/.config/kafka-
 never written or printed. --backend stub answers from an in-process stub server (tests and the chain's dry run); its plants
 come from the environment: KB_STUB_WRITE_BAD (target ids whose replies never parse), KB_STUB_WRITE_RETRY (bad at temperature
 0, good at the retry), KB_STUB_WRITE_GATE (one entry with an invented identifier added), KB_STUB_STOP_AFTER (HTTP 500
-after N calls).
-Exit: 0 done; 1 a server or input error (resumable); 2 refused.
+after N calls), KB_STUB_WRONG_MODEL_AFTER (another model answers after N calls).
+Exit: 0 done; 1 a server or input error (resumable); 2 refused (also: the server answered with another model; never retried).
 """
 import argparse
 import concurrent.futures as cf
@@ -55,6 +55,11 @@ FILES = ("windows.jsonl", "entries_raw.jsonl", "entries_gate_rejects.jsonl")
 
 class ServerError(Exception):
     pass
+
+
+class WrongModel(ServerError):
+    """The server answered with another model than the one asked for: another client changed the server. A refusal (exit 2),
+    never retried: the chain's server gate must see the server before anything goes on (review of f45dd13)."""
 
 
 def now():
@@ -107,7 +112,7 @@ class Client:
             raise ServerError(f"the server returned HTTP {r.status_code}")
         d = r.json()
         if d.get("model") and d["model"] != self.model:
-            raise ServerError(f"the server answered with model {d['model']!r}, not {self.model!r}")
+            raise WrongModel(f"the server answered with model {d['model']!r}, not {self.model!r}")
         ch = d["choices"][0]
         u = d.get("usage") or {}
         return {"text": strip_think(ch["message"].get("content") or ""), "finish": ch.get("finish_reason"),
@@ -132,6 +137,7 @@ def stub_transport(handler):
     call after the N-th answers HTTP 500 (a planted server stop, to rehearse a resume)."""
     import httpx
     stop = int(os.environ.get("KB_STUB_STOP_AFTER") or 0)
+    wrong = int(os.environ.get("KB_STUB_WRONG_MODEL_AFTER") or 0)     # every call after the N-th is answered by another model
     calls = [0]
     lock = threading.Lock()
 
@@ -145,7 +151,7 @@ def stub_transport(handler):
         out = handler(body)
         if isinstance(out, str):
             out = {"text": out}
-        return httpx.Response(200, json={"model": body["model"], "choices": [{"message": {"content": out["text"]},
+        return httpx.Response(200, json={"model": "Another-Clients-Model" if wrong and n > wrong else body["model"], "choices": [{"message": {"content": out["text"]},
                                          "finish_reason": out.get("finish", "stop")}],
                                          "usage": {"completion_tokens": len(out["text"]) // 4,
                                                    "prompt_tokens": sum(len(m["content"]) for m in body["messages"]) // 4}})
@@ -175,7 +181,7 @@ def stub_writer(chunks_by_id):
             quote = (quote + " " + w).strip()
         if not quote:
             return json.dumps({"entries": []})
-        entries = [{"kind": "fact", "title": (c["title"] or "Untitled")[:100], "statement": quote,
+        entries = [{"kind": "fact", "title": " ".join(quote.split(" ")[:5])[:100], "statement": quote,
                     "sources": [target], "quotes": [{"chunk": target, "text": quote}]}]
         if target in gate:
             entries.append({"kind": "value", "title": "Invented", "statement": "The setting `stub.invented.key` defaults to 42.",
@@ -404,7 +410,9 @@ def main(argv=None):
                 try:
                     row, entries, rejects = fu.result()
                 except ServerError as e:
-                    err = err or e
+                    err = e if err is None or (isinstance(e, WrongModel) and not isinstance(err, WrongModel)) else err
+                    ex.shutdown(wait=False, cancel_futures=True)      # no new call after a server error
+                    print(f"[write] -/{n_total} {w} SERVER ERROR ({e}); not written", flush=True)
                     continue
                 append(row, entries, rejects)
                 with lock:
@@ -413,6 +421,9 @@ def main(argv=None):
                 tail = f" FAILED ({row['failed']})" if row["status"] == "failed" else (" retried" if row["attempts"] > 1 else "")
                 print(f"[write] {k}/{n_total} {w} entries={row['entries']} gate_fail={row['gate_rejects']} {row['seconds']}s "
                       f"tokens={row['tokens']}{tail}", flush=True)
+        if isinstance(err, WrongModel):
+            print(f"REFUSED: {err}; another client changed the server; the windows written so far are kept (the chain's server gate decides)", file=sys.stderr)
+            return 2
         if err:
             print(f"ERROR: {err}; the windows written so far are kept (resume by running again)", file=sys.stderr)
             return 1

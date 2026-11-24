@@ -6,7 +6,7 @@
   stub-status | stub-load | stub-unload   the stub server's status in a dry run (a JSON file the chain reads instead of the server)
   sanity-rule                        the stop rule of the sanity run (kb2_design.md section 7), its mechanical parts
   reading-sample                     the sanity reading's sample: 40 accepted and 20 rejected entries, blind bundle and key
-  full-gate                          the full run's preconditions: the sanity run passed its rule and its reading
+  full-gate                          the full run's preconditions: the sanity run passed its rule (same prompts and models) and its reading
   index                              the accepted entries (checker "ok"), duplicates dropped, sorted by id, rendered
   audit-sample                       the audit's sample (section 4): 200 accepted, the cross entries up to 40 more, 50 rejected
   rule-text                          the sanity rule and the audit bar, as written into the report header
@@ -55,8 +55,11 @@ def sha256_text(s):
 
 
 def kb_prompts_sha256():
-    """The hash of the KB prompt constants only: an edit elsewhere in prompts.py (phase 1) does not stop a resume."""
-    return sha256_text(json.dumps({n: getattr(P, n) for n in KB_PROMPT_NAMES}, sort_keys=True, ensure_ascii=False))
+    """The hash of the KB prompt constants and of the two functions that fill them (prompts.py itself is also pinned by the chain)."""
+    import inspect
+    texts = {n: getattr(P, n) for n in KB_PROMPT_NAMES}
+    texts.update({f.__name__: inspect.getsource(f) for f in (P.kb_writer_messages, P.kb_check_messages)})
+    return sha256_text(json.dumps(texts, sort_keys=True, ensure_ascii=False))
 
 
 def rows(p):
@@ -165,13 +168,30 @@ def cmd_mark(a):
 
 
 # ---------------------------------------------------------------- the server gate (W2, W16)
+def _epoch(v):
+    """A load time as seconds since the epoch: a number, or an ISO 8601 string; None when it cannot be read (as m7_six_arm_rule.py)."""
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        return float(v)
+    try:
+        import datetime
+        return datetime.datetime.fromisoformat(str(v).replace("Z", "+00:00")).timestamp()
+    except (ValueError, TypeError):
+        return None
+
+
 def cmd_server_gate(a):
-    """Before a model stage. Ours: a model with a marker this chain wrote when it loaded it (W2). Printed decisions:
+    """Before a model stage (and at the chain's gate). Ours (W2, K4b): a loaded model with a marker this chain wrote when it
+    loaded it, AND a server-reported load time (`model_load_times`: {model: epoch seconds or ISO time}) not later than the
+    marker's time. A marker whose load time the server does not report cannot be checked: refused (a leftover marker must never
+    make the chain unload another client's model; ported from scripts/m7_six_arm_rule.py, made strict by the review of f45dd13).
+    Printed decisions:
     UNLOAD <id>    a model of ours that this stage does not use
-    W16 <id>       the writer's DeepSeek build loaded by another client: W16 allows its unload (after no request is active
-                   or waiting; the chain waits for that and logs the unload in HEARTBEAT.md as W16's)
-    Refused (exit 2, the model named, nothing unloaded): any other model without our marker; a request active or waiting
-    while no W16 unload is due (with a W16 unload due, the chain's unload waits until the server is idle)."""
+    ADOPT <id>     the writer's DeepSeek build loaded by another client while the writer needs it (--need is that model): used
+                   as it is, without our marker; logged; left loaded after the writer (W16 as the conductor read it)
+    W16 <id>       the writer's DeepSeek build loaded by another client while a stage needs another model: W16 allows its unload
+                   (after no request is active or waiting; the chain waits for that and logs the unload as W16's)
+    Refused (exit 2, the model named, nothing unloaded): any other model without a valid marker; a request active or waiting,
+    except while a W16 unload is due (that unload waits until the server is idle)."""
     try:
         st = load_json(a.status)
         busy = int(st.get("active_requests", 1)) + int(st.get("waiting_requests", 0))
@@ -179,18 +199,37 @@ def cmd_server_gate(a):
     except (OSError, ValueError, TypeError):
         print("REFUSED: the server status is unreadable", file=sys.stderr)
         return 2
+    times = st.get("model_load_times") or {}
+    if not isinstance(times, dict):
+        times = {}
     ours = set()
     for spec in a.marker or []:
         mid, _, path = spec.partition("=")
-        if mid and path and os.path.exists(path):
-            ours.add(mid)
+        if not mid or not path:
+            print(f"REFUSED: --marker {spec!r}: expected ID=PATH", file=sys.stderr)
+            return 2
+        if not os.path.exists(path) or mid not in loaded:
+            continue
+        lt = _epoch(times.get(mid)) if mid in times else None
+        if lt is None:
+            print(f"REFUSED: the model {mid} is loaded and this chain has a marker for it ({path}), but the server reports no load time "
+                  f"for it, so the marker's age cannot be checked; it may be another client's copy; nothing was unloaded (the Owner decides)",
+                  file=sys.stderr)
+            return 2
+        if lt > os.path.getmtime(path) + 1:
+            print(f"REFUSED: the model {mid} was loaded at {lt:.0f}, after this chain's marker {path} was written: another client loaded "
+                  f"it; this chain never unloads a model it did not load; nothing was unloaded", file=sys.stderr)
+            return 2
+        ours.add(mid)
     foreign = [m for m in loaded if m not in ours]
     w16 = [m for m in foreign if m == a.w16]
     other = [m for m in foreign if m != a.w16]
     if other:
-        print(f"REFUSED: the model {', '.join(other)} is loaded by another client (no marker of this chain); only {a.w16} may be "
+        print(f"REFUSED: the model {', '.join(other)} is loaded by another client (no valid marker of this chain); only {a.w16} may be "
               f"unloaded under W16; any other model waits for the Owner (W2); nothing was unloaded", file=sys.stderr)
         return 2
+    adopt = [m for m in w16 if m == a.need]
+    w16 = [m for m in w16 if m != a.need]
     if busy and not w16:
         print(f"REFUSED: the server has {busy} active or waiting request(s) (another client); nothing was started", file=sys.stderr)
         return 2
@@ -199,6 +238,8 @@ def cmd_server_gate(a):
             print(f"UNLOAD {m}")
     for m in w16:
         print(f"W16 {m}")
+    for m in adopt:
+        print(f"ADOPT {m}")
     if busy:
         print(f"note: {busy} active or waiting request(s); the W16 unload waits until the server is idle")
     return 0
@@ -219,7 +260,9 @@ def cmd_stub_status(a):
     if a.init:
         if p.exists():
             return 0
-        st = {"active_requests": a.busy, "waiting_requests": 0, "loaded_models": [m for m in (a.loaded or "").split(",") if m]}
+        import time
+        lm = [m for m in (a.loaded or "").split(",") if m]
+        st = {"active_requests": a.busy, "waiting_requests": 0, "loaded_models": lm, "model_load_times": {m: time.time() for m in lm}}
         _stub_save(p, st)
         return 0
     print(json.dumps(st))
@@ -230,9 +273,12 @@ def cmd_stub_status(a):
 
 
 def cmd_stub_load(a):
+    """The stub server loads a model on the chain's first request: it reports the load time, as model_load_times."""
+    import time
     p, st = _stub(a)
     if a.model not in st["loaded_models"]:
         st["loaded_models"].append(a.model)
+        st.setdefault("model_load_times", {})[a.model] = time.time()
     _stub_save(p, st)
     return 0
 
@@ -240,6 +286,7 @@ def cmd_stub_load(a):
 def cmd_stub_unload(a):
     p, st = _stub(a)
     st["loaded_models"] = [m for m in st["loaded_models"] if m != a.model]
+    (st.get("model_load_times") or {}).pop(a.model, None)
     _stub_save(p, st)
     print("202")
     return 0
@@ -271,15 +318,22 @@ def sanity(write_dir, check_dir, concurrency, total=FULL_WINDOWS):
             "reading": f"pending: at most {SAN_READ_NOTOK_MAX} of the {SAN_READ_ACC} accepted entries read may be rated not ok"}
 
 
+def run_identity(writer, checker):
+    """What a sanity result is valid for: the prompt versions, the KB prompt texts' hash, the writer and the checker."""
+    return {"entry_prompt_version": P.KB_ENTRY_PROMPT_VERSION, "check_prompt_version": P.KB_CHECK_PROMPT_VERSION,
+            "kb_prompts_sha256": kb_prompts_sha256(), "writer": writer, "checker": checker}
+
+
 def cmd_sanity_rule(a):
     r = sanity(a.write_dir, a.check_dir, a.concurrency, a.total)
+    r["identity"] = run_identity(a.writer, a.checker)
     for it in r["items"]:
         print(f"  {it['name']}: {it['value']} (bar {it['bar']}): {'pass' if it['pass'] else 'FAIL'}")
     print(f"SANITY (mechanical parts): {'PASS' if r['mechanical_pass'] else 'STOP: rework the prompt (new version, new sanity run)'}; "
           f"the reading: {r['reading']}")
     if a.out:
         Path(a.out).write_text(json.dumps(r, indent=1, sort_keys=True) + "\n", encoding="utf-8")
-    return 0
+    return 0 if r["mechanical_pass"] else 1
 
 
 def _draw(ids, salt, n):
@@ -293,11 +347,11 @@ def _chunks(slice_path, record):
 
 
 def _bundle(entries, chunks, title, note):
-    """A blind reading bundle: each entry with its statement, applies_when, quotes and its source chunks as the model
+    """A blind reading bundle: each entry with its title, statement, applies_when, quotes and its source chunks as the model
     receives them; no verdict and no checker reason."""
     out = [f"# {title}", "", note, ""]
     for n, e in enumerate(entries, 1):
-        out += [f"## Item {n} (`{e['id']}`, kind {e['kind']})", "", f"**Statement.** {e['statement']}"]
+        out += [f"## Item {n} (`{e['id']}`, kind {e['kind']})", "", f"**Title.** {e['title']}", f"**Statement.** {e['statement']}"]
         if e.get("applies_when"):
             out.append(f"**Applies when.** {e['applies_when']}")
         out.append("**Quotes.**")
@@ -335,27 +389,67 @@ def cmd_reading_sample(a):
     return 0
 
 
+RATINGS = ("ok", "partial", "wrong")
+
+
+def reading_count(result_path, key_path):
+    """The sanity reading's result file: one JSON object per line {"id", "rating": ok|partial|wrong, "reason"}; its ids must equal
+    the reading sample's (sanity_reading_key.json), each once. Returns (not-ok count among the entries the checker accepted, the
+    number of those entries, the file's sha256). Raises ValueError with the reason."""
+    key = load_json(key_path)
+    want = list(key["order"])
+    got = rows(result_path)
+    ids = [r.get("id") for r in got]
+    if len(ids) != len(set(ids)):
+        raise ValueError("an id is rated twice")
+    if set(ids) != set(want):
+        miss, extra = sorted(set(want) - set(ids)), sorted(set(ids) - set(want))
+        raise ValueError(f"the ids differ from the reading sample's ({len(miss)} missing, {len(extra)} not in the sample)")
+    bad = [r["id"] for r in got if r.get("rating") not in RATINGS]
+    if bad:
+        raise ValueError(f"{len(bad)} row(s) without a rating of ok, partial or wrong (first {bad[0]})")
+    acc = [i for i in want if key["checker_verdict"][i] == "ok"]
+    rating = {r["id"]: r["rating"] for r in got}
+    return sum(1 for i in acc if rating[i] != "ok"), len(acc), sha256_file(result_path)
+
+
 def cmd_full_gate(a):
+    """The full run's preconditions: the sanity result passed its rule, for the same prompt versions, KB prompt texts, writer and
+    checker as this run and as the sanity folder's MANIFEST.json; the reading's result file covers exactly the reading sample and
+    rates at most 4 of the accepted entries not ok."""
     try:
         r = load_json(a.sanity_result)
+        sm = load_json(Path(a.sanity_dir) / "MANIFEST.json")
     except (OSError, ValueError):
-        print(f"REFUSED: the sanity run's result {a.sanity_result} is missing or unreadable (run --sanity first)", file=sys.stderr)
+        print(f"REFUSED: the sanity run's result or manifest is missing or unreadable in {a.sanity_dir} (run --sanity first)", file=sys.stderr)
         return 2
     if not r.get("mechanical_pass"):
         print("REFUSED: the sanity run failed its rule (mechanical parts); rework the prompt first", file=sys.stderr)
         return 2
-    try:
-        n = int(a.read_notok)
-    except (TypeError, ValueError):
-        print("REFUSED: --sanity-read-notok N (of the 40 accepted entries the sanity reading rated not ok) is required", file=sys.stderr)
+    now = run_identity(a.writer, a.checker)
+    stored = r.get("identity") or {}
+    man = {"entry_prompt_version": sm.get("entry_prompt_version"), "check_prompt_version": sm.get("check_prompt_version"),
+           "kb_prompts_sha256": sm.get("kb_prompts_sha256"), "writer": (sm.get("options") or {}).get("writer"),
+           "checker": (sm.get("options") or {}).get("checker")}
+    for name, other in (("the sanity result", stored), ("the sanity folder's manifest", man)):
+        diff = [k for k in now if other.get(k) != now[k]]
+        if diff:
+            print(f"REFUSED: {name} was made for another {', '.join(diff)} than this run (sanity: "
+                  + "; ".join(f"{k}={str(other.get(k))[:16]}" for k in diff) + "; now: " + "; ".join(f"{k}={str(now[k])[:16]}" for k in diff)
+                  + "): a new sanity run first", file=sys.stderr)
+            return 2
+    if not a.reading:
+        print("REFUSED: --sanity-reading FILE (the sanity reading's result) is required", file=sys.stderr)
         return 2
-    if not 0 <= n <= SAN_READ_ACC:
-        print(f"REFUSED: --sanity-read-notok {n} is not a count of 0 to {SAN_READ_ACC}", file=sys.stderr)
+    try:
+        n, of, sha = reading_count(a.reading, Path(a.sanity_dir) / "reading" / "sanity_reading_key.json")
+    except (OSError, ValueError, KeyError) as e:
+        print(f"REFUSED: the sanity reading's result {a.reading} is not usable: {e}", file=sys.stderr)
         return 2
     if n > SAN_READ_NOTOK_MAX:
-        print(f"REFUSED: the sanity reading rated {n} of {SAN_READ_ACC} accepted entries not ok (at most {SAN_READ_NOTOK_MAX}): rework the prompt", file=sys.stderr)
+        print(f"REFUSED: the sanity reading rated {n} of {of} accepted entries not ok (at most {SAN_READ_NOTOK_MAX}): rework the prompt", file=sys.stderr)
         return 2
-    print(f"full gate: the sanity run passed its rule ({n} of {SAN_READ_ACC} read not ok)")
+    print(f"full gate: the sanity run passed its rule; the reading rated {n} of {of} accepted entries not ok; reading file sha256 {sha}")
     return 0
 
 
@@ -413,7 +507,7 @@ def cmd_rule_text(a):
           "15 % of written entries fail the mechanical gate; median entries per window outside 1 to 8; the checker accepts fewer than 50 % "
           "or more than 98 % of gated entries; more than 4 of the 40 accepted entries are rated not ok; a projected full writer time over "
           "16 h. A second failed sanity run stops the pilot until the conductor has seen it. The chain computes the mechanical parts; the "
-          "reading's part is given to the full run (`--sanity-read-notok N`), which refuses N above 4.")
+          "reading's result file is given to the full run (`--sanity-reading FILE`, its ids those of the reading sample), which refuses more than 4 of the accepted entries rated not ok.")
     print()
     print(f"**The audit bar (section 4).** {AUDIT_N} accepted entries drawn by sha256(`{AUDIT_SALT}` + entry id), lowest first, plus every "
           f"accepted cross entry up to {AUDIT_CROSS_MAX} more (reported separately); at least {AUDIT_BAR} of {AUDIT_N} rated ok, or the entries "
@@ -454,6 +548,8 @@ def main(argv=None):
     p.add_argument("--check-dir", required=True)
     p.add_argument("--concurrency", type=int, default=3)
     p.add_argument("--total", type=int, default=FULL_WINDOWS)
+    p.add_argument("--writer", required=True)
+    p.add_argument("--checker", required=True)
     p.add_argument("--out", default=None)
     p = sub.add_parser("reading-sample")
     for x in ("--write-dir", "--check-dir", "--slice", "--out-dir"):
@@ -464,7 +560,10 @@ def main(argv=None):
     p.add_argument("--salt", default=SAN_READ_SALT)
     p = sub.add_parser("full-gate")
     p.add_argument("--sanity-result", required=True)
-    p.add_argument("--read-notok", default=None)
+    p.add_argument("--sanity-dir", required=True)
+    p.add_argument("--reading", default=None)
+    p.add_argument("--writer", required=True)
+    p.add_argument("--checker", required=True)
     p = sub.add_parser("index")
     for x in ("--write-dir", "--check-dir", "--slice", "--out"):
         p.add_argument(x, required=True)

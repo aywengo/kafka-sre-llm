@@ -128,6 +128,13 @@ class Gate(unittest.TestCase):
         r = K.gate_entry(entry(statement="Strimzi 1.3.1 sets broker nodes with `spec.kafka.replicas`; the default is 3."), WIN, "t1")
         self.assertTrue(any("'1.3.1'" in x for x in r), r)
 
+    def test_title_is_gated(self):
+        r = K.gate_entry(entry(title="maxUnavailable for brokers"), WIN, "t1")
+        self.assertTrue(any("title: 'maxUnavailable'" in x for x in r), r)
+        r = K.gate_entry(entry(title="Strimzi 1.3.1 broker replicas"), WIN, "t1")
+        self.assertTrue(any("title: '1.3.1'" in x for x in r), r)
+        self.assertEqual(K.gate_entry(entry(title="The `spec.kafka.replicas` default"), WIN, "t1"), [])
+
     def test_whole_tokens_only(self):
         self.assertTrue(K.token_in("spec.kafka.replicas", "The spec.kafka.replicas property."))
         self.assertFalse(K.token_in("spec.kafka.replica", "The spec.kafka.replicas property."))

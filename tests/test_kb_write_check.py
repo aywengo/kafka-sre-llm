@@ -106,6 +106,13 @@ class Writer(unittest.TestCase):
         self.assertEqual(len(rows(self.out / "windows.jsonl")), 6)
         self.assertEqual(len(rows(self.out / "entries_raw.jsonl")), 6)
 
+    def test_another_model_answering_is_a_refusal(self):
+        code, out, err = run(W.main, self.base + ["--concurrency", "1"], dict(CLEAN, KB_STUB_WRONG_MODEL_AFTER="2"))
+        self.assertEqual(code, 2)
+        self.assertIn("another client changed the server", err)
+        self.assertIn("SERVER ERROR", out)                                   # the window of the error prints a line
+        self.assertEqual(len(rows(self.out / "windows.jsonl")), 2)
+
     def test_stale_version_and_other_model_refused(self):
         run(W.main, self.base, CLEAN)
         with mock.patch.object(P, "KB_ENTRY_PROMPT_VERSION", "kbe/9"):
@@ -201,6 +208,30 @@ class Checker(unittest.TestCase):
         code, out, _ = run(C.main, self.base[:-2] + ["--model", C.FALLBACK_MODEL, "--fallback-note", "conductor: oQ8e not available",
                                                       "--out-dir", str(self.d / "c2")], CLEAN)
         self.assertEqual(code, 0)
+
+    def test_title_sent_and_prompt_names_it(self):
+        ents = rows(self.wd / "entries_raw.jsonl")
+        line = json.loads(C.entry_lines(ents[:1]))
+        self.assertEqual(line["title"], ents[0]["title"])
+        self.assertIn("each with its title", P.KB_CHECK_USER)
+        self.assertIn("every claim of the title, of the statement", P.KB_CHECK_USER)
+
+    def test_retry_never_upgrades_a_verdict(self):
+        ents = rows(self.wd / "entries_raw.jsonl")[:2]
+        a, b = ents[0]["id"], ents[1]["id"]
+        replies = iter([json.dumps({"verdicts": [{"id": a, "verdict": "partial", "reason": "first"}]}),
+                        json.dumps({"verdicts": [{"id": a, "verdict": "ok", "reason": "retry"}, {"id": b, "verdict": "ok", "reason": "retry"}]})])
+        client = W.Client("http://stub.invalid/v1", None, C.CHECKER_MODEL, transport=W.stub_transport(lambda body: next(replies)))
+        got, attempts, _, _ = C.check_window(client, [], ents, 100)
+        self.assertEqual(attempts, 2)
+        self.assertEqual(got[a], ("partial", "first"))
+        self.assertEqual(got[b], ("ok", "retry"))
+
+    def test_another_model_answering_is_a_refusal(self):
+        code, out, err = run(C.main, self.base, dict(CLEAN, KB_STUB_WRONG_MODEL_AFTER="2"))
+        self.assertEqual(code, 2)
+        self.assertIn("REFUSED", err)
+        self.assertIn("SERVER ERROR", out)
 
     def test_parse_verdicts(self):
         self.assertEqual(C.parse_verdicts({"verdicts": [{"id": "a", "verdict": "ok", "reason": "r"}, {"id": "b", "verdict": "maybe"},

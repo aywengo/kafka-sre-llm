@@ -3,7 +3,8 @@
 # Two modes, each resumable by its stage markers:
 #   --sanity  the 50 sanity windows (the lowest sha256("kb2-sanity:" + chunk id)): writer (DeepSeek), checker (GLM oQ8e), the sanity rule's mechanical parts,
 #             the blind reading sample (40 accepted, 20 rejected). The reading itself is a Claude reading session (W18), not done here.
-#   --full    all 1,487 windows of the slice (W15's go; after the sanity run passed its rule and its reading: --sanity-read-notok N, refused above 4); the
+#   --full    all 1,487 windows of the slice (W15's go; after the sanity run passed its rule and its reading: --sanity-reading FILE, refused when more than 4 of the
+#             40 accepted entries are rated not ok, or when the sanity run was made for other prompts or models); the
 #             sanity windows are reused when the prompt versions and models are the same; then the accepted entries (work/m7/kb/entries_index.jsonl: checker
 #             "ok", exact duplicates dropped, sorted by id, rendered) and the audit's sample (200 + cross up to 40 + 50 rejected; second rater a quarter).
 #             The entries index's search, the record kafka_sre_rag/kb_entries.json and the runtime option are task I4, not this chain.
@@ -22,42 +23,49 @@
 #   stage, a model of ours that the stage does not use is unloaded; DeepSeek-V4.1-Flash-1017-oQ4e-mtp loaded by another client is unloaded under W16 (after no
 #   request is active or waiting: the unload waits until the server is idle, then until the model is gone) with a HEARTBEAT.md line naming it as W16's unload
 #   of a foreign model; any other model of another client, or a request active or waiting while no W16 unload is due, refuses (exit 2) and waits for the Owner.
-#   The writer's DeepSeek copy that another client loaded is treated as foreign and unloaded under W16 before this chain loads its own (a marker cannot be
-#   given to a model another client loaded). Every load and unload is noted in runs/v3/HEARTBEAT.md.
+#   W16 as the conductor read it (review of f45dd13): when the foreign model is the DeepSeek build the writer needs, it does not block: the writer uses that
+#   copy as it is, without our marker (logged), and leaves it loaded after the writer; the checker stage then unloads it under W16, because there it blocks.
+#   A marker counts only when the server reports the model's load time and it is not later than the marker (a leftover marker never makes another client's
+#   model ours); when the server reports no load time the gate refuses. A reply from another model than the one asked for stops a stage with a refusal
+#   (exit 2) that is never retried, and the stages run with --other-retries 0, so no model loads in a stage without a server check first.
+#   Every load and unload is noted in runs/v3/HEARTBEAT.md.
 # A stopped run resumes: running the same command again removes the failed marker after the start check; finished stages are kept, a stage that stopped
 #   midway resumes from its output files. A changed pin, option or output is refused and the mv lines are printed (nothing is moved or deleted here).
 #
 #   scripts/m7_kb2.sh --sanity > runs/m7/logs/m7_kb2.sanity.out 2>&1 &                          (J1)
-#   scripts/m7_kb2.sh --full --sanity-read-notok N > runs/m7/logs/m7_kb2.full.out 2>&1 &         (J2, W15's go)
+#   scripts/m7_kb2.sh --full --sanity-reading FILE > runs/m7/logs/m7_kb2.full.out 2>&1 &     (J2, W15's go)
 #   scripts/m7_kb2.sh --sanity|--full --dry-run --work DIR [plants]     # stub server, stub writer and checker; nothing is written outside DIR
-# Options: --work DIR, --report FILE, --sanity-read-notok N, --checker-model ID, --fallback-note TXT; dry runs only: --fail-after STAGE, --plant-foreign ID
+# Options: --work DIR, --report FILE, --sanity-reading FILE (one JSON object per line: id, rating ok|partial|wrong, reason; the ids of
+#   W/sanity/reading/sanity_reading_key.json), --checker-model ID, --fallback-note TXT; dry runs only: --fail-after STAGE, --plant-foreign ID
 #   (a model of another client loaded at the start), --plant-busy N (the first N status reads show an active request), --plant-stop N (the stub server answers
-#   HTTP 500 after N calls: a stop inside a stage), --plant-write-bad IDS, --plant-write-retry IDS, --plant-write-gate IDS, --plant-check-bad IDS (comma lists of
+#   HTTP 500 after N calls: a stop inside a stage), --plant-wrong-model N (another model answers after N calls: a refusal), --plant-write-bad IDS, --plant-write-retry IDS, --plant-write-gate IDS, --plant-check-bad IDS (comma lists of
 #   target chunk ids; see the writer's and checker's headers).
 # The server address and key come from OMLX_URL and OMLX_API_KEY or ~/.config/kafka-sre-llm/; they are never written or printed.
 set -e
-MODE=; DRY=no; W=work/m7/kb; WSET=no; REPORT=runs/m7/KB2_PILOT.md; RSET=no; NOTOK=; FAILAFTER=; PFOREIGN=; PBUSY=0; PSTOP=
-PWBAD=; PWRETRY=; PWGATE=; PCBAD=
+MODE=; DRY=no; W=work/m7/kb; WSET=no; REPORT=runs/m7/KB2_PILOT.md; RSET=no; READING=; FAILAFTER=; PFOREIGN=; PBUSY=0; PSTOP=
+PWBAD=; PWRETRY=; PWGATE=; PCBAD=; PWRONG=
 DS=DeepSeek-V4.1-Flash-1017-oQ4e-mtp; GLM8=GLM-5.3-Flash-oQ8e-mtp; GLM4=GLM-5.3-Flash-oQ4e; CHK=$GLM8; FBNOTE=
 WCONC=3; CCONC=2; WMAX=3000; CMAX=1500
 while [ $# -gt 0 ]; do case $1 in
   --sanity) MODE=sanity;; --full) MODE=full;; --dry-run) DRY=yes;;
   --work) W=${2:?}; WSET=yes; shift;; --report) REPORT=${2:?}; RSET=yes; shift;;
-  --sanity-read-notok) NOTOK=${2:?}; shift;; --checker-model) CHK=${2:?}; shift;; --fallback-note) FBNOTE=${2:?}; shift;;
+  --sanity-reading) READING=${2:?}; shift;; --checker-model) CHK=${2:?}; shift;; --fallback-note) FBNOTE=${2:?}; shift;;
   --fail-after) FAILAFTER=${2:?}; shift;; --plant-foreign) PFOREIGN=${2:?}; shift;; --plant-busy) PBUSY=${2:?}; shift;; --plant-stop) PSTOP=${2:?}; shift;;
-  --plant-write-bad) PWBAD=${2:?}; shift;; --plant-write-retry) PWRETRY=${2:?}; shift;; --plant-write-gate) PWGATE=${2:?}; shift;; --plant-check-bad) PCBAD=${2:?}; shift;;
-  *) echo "usage: scripts/m7_kb2.sh --sanity|--full [--sanity-read-notok N] [--dry-run --work DIR] (see the header)" >&2; exit 2;; esac
+  --plant-write-bad) PWBAD=${2:?}; shift;; --plant-write-retry) PWRETRY=${2:?}; shift;; --plant-write-gate) PWGATE=${2:?}; shift;; --plant-check-bad) PCBAD=${2:?}; shift;; --plant-wrong-model) PWRONG=${2:?}; shift;;
+  *) echo "usage: scripts/m7_kb2.sh --sanity|--full [--sanity-reading FILE] [--dry-run --work DIR] (see the header)" >&2; exit 2;; esac
   shift; done
 refuse() { echo "REFUSED: $1; nothing started" >&2; exit 2; }
+case "$W$REPORT$READING" in *[[:space:]]*) refuse "--work, --report and --sanity-reading take paths without white space";; esac   # unquoted paths below (review of f45dd13)
 R=scripts/m7_kb2_rule.py; N=m7_kb2; L=runs/m7/logs
 [ -n "$MODE" ] || refuse "--sanity or --full is required"
 case $CHK in "$GLM8") ;; "$GLM4") case "$FBNOTE" in *[![:space:]]*) ;; *) refuse "the checker $GLM4 needs --fallback-note (the conductor's note before the run)";; esac;; *) refuse "the checker is $GLM8 (or $GLM4 with --fallback-note)";; esac
 case $PBUSY in ''|*[!0-9]*) refuse "--plant-busy is a whole number";; esac
 if [ $DRY = no ]; then
-  [ -z "$FAILAFTER$PFOREIGN$PSTOP$PWBAD$PWRETRY$PWGATE$PCBAD" ] && [ "$PBUSY" = 0 ] || refuse "--fail-after and the --plant-* options are for dry runs only"
+  [ -z "$FAILAFTER$PFOREIGN$PSTOP$PWBAD$PWRETRY$PWGATE$PCBAD$PWRONG" ] && [ "$PBUSY" = 0 ] || refuse "--fail-after and the --plant-* options are for dry runs only"
 fi
 if [ $MODE = full ]; then
-  case $NOTOK in ''|*[!0-9]*) refuse "--full needs --sanity-read-notok N (how many of the 40 accepted entries the sanity reading rated not ok)";; esac
+  [ -n "$READING" ] || refuse "--full needs --sanity-reading FILE (the sanity reading's result)"
+  [ -s "$READING" ] || refuse "the sanity reading's result $READING is missing or empty"
 fi
 if [ $DRY = yes ]; then
   [ $WSET = yes ] || refuse "a dry run needs --work DIR (a folder of its own; the sanity and the full dry run share it)"
@@ -101,7 +109,9 @@ VOUT=$(mktemp "${TMPDIR:-/tmp}/m7_kb2_verify.XXXXXX")
 .venv/bin/python -m kafka_sre_rag verify > $VOUT 2>&1 || { cat $VOUT >&2; refuse "kafka_sre_rag verify failed (frozen index, prompts, reranker revision or catalogues)"; }
 rm -f $VOUT
 if [ $MODE = full ]; then
-  .venv/bin/python $R full-gate --sanity-result $W/sanity/sanity_result.json --read-notok "$NOTOK" || refuse "the full run's preconditions do not hold (see above)"
+  FGOUT=$(.venv/bin/python $R full-gate --sanity-result $W/sanity/sanity_result.json --sanity-dir $W/sanity --reading $READING --writer $DS --checker $CHK) \
+    || refuse "the full run's preconditions do not hold (see above)"
+  echo "$FGOUT"
   [ -f $W/sanity/stage_report.done ] || refuse "the sanity run has not finished (no $W/sanity/stage_report.done)"
 fi
 
@@ -144,6 +154,9 @@ server_gate() { # NEED clear|check: exit 2 on a refusal (the model named); with 
   for m in $(echo "$gout" | sed -n 's/^W16 //p'); do
     hb "$N ($MODE): W16: $m is loaded by another client and blocks this M7 chain; unloading it under W16 (the Owner's decision of 2026-11-24) once no request is active or waiting"
     unload_now $m "W16's unload of a foreign model (loaded by another client; MILESTONE.md W16)"; done
+  for m in $(echo "$gout" | sed -n 's/^ADOPT //p'); do
+    if [ ! -e $W/adopted_writer ]; then touch $W/adopted_writer
+      hb "$N ($MODE): $m is loaded by another client and is the model the writer needs: the writer uses that copy as it is, without this chain's marker, and leaves it loaded (W16 as the conductor read it; the checker stage unloads it under W16)"; fi; done
   return 0; }
 others() { pgrep -fl 'scripts/(m4|m5|m6|m7|s1)_[a-z0-9_]*\.sh|run_guarded\.py' | grep -v "$N" || true; }
 wait_others() { [ $DRY = yes ] && return 0
@@ -154,11 +167,23 @@ use_model() { # ROLE ID: the gate for this stage's model, then our marker (the m
   wait_others
   server_gate $2 clear || refuse_late "the server is not free for this chain (another client's model or request; see above)"
   server_gate $2 check || refuse_late "the server is not free for this chain after the unloads (see above)"
+  if [ "$1" = writer ] && [ -e $W/adopted_writer ] && [ ! -e $W/loaded_writer ]; then return 0; fi     # another client's copy, used as it is (no marker)
   if [ ! -e $W/loaded_$1 ]; then touch $W/loaded_$1; hb "$N ($MODE): loading $2 (the $1; marker $W/loaded_$1; it loads on the first request)"; fi
   [ $DRY = no ] || .venv/bin/python $R stub-load --file $STUB --model $2; }
-done_model() { # ROLE ID: unload our model after its stage
+refresh_marker() { # ROLE: after a stage's job ended (done or stopped, not refused): the marker's time moves past the load of the stage's first request,
+  # so that on a resume a later load (another client's) is seen as foreign by the gate
+  [ ! -e $W/loaded_$1 ] || touch $W/loaded_$1; }
+done_model() { # ROLE ID: unload our model after its stage; another client's adopted copy stays loaded
+  if [ "$1" = writer ] && [ -e $W/adopted_writer ] && [ ! -e $W/loaded_writer ]; then
+    hb "$N ($MODE): the writer is done; $2 (another client's copy, used without a marker) is left loaded"; rm -f $W/adopted_writer; return 0; fi
   if [ -e $W/loaded_$1 ] && [ "$(loaded $2)" = yes ]; then unload_now $2 "the $1 stage is done (this chain's model)"; fi
   rm -f $W/loaded_$1; }
+run_stage() { # ROLE NAME CMD...: the guarded job; exit 2 of the job (another model answered) is a refusal, never retried
+  role=$1; what=$2; shift 2
+  set +e; "$@"; rc=$?; set -e
+  [ $rc = 2 ] || refresh_marker $role
+  case $rc in 0) ;; 2) refuse_late "the $what was refused (see its log: the server answered with another model, or an input was refused); nothing is retried";;
+    *) fail "the $what stopped (see its log; run again to resume)";; esac; }
 
 if [ $DRY = yes ]; then     # the stub server's status lives in the dry run's own folder (the only thing written before the gate passes)
   mkdir -p $W; .venv/bin/python $R stub-status --file $STUB --init --loaded "$PFOREIGN" --busy $PBUSY
@@ -176,18 +201,19 @@ fi
 # the gate has passed: the work and log folders are written from here on
 mkdir -p $W $RW $L
 if [ $DRY = yes ]; then
-  export KB_STUB_WRITE_BAD="$PWBAD" KB_STUB_WRITE_RETRY="$PWRETRY" KB_STUB_WRITE_GATE="$PWGATE" KB_STUB_CHECK_BAD="$PCBAD" KB_STUB_STOP_AFTER="$PSTOP"
+  export KB_STUB_WRITE_BAD="$PWBAD" KB_STUB_WRITE_RETRY="$PWRETRY" KB_STUB_WRITE_GATE="$PWGATE" KB_STUB_CHECK_BAD="$PCBAD" KB_STUB_STOP_AFTER="$PSTOP" KB_STUB_WRONG_MODEL_AFTER="$PWRONG"
   G="scripts/run_guarded.py --other-retries 0"
 else
-  G="scripts/run_guarded.py --heartbeat runs/v3/HEARTBEAT.md --other-retries 2"
+  G="scripts/run_guarded.py --heartbeat runs/v3/HEARTBEAT.md --other-retries 0"     # no retry without the chain's server gate (review of f45dd13)
 fi
-PINS=; for f in $CHUNKS $REC kafka_sre_rag/kb_entry.py kafka_sre_rag/generators.py scripts/kb_slice.py scripts/kb_write_entries.py scripts/kb_check_entries.py \
+PINS=; for f in $CHUNKS $REC kafka_sre_rag/prompts.py kafka_sre_rag/kb_entry.py kafka_sre_rag/generators.py scripts/kb_slice.py scripts/kb_write_entries.py scripts/kb_check_entries.py \
                 scripts/run_guarded.py scripts/m7_kb2.sh $R; do PINS="$PINS --pin $f"; done
+RSHA=; [ -z "$READING" ] || RSHA=$(shasum -a 256 $READING | cut -d' ' -f1)
 GIT_HEAD=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
 gstate() { sub=$1; shift
   .venv/bin/python $R $sub --work $RW $PINS $([ $DRY = yes ] && echo --dry) --opt "mode=$MODE" --opt "writer=$DS" --opt "checker=$CHK" --opt "fallback_note=$FBNOTE" \
     --opt "writer_concurrency=$WCONC" --opt "checker_concurrency=$CCONC" --opt "writer_max_tokens=$WMAX" --opt "checker_max_tokens=$CMAX" \
-    --opt "sanity_read_notok=$NOTOK" --info "git_head=$GIT_HEAD" "$@"; }
+    --opt "sanity_reading_sha256=$RSHA" --info "git_head=$GIT_HEAD" "$@"; }
 SCOUT=$(mktemp "${TMPDIR:-/tmp}/m7_kb2_startcheck.XXXXXX")
 if ! gstate start-check > $SCOUT 2>&1; then cat $SCOUT >&2; rm -f $SCOUT; moveaside; refuse "the start check failed (see above; nothing was moved or deleted)"; fi
 cat $SCOUT; rm -f $SCOUT
@@ -244,8 +270,8 @@ if ! stage_done write; then
   recheck write
   use_model writer $DS
   hb "$N ($MODE): the writer starts ($SEL windows; log $L/$N.$MODE.write.log)"
-  $G --log $L/$N.$MODE.write.log --stall-min 20 -- .venv/bin/python scripts/kb_write_entries.py --slice $SLICE --record $REC --select $SEL --out-dir $RW \
-     --model $DS $BACK --concurrency $WCONC --max-tokens $WMAX --done $WDONE $REUSE || fail "the writer stopped (see $L/$N.$MODE.write.log; run again to resume)"
+  run_stage writer "writer ($L/$N.$MODE.write.log)" $G --log $L/$N.$MODE.write.log --stall-min 20 -- .venv/bin/python scripts/kb_write_entries.py --slice $SLICE \
+     --record $REC --select $SEL --out-dir $RW --model $DS $BACK --concurrency $WCONC --max-tokens $WMAX --done $WDONE $REUSE
   tail -n 1 $L/$N.$MODE.write.log
   done_model writer $DS
   mark write $RW/windows.jsonl $RW/entries_raw.jsonl $RW/entries_gate_rejects.jsonl $WDONE
@@ -259,8 +285,8 @@ if ! stage_done check; then
   use_model checker $CHK
   hb "$N ($MODE): the checker starts (log $L/$N.$MODE.check.log)"
   FBA=; [ -z "$FBNOTE" ] || FBA="--fallback-note"
-  $G --log $L/$N.$MODE.check.log --stall-min 20 -- .venv/bin/python scripts/kb_check_entries.py --slice $SLICE --record $REC --write-dir $RW --write-done $WDONE \
-     --out-dir $RW --model $CHK ${FBA:+$FBA "$FBNOTE"} $BACK --concurrency $CCONC --max-tokens $CMAX --done $CDONE $CREUSE || fail "the checker stopped (see $L/$N.$MODE.check.log; run again to resume)"
+  run_stage checker "checker ($L/$N.$MODE.check.log)" $G --log $L/$N.$MODE.check.log --stall-min 20 -- .venv/bin/python scripts/kb_check_entries.py --slice $SLICE \
+     --record $REC --write-dir $RW --write-done $WDONE --out-dir $RW --model $CHK ${FBA:+$FBA "$FBNOTE"} $BACK --concurrency $CCONC --max-tokens $CMAX --done $CDONE $CREUSE
   tail -n 1 $L/$N.$MODE.check.log
   done_model checker $CHK
   mark check $RW/check_windows.jsonl $RW/checks.jsonl $CDONE
@@ -270,7 +296,8 @@ fi
 # ---------------------------------------------------------------- CPU stages
 if [ $MODE = sanity ]; then
   if ! stage_done rule; then
-    .venv/bin/python $R sanity-rule --write-dir $RW --check-dir $RW --concurrency $WCONC --out $RW/sanity_result.json > $RW/sanity_rule.txt || fail "the sanity rule could not be computed"
+    set +e; .venv/bin/python $R sanity-rule --write-dir $RW --check-dir $RW --concurrency $WCONC --writer $DS --checker $CHK --out $RW/sanity_result.json > $RW/sanity_rule.txt; rc=$?; set -e
+    [ $rc -le 1 ] || fail "the sanity rule could not be computed"     # 1: the rule failed (recorded; the chain stops after the report)
     cat $RW/sanity_rule.txt
     .venv/bin/python $R reading-sample --write-dir $RW --check-dir $RW --slice $SLICE --record $REC --out-dir $RW/reading > $RW/reading_sample.txt || fail "the reading sample could not be drawn"
     cat $RW/reading_sample.txt
@@ -302,7 +329,7 @@ if ! stage_done report; then
       echo; echo '```'; cat $RW/sanity_rule.txt; echo '```'; echo
       echo "Reading sample: \`$RW/reading/sanity_reading.md\` (blind; the checker's verdicts in \`sanity_reading_key.json\`). $(cat $RW/reading_sample.txt)"
     else
-      echo "The sanity reading rated $NOTOK of 40 accepted entries not ok (given to the run; at most 4)."
+      echo "Sanity reading: \`$READING\` (sha256 \`$RSHA\`). $FGOUT."
       echo; echo '```'; cat $RW/index.txt; cat $RW/audit.txt; echo '```'; echo
       echo "Accepted entries: \`$W/entries_index.jsonl\`. The audit (at least 190 of 200 ok) is a reading session; its bundles are in \`$RW/audit/\`."
     fi
@@ -312,6 +339,9 @@ if ! stage_done report; then
   mark report $PART
 fi
 assemble
+if [ $MODE = sanity ] && ! .venv/bin/python -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1]))["mechanical_pass"] else 1)' $RW/sanity_result.json; then
+  fail "the sanity run failed its rule (see $REPORT): rework the prompt (new version, new sanity run); a second failed sanity run stops the pilot until the conductor has seen it"
+fi
 if [ ! -f $L/$N.$MODE.done ]; then
   echo "$MODE done; report $REPORT" > $L/$N.$MODE.done
   hb "$N ($MODE): done; report $REPORT$([ $MODE = sanity ] && echo '; the sanity reading waits (Claude readers, W18)')"

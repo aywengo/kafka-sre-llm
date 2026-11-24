@@ -12,7 +12,7 @@ Spec: runs/m7/reports/kb2_design.md sections 1 to 3 (and 5 for the rendered form
 
 The gate (section 3): schema and size limits; every quote a substring of its chunk after whitespace normalisation; quote
 ids within the window and within the sources; every source quoted; the target chunk quoted; every number and every
-identifier-like token of the statement and of applies_when occurs in a quote; the rendered form within its cap.
+identifier-like token of the title, the statement and applies_when occurs in a quote; the rendered form within its cap.
 """
 import hashlib
 import json
@@ -176,7 +176,7 @@ def gate_entry(e, window, target):
     if target not in {x["chunk"] for x in e["quotes"]}:
         bad.append("no quote from the target chunk")
     qtext = " \n ".join(norm_ws(x["text"]) for x in e["quotes"])
-    for field in ("statement", "applies_when"):
+    for field in ("title", "statement", "applies_when"):     # the title goes into the pack too (review of f45dd13)
         for t in identifier_tokens(e.get(field) or ""):
             if not token_in(t, qtext):
                 bad.append(f"{field}: {t!r} is in no quote")

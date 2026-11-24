@@ -2,7 +2,7 @@
 """M7 KB phase 2, I2: the independent check of the gated entries (runs/m7/reports/kb2_design.md section 4). One call per window.
 
 The checker model (GLM-5.3-Flash-oQ8e-mtp, the judge build, not the writer; thinking off, temperature 0) sees the window's
-chunks as the model receives them and the window's gated entries (statement, applies_when, quotes); not the writer's prompt.
+chunks as the model receives them and the window's gated entries (title, statement, applies_when, quotes); not the writer's prompt.
 It gives one verdict per entry: ok, partial, wrong or unsupported, with a short reason. An unparsable or incomplete reply is
 retried once (temperature 0.3); entries still without a verdict are "unchecked". Only "ok" entries enter the index.
 
@@ -19,7 +19,7 @@ done writes nothing. --reuse DIR copies the rows of an earlier check folder (the
 version, checker and entry ids are the same. --backend stub: an in-process stub server (plants from the environment: KB_STUB_CHECK_BAD target ids
 whose replies never parse; KB_STUB_CHECK_PARTIAL target ids whose first entry is rated partial; an entry id ending in 0 is
 rated partial).
-Exit: 0 done; 1 a server or input error (resumable); 2 refused.
+Exit: 0 done; 1 a server or input error (resumable); 2 refused (also: the server answered with another model; never retried).
 """
 import argparse
 import concurrent.futures as cf
@@ -45,7 +45,7 @@ FILES = ("check_windows.jsonl", "checks.jsonl")
 
 
 def entry_lines(entries):
-    return "\n".join(json.dumps({"id": e["id"], "statement": e["statement"], **({"applies_when": e["applies_when"]} if e.get("applies_when") else {}),
+    return "\n".join(json.dumps({"id": e["id"], "title": e["title"], "statement": e["statement"], **({"applies_when": e["applies_when"]} if e.get("applies_when") else {}),
                                  "quotes": e["quotes"]}, ensure_ascii=False) for e in entries)
 
 
@@ -87,8 +87,7 @@ def check_window(client, win, entries, max_tokens):
         r = client.chat(msgs, max_tokens, temperature=temp)
         tokens += r["tokens"]
         v = parse_verdicts(W.parse_json(r["text"]), ids)
-        if len(v) >= len(got):
-            got = v if attempts == 1 else {**got, **v}
+        got = {**v, **got}     # a verdict of the first reply is never replaced by the retry's; the retry only fills gaps
         if len(got) == len(ids):
             break
     return got, attempts, round(time.monotonic() - t0, 2), tokens
@@ -220,7 +219,9 @@ def main(argv=None):
                 try:
                     got, attempts, secs, tokens = fu.result()
                 except W.ServerError as e:
-                    err = err or e
+                    err = e if err is None or (isinstance(e, W.WrongModel) and not isinstance(err, W.WrongModel)) else err
+                    ex.shutdown(wait=False, cancel_futures=True)      # no new call after a server error
+                    print(f"[check] -/{n_total} {w} SERVER ERROR ({e}); not written", flush=True)
                     continue
                 rows = []
                 for e in by_win[w]:
@@ -234,6 +235,9 @@ def main(argv=None):
                 k = append(rows, wrow)
                 print(f"[check] {k}/{n_total} {w} entries={len(rows)} " + " ".join(f"{x}={cnt[x]}" for x in cnt)
                       + f" {secs}s tokens={tokens}" + (" retried" if attempts > 1 else ""), flush=True)
+        if isinstance(err, W.WrongModel):
+            print(f"REFUSED: {err}; another client changed the server; the windows checked so far are kept (the chain's server gate decides)", file=sys.stderr)
+            return 2
         if err:
             print(f"ERROR: {err}; the windows checked so far are kept (resume by running again)", file=sys.stderr)
             return 1
