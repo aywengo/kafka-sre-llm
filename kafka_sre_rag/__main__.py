@@ -48,6 +48,15 @@ def mark_option(p):
                         "no measure of harm. The answer is printed when it is complete (not streamed)")
 
 
+def lookup_option(p):
+    p.add_argument("--lookup-cards", action="store_true",
+                   help="EXPERIMENTAL and UNMEASURED, off by default (M7 KA1): add reference cards to the prompt, one block "
+                        "after the excerpts: the exact facts of the pinned catalogues (type, default, valid values, "
+                        "options, fields, errors) for the names in the question and in the search terms, with their pin. "
+                        "No extra model call; the lookup takes milliseconds. Needs the catalogues (--catalogues DIR or "
+                        "work/m4/catalogues; python scripts/build_catalogues.py). Not available with --service-url or serve")
+
+
 def answer_profile_options(p):
     p.add_argument("--answer-profile", choices=["thorough"], default=None,
                    help="EXPERIMENTAL and UNMEASURED, off by default: thorough = the draft is written with thinking on, "
@@ -144,6 +153,7 @@ def build_parser():
     a.add_argument("question")
     common(a)
     mark_option(a)
+    lookup_option(a)
     answer_profile_options(a)
     a.add_argument("--stream", action="store_true",
                    help="print the answer as it is generated (a <think> block is not shown); the sources follow")
@@ -154,6 +164,7 @@ def build_parser():
                                     "(no conversation history is sent; multi-turn is unmeasured)")
     common(c)
     mark_option(c)
+    lookup_option(c)
     answer_profile_options(c)
     sv = sub.add_parser("serve", help="long-running local service, OpenAI-compatible, loopback only")
     common(sv)
@@ -319,6 +330,8 @@ def run_one(question, gen, cfg, a, checker=None):
         stream = None if not live else (lambda t: print(t, end="", flush=True))
     kw = dict(k=a.k, mode=a.mode, on_token=stream, rerank=not (a.dry_run and a.no_rerank_in_dry_run),
               max_tokens=a.max_tokens)
+    if getattr(a, "lookup_cards", False):  # off: the call stays exactly as it was
+        kw.update(lookup_cards=True, lookup_kb=a.lookup_kb)
     if thorough is not None:  # off: the call stays exactly as it was
         if thorough.verify and thorough.cards and getattr(a, "thorough_kb", None) is None:  # loaded once (chat)
             from .kb_lookup import KbLookup
@@ -360,6 +373,8 @@ def run_one(question, gen, cfg, a, checker=None):
         out.update(ans.profile_fields)  # nothing for frozen
         if mark_d:
             out["destructive_marks"] = n_marks
+        if ans.lookup is not None:
+            out["lookup_cards"] = ans.lookup
         if ans.thorough is not None:
             from . import verify_pass
             # one name per text (review note): first_pass_text is the draft, as in the harness's rows; checked_text is
@@ -430,6 +445,9 @@ def main(argv=None):
         print(f"error: --mode {a.mode} cannot be used with serve: the service has no grounded mode "
               "(a request would be answered in the default mode)", file=sys.stderr)
         return 2
+    if a.cmd == "ask" and a.service_url and a.lookup_cards:
+        print("error: --lookup-cards is not available with --service-url: the service has no lookup cards", file=sys.stderr)
+        return 2
     if a.cmd == "ask" and a.service_url and a.mark_destructive:
         print("error: --mark-destructive is not available with --service-url", file=sys.stderr)
         return 2
@@ -473,6 +491,15 @@ def main(argv=None):
         try:
             a.thorough_checker = checker or service.AnswerChecker(a.catalogues)
         except service.CatalogueError as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 2
+    a.lookup_kb = None
+    if getattr(a, "lookup_cards", False):  # EXPERIMENTAL: the lookup needs the catalogues; loaded once (hash checked)
+        try:
+            from .kb_lookup import CatalogueHashError, KbLookup
+            ck = checker or a.thorough_checker or service.AnswerChecker(a.catalogues)
+            a.lookup_kb = KbLookup(ck.cats, ck.directory, verify=True)
+        except (service.CatalogueError, CatalogueHashError) as e:
             print(f"error: {e}", file=sys.stderr)
             return 2
     cfg = config.load()

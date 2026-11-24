@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from . import config, profiles, prompts
 
 GROUNDED_MODES = tuple(prompts.GROUNDED)  # EXPERIMENTAL: grounded-g1, grounded-g2
+LOOKUP_REASON = "lookup cards (EXPERIMENTAL, unmeasured: reference cards of the question's names after the excerpts)"
 
 
 @dataclass
@@ -20,6 +21,7 @@ class Answer:
     messages: list = field(default_factory=list)
     profile_fields: dict = field(default_factory=dict)  # {} for frozen; retrieval_profile, settings hash, measured False
     thorough: dict = None  # EXPERIMENTAL answer profile only: first_pass_text, record, draft_info, seconds; else None
+    lookup: dict = None  # EXPERIMENTAL lookup cards only: cards_found, cards, chars, seconds, catalogue_sha256; else None
 
 
 def is_reference(gen, cfg):
@@ -32,8 +34,10 @@ def is_reference(gen, cfg):
 
 
 def ask(question, gen, cfg=None, *, k="k6", mode="default", index_path=None, on_token=None, rerank=True,
-        max_tokens=None, profile="frozen", thorough=None, thorough_checker=None, kb=None):
-    """thorough: a verify_pass.Profile (EXPERIMENTAL answer profile, off by default) with thorough_checker a
+        max_tokens=None, profile="frozen", thorough=None, thorough_checker=None, kb=None, lookup_cards=False, lookup_kb=None):
+    """lookup_cards: EXPERIMENTAL (M7 KA1), off by default: the reference cards of the names in the question and the search
+    terms follow the excerpts in the prompt (lookup_kb: a kb_lookup.KbLookup, or None for the shared one).
+    thorough: a verify_pass.Profile (EXPERIMENTAL answer profile, off by default) with thorough_checker a
     service.AnswerChecker; the answer is then not streamed (on_token must be None)."""
     t_start = time.monotonic()
     if thorough is not None and (on_token is not None or thorough_checker is None):
@@ -60,6 +64,8 @@ def ask(question, gen, cfg=None, *, k="k6", mode="default", index_path=None, on_
         reasons.append(f"max_tokens override {max_tokens}")
     if thorough is not None:
         reasons.append(thorough.unmeasured_reason())
+    if lookup_cards:
+        reasons.append(LOOKUP_REASON)
     t0 = time.monotonic()
     if thorough is None:
         exp, _, _ = gen.chat(prompts.expand_messages(question), max_tokens or cfg["expansion"]["max_tokens"])
@@ -70,10 +76,14 @@ def ask(question, gen, cfg=None, *, k="k6", mode="default", index_path=None, on_
     sel_kw = {} if profile == "frozen" else {"profile": profile}  # frozen call stays exactly as it was
     chunks = retrieval.select(question, exp, k=k, index_path=index_path, rerank=rerank, **sel_kw)
     t2 = time.monotonic()
+    cards_text, lookup = None, None
+    if lookup_cards:  # off: the prompt stays byte for byte as it was
+        from . import kb_lookup
+        cards_text, lookup = kb_lookup.answer_block(question, exp, kb=lookup_kb)
     if mode in GROUNDED_MODES:
-        msgs = prompts.grounded_answer_messages(question, chunks, mode)
+        msgs = prompts.grounded_answer_messages(question, chunks, mode, cards_text=cards_text or None)
     else:
-        msgs = prompts.answer_messages(question, chunks, strict=(mode == "strict"))
+        msgs = prompts.answer_messages(question, chunks, strict=(mode == "strict"), cards_text=cards_text or None)
     th = None
     if thorough is None:
         text, toks, trunc = gen.chat(msgs, max_tokens or cfg["answer"]["max_tokens"], on_token)
@@ -86,8 +96,10 @@ def ask(question, gen, cfg=None, *, k="k6", mode="default", index_path=None, on_
     sources = [{"source": c["source"], "title": c["title"], "path": c["path"],
                 "bm25_rank": c.get("bm25_rank"), "ce_score": c.get("ce_score")} for c in chunks]
     timings = {"expand_s": t1 - t0, "retrieve_s": t2 - t1, "answer_s": t3 - t2}
+    if lookup is not None:
+        timings["lookup_s"] = lookup["seconds"]
     if th is not None:
         timings.update(draft_s=th["seconds"]["draft"], thinking_s=th["seconds"]["thinking"],
                        check_s=th["seconds"]["check"])
     return Answer(text, sources, exp, timings,
-                  not reasons, toks, trunc, reasons, msgs, profiles.manifest_fields(profile), th)
+                  not reasons, toks, trunc, reasons, msgs, profiles.manifest_fields(profile), th, lookup)

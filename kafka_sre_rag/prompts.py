@@ -52,20 +52,23 @@ def pack_text(chunks):
     return "\n\n".join(parts)
 
 
-def user_message(question, chunks=None, *, strict=False, thorough=False, rules=False):
-    """chunks None = closed-book (the bare question). strict and rules only apply with chunks."""
+def user_message(question, chunks=None, *, strict=False, thorough=False, rules=False, cards_text=None):
+    """chunks None = closed-book (the bare question). strict and rules only apply with chunks.
+    cards_text (M7 KA1, EXPERIMENTAL): the rendered lookup cards, one block after the excerpts; None or "" = nothing."""
     user = question
     if chunks is not None:
         user = (INSTRUCTION + (" " + STRICT if strict else "") + (" " + RULES if rules else "")
-                + "\n\n" + pack_text(chunks) + f"\n\nQuestion: {question}")
+                + "\n\n" + pack_text(chunks) + ("\n\n" + cards_text if cards_text else "")
+                + f"\n\nQuestion: {question}")
     if thorough:
         user += "\n\n" + THOROUGH
     return user
 
 
-def answer_messages(question, chunks, *, strict=False, thorough=False, rules=False):
+def answer_messages(question, chunks, *, strict=False, thorough=False, rules=False, cards_text=None):
     return [{"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_message(question, chunks, strict=strict, thorough=thorough, rules=rules)}]
+            {"role": "user", "content": user_message(question, chunks, strict=strict, thorough=thorough, rules=rules,
+                                                     cards_text=cards_text)}]
 
 
 def expand_messages(question):
@@ -155,18 +158,19 @@ GROUNDED_G3 = (
 GROUNDED["grounded-g3"] = GROUNDED_G3
 
 
-def grounded_user_message(question, chunks, variant):
-    """INSTRUCTION, the pack, the question, then the grounded text. Needs excerpts (no closed-book form)."""
+def grounded_user_message(question, chunks, variant, cards_text=None):
+    """INSTRUCTION, the pack, (the lookup cards,) the question, then the grounded text. Needs excerpts (no closed-book form)."""
     if chunks is None:
         raise ValueError("a grounded mode needs excerpts; it has no closed-book form")
     if variant not in GROUNDED:
         raise ValueError(f"variant must be one of {sorted(GROUNDED)}, got {variant!r}")
-    return (INSTRUCTION + "\n\n" + pack_text(chunks) + f"\n\nQuestion: {question}" + "\n\n" + GROUNDED[variant])
+    return (INSTRUCTION + "\n\n" + pack_text(chunks) + ("\n\n" + cards_text if cards_text else "")
+            + f"\n\nQuestion: {question}" + "\n\n" + GROUNDED[variant])
 
 
-def grounded_answer_messages(question, chunks, variant):
+def grounded_answer_messages(question, chunks, variant, cards_text=None):
     return [{"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": grounded_user_message(question, chunks, variant)}]
+            {"role": "user", "content": grounded_user_message(question, chunks, variant, cards_text)}]
 
 
 # M7 P1 (EXPERIMENTAL, unmeasured): the checking pass of the thorough profile (kafka_sre_rag/verify_pass.py). Added after
@@ -218,3 +222,13 @@ VERIFY_PROMPT_CARDS = (
     + "Reference cards from the pinned catalogues for names the draft uses (exact facts; empty if none):\n\n<<CARDS>>\n\n"
     + _VERIFY_CASES + _VERIFY_CASE1_CARDS + _VERIFY_TAIL)
 del _VERIFY_HEAD, _VERIFY_CASES, _VERIFY_CASE1, _VERIFY_CASE1_CARDS, _VERIFY_TAIL
+
+
+# M7 KA1 (EXPERIMENTAL, unmeasured, off by default): the lookup cards of an answer prompt (kafka_sre_rag/kb_lookup.py,
+# answer_block). One block after the excerpts, under this heading; the cards are catalogue facts with their pin. The block is
+# left out when there is no card. The hash of this constant is in tests/test_lookup_cards.py; it is no part of
+# the measured configuration (not in frozen.json). No text of any evaluation item.
+LOOKUP_CARDS_HEADER = (
+    "REFERENCE CARDS from the pinned catalogues (exact names, defaults and values; these are not documentation "
+    "excerpts). Use them for the exact name, default or value of what they list. A name without a card is not "
+    "thereby wrong: the catalogues can be incomplete.")

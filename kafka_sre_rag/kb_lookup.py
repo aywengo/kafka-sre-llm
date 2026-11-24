@@ -18,6 +18,7 @@ No network, no model, no file written.
 import json
 import re
 import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
@@ -85,8 +86,7 @@ def _cap_lines(card: Card, limit: int = MAX_CARD_CHARS) -> Card:
 
 class KbLookup:
     def __init__(self, cats: Catalogues, directory=None, verify: bool = True):
-        if verify:
-            self._verify(Path(directory) if directory else default_dir())
+        self.catalogue_sha256 = self._verify(Path(directory) if directory else default_dir()) if verify else None
         self.cats = cats
         self.checker = Checker(cats)
         self._lc_keys = {k.lower(): k for k in cats._config}
@@ -109,11 +109,14 @@ class KbLookup:
         now = catalogue_hash(directory)
         if rec != now:
             raise CatalogueHashError("catalogue hash %s is not the recorded %s" % (now[:12], rec[:12]))
+        return now
 
     # ------------------------------------------------------------------ public
-    def cards(self, text: str, sources: Sequence[str] = SOURCES) -> List[Card]:
+    def cards(self, text: str, sources: Sequence[str] = SOURCES, terms: str = "") -> List[Card]:
+        """terms: the comma-separated search terms of the question (profiles source only; as profiles.Lookup
+        reads them). "" changes nothing."""
         out: Dict[tuple, Tuple[int, Card]] = {}
-        low = text.lower()
+        low = (text + "\n" + terms).lower() if terms else text.lower()
 
         def at(*names):
             ps = [low.find(str(n).lower()) for n in names if n]
@@ -128,7 +131,7 @@ class KbLookup:
             for it in self.checker.extract(text):
                 self._from_item(it, add)
         if "profiles" in sources:
-            for name in _ProfileLookup.identifiers(text, ""):
+            for name in _ProfileLookup.identifiers(text, terms):
                 self._from_name(name, add)
         # order of first mention in the text (stable: ties keep the extractor order)
         return [c for _, c in sorted(out.values(), key=lambda x: x[0])]
@@ -372,17 +375,38 @@ def _history_line(h: dict) -> str:
 
 
 # ---------------------------------------------------------------------------------------- module level
-def render(cards: Sequence[Card], max_chars: int = DEFAULT_MAX_CHARS) -> str:
-    """One block: the header, then whole cards in the given order (order of first mention). A card that does not
-    fit in what is left is skipped and later, smaller cards may still fit. "" when no card fits."""
-    out, used = [], len(HEADER) + 1
+def render_counted(cards: Sequence[Card], max_chars: int = DEFAULT_MAX_CHARS, header: str = HEADER) -> Tuple[str, int]:
+    """(block, number of cards in it). The block is the header, then whole cards in the given order (order of first
+    mention). A card that does not fit in what is left is skipped and later, smaller cards may still fit. ("", 0)
+    when no card fits: nothing, not even the header, is then produced."""
+    out, used = [], len(header) + 1
     for c in cards:
         t = c.text()
         if used + len(t) + 1 > max_chars:
             continue
         out.append(t)
         used += len(t) + 1
-    return HEADER + "\n" + "\n".join(out) if out else ""
+    return (header + "\n" + "\n".join(out), len(out)) if out else ("", 0)
+
+
+def render(cards: Sequence[Card], max_chars: int = DEFAULT_MAX_CHARS) -> str:
+    return render_counted(cards, max_chars)[0]
+
+
+def answer_block(question: str, terms: str = "", *, kb: Optional[KbLookup] = None,
+                 max_chars: int = DEFAULT_MAX_CHARS, header: Optional[str] = None) -> Tuple[str, dict]:
+    """M7 KA1: the lookup cards of an ANSWER prompt: the identifiers of the question and of the frozen search terms
+    (`profiles` source), rendered under the header of prompts.LOOKUP_CARDS_HEADER within `max_chars` (header
+    included). Returns (block, info); block is "" when no card was found or fits (no heading then). info:
+    cards_found, cards (in the block), chars, seconds (the whole lookup), catalogue_recorded_sha256 (the catalogue hash
+    recorded in CATALOGUES.json and checked at load; not the hash of the directory files that eval2 puts in its manifest)."""
+    from . import prompts
+    t0 = time.monotonic()
+    kb = kb or get()
+    found = kb.cards(question, ("profiles",), terms or "")
+    block, n = render_counted(found, max_chars, header if header is not None else prompts.LOOKUP_CARDS_HEADER)
+    return block, {"cards_found": len(found), "cards": n, "chars": len(block),
+                   "seconds": round(time.monotonic() - t0, 6), "catalogue_recorded_sha256": kb.catalogue_sha256}
 
 
 _kb: Optional[KbLookup] = None
