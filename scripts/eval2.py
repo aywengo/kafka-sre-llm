@@ -452,6 +452,8 @@ def build_manifest(a, gen, cfg, items_file, n_items, subset, replay_info):
     thorough = thorough_profile(a)
     if thorough is not None:
         reasons.append(thorough.unmeasured_reason())
+    if getattr(a, "lookup_cards", False):
+        reasons.append(pipeline.LOOKUP_REASON)
     m = {
         "harness": "eval2", "config": a.config, "backend": ident.get("backend"),
         "model_requested": ident.get("model"),
@@ -484,6 +486,12 @@ def build_manifest(a, gen, cfg, items_file, n_items, subset, replay_info):
     m.update(profiles.manifest_fields(profile))  # nothing is added for the frozen profile
     if thorough is not None:  # nothing is added without the answer profile
         m["answer_profile"] = thorough.manifest()
+    if getattr(a, "lookup_cards", False):  # nothing is added without the lookup cards (M7 KA1)
+        from kafka_sre_rag import kb_lookup, prompts
+        m["lookup_cards"] = {"enabled": True, "sources": ["profiles"], "terms": "frozen search terms of the run",
+                             "max_chars": kb_lookup.DEFAULT_MAX_CHARS, "place": "after the excerpts, before the question",
+                             "header_sha256": sha256_bytes(prompts.LOOKUP_CARDS_HEADER.encode("utf-8")),
+                             "catalogue_sha256": m["catalogue_sha256"]}
     rec = items_files_record(items_file)
     if rec is not None:
         m["items_files"] = rec
@@ -790,6 +798,8 @@ def cmd_answer(a, out=sys.stdout):
     if getattr(a, "revise_from", None):
         if getattr(a, "answer_profile", None):
             raise EvalError("--answer-profile cannot be used with --revise-from (use python -m kafka_sre_rag.verify_pass run)")
+        if getattr(a, "lookup_cards", False):
+            raise EvalError("--lookup-cards cannot be used with --revise-from")
         return cmd_revise(a, out)
     if not a.out:
         raise EvalError("--out is required")
@@ -846,6 +856,19 @@ def cmd_answer(a, out=sys.stdout):
     elif (getattr(a, "no_thinking", False) or getattr(a, "no_verify", False) or getattr(a, "no_cards", False)
           or getattr(a, "think_cap", None) is not None):
         raise EvalError("--no-thinking, --no-verify, --no-cards and --think-cap need --answer-profile thorough")
+    lookup_kb = None
+    if getattr(a, "lookup_cards", False):  # EXPERIMENTAL (M7 KA1): the lookup cards after the excerpts; the catalogues are hashed into the manifest
+        if closed:
+            raise EvalError("--lookup-cards needs excerpts; it cannot be used with --mode closed")
+        if not a.catalogue:
+            raise EvalError("--lookup-cards needs --catalogue DIR (the catalogues the cards are read from)")
+        from kafka_sre_rag import service
+        from kafka_sre_rag.kb_lookup import CatalogueHashError, KbLookup
+        try:
+            ck = th_kw.get("thorough_checker") or service.AnswerChecker(a.catalogue)
+            lookup_kb = KbLookup(ck.cats, ck.directory, verify=True)   # loaded once for the run (hash checked)
+        except (service.CatalogueError, CatalogueHashError) as e:
+            raise EvalError(str(e))
     replay, replay_info = None, None
     if a.replay_packs:
         if is_hidden(a.replay_packs) != hidden:
@@ -896,11 +919,14 @@ def cmd_answer(a, out=sys.stdout):
         try:
             r = evalhooks.run_item(full_question(it), rec, cfg, k=a.k, mode=a.mode, rerank=not a.no_rerank,
                                    max_tokens=a.max_tokens, pack_ids=None if replay is None else replay[it["id"]],
-                                   **({} if profile == "frozen" else {"profile": profile}), **th_kw)
+                                   **({} if profile == "frozen" else {"profile": profile}), **th_kw,
+                                   **({} if lookup_kb is None else {"lookup_kb": lookup_kb}))
             row.update(text=r["text"], tokens=r["tokens"] or None, truncated=r["truncated"],
                        seconds=r["seconds"], search_terms=r["search_terms"], pack=r["pack"])
             if "thorough" in r:
                 row.update(thorough_row(r))
+            if "lookup" in r:   # M7 KA1: cards found and in the block, their characters, the lookup's seconds
+                row["lookup"] = r["lookup"]
             row["prompt_sha256"], row["prompt_chars"] = messages_fingerprint(r["messages"])
             if rec.expand_messages is not None:
                 row["search_terms_prompt_sha256"], row["search_terms_prompt_chars"] = messages_fingerprint(rec.expand_messages)
@@ -1107,6 +1133,10 @@ def build_parser():
                     help="EXPERIMENTAL, unmeasured: the draft with thinking on, then the checking pass "
                          "(kafka_sre_rag/verify_pass.py); needs --catalogue. Rows then also carry first_pass_text, "
                          "tokens_detail, the pass's record (thorough) and seconds draft, thinking and check")
+    an.add_argument("--lookup-cards", action="store_true",
+                    help="EXPERIMENTAL, unmeasured, off by default (M7 KA1): reference cards of the catalogues for the names in the "
+                         "question and the search terms, one block after the excerpts. Needs --catalogue DIR; the manifest records "
+                         "the option and the catalogue hash, each row the cards, their characters and the lookup's seconds")
     an.add_argument("--no-thinking", action="store_true", help="with --answer-profile: check only (draft without thinking)")
     an.add_argument("--no-verify", action="store_true", help="with --answer-profile: thinking only (no checking pass)")
     an.add_argument("--no-cards", action="store_true", help="with --answer-profile: no reference cards in the check")
