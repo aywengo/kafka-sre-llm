@@ -12,7 +12,7 @@ Earlier tracking documents: `milestones/M6.md` (decisions S1 to S8, U1, U2; the 
 look's rule; the covering test), `milestones/M5.md` (P, Q) and `milestones/M4.md` (J to N).
 Their decisions stay in force where this file does not change them.
 
-Last updated: 2026-11-24 (K5 and K6 done).
+Last updated: 2026-11-25 (Z3 done).
 
 ## What this milestone is for
 
@@ -38,7 +38,7 @@ The base model stays Qwen3.8-27B at 4-bit.
 |---|---|---|---|
 | Z1 | The test on D5 | Run; readers within 30 %; the outcome table of `agents/m7-plan.md` section 3 applied | open |
 | Z2 | Thorough profile | A hidden look on the new hidden part (h6) with M6's rule (wrong statements: upper end of the 90 % interval below 0; coverage at least −0.04 and lower end above −0.10; harmful at most the reference's + 3; mechanical lower end above −3 points; wrong declines at most 1 in 10), plus median at most 180 s, 90th percentile at most 300 s, at most 10 % of answers cut | open |
-| Z3 | Lookup from the catalogues | Nonexistent identifiers below the arm without it; mechanical lower end above −3 points; at most 1 s added; the mechanical tier reported with and without the lookup (V7) | open |
+| Z3 | Lookup from the catalogues | Nonexistent identifiers below the arm without it; mechanical lower end above −3 points; at most 1 s added; the mechanical tier reported with and without the lookup (V7) | **Gemma 31B pass, Qwen fail** 2026-11-25 (`runs/m7/M7_KA2.md`, D5 50 + mechanical 116, paired against stored arm A): Gemma 31B identifiers -0.80 per 10 (upper end -0.01), mechanical +15.5 points (lower end +9.6), +0.29 s; Qwen fails the identifier bar only (-0.20 per 10, interval -1.30 to +0.90), mechanical +10.3 points (lower end +4.5), -0.90 s, coverage +0.057 (reported). The cards stay off by default; using them on Gemma 31B waits for W10 |
 | Z4 | Fact entries (only if the test supports them) | 95 % on an independent check; strict served count +15 points over frozen on a new batch, nothing lost | open |
 | Z5 | `GOAL.md` | The thorough profile's wording recorded as proposed (done 2026-11-23, commit `674be04`); agreed after Z2 | proposed |
 
