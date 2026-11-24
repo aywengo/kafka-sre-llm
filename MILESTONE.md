@@ -12,7 +12,7 @@ Earlier tracking documents: `milestones/M6.md` (decisions S1 to S8, U1, U2; the 
 look's rule; the covering test), `milestones/M5.md` (P, Q) and `milestones/M4.md` (J to N).
 Their decisions stay in force where this file does not change them.
 
-Last updated: 2026-11-23, 13:28 (the first version, at the handover).
+Last updated: 2026-11-24, 03:48 (K5 running).
 
 ## What this milestone is for
 
@@ -144,7 +144,7 @@ medians: about 17 h); 900 judge calls; about 25 first-reader and 7 second-reader
 | K3, P2, P3 | The pilot chain and its scoring | **run** 2026-11-23 (third attempt; two earlier stops fixed: `936964b`, `045e34e`). Thinking: 20 of 20 drafts unusable at a 1,500-token cap and again at 8,000 (19 used the whole limit, about 306 s each at 8,000; one, b2-09, stopped at 7,136 tokens with reasoning text as its answer). The checking pass on 250 stored drafts (V1) and 190 (V1C), scored by hand with `m7_pilot_score.py score --no-think-check` after the chain stopped on the one thinking draft's skipped check: accepted 35 and 29, catches by code on B1 and pilot2 8 and 7, valid replies 97.6 % and 98.4 %, added median 7.6 s and 4.7 s |
 | K4 | The six-arm test chain (`scripts/m7_four_way.sh`, `scripts/m7_six_arm_rule.py`) | **built, reviewed and merged** 2026-11-23 (`f8b8770`): the review found two blockers (a draft cut while thinking leaked its arm into the reading bundles and failed the chain at its last stage; the thinking arms had a longer answer limit than A) and seven should-fix items, all fixed (the answer part of a thinking draft is cut at 2,048 like A's; no-draft rows are scored as empty and kept out of the bundles; the lookup row prints "not tested"; failed checks counted, redone and limited; the judge model checked at the gate; arm order D, F, A, C, E; the pilot's report pinned); descriptive point-level measures for E against A added from the Owner's research handoff (not decided on). full suite on the merge 2,320 tests, OK, 66 skipped, after a fix to one of its tests that leaked retrieval patches into later tests (review `runs/m7/reports/k4_review.md`, build report `runs/m7/reports/k4_build.md`). Dry runs only; not run |
 | P4 | The reading of the pilot's accepted changes | **done** 2026-11-23 (one reader per variant, `runs/m7/reports/p4_reading_V1.md`, `p4_reading_V1C.md`): V1 13 catch, 8 damage (6 on B1 and pilot2), 14 neutral, 0 harmful; V1C 16 catch, 1 damage, 11 neutral, 1 harmful (b1-24: `--partition 3` deleted from an offset reset). **Both variants fail the bars fixed beforehand** (V1: net 8 − 6 = 2 against 6, damage 6 against at most 4 and 5; V1C: a new harmful statement, net 7 − 2 = 5 against 6), so the checking pass does not go into the test |
-| K5, K6 | The test's run and its blind reading | after the pilot and the rule |
+| K5, K6 | The test's run and its blind reading | **K5 running** since 2026-11-23 22:41 (`scripts/m7_four_way.sh` at `77429a6`; three models, thinking on the Gemma models only, no checking pass); answers and judging expected about 16:00 on 2026-11-24 (13:00 to 03:00 on 11-25); K6 follows |
 | K9, K10 | B4 as the out-of-sample answer check (V6); one hidden look on h6 (V9) | conditional on the test |
 
 ## Decisions
