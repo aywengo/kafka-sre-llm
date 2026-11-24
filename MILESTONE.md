@@ -180,6 +180,11 @@ medians: about 17 h); 900 judge calls; about 25 first-reader and 7 second-reader
 | 2026-11-24 | W12 | The Owner (through LLM PM): "Knowledge base: yes, build it (the rule's BUILD outcome stands)." |
 | 2026-11-24 | W13 | The Owner (through LLM PM): publishing stays open until the knowledge base is built and measured; keep Qwen3.8-27B and Gemma 4 31B and the knowledge-base work for both in play; drop neither. |
 | 2026-11-24 | conductor | The knowledge base is built in two phases on both models: (a) the exact lookup in the answer path, measured on D5 and the mechanical items (Z3); then (b) fact entries with a separate entries index (c), judged on a new batch D7 (Z4). Arm E's perfect packs are an upper bound, not the built knowledge base: the built one is expected to give less. |
+| 2026-11-24 | W14 | The Owner (through LLM PM): the fact entries are written by the local teacher model ("all local, slower. No public docs go to a hosted service"). |
+| 2026-11-24 | W15 | The Owner (through LLM PM): the pilot generation (Strimzi and Kafka operations) has the go "once the licences are settled". |
+| 2026-11-24 | W16 | The Owner (through LLM PM): `DeepSeek-V4.1-Flash-1017-oQ4e-mtp` may be unloaded when it blocks an M7 chain, during M7 chains only, each unload logged in `runs/v3/HEARTBEAT.md`. This narrows W2 for that one model; any other model of another client still stops the chain. |
+| 2026-11-24 | W17 | The Owner (handoff from LLM PM): this session runs the knowledge-base work end to end and reports to LLM PM only at: licences settled; phase 1 result; pilot generation started; phase 2 result; a blocker it cannot clear. Publishing (W10), X1, licence points that need the Owner, changes to a bar fixed beforehand and anything that sends data off the machine stay with the Owner. |
+| 2026-11-24 | conductor | Licences settled for the pilot slice (`runs/m7/reports/kb_licences.md`): Apache Kafka and Strimzi docs Apache-2.0, teacher DeepSeek-V4.1-Flash MIT, checker GLM-5.3-Flash MIT; entries are derivative works, allowed; Kubernetes (CC-BY-4.0) is outside the pilot slice; `own-runbooks` (private) is excluded. Publishing entries in the dataset is a publishing choice, decided with W10. |
 
 ## Waiting for the Owner
 
@@ -187,7 +192,7 @@ medians: about 17 h); 900 judge calls; about 25 first-reader and 7 second-reader
   the fast profile's default candidate, under the look's rule of `milestones/M6.md`.
   Recommended by the M6 session: yes; it would be a second look in M7, leaving two.
 - Which model or models to publish (W10): open until the knowledge base is measured (W13).
-- For phase 2 (entries, b): who writes the entries (local teacher or Claude workers), the licences (Kubernetes CC-BY-4.0, the teacher's output terms, publishing entries in the dataset), and the go for the pilot generation (bulk generation, a new `PACK_PROMPT_VERSION`); plan decision 8.
+- Whether the fact entries are published in the dataset (allowed by the licences; decided with W10).
 
 ## Rules that are shared between the two sessions
 

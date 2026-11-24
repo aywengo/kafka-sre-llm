@@ -86,7 +86,8 @@ Loading and unloading the three models named below is covered by the Owner's sta
 other client is active.
 For M7 the Owner's go of 2026-11-23 (V1) also covers loading the 4-bit build of the base
 model for measurement runs. It does not cover unloading a model that another client left
-loaded: a chain of M7 refuses and waits for the Owner (W2 in `MILESTONE.md`). The rest of M4's wider go (the full-precision
+loaded: a chain of M7 refuses and waits for the Owner (W2 in `MILESTONE.md`), except
+`DeepSeek-V4.1-Flash`, which an M7 chain may unload when it blocks it, logging each unload (W16). The rest of M4's wider go (the full-precision
 build, the bake-off candidates) ended with M4.
 
 ## Repository map
