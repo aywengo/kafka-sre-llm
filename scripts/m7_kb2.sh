@@ -1,7 +1,8 @@
 #!/bin/sh
 # M7 KB phase 2, I3: the chain of the fact-entries pilot (runs/m7/reports/kb2_design.md sections 3, 4, 7 and 9; MILESTONE.md W12 to W19).
 # Two modes, each resumable by its stage markers:
-#   --sanity  the 50 sanity windows (the lowest sha256("kb2-sanity:" + chunk id)): writer (DeepSeek), checker (GLM oQ8e), the sanity rule's mechanical parts,
+#   --sanity  the 50 fresh sanity windows, selection "sanity2" (the lowest sha256("kb2-sanity2:" + chunk id) among the slice chunks that are not in the 50 of
+#             the kbe/1 and kbe/2 runs, selection "sanity", salt "kb2-sanity:"; the manifest option "selection" and the report name it): writer (DeepSeek), checker (GLM oQ8e), the sanity rule's mechanical parts,
 #             the blind reading sample (40 accepted, 20 rejected). The reading itself is a Claude reading session (W18), not done here.
 #   --full    all 1,487 windows of the slice (W15's go; after the sanity run passed its rule and its reading: --sanity-reading FILE, refused when more than 4 of the
 #             40 accepted entries are rated not ok, or when the sanity run was made for other prompts or models); the
@@ -45,7 +46,7 @@ set -e
 MODE=; DRY=no; W=work/m7/kb; WSET=no; REPORT=runs/m7/KB2_PILOT.md; RSET=no; READING=; FAILAFTER=; PFOREIGN=; PBUSY=0; PSTOP=
 PWBAD=; PWRETRY=; PWGATE=; PCBAD=; PWRONG=
 DS=DeepSeek-V4.1-Flash-1017-oQ4e-mtp; GLM8=GLM-5.3-Flash-oQ8e-mtp; GLM4=GLM-5.3-Flash-oQ4e; CHK=$GLM8; FBNOTE=
-WCONC=1; CCONC=1; WMAX=3000; CMAX=1500
+WCONC=1; CCONC=1; WMAX=3000; CMAX=4000
 while [ $# -gt 0 ]; do case $1 in
   --sanity) MODE=sanity;; --full) MODE=full;; --dry-run) DRY=yes;;
   --work) W=${2:?}; WSET=yes; shift;; --report) REPORT=${2:?}; RSET=yes; shift;;
@@ -78,7 +79,7 @@ else
   HBFILE=runs/v3/HEARTBEAT.md; SLEEP=30
 fi
 RW=$W/$MODE; SLICE=$W/slice.jsonl; CHUNKS=work/v3/chunks_s1.jsonl; REC=runs/v3/INDEX_FROZEN.json
-if [ $MODE = full ]; then WDONE=$L/$N.write.done; CDONE=$L/$N.check.done; SEL=all; else WDONE=$L/$N.sanity.write.done; CDONE=$L/$N.sanity.check.done; SEL=sanity; fi
+if [ $MODE = full ]; then WDONE=$L/$N.write.done; CDONE=$L/$N.check.done; SEL=all; else WDONE=$L/$N.sanity.write.done; CDONE=$L/$N.sanity.check.done; SEL=sanity2; fi     # sanity2: the 50 fresh windows of kbe/3, disjoint from the 50 of the kbe/1 and kbe/2 runs
 hb() { mkdir -p "$(dirname $HBFILE)"; printf '\n### %s — %s\nneeds_human: %s\n' "$(date +%Y-%m-%dT%H:%M:%S%z)" "$1" "${2:-no}" >> $HBFILE; }
 status() { # STATE NEEDS_HUMAN NOTE
   [ $DRY = yes ] && return 0
@@ -213,7 +214,7 @@ GIT_HEAD=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
 gstate() { sub=$1; shift
   .venv/bin/python $R $sub --work $RW $PINS $([ $DRY = yes ] && echo --dry) --opt "mode=$MODE" --opt "writer=$DS" --opt "checker=$CHK" --opt "fallback_note=$FBNOTE" \
     --opt "writer_concurrency=$WCONC" --opt "checker_concurrency=$CCONC" --opt "writer_max_tokens=$WMAX" --opt "checker_max_tokens=$CMAX" \
-    --opt "sanity_reading_sha256=$RSHA" --info "git_head=$GIT_HEAD" "$@"; }
+    --opt "selection=$SEL" --opt "sanity_reading_sha256=$RSHA" --info "git_head=$GIT_HEAD" "$@"; }
 SCOUT=$(mktemp "${TMPDIR:-/tmp}/m7_kb2_startcheck.XXXXXX")
 if ! gstate start-check > $SCOUT 2>&1; then cat $SCOUT >&2; rm -f $SCOUT; moveaside; refuse "the start check failed (see above; nothing was moved or deleted)"; fi
 cat $SCOUT; rm -f $SCOUT
@@ -224,7 +225,7 @@ stage_done() { [ -f $RW/stage_$1.done ]; }
 mark() { st=$1; shift; .venv/bin/python $R mark --work $RW --stage $st --out "$@" > /dev/null; echo "stage $st done"; planted $st; }
 
 if [ $MODE = sanity ]; then
-  echo "planned: 50 sanity windows; writer $DS (concurrency $WCONC), checker $CHK (concurrency $CCONC); about 0.6 to 1.2 h of model-server time incl. two swaps (inferred from the design's rates, section 7; not measured)"
+  echo "planned: 50 sanity windows (selection $SEL, fresh: disjoint from the 50 of the kbe/1 and kbe/2 runs); writer $DS (concurrency $WCONC), checker $CHK (concurrency $CCONC); about 0.6 to 1.2 h of model-server time incl. two swaps (inferred from the design's rates, section 7; not measured)"
 else
   echo "planned: 1,487 windows (the sanity windows reused); writer about 6 to 12 h, checker about 4 to 10 h of model-server time (inferred from the design's rates, section 7; the sanity run's projection is in the report)"
 fi
@@ -318,7 +319,7 @@ fi
 # ---------------------------------------------------------------- report
 if ! stage_done report; then
   {
-    echo "## $([ $MODE = sanity ] && echo 'Sanity run (50 windows)' || echo 'Full run (1,487 windows)')$([ $DRY = yes ] && echo ' (from stub data: not a measurement)')"
+    echo "## $([ $MODE = sanity ] && echo "Sanity run (50 windows, selection $SEL)" || echo 'Full run (1,487 windows)')$([ $DRY = yes ] && echo ' (from stub data: not a measurement)')"
     echo
     echo "Writer: \`$(tail -n 1 $L/$N.$MODE.write.log)\`"
     echo

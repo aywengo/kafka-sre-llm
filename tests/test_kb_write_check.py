@@ -139,6 +139,17 @@ class Writer(unittest.TestCase):
         self.assertEqual(s, [i for i in ids if i in set(s)])               # index order
         self.assertEqual(set(s), set(sorted(ids, key=lambda i: hashlib.sha256(("kb2-sanity:" + i).encode()).hexdigest())[:50]))
 
+    def test_sanity2_selection(self):
+        ids = [f"id{i}" for i in range(400)]
+        s1, s2 = W.sanity_ids(ids), W.sanity2_ids(ids)
+        self.assertEqual((len(s2), len(set(s1) & set(s2))), (50, 0))          # fresh: disjoint from the first 50
+        self.assertEqual(s2, [i for i in ids if i in set(s2)])                # index order
+        rest = [i for i in ids if i not in set(s1)]
+        self.assertEqual(set(s2), set(sorted(rest, key=lambda i: hashlib.sha256(("kb2-sanity2:" + i).encode()).hexdigest())[:50]))
+        self.assertEqual(W.sanity2_ids(ids), s2)                              # deterministic
+        self.assertEqual(W.select([{"id": i} for i in ids], "sanity2"), s2)
+        self.assertEqual(W.select([{"id": i} for i in ids], "sanity"), s1)    # the first selection is unchanged
+
     def test_request_body_and_no_address_written(self):
         seen = []
 

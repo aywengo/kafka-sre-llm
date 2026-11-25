@@ -13,7 +13,8 @@ Spec: runs/m7/reports/kb2_design.md sections 1 to 3 (and 5 for the rendered form
 The gate (section 3): schema and size limits; every quote a substring of its chunk after whitespace normalisation; quote
 ids within the window and within the sources; every source quoted; the target chunk quoted; every number and every
 identifier-like token of the title, the statement and applies_when occurs in a quote (kbe/2: or, for a name with a letter,
-in the first title line of a source chunk, which finish_entry then adds as a quote); the rendered form within its cap.
+in the first title line of a source chunk; kbe/3: or in a heading line inside a source chunk, a number together with its
+neighbouring word; backticks and emphasis underscores are ignored; finish_entry then adds that line as a quote); the rendered form within its cap.
 """
 import hashlib
 import json
@@ -23,6 +24,7 @@ from . import prompts
 
 KINDS = ("fact", "value", "procedure", "warning", "cross")
 TITLE_MAX, STATEMENT_MAX, APPLIES_MAX, QUOTE_MAX = 100, 400, 200, 300
+HEADING_MAX = 120                    # a heading line inside a chunk that counts as support (kbe/3)
 QUOTES_MIN, QUOTES_MAX, SOURCES_MIN, SOURCES_MAX = 1, 4, 1, 3
 ENTRIES_MAX = 8                      # per window
 RENDER_MAX = 1500                    # the rendered entry, as a reranker passage
@@ -185,41 +187,102 @@ def _title_line(c):
     return chunk_view(c).split("\n", 1)[0]
 
 
+_HEADING = re.compile(r"^\s*(?:#{1,6}|={1,6})\s+\S")
+_FENCE = re.compile(r"^\s*(?:```|~~~|----+\s*$|\.\.\.\.+\s*$)")
+
+
+def heading_lines(c):
+    """The heading lines inside a chunk's text (markdown '#', AsciiDoc '='), not those in a code block, each at most
+    HEADING_MAX characters (kbe/3: a heading names the subject of what follows and counts as support like the title line)."""
+    out, fence = [], False
+    for line in (c.get("text") or "").split("\n"):
+        if _FENCE.match(line):
+            fence = not fence
+            continue
+        if not fence and _HEADING.match(line) and len(line.strip()) <= HEADING_MAX:
+            out.append(line.strip())
+    return out
+
+
+def unmark(s):
+    """kbe/3, verbatim-safe: backticks and AsciiDoc emphasis underscores (an underscore that is not between two letters or
+    digits, as in _&lt;cluster_name&gt;_-cluster-ca-cert) removed, for comparing a name with a text; inner underscores stay."""
+    return re.sub(r"(?<![A-Za-z0-9])_|_(?![A-Za-z0-9])", "", (s or "").replace("`", ""))
+
+
 def _title_norm(s):
-    """A title line for the name comparison: backticks removed, '.', '/' and ' > ' as separators (one space)."""
-    return norm_ws(re.sub(r"\s>\s|[./]", " ", (s or "").replace("`", "")))
+    """A title line for the name comparison: backticks and emphasis underscores removed, '.', '/' and ' > ' as separators (one space)."""
+    return norm_ws(re.sub(r"\s>\s|[./]", " ", unmark(s)))
 
 
 _WORD_NAME = re.compile(r"^[A-Za-z]+(-[A-Za-z]+)+$")
 
 
 def _in_title(token, line):
-    if not re.search(r"[A-Za-z]", token):          # numbers and versions are not matched in a title line
+    if not re.search(r"[A-Za-z]", token):          # a bare number is matched with its neighbouring word (_number_in_title)
         return False
     t, l = _title_norm(token), _title_norm(line)
     return bool(t) and re.search(r"(?<![\w\-])" + re.escape(t) + r"(?![\w\-])", l, re.I if _WORD_NAME.match(token) else 0) is not None
 
 
+def _number_in_title(token, field_text, line):
+    """kbe/3: a number (no letter) is supported by a title or heading line when the line has it together with a word that
+    stands next to it in the field's text ("Step 1", "MirrorMaker 2")."""
+    l = _title_norm(line)
+    ft = norm_ws(unmark(field_text))
+    for m in re.finditer(r"(?<![\w.\-])" + re.escape(token) + r"(?![\w\-])(?!\.\w)", ft):
+        before = re.search(r"([A-Za-z][\w\-]*)\s$", ft[:m.start()])
+        after = re.match(r"\s([A-Za-z][\w\-]*)", ft[m.end():])
+        for phrase in ([f"{before.group(1)} {token}"] if before else []) + ([f"{token} {after.group(1)}"] if after else []):
+            if re.search(r"(?<![\w\-])" + re.escape(norm_ws(phrase)) + r"(?![\w\-])", l):
+                return True
+    return False
+
+
+def _line_supports(token, field_text, line):
+    return _number_in_title(token, field_text, line) if not re.search(r"[A-Za-z]", token) else _in_title(token, line)
+
+
 def _support(e, window):
-    """Returns (unsupported [(field, token)], title chunk ids): the tokens that no quote contains and no source chunk's title
-    line contains, and the ids of the source chunks whose title line is what supports a token (in source order)."""
+    """Returns (unsupported [(field, token)], lines [(chunk id, line, is_title)]): the tokens that no quote contains and no
+    source chunk's title line or heading line contains, and the lines that support a token (in source order, title line first;
+    kbe/3: heading lines inside the chunk count like the title line)."""
     qtext = " \n ".join(norm_ws(x["text"]) for x in e["quotes"])
-    bad, titles = [], []
+    qun = unmark(qtext)
+    bad, found = [], set()
     for field in ("title", "statement", "applies_when"):     # the title goes into the pack too (review of f45dd13)
-        for t in identifier_tokens(e.get(field) or ""):
-            if token_in(t, qtext):
+        ftext = e.get(field) or ""
+        for t in identifier_tokens(ftext):
+            if token_in(t, qtext) or (unmark(t) and token_in(unmark(t), qun)):
                 continue
-            cid = next((s for s in e["sources"] if s in window and _in_title(t, _title_line(window[s]))), None)
-            if cid is None:
+            hit = None
+            for s in e["sources"]:
+                if s not in window:
+                    continue
+                cands = [(_title_line(window[s]), True)] + [(h, False) for h in heading_lines(window[s])]
+                hit = next(((s, ln, ti) for ln, ti in cands if _line_supports(t, ftext, ln)), None)
+                if hit:
+                    break
+            if hit is None:
                 bad.append((field, t))
-            elif cid not in titles:
-                titles.append(cid)
-    return bad, [s for s in e["sources"] if s in titles]
+            else:
+                found.add(hit)
+    order = {s: i for i, s in enumerate(e["sources"])}
+    return bad, sorted(found, key=lambda h: (order[h[0]], not h[2], h[1]))
 
 
 def title_support(e, window):
-    """The ids of the source chunks whose title line supports a name of the entry (no quote has it): finish_entry records
-    each such line as an extra quote."""
+    """The ids of the source chunks whose title line supports a name of the entry (no quote has it)."""
+    out = []
+    for cid, _, ti in _support(e, window)[1]:
+        if ti and cid not in out:
+            out.append(cid)
+    return out
+
+
+def line_support(e, window):
+    """[(chunk id, line, is_title)]: the title lines and heading lines that support a name of the entry; finish_entry records
+    each as an extra quote."""
     return _support(e, window)[1]
 
 
@@ -264,8 +327,8 @@ def finish_entry(e, window_chunks, target, *, prompt_version, writer, created, c
     out["sources"] = [{"id": s, "source": byid[s]["source"], "path": byid[s]["path"], "commit": commits.get(byid[s]["source"])}
                       for s in e["sources"]]
     out["quotes"] = [{"chunk": x["chunk"], "text": x["text"]} for x in e["quotes"]]
-    for cid in title_support(e, byid):         # a name only the chunk's title line has: that line is shown as a quote
-        out["quotes"].append({"chunk": cid, "text": _title_line(byid[cid]), "title_line": True})
+    for cid, line, is_title in line_support(e, byid):     # a name only a title line or a heading line has: that line is shown as a quote
+        out["quotes"].append({"chunk": cid, "text": line, ("title_line" if is_title else "heading_line"): True})
     out.update({"prompt_version": prompt_version, "writer": writer,
                 "window": {"target": target, "chunks": [c["id"] for c in window_chunks]}, "created": created})
     return out

@@ -370,12 +370,23 @@ def _write_sample(out_dir, name, entries, chunks, title, note, key):
     (d / f"{name}_key.json").write_text(json.dumps(key, indent=1, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def pick_reading(chk, salt, n_acc, n_rej):
+    """The reading sample's ids (before the blind order): up to n_acc accepted entries, and up to n_rej not accepted ones, the checker's
+    own rejections (partial, wrong, unsupported) first and unchecked entries only to fill the quota; each part drawn by sha256(salt + id)."""
+    acc = [r["id"] for r in chk if r["verdict"] == "ok"]
+    judged = [r["id"] for r in chk if r["verdict"] in ("partial", "wrong", "unsupported")]
+    rest = [r["id"] for r in chk if r["verdict"] != "ok" and r["id"] not in set(judged)]
+    rej = _draw(judged, salt, n_rej)
+    rej += _draw(rest, salt, n_rej - len(rej))
+    return _draw(acc, salt, n_acc) + rej
+
+
 def cmd_reading_sample(a):
     ents = {e["id"]: e for e in rows(Path(a.write_dir) / "entries_raw.jsonl")}
     chk = rows(Path(a.check_dir) / "checks.jsonl")
     acc = [r["id"] for r in chk if r["verdict"] == "ok"]
     rej = [r["id"] for r in chk if r["verdict"] != "ok"]
-    pick = _draw(acc, a.salt, a.accepted) + _draw(rej, a.salt, a.rejected)
+    pick = pick_reading(chk, a.salt, a.accepted, a.rejected)
     order = sorted(pick, key=lambda i: sha256_text(a.salt + "order:" + i))
     chunks = _chunks(a.slice, a.record)
     verdict = {r["id"]: r["verdict"] for r in chk}
@@ -502,7 +513,8 @@ def cmd_audit_sample(a):
 
 def cmd_rule_text(a):
     print("**The sanity rule (kb2_design.md section 7, fixed before any entry exists).** The 50 slice chunks with the lowest "
-          "sha256(`kb2-sanity:` + chunk id), their windows, writer then checker, then a reading of 40 accepted and 20 rejected entries. "
+          "sha256(`kb2-sanity2:` + chunk id) (selection `sanity2`, drawn from the slice chunks that are not among the 50 of the earlier kbe/1 and kbe/2 runs, "
+          "which used `kb2-sanity:`), their windows, writer then checker, then a reading of 40 accepted and 20 rejected entries. "
           "Stop and rework the prompt (new version, new sanity run) if any holds: fewer than 95 % of windows give a valid reply; more than "
           "15 % of written entries fail the mechanical gate; median entries per window outside 1 to 8; the checker accepts fewer than 50 % "
           "or more than 98 % of gated entries; more than 4 of the 40 accepted entries are rated not ok; a projected full writer time over "

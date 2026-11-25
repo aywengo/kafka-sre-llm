@@ -135,6 +135,17 @@ class SanityAndFull(unittest.TestCase):
             self.assertFalse(it[1]["pass"])                                    # 20 % gate failures
             self.assertFalse(it[2]["pass"])                                    # median 10
 
+    def test_reading_sample_prefers_judged_rejections(self):
+        chk = [{"id": f"a{i}", "verdict": "ok"} for i in range(50)] + [{"id": f"u{i}", "verdict": "unchecked"} for i in range(7)] \
+            + [{"id": f"p{i}", "verdict": v} for i, v in enumerate(["partial", "wrong", "unsupported"] * 4)]
+        pick = R.pick_reading(chk, "salt", 40, 20)
+        self.assertEqual((sum(i[0] == "a" for i in pick), sum(i[0] == "p" for i in pick), sum(i[0] == "u" for i in pick)), (40, 12, 7))
+        pick = R.pick_reading(chk, "salt", 40, 10)                                       # the quota is filled by judged ones first
+        self.assertEqual((sum(i[0] == "p" for i in pick), sum(i[0] == "u" for i in pick)), (10, 0))
+        self.assertEqual(R.pick_reading(chk, "salt", 40, 20), R.pick_reading(chk, "salt", 40, 20))
+        only_u = [r for r in chk if r["verdict"] in ("ok", "unchecked")]
+        self.assertEqual(sum(i[0] == "u" for i in R.pick_reading(only_u, "salt", 40, 20)), 7)     # unchecked still fill when nothing else
+
     def test_sanity_rule_exit_and_identity(self):
         with tempfile.TemporaryDirectory() as d:
             self.write(d, [{"window": f"w{i}", "status": "ok", "written": 3, "gate_rejects": 0, "seconds": 30.0} for i in range(50)],
@@ -317,11 +328,11 @@ class DryRun(unittest.TestCase):
     def test_end_to_end(self):
         with tempfile.TemporaryDirectory() as d:
             w = str(Path(d) / "kb")
-            r = self.sh("--sanity", "--dry-run", "--work", w, "--plant-write-bad", "69035e6ae7d31ef2", "--plant-check-bad", "6bae04ac43dc5bcc",
+            r = self.sh("--sanity", "--dry-run", "--work", w, "--plant-write-bad", "946a872e4a53c017", "--plant-check-bad", "b9ab24266d42b64c",
                         "--plant-stop", "20", ok=(1,))
             self.assertIn("the writer", r.stdout)
             self.assertIn("SERVER ERROR", Path(w, "logs/m7_kb2.sanity.write.log").read_text())   # a window of a server error prints a line
-            r = self.sh("--sanity", "--dry-run", "--work", w, "--plant-write-bad", "69035e6ae7d31ef2", "--plant-check-bad", "6bae04ac43dc5bcc")
+            r = self.sh("--sanity", "--dry-run", "--work", w, "--plant-write-bad", "946a872e4a53c017", "--plant-check-bad", "b9ab24266d42b64c")
             self.assertIn("rerun after a stop", r.stdout)
             self.assertIn("SANITY (mechanical parts): PASS", r.stdout)
             self.assertTrue(r.stdout.rstrip().endswith("KB2_PILOT_from_stub_data.md"))
@@ -347,7 +358,7 @@ class DryRun(unittest.TestCase):
             self.sh("--full", "--dry-run", "--work", w, "--sanity-reading", rf)
             self.assertEqual(self.tree(w), before)
             rep = Path(w, "KB2_PILOT_from_stub_data.md").read_text()
-            self.assertIn("## Sanity run (50 windows)", rep)
+            self.assertIn("## Sanity run (50 windows, selection sanity2)", rep)
             self.assertIn("## Full run (1,487 windows)", rep)
             self.assertIn(hashlib.sha256(Path(rf).read_bytes()).hexdigest(), rep)
             self.assertIn("rated 1 of 40 accepted entries not ok", rep)
@@ -361,7 +372,7 @@ class DryRun(unittest.TestCase):
     def test_failed_sanity_rule_ends_failed(self):
         with tempfile.TemporaryDirectory() as d:
             w = str(Path(d) / "kb")
-            r = self.sh("--sanity", "--dry-run", "--work", w, "--plant-write-bad", "69035e6ae7d31ef2,c137b685cd5d51ad,b6963531e2897b26", ok=(1,))
+            r = self.sh("--sanity", "--dry-run", "--work", w, "--plant-write-bad", "946a872e4a53c017,0345ef65d5924a85,efe1a319d6619f88", ok=(1,))
             self.assertIn("the sanity run failed its rule", r.stdout)
             self.assertTrue(Path(w, "logs/m7_kb2.sanity.failed").exists())
             self.assertFalse(Path(w, "logs/m7_kb2.sanity.done").exists())

@@ -195,7 +195,7 @@ class Finish(unittest.TestCase):
         self.assertNotIn("<<", m[1]["content"].replace("WINDOW <<TARGET>>", ""))
         c = P.kb_check_messages("W", "E")
         self.assertNotIn("<<", c[1]["content"])
-        self.assertEqual((P.KB_ENTRY_PROMPT_VERSION, P.KB_CHECK_PROMPT_VERSION), ("kbe/2", "kbc/1"))
+        self.assertEqual((P.KB_ENTRY_PROMPT_VERSION, P.KB_CHECK_PROMPT_VERSION), ("kbe/3", "kbc/2"))
 
 
 class GoldenUntouched(unittest.TestCase):
@@ -260,3 +260,72 @@ class Normalisations(unittest.TestCase):
         self.assertTrue(any("longer than 300" in r for r in K.gate_entry(self.e(quotes=[{"chunk": "t2", "text": long}]), self.W, "t2")))
         self.assertTrue(any("longer than 400" in r for r in K.gate_entry(self.e(statement="s" * 401), self.W, "t2")))
         self.assertTrue(K.gate_entry(self.e(statement="Call SinkTask.put now."), self.W, "t2"))            # a built name
+
+
+class Kbe3(unittest.TestCase):
+    """kbe/3: heading lines as support, numbers with their neighbouring word, markup normalised; the limits unchanged."""
+    MD = {"id": "m1", "source": "apache-kafka", "path": "raw/apache-kafka/docs/x.md", "title": "Connect > Steps",
+          "text": "## KafkaConnectTemplate schema reference\n\nThe pod template sets the labels.\n\n```\n# Not A Heading in code\n```\n\n"
+                  "Step 1\n\nUse the secret `_<cluster_name>_-cluster-ca-cert` here.\n\nMirrorMaker 2 is a connector."}
+    ADOC = {"id": "a1", "source": "strimzi", "path": "raw/strimzi/documentation/modules/y.adoc", "title": "Using MirrorMaker 2",
+            "text": "== Step 1: Create the topic\n\nCreate it with the tool."}
+    W = {"m1": MD, "a1": ADOC}
+
+    def e(self, cid="m1", text="The pod template sets the labels.", **kw):
+        d = {"kind": "fact", "title": "Pod template", "statement": "The pod template sets the labels.", "sources": [cid],
+             "quotes": [{"chunk": cid, "text": text}]}
+        d.update(kw)
+        return d
+
+    def test_heading_line_supports_a_name_and_is_recorded(self):
+        e = self.e(statement="KafkaConnectTemplate: the pod template sets the labels.")
+        self.assertEqual(K.gate_entry(e, self.W, "m1"), [])
+        f = K.finish_entry(e, [self.MD], "m1", prompt_version="kbe/3", writer="w", created="c", commits={})
+        self.assertEqual(f["quotes"][-1], {"chunk": "m1", "text": "## KafkaConnectTemplate schema reference", "heading_line": True})
+        self.assertIn("KafkaConnectTemplate schema reference", K.render_text(f))
+        e = self.e(cid="a1", text="Create it with the tool.", statement="Create the topic with the tool.", title="Topic")
+        e["statement"] = "In Step 1: Create the topic with the tool."
+        f = K.finish_entry(e, [self.ADOC], "a1", prompt_version="kbe/3", writer="w", created="c", commits={})
+        self.assertEqual(K.gate_entry(e, self.W, "a1"), [])                       # AsciiDoc '=' heading
+        self.assertTrue(any(q.get("heading_line") for q in f["quotes"]) or any(q.get("title_line") for q in f["quotes"]))
+
+    def test_heading_rules_negative(self):
+        self.assertTrue(K.gate_entry(self.e(statement="KafkaConnectTemplates set the labels."), self.W, "m1"))   # plural: another name
+        self.assertTrue(K.gate_entry(self.e(statement="KafkaMirrorMakerTemplate sets the labels."), self.W, "m1"))   # invented
+        self.assertEqual(K.heading_lines(self.MD), ["## KafkaConnectTemplate schema reference"])      # no heading line inside a code block
+        self.assertTrue(K.gate_entry(self.e(statement="NotAHeadingInCode sets the labels."), self.W, "m1"))
+        self.assertEqual(K.heading_lines({"text": "## " + "x" * 130}), [])                                  # too long to be a heading
+
+    def test_number_with_neighbouring_word(self):
+        e = self.e(cid="a1", text="Create it with the tool.", title="Topic", statement="MirrorMaker 2 creates it with the tool.")
+        self.assertEqual(K.gate_entry(e, self.W, "a1"), [])                                                   # "MirrorMaker 2" in the title line
+        e = self.e(cid="a1", text="Create it with the tool.", title="Topic", statement="Step 1 creates it with the tool.")
+        self.assertEqual(K.gate_entry(e, self.W, "a1"), [])                                                   # "Step 1" in the heading
+        for bad in ("MirrorMaker 3 creates it with the tool.", "Step 2 creates it with the tool.", "Create it with the tool in 7 steps."):
+            self.assertTrue(K.gate_entry(self.e(cid="a1", text="Create it with the tool.", title="Topic", statement=bad), self.W, "a1"), bad)
+
+    def test_markup_normalised(self):
+        q = "Use the secret _&lt;cluster_name&gt;_-cluster-ca-cert here."
+        W = {"t": dict(T, id="t", text=q)}
+        e = {"kind": "fact", "title": "Secret", "statement": "Use the secret &lt;cluster_name&gt;-cluster-ca-cert here.", "sources": ["t"],
+             "quotes": [{"chunk": "t", "text": q}]}
+        self.assertEqual(K.gate_entry(e, W, "t"), [])
+        e2 = dict(e, statement="Use the secret `_&lt;cluster_name&gt;_-cluster-ca-cert` here.")
+        self.assertEqual(K.gate_entry(e2, W, "t"), [])
+        e3 = dict(e, statement="Use the secret &lt;cluster_name&gt;-cluster-ca-certs here.")                  # a plural stays another name
+        self.assertTrue(K.gate_entry(e3, W, "t"))
+        self.assertEqual(K.unmark("`_a_` and x_y and __z"), "a and x_y and z")
+
+    def test_limits_unchanged(self):
+        self.assertEqual((K.QUOTE_MAX, K.STATEMENT_MAX), (300, 400))
+        self.assertTrue(any("longer than 300" in r for r in K.gate_entry(self.e(text="x" * 301), self.W, "m1")))
+        self.assertTrue(any("longer than 400" in r for r in K.gate_entry(self.e(statement="s" * 401), self.W, "m1")))
+        self.assertTrue(any("not verbatim" in r for r in K.gate_entry(self.e(text="The pod template sets all labels."), self.W, "m1")))
+
+    def test_prompt_texts(self):
+        w = P.KB_WRITER_USER
+        for t in ("Keep each quote under 250 characters: quote one sentence or one table row per quote.",
+                  "When the entry's subject is named by a heading line inside the chunk, quote that heading line as well.",
+                  "a statement true only under a condition must name it."):
+            self.assertIn(t, w)
+        self.assertIn("drops a condition that the source (its heading or its context) places on it", P.KB_CHECK_USER)

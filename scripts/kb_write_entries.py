@@ -51,6 +51,7 @@ EXTRA_BODY = {"chat_template_kwargs": {"thinking_mode": "chat"}}     # DeepSeek'
 # One request at a time (W21: oMLX server requests stay sequential).
 MAX_TOKENS, CONCURRENCY, RETRY_TEMPERATURE = 3000, 1, 0.3
 SANITY_N, SANITY_SALT = 50, "kb2-sanity:"
+SANITY2_SALT = "kb2-sanity2:"      # the fresh sanity windows of kbe/3 (the 50 of "sanity" were used by the kbe/1 and kbe/2 runs)
 FILES = ("windows.jsonl", "entries_raw.jsonl", "entries_gate_rejects.jsonl")
 
 
@@ -210,6 +211,15 @@ def sanity_ids(ids, n=SANITY_N):
     return [i for i in ids if i in pick]
 
 
+def sanity2_ids(ids, n=SANITY_N):
+    """The fresh sanity selection (kbe/3): drawn like sanity_ids (the n lowest sha256("kb2-sanity2:" + id), in index order) from the
+    slice chunks that are not among the 50 of sanity_ids, so the two selections are disjoint. Deterministic."""
+    used = set(sanity_ids(ids))
+    rest = [i for i in ids if i not in used]
+    pick = set(sorted(rest, key=lambda i: hashlib.sha256((SANITY2_SALT + i).encode()).hexdigest())[:n])
+    return [i for i in ids if i in pick]
+
+
 def load_slice_chunks(slice_path, record):
     import kb_slice
     chunks, rec = kb_slice.load_index(record)
@@ -226,6 +236,8 @@ def select(slice_chunks, how):
         return ids
     if how == "sanity":
         return sanity_ids(ids)
+    if how == "sanity2":
+        return sanity2_ids(ids)
     want = [json.loads(l)["id"] if l.strip().startswith("{") else l.strip() for l in open(how, encoding="utf-8") if l.strip()]
     unknown = [i for i in want if i not in set(ids)]
     if unknown:
@@ -323,7 +335,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--slice", required=True)
     ap.add_argument("--record", default="runs/v3/INDEX_FROZEN.json")
-    ap.add_argument("--select", default="sanity", help="sanity (the 50 of section 7), all, or a file of ids")
+    ap.add_argument("--select", default="sanity", help="sanity (the 50 of section 7, used by the kbe/1 and kbe/2 runs), sanity2 (50 fresh ones, disjoint from sanity), all, or a file of ids")
     ap.add_argument("--out-dir", required=True)
     ap.add_argument("--model", default=WRITER_MODEL)
     ap.add_argument("--backend", choices=["openai", "stub"], default="openai")

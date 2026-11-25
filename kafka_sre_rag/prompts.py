@@ -240,8 +240,8 @@ LOOKUP_CARDS_HEADER = (
 # object per entry). Every output row carries its version; a changed text needs a new version and a new sanity run. These
 # constants are not in frozen.json and no golden hash covers them (they are no part of the measured configuration). They
 # are written for and tried only on the slice's sanity chunks; no text of any evaluation item.
-KB_ENTRY_PROMPT_VERSION = "kbe/2"
-KB_CHECK_PROMPT_VERSION = "kbc/1"
+KB_ENTRY_PROMPT_VERSION = "kbe/3"
+KB_CHECK_PROMPT_VERSION = "kbc/2"
 
 KB_WRITER_SYSTEM = (
     "You turn pages of the Strimzi and Apache Kafka documentation into short, exact fact entries for operators. You "
@@ -270,12 +270,15 @@ KB_WRITER_USER = (
     "- \"sources\": the ids of the 1 to 3 chunks that state the entry; the target chunk <<TARGET>> is always one of "
     "them. A \"cross\" entry has two or three.\n"
     "- \"quotes\": 1 to 4 objects {\"chunk\": id, \"text\": span}; each span is copied character for character from "
-    "that chunk as shown (its first line or its text), at most 300 characters; every source has at least one quote, "
-    "and at least one quote is from the target chunk. Every claim of the statement and of \"applies_when\" is stated "
+    "that chunk as shown (its first line or its text); every source has at least one quote, "
+    "and at least one quote is from the target chunk. Keep each quote under 250 characters: quote one sentence or one "
+    "table row per quote. When the entry's subject is named by a heading line inside the chunk, quote that heading line as well. Every claim of the statement and of \"applies_when\" is stated "
     "by the quotes, and every number and name in them and in the title appears in a quote.\n"
     "- A \"cross\" entry only when every part of its statement is quoted from the chunk that states it.\n"
     "- Count characters. A quote over 300 characters is rejected: use two shorter quotes from the same chunk. A statement "
     "over 400 characters is rejected: write two entries.\n"
+    "- When a heading or an earlier sentence limits where a statement applies (a version, a feature, a component, a mode), "
+    "carry that condition into the statement or its applies-when field; a statement true only under a condition must name it.\n"
     "- For a table row, quote the whole row from its first cell, so the name and its value are in one quote.\n"
     "- Write each name exactly as a quote or the chunk's title line writes it: same case, no added class, prefix, path or "
     "plural. If neither contains it, leave it out. Do not make up hyphenated words.\n"
@@ -298,7 +301,8 @@ KB_CHECK_USER = (
     "- \"ok\" only when all three hold: (1) every claim of the title, of the statement and of \"applies_when\" is "
     "stated by the quoted spans; (2) nothing is added: no extra claim, no stronger or weaker wording, no dropped condition, negation, "
     "version or scope; (3) read in its chunk, each quote means what the statement says.\n"
-    "- \"partial\": part of it is supported, or something is added or dropped.\n"
+    "- \"partial\": part of it is supported, or something is added or dropped; so is an entry whose statement drops a "
+    "condition that the source (its heading or its context) places on it.\n"
     "- \"wrong\": the chunks contradict it.\n"
     "- \"unsupported\": the quotes do not state it.\n"
     "Give one short reason per entry.\n\n"
