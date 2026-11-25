@@ -52,6 +52,7 @@ EXTRA_BODY = {"chat_template_kwargs": {"thinking_mode": "chat"}}     # DeepSeek'
 MAX_TOKENS, CONCURRENCY, RETRY_TEMPERATURE = 3000, 1, 0.3
 SANITY_N, SANITY_SALT = 50, "kb2-sanity:"
 SANITY2_SALT = "kb2-sanity2:"      # the fresh sanity windows of kbe/3 (the 50 of "sanity" were used by the kbe/1 and kbe/2 runs)
+SANITY4_SALT = "kb2-sanity4:"      # the fresh sanity windows of the fifth run (W26; disjoint from sanity, sanity2 and sanity3)
 SANITY3_SALT = "kb2-sanity3:"      # the fresh sanity windows of kbe/4 (disjoint from "sanity" and "sanity2")
 FILES = ("windows.jsonl", "entries_raw.jsonl", "entries_gate_rejects.jsonl")
 
@@ -230,6 +231,15 @@ def sanity3_ids(ids, n=SANITY_N):
     return [i for i in ids if i in pick]
 
 
+def sanity4_ids(ids, n=SANITY_N):
+    """The fresh sanity selection of the fifth sanity run (W26): the n lowest sha256("kb2-sanity4:" + id), in index order, drawn from
+    the slice chunks that are in none of sanity_ids, sanity2_ids and sanity3_ids, so the four selections are disjoint. Deterministic."""
+    used = set(sanity_ids(ids)) | set(sanity2_ids(ids)) | set(sanity3_ids(ids))
+    rest = [i for i in ids if i not in used]
+    pick = set(sorted(rest, key=lambda i: hashlib.sha256((SANITY4_SALT + i).encode()).hexdigest())[:n])
+    return [i for i in ids if i in pick]
+
+
 def load_slice_chunks(slice_path, record):
     import kb_slice
     chunks, rec = kb_slice.load_index(record)
@@ -250,6 +260,8 @@ def select(slice_chunks, how):
         return sanity2_ids(ids)
     if how == "sanity3":
         return sanity3_ids(ids)
+    if how == "sanity4":
+        return sanity4_ids(ids)
     want = [json.loads(l)["id"] if l.strip().startswith("{") else l.strip() for l in open(how, encoding="utf-8") if l.strip()]
     unknown = [i for i in want if i not in set(ids)]
     if unknown:
@@ -347,7 +359,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--slice", required=True)
     ap.add_argument("--record", default="runs/v3/INDEX_FROZEN.json")
-    ap.add_argument("--select", default="sanity", help="sanity (the 50 of section 7, used by the kbe/1 and kbe/2 runs), sanity2 (50 fresh ones of kbe/3, disjoint from sanity), sanity3 (50 fresh ones of kbe/4, disjoint from both), all, or a file of ids")
+    ap.add_argument("--select", default="sanity", help="sanity (the 50 of section 7, used by the kbe/1 and kbe/2 runs), sanity2 (50 fresh ones of kbe/3, disjoint from sanity), sanity3 (50 fresh ones of kbe/4, disjoint from both), sanity4 (50 fresh ones of the fifth run, disjoint from the three), all, or a file of ids")
     ap.add_argument("--out-dir", required=True)
     ap.add_argument("--model", default=WRITER_MODEL)
     ap.add_argument("--backend", choices=["openai", "stub"], default="openai")

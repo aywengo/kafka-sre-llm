@@ -1,8 +1,8 @@
 #!/bin/sh
 # M7 KB phase 2, I3: the chain of the fact-entries pilot (runs/m7/reports/kb2_design.md sections 3, 4, 7 and 9; MILESTONE.md W12 to W19).
 # Two modes, each resumable by its stage markers:
-#   --sanity  the 50 fresh sanity windows, selection "sanity3" (the lowest sha256("kb2-sanity3:" + chunk id) among the slice chunks that are in neither of the 50 of
-#             the kbe/1 and kbe/2 runs (selection "sanity", salt "kb2-sanity:") nor of the 50 of the kbe/3 run (selection "sanity2"); the manifest option "selection" and the report name it): writer (DeepSeek), checker (GLM oQ8e), the sanity rule's mechanical parts,
+#   --sanity  the 50 fresh sanity windows, selection "sanity4" (the lowest sha256("kb2-sanity4:" + chunk id) among the slice chunks that are in neither of the 50 of
+#             the kbe/1 and kbe/2 runs (selection "sanity", salt "kb2-sanity:") nor of the 50 of the kbe/3 run (selection "sanity2") nor of the 50 of the kbe/4 run (selection "sanity3"); the manifest option "selection" and the report name it): writer (DeepSeek), checker (GLM oQ8e), the sanity rule's mechanical parts,
 #             the blind reading sample (40 accepted, 20 rejected). The reading itself is a Claude reading session (W18), not done here.
 #   --full    all 1,487 windows of the slice (W15's go; after the sanity run passed its rule and its reading: --sanity-reading FILE, refused when more than 4 of the
 #             40 accepted entries are rated not ok, or when the sanity run was made for other prompts or models); the
@@ -46,7 +46,7 @@ set -e
 MODE=; DRY=no; W=work/m7/kb; WSET=no; REPORT=runs/m7/KB2_PILOT.md; RSET=no; READING=; FAILAFTER=; PFOREIGN=; PBUSY=0; PSTOP=
 PWBAD=; PWRETRY=; PWGATE=; PCBAD=; PWRONG=
 DS=DeepSeek-V4.1-Flash-1017-oQ4e-mtp; GLM8=GLM-5.3-Flash-oQ8e-mtp; GLM4=GLM-5.3-Flash-oQ4e; CHK=$GLM8; FBNOTE=
-WCONC=1; CCONC=1; WMAX=3000; CMAX=4000
+WCONC=1; CCONC=1; WMAX=3000; CMAX=8000
 while [ $# -gt 0 ]; do case $1 in
   --sanity) MODE=sanity;; --full) MODE=full;; --dry-run) DRY=yes;;
   --work) W=${2:?}; WSET=yes; shift;; --report) REPORT=${2:?}; RSET=yes; shift;;
@@ -79,7 +79,7 @@ else
   HBFILE=runs/v3/HEARTBEAT.md; SLEEP=30
 fi
 RW=$W/$MODE; SLICE=$W/slice.jsonl; CHUNKS=work/v3/chunks_s1.jsonl; REC=runs/v3/INDEX_FROZEN.json
-if [ $MODE = full ]; then WDONE=$L/$N.write.done; CDONE=$L/$N.check.done; SEL=all; else WDONE=$L/$N.sanity.write.done; CDONE=$L/$N.sanity.check.done; SEL=sanity3; fi     # sanity3: the 50 fresh windows of kbe/4, disjoint from the 50 of the kbe/1 to kbe/3 runs (sanity, sanity2)
+if [ $MODE = full ]; then WDONE=$L/$N.write.done; CDONE=$L/$N.check.done; SEL=all; else WDONE=$L/$N.sanity.write.done; CDONE=$L/$N.sanity.check.done; SEL=sanity4; fi     # sanity4: the 50 fresh windows of the fifth sanity run (W26), disjoint from the 150 of the kbe/1 to kbe/4 runs (sanity, sanity2, sanity3)
 hb() { mkdir -p "$(dirname $HBFILE)"; printf '\n### %s — %s\nneeds_human: %s\n' "$(date +%Y-%m-%dT%H:%M:%S%z)" "$1" "${2:-no}" >> $HBFILE; }
 status() { # STATE NEEDS_HUMAN NOTE
   [ $DRY = yes ] && return 0
@@ -225,7 +225,7 @@ stage_done() { [ -f $RW/stage_$1.done ]; }
 mark() { st=$1; shift; .venv/bin/python $R mark --work $RW --stage $st --out "$@" > /dev/null; echo "stage $st done"; planted $st; }
 
 if [ $MODE = sanity ]; then
-  echo "planned: 50 sanity windows (selection $SEL, fresh: disjoint from the 100 of the kbe/1 to kbe/3 runs); writer $DS (concurrency $WCONC), checker $CHK (concurrency $CCONC); about 0.6 to 1.2 h of model-server time incl. two swaps (inferred from the design's rates, section 7; not measured)"
+  echo "planned: 50 sanity windows (selection $SEL, fresh: disjoint from the 150 of the kbe/1 to kbe/4 runs); writer $DS (concurrency $WCONC), checker $CHK (concurrency $CCONC); about 0.6 to 1.2 h of model-server time incl. two swaps (inferred from the design's rates, section 7; not measured)"
 else
   echo "planned: 1,487 windows (the sanity windows reused); writer about 6 to 12 h, checker about 4 to 10 h of model-server time (inferred from the design's rates, section 7; the sanity run's projection is in the report)"
 fi

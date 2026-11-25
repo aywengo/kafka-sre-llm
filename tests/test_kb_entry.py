@@ -486,6 +486,61 @@ class Kbe5Context(unittest.TestCase):
         self.assertIn("sentence just before the quote", P.KB_WRITER_USER)
 
 
+class W26Fixes(unittest.TestCase):
+    """W26: hyphenated title words with a space or no hyphen in the source; no lead-in from a cell or row of the quote's own table."""
+    def ch(self, text, title="Doc > Page"):
+        return {"id": "c1", "source": "strimzi", "path": "raw/strimzi/documentation/modules/z.adoc", "title": title, "text": text}
+
+    def gate(self, title, quote_text, text=None, statement="Set the value.", **kw):
+        c = self.ch(text or quote_text)
+        e = {"kind": "fact", "title": title, "statement": statement, "sources": ["c1"], "quotes": [{"chunk": "c1", "text": quote_text}]}
+        e.update(kw)
+        return K.gate_entry(e, {"c1": c}, "c1")
+
+    def test_hyphenated_title_words_accepted_in_other_forms(self):
+        for title, src in (("TLS node-to-node encryption", "Encryption between node to node connections is set here."),
+                           ("Self-signed certificates", "Strimzi creates self signed certificates by default."),
+                           ("Controller step-down", "The controller does a stepdown when it is told so."),
+                           ("Fine-tuning the cache", "Fine tuning the cache is possible."),
+                           ("Node-To-Node traffic", "traffic from node to node.")):
+            q = src
+            self.assertEqual(self.gate(title, q, statement="Set it."), [], title)
+
+    def test_hyphenated_title_words_still_refused_when_absent_or_identifier_like(self):
+        self.assertTrue(self.gate("Self-signed certificates", "Strimzi creates certificates by default.", statement="Set it."))
+        self.assertTrue(self.gate("Cross-site mirroring", "Mirroring happens here.", statement="Set it."))
+        self.assertTrue(self.gate("Option log-dir2 set", "The option is set here.", statement="Set it."))         # a digit
+        self.assertTrue(self.gate("Setting `node-to-node` now", "Encryption between node to node.", statement="Set it."))   # backticked in the title
+        self.assertTrue(self.gate("Use my-setting.value", "Use my setting value.", statement="Set it."))           # a dot
+        self.assertTrue(self.gate("The node-to-node", "See x.node to node.y here.", statement="Set it."))         # part of a longer identifier
+        self.assertTrue(self.gate("Use camelCase-word", "Use camel case word.", statement="Set it."))
+        # the leniency is for titles only: the statement still needs the exact token
+        self.assertTrue(self.gate("Encryption", "Encryption between node to node.", statement="It is node-to-node."))
+
+    LEAD = "The following metrics are recorded at the debug level and only then, never at info:"
+
+    def test_cut_html_table_row_has_no_lead_in_from_a_cell(self):
+        t = ("</td> </tr>  \n<tr>  \n<td>\n\nSTREAMS_GROUP_HEARTBEAT (88)\n</td>  \n<td>\n\nDescribe\n</td>  \n<td>\n\nTopic\n</td>  \n<td>\n\n"
+             "Not required if internal topics exist.\n</td> </tr>  \n<tr>  \n<td>\n\nSTREAMS_GROUP_DESCRIBE (89)\n</td>  \n<td>\n\nDescribe\n</td>  \n"
+             "<td>\n\nTopic\n</td>  \n<td>\n\nRequired for all source topics and internal topics used in the topology of the group.\n</td> </tr>  \n")
+        for q in ("STREAMS_GROUP_DESCRIBE (89)", "Required for all source topics and internal topics used in the topology of the group."):
+            self.assertEqual(K.lead_parts(t, q), ("", []), q)
+            self.assertEqual(K.context_notes(["c1"], [{"chunk": "c1", "text": q}], {"c1": self.ch(t)}, "Doc > Page"), ("", ""))
+
+    def test_whole_table_row_takes_the_sentence_above_the_table(self):
+        h = (f"{self.LEAD}  \n<table>  \n<tr>\n<td>\n\nA (1)\n</td>\n<td>\n\nOnly at debug.\n</td>\n</tr>\n<tr>\n<td>\n\nB (2)\n</td>\n<td>\n\n"
+             "Other cell sentence.\n</td>\n</tr>\n</table>\n")
+        self.assertEqual(K.lead_parts(h, "B (2)")[0], self.LEAD)
+        self.assertEqual(K.lead_parts(h, "Other cell sentence.")[0], self.LEAD)
+        a = f"{self.LEAD}\n\n|===\n|name |value\n|`a` |Not required.\n|`b` |Required here.\n|===\n"
+        self.assertEqual(K.lead_parts(a, "|`b` |Required here.")[0], self.LEAD)
+        m = f"{self.LEAD}\n\n| name | value |\n|---|---|\n| a | Not required. |\n| b | Required here. |\n"
+        self.assertEqual(K.lead_parts(m, "| b | Required here.")[0], self.LEAD)
+        # no sentence above the table: no lead-in, never a cell
+        n = "<table>\n<tr>\n<td>\n\nNot required.\n</td>\n<td>\n\nB (2)\n</td>\n</tr>\n</table>\n"
+        self.assertEqual(K.lead_parts(n, "B (2)")[0], "")
+
+
 class Kbe3(unittest.TestCase):
     """kbe/3: heading lines as support, numbers with their neighbouring word, markup normalised; the limits unchanged."""
     MD = {"id": "m1", "source": "apache-kafka", "path": "raw/apache-kafka/docs/x.md", "title": "Connect > Steps",

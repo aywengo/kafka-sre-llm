@@ -331,6 +331,7 @@ _ADM_PARA = re.compile(r"^\s*(?:(NOTE|WARNING|IMPORTANT|CAUTION)\s*:\s*"        
                        r"|>?\s*\*{1,2}(Note|Warning|Important|Caution)\s*[:.]?\*{1,2}\s*[:.]?\s*)")   # **Note:** text, > **Note**
 _DELIM = re.compile(r"^={4,}\s*$")
 _HTML_TABLE = re.compile(r"^\s*<table\b", re.I)
+_TABLE_TAG = re.compile(r"</?(?:td|th|tr|tbody|thead|table)\b", re.I)
 SHORT_SENTENCE = 80                  # a lead-in shorter than this takes the sentence before it as well
 _ABBREV_END = re.compile(r"(?:^|\s)(?:" + "|".join(re.escape(a) for a in sorted(ABBREVIATIONS)) + r")\.$", re.I)
 
@@ -541,6 +542,8 @@ def lead_parts(chunk_text, qtext):
     if k is None or blocks[k][0] in ("heading", "admonition", "code"):
         return "", []
     kind, start = blocks[k][0], blocks[k][1]
+    if kind == "para" and _TABLE_TAG.search(text[start:blocks[k][2]]):
+        return "", []                       # W26: a cut-off HTML table (its start is not in the chunk): no lead-in, and never a cell or row of it
     lead, lead_block = "", None
     before = ""
     item = _item_before(text, s)                              # the list item the quote is in (or continues), up to the quote
@@ -649,6 +652,20 @@ def _title_norm(s):
 _WORD_NAME = re.compile(r"^[A-Za-z]+(-[A-Za-z]+)+$")
 
 
+def _hyphen_word_in(token, text):
+    """W26: an ordinary hyphenated word (letters and hyphens only, not in backticks in the field) is in the text in the same form,
+    with spaces for the hyphens, or without them, case-insensitive, as a whole word; text that has it inside backticks or as part
+    of a longer identifier (a dot, slash, underscore or further hyphen next to it) does not count."""
+    parts = token.split("-")
+    forms = ["-".join(parts), " ".join(parts), "".join(parts)]
+    t = unmark(text or "")
+    for f in forms:
+        pat = r"(?<![\w.\-/`])" + r"\s+".join(re.escape(x) for x in f.split(" ")) + r"(?![\w\-/`])(?!\.\w)"
+        if re.search(pat, t, re.I):
+            return True
+    return False
+
+
 def _in_title(token, line):
     if not re.search(r"[A-Za-z]", token):          # a bare number is matched with its neighbouring word (_number_in_title)
         return False
@@ -685,6 +702,10 @@ def _support(e, window):
         ftext = e.get(field) or ""
         for t in identifier_tokens(ftext):
             if token_in(t, qtext) or (unmark(t) and token_in(unmark(t), qun)):
+                continue
+            if (field == "title" and _WORD_NAME.match(t) and "`" + t + "`" not in ftext      # W26: node-to-node, self-signed, Fine-tuning
+                    and (_hyphen_word_in(t, qtext) or any(_hyphen_word_in(t, ln) for s in e["sources"] if s in window
+                                                          for ln in [_title_line(window[s])] + heading_lines(window[s])))):
                 continue
             hit = None
             for s in e["sources"]:

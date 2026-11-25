@@ -328,11 +328,11 @@ class DryRun(unittest.TestCase):
     def test_end_to_end(self):
         with tempfile.TemporaryDirectory() as d:
             w = str(Path(d) / "kb")
-            r = self.sh("--sanity", "--dry-run", "--work", w, "--plant-write-bad", "49e7b9e6149b5a46", "--plant-check-bad", "c048f3683c509d69",
+            r = self.sh("--sanity", "--dry-run", "--work", w, "--plant-write-bad", "cf10e0087a5af5e7", "--plant-check-bad", "01e91f892aa1e343",
                         "--plant-stop", "20", ok=(1,))
             self.assertIn("the writer", r.stdout)
             self.assertIn("SERVER ERROR", Path(w, "logs/m7_kb2.sanity.write.log").read_text())   # a window of a server error prints a line
-            r = self.sh("--sanity", "--dry-run", "--work", w, "--plant-write-bad", "49e7b9e6149b5a46", "--plant-check-bad", "c048f3683c509d69")
+            r = self.sh("--sanity", "--dry-run", "--work", w, "--plant-write-bad", "cf10e0087a5af5e7", "--plant-check-bad", "01e91f892aa1e343")
             self.assertIn("rerun after a stop", r.stdout)
             self.assertIn("SANITY (mechanical parts): PASS", r.stdout)
             self.assertTrue(r.stdout.rstrip().endswith("KB2_PILOT_from_stub_data.md"))
@@ -358,7 +358,7 @@ class DryRun(unittest.TestCase):
             self.sh("--full", "--dry-run", "--work", w, "--sanity-reading", rf)
             self.assertEqual(self.tree(w), before)
             rep = Path(w, "KB2_PILOT_from_stub_data.md").read_text()
-            self.assertIn("## Sanity run (50 windows, selection sanity3)", rep)
+            self.assertIn("## Sanity run (50 windows, selection sanity4)", rep)
             self.assertIn("## Full run (1,487 windows)", rep)
             self.assertIn(hashlib.sha256(Path(rf).read_bytes()).hexdigest(), rep)
             self.assertIn("rated 1 of 40 accepted entries not ok", rep)
@@ -372,7 +372,7 @@ class DryRun(unittest.TestCase):
     def test_failed_sanity_rule_ends_failed(self):
         with tempfile.TemporaryDirectory() as d:
             w = str(Path(d) / "kb")
-            r = self.sh("--sanity", "--dry-run", "--work", w, "--plant-write-bad", "49e7b9e6149b5a46,1d804ccb66c5d805,bdad335383aa9e16", ok=(1,))
+            r = self.sh("--sanity", "--dry-run", "--work", w, "--plant-write-bad", "cf10e0087a5af5e7,6f003de7f82a37fd,2599a06d176f53fd", ok=(1,))
             self.assertIn("the sanity run failed its rule", r.stdout)
             self.assertTrue(Path(w, "logs/m7_kb2.sanity.failed").exists())
             self.assertFalse(Path(w, "logs/m7_kb2.sanity.done").exists())

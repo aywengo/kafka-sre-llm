@@ -4,7 +4,7 @@
 The checker model (GLM-5.3-Flash-oQ8e-mtp, the judge build, not the writer; thinking off, temperature 0) sees the window's
 chunks as the model receives them and the window's gated entries (title, statement, applies_when, quotes); not the writer's prompt.
 It gives one verdict per entry: ok, partial, wrong or unsupported, with a short reason. An unparsable or incomplete reply is
-retried once (temperature 0.3); entries still without a verdict are "unchecked". Only "ok" entries enter the index.
+retried once (temperature 0.3); entries still without a verdict are checked in halves of the window's entries (W26), then "unchecked". Only "ok" entries enter the index.
 
   .venv/bin/python scripts/run_guarded.py --stall-min 20 --log L -- .venv/bin/python scripts/kb_check_entries.py \\
       --slice work/m7/kb/slice.jsonl --write-dir work/m7/kb/sanity --out-dir work/m7/kb/sanity \\
@@ -40,7 +40,7 @@ import kb_write_entries as W  # noqa: E402
 CHECKER_MODEL = "GLM-5.3-Flash-oQ8e-mtp"
 FALLBACK_MODEL = "GLM-5.3-Flash-oQ4e"      # only by the conductor's note before the run (--fallback-note)
 # One request at a time (W21: oMLX server requests stay sequential).
-MAX_TOKENS, CONCURRENCY = 4000, 1
+MAX_TOKENS, CONCURRENCY = 8000, 1       # W26: 4000 -> 8000 (see runs/m7/reports/kb2_w24_build.md)
 VERDICTS = ("ok", "partial", "wrong", "unsupported")
 FILES = ("check_windows.jsonl", "checks.jsonl")
 
@@ -82,19 +82,40 @@ def stub_checker():
 
 
 def check_window(client, win, entries, max_tokens):
+    """Two attempts on the whole window (temperature 0, then 0.3, the retry only fills gaps). Entries still without a verdict
+    (a reply cut at max_tokens, or none that parses) are then checked in halves, each half one call at temperature 0, down to
+    a single entry (W26: two windows of the fourth sanity run had two cut replies each and went unchecked)."""
     t0 = time.monotonic()
-    msgs = P.kb_check_messages(K.window_text(win, None), entry_lines(entries))
+    wtext = K.window_text(win, None)
     ids = {e["id"] for e in entries}
-    got, attempts, tokens = {}, 0, 0
-    for temp in (0.0, W.RETRY_TEMPERATURE):
-        attempts += 1
-        r = client.chat(msgs, max_tokens, temperature=temp)
+    got, calls, tokens, cut = {}, 0, 0, 0
+
+    def ask(es, temp):
+        nonlocal calls, tokens, cut
+        calls += 1
+        r = client.chat(P.kb_check_messages(wtext, entry_lines(es)), max_tokens, temperature=temp)
         tokens += r["tokens"]
-        v = parse_verdicts(W.parse_json(r["text"]), ids)
-        got = {**v, **got}     # a verdict of the first reply is never replaced by the retry's; the retry only fills gaps
+        if r.get("finish") == "length":
+            cut += 1
+        return parse_verdicts(W.parse_json(r["text"]), {e["id"] for e in es})
+
+    for temp in (0.0, W.RETRY_TEMPERATURE):
+        got = {**ask(entries, temp), **got}     # a verdict of the first reply is never replaced by the retry's; the retry only fills gaps
         if len(got) == len(ids):
             break
-    return got, attempts, round(time.monotonic() - t0, 2), tokens
+    attempts = calls
+
+    def split(es):
+        if len(es) < 2:
+            return
+        mid = (len(es) + 1) // 2
+        for half in (es[:mid], es[mid:]):
+            todo = [e for e in half if e["id"] not in got]
+            if todo:
+                got.update({k: v for k, v in ask(todo, 0.0).items() if k not in got})
+                split([e for e in todo if e["id"] not in got])
+    split([e for e in entries if e["id"] not in got])
+    return got, attempts, round(time.monotonic() - t0, 2), tokens, cut, calls
 
 
 def main(argv=None):
@@ -229,7 +250,7 @@ def main(argv=None):
                     res = fu.result()
                     if res is None:
                         continue                 # not started after a server error; checked on the resume
-                    got, attempts, secs, tokens = res
+                    got, attempts, secs, tokens, ncut, ncalls = res
                 except W.ServerError as e:
                     err = e if err is None or (isinstance(e, W.WrongModel) and not isinstance(err, W.WrongModel)) else err
                     stop.set()                                        # no new call after a server error
@@ -237,12 +258,12 @@ def main(argv=None):
                     continue
                 rows = []
                 for e in by_win[w]:
-                    v, why = got.get(e["id"], ("unchecked", "no verdict after the retry"))
+                    v, why = got.get(e["id"], ("unchecked", "no verdict after the retry and the halves"))
                     rows.append({"id": e["id"], "window": w, "verdict": v, "reason": why, "attempts": attempts, "kind": e["kind"],
                                  "entry_prompt_version": e["prompt_version"], "check_prompt_version": P.KB_CHECK_PROMPT_VERSION,
                                  "checker": a.model})
                 cnt = {k: sum(1 for r in rows if r["verdict"] == k) for k in VERDICTS + ("unchecked",)}
-                wrow = {"window": w, "entries": len(rows), **cnt, "attempts": attempts, "seconds": secs, "tokens": tokens,
+                wrow = {"window": w, "entries": len(rows), **cnt, "attempts": attempts, "seconds": secs, "tokens": tokens, "calls": ncalls, "cut_replies": ncut,
                         "check_prompt_version": P.KB_CHECK_PROMPT_VERSION, "checker": a.model, "created": W.now()}
                 k = append(rows, wrow)
                 print(f"[check] {k}/{n_total} {w} entries={len(rows)} " + " ".join(f"{x}={cnt[x]}" for x in cnt)

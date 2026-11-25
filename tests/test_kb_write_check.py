@@ -150,6 +150,19 @@ class Writer(unittest.TestCase):
         self.assertEqual(W.select([{"id": i} for i in ids], "sanity2"), s2)
         self.assertEqual(W.select([{"id": i} for i in ids], "sanity"), s1)    # the first selection is unchanged
 
+    def test_sanity4_selection(self):
+        ids = ["c%04d" % i for i in range(600)]
+        s = [W.sanity_ids(ids), W.sanity2_ids(ids), W.sanity3_ids(ids), W.sanity4_ids(ids)]
+        self.assertEqual(len(s[3]), 50)
+        for k in range(3):
+            self.assertEqual(set(s[3]) & set(s[k]), set())
+        used = set(s[0]) | set(s[1]) | set(s[2])
+        rest = [i for i in ids if i not in used]
+        self.assertEqual(set(s[3]), set(sorted(rest, key=lambda i: hashlib.sha256(("kb2-sanity4:" + i).encode()).hexdigest())[:50]))
+        self.assertEqual(W.sanity4_ids(ids), s[3])                                   # deterministic
+        self.assertEqual(W.select([{"id": i} for i in ids], "sanity4"), s[3])
+        self.assertEqual(W.select([{"id": i} for i in ids], "sanity3"), s[2])        # the earlier selections are unchanged
+
     def test_sanity3_selection(self):
         ids = [f"id{i}" for i in range(600)]
         s1, s2, s3 = W.sanity_ids(ids), W.sanity2_ids(ids), W.sanity3_ids(ids)
@@ -246,10 +259,39 @@ class Checker(unittest.TestCase):
         replies = iter([json.dumps({"verdicts": [{"id": a, "verdict": "partial", "reason": "first"}]}),
                         json.dumps({"verdicts": [{"id": a, "verdict": "ok", "reason": "retry"}, {"id": b, "verdict": "ok", "reason": "retry"}]})])
         client = W.Client("http://stub.invalid/v1", None, C.CHECKER_MODEL, transport=W.stub_transport(lambda body: next(replies)))
-        got, attempts, _, _ = C.check_window(client, [], ents, 100)
+        got, attempts, _, _, _, _ = C.check_window(client, [], ents, 100)
         self.assertEqual(attempts, 2)
         self.assertEqual(got[a], ("partial", "first"))
         self.assertEqual(got[b], ("ok", "retry"))
+
+    def _client(self, handler):
+        return W.Client("http://stub.invalid/v1", None, C.CHECKER_MODEL, transport=W.stub_transport(handler))
+
+    def test_cut_window_is_checked_in_halves(self):
+        """W26: two whole-window replies without verdicts (cut), then the halves are asked; a half that is cut again is split further."""
+        ents = rows(self.wd / "entries_raw.jsonl")[:4]
+        ids = [e["id"] for e in ents]
+        calls = []
+
+        def handler(body):
+            user = body["messages"][-1]["content"]
+            asked = [i for i in ids if '"id": "%s"' % i in user]
+            calls.append(len(asked))
+            if len(asked) > 2 or (len(asked) == 2 and ids[3] in asked):      # whole window and the half with the 4th entry: no reply that parses
+                return '{"verdicts": [{"id": "' + asked[0] + '", "verd'
+            return json.dumps({"verdicts": [{"id": i, "verdict": "ok", "reason": "half"} for i in asked]})
+        got, attempts, _, _, _, ncalls = C.check_window(self._client(handler), [], ents, 100)
+        self.assertEqual(set(got), set(ids))
+        self.assertEqual((attempts, ncalls), (2, 6))
+        self.assertEqual(calls, [4, 4, 2, 2, 1, 1])                         # whole, whole (retry), half 1 ok, half 2 cut, then its two singles
+
+    def test_entry_that_never_parses_stays_unchecked(self):
+        ents = rows(self.wd / "entries_raw.jsonl")[:2]
+        got, attempts, _, _, _, ncalls = C.check_window(self._client(lambda b: "no verdicts"), [], ents, 100)
+        self.assertEqual((got, attempts, ncalls), ({}, 2, 2 + 1 + 1))
+
+    def test_check_cap_default(self):
+        self.assertGreaterEqual(C.MAX_TOKENS, 8000)
 
     def test_another_model_answering_is_a_refusal(self):
         code, out, err = run(C.main, self.base, dict(CLEAN, KB_STUB_WRONG_MODEL_AFTER="2"))
