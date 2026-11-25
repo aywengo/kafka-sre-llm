@@ -195,7 +195,7 @@ class Finish(unittest.TestCase):
         self.assertNotIn("<<", m[1]["content"].replace("WINDOW <<TARGET>>", ""))
         c = P.kb_check_messages("W", "E")
         self.assertNotIn("<<", c[1]["content"])
-        self.assertEqual((P.KB_ENTRY_PROMPT_VERSION, P.KB_CHECK_PROMPT_VERSION), ("kbe/1", "kbc/1"))
+        self.assertEqual((P.KB_ENTRY_PROMPT_VERSION, P.KB_CHECK_PROMPT_VERSION), ("kbe/2", "kbc/1"))
 
 
 class GoldenUntouched(unittest.TestCase):
@@ -206,3 +206,57 @@ class GoldenUntouched(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Normalisations(unittest.TestCase):
+    """kbe/2: three harmless gate normalisations and the title-line support."""
+    TL = {"id": "t2", "source": "strimzi", "path": T["path"], "title": "Using `KafkaNodePool` > Rolling.Updates",
+          "text": "Set the value as described. Use bin/kafka-features.sh to inspect features. This is a trade-off between speed and safety."}
+    W = {"t2": TL}
+
+    def e(self, **kw):
+        d = {"kind": "fact", "title": "Features", "statement": "Set the value.", "sources": ["t2"],
+             "quotes": [{"chunk": "t2", "text": "Set the value as described."}]}
+        d.update(kw)
+        return d
+
+    def test_a_title_line_supports_name_and_is_recorded(self):
+        e = self.e(statement="For `KafkaNodePool`, set the value.")
+        self.assertEqual(K.gate_entry(e, self.W, "t2"), [])
+        self.assertEqual(K.title_support(e, self.W), ["t2"])
+        f = K.finish_entry(e, [self.TL], "t2", prompt_version="kbe/2", writer="w", created="c", commits={})
+        self.assertEqual(f["quotes"][-1], {"chunk": "t2", "text": "strimzi \u2014 Using `KafkaNodePool` > Rolling.Updates", "title_line": True})
+        self.assertIn("Using `KafkaNodePool`", K.render_text(f))
+        # separators: dots and ' > ' in the title line
+        self.assertEqual(K.gate_entry(self.e(statement="See Rolling.Updates."), self.W, "t2"), [])
+        self.assertEqual(K.gate_entry(self.e(statement="See `Rolling/Updates`."), self.W, "t2"), [])
+
+    def test_a_not_for_unlisted_chunk_or_numbers_or_invented(self):
+        self.assertTrue(K.gate_entry(self.e(statement="Use `KafkaNodePools`."), self.W, "t2"))      # a plural is another name
+        self.assertTrue(K.gate_entry(self.e(statement="Use `KafkaUser`."), self.W, "t2"))
+        self.assertTrue(K.gate_entry(self.e(statement="Version 1.3."), self.W, "t2"))
+        e = self.e(statement="For `KafkaNodePool`, set the value.", sources=["t2"])
+        e2 = dict(e, sources=["t2"])
+        self.assertEqual(K.title_support(self.e(), self.W), [])                 # no extra quote when a quote has every name
+
+    def test_b_path_slash(self):
+        self.assertTrue(K.token_in("kafka-features.sh", "run bin/kafka-features.sh now"))
+        self.assertEqual(K.gate_entry(self.e(statement="Use kafka-features.sh to inspect features.",
+                                             quotes=[{"chunk": "t2", "text": "Use bin/kafka-features.sh to inspect features."}]), self.W, "t2"), [])
+        self.assertFalse(K.token_in("spec.kafka", "x.spec.kafka"))               # a dot or hyphen before it still refuses
+        self.assertFalse(K.token_in("kafka-features.sh", "bin/kafka-features.shx"))
+        self.assertFalse(K.token_in("features.sh", "bin/kafka-features.sh"))
+
+    def test_c_case_insensitive_hyphenated_words(self):
+        self.assertTrue(K.token_in("Trade-off", "This is a trade-off between"))
+        self.assertEqual(K.gate_entry(self.e(statement="A Trade-off applies.",
+                                             quotes=[{"chunk": "t2", "text": "This is a trade-off between speed and safety."}]), self.W, "t2"), [])
+        self.assertFalse(K.token_in("Spec.Kafka", "a spec.kafka b"))              # not letters and hyphens only: case matters
+        self.assertFalse(K.token_in("Trade-off", "tradeoff"))
+
+    def test_still_rejected(self):
+        self.assertTrue(K.gate_entry(self.e(quotes=[{"chunk": "t2", "text": "Set the other value."}]), self.W, "t2"))   # not verbatim
+        long = "x" * 301
+        self.assertTrue(any("longer than 300" in r for r in K.gate_entry(self.e(quotes=[{"chunk": "t2", "text": long}]), self.W, "t2")))
+        self.assertTrue(any("longer than 400" in r for r in K.gate_entry(self.e(statement="s" * 401), self.W, "t2")))
+        self.assertTrue(K.gate_entry(self.e(statement="Call SinkTask.put now."), self.W, "t2"))            # a built name

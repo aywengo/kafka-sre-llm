@@ -12,7 +12,8 @@ Spec: runs/m7/reports/kb2_design.md sections 1 to 3 (and 5 for the rendered form
 
 The gate (section 3): schema and size limits; every quote a substring of its chunk after whitespace normalisation; quote
 ids within the window and within the sources; every source quoted; the target chunk quoted; every number and every
-identifier-like token of the title, the statement and applies_when occurs in a quote; the rendered form within its cap.
+identifier-like token of the title, the statement and applies_when occurs in a quote (kbe/2: or, for a name with a letter,
+in the first title line of a source chunk, which finish_entry then adds as a quote); the rendered form within its cap.
 """
 import hashlib
 import json
@@ -175,18 +176,59 @@ def gate_entry(e, window, target):
             bad.append(f"source {s} has no quote")
     if target not in {x["chunk"] for x in e["quotes"]}:
         bad.append("no quote from the target chunk")
+    for field, t in _support(e, window)[0]:
+        bad.append(f"{field}: {t!r} is in no quote or title line")
+    return bad
+
+
+def _title_line(c):
+    return chunk_view(c).split("\n", 1)[0]
+
+
+def _title_norm(s):
+    """A title line for the name comparison: backticks removed, '.', '/' and ' > ' as separators (one space)."""
+    return norm_ws(re.sub(r"\s>\s|[./]", " ", (s or "").replace("`", "")))
+
+
+_WORD_NAME = re.compile(r"^[A-Za-z]+(-[A-Za-z]+)+$")
+
+
+def _in_title(token, line):
+    if not re.search(r"[A-Za-z]", token):          # numbers and versions are not matched in a title line
+        return False
+    t, l = _title_norm(token), _title_norm(line)
+    return bool(t) and re.search(r"(?<![\w\-])" + re.escape(t) + r"(?![\w\-])", l, re.I if _WORD_NAME.match(token) else 0) is not None
+
+
+def _support(e, window):
+    """Returns (unsupported [(field, token)], title chunk ids): the tokens that no quote contains and no source chunk's title
+    line contains, and the ids of the source chunks whose title line is what supports a token (in source order)."""
     qtext = " \n ".join(norm_ws(x["text"]) for x in e["quotes"])
+    bad, titles = [], []
     for field in ("title", "statement", "applies_when"):     # the title goes into the pack too (review of f45dd13)
         for t in identifier_tokens(e.get(field) or ""):
-            if not token_in(t, qtext):
-                bad.append(f"{field}: {t!r} is in no quote")
-    return bad
+            if token_in(t, qtext):
+                continue
+            cid = next((s for s in e["sources"] if s in window and _in_title(t, _title_line(window[s]))), None)
+            if cid is None:
+                bad.append((field, t))
+            elif cid not in titles:
+                titles.append(cid)
+    return bad, [s for s in e["sources"] if s in titles]
+
+
+def title_support(e, window):
+    """The ids of the source chunks whose title line supports a name of the entry (no quote has it): finish_entry records
+    each such line as an extra quote."""
+    return _support(e, window)[1]
 
 
 def token_in(token, text):
     """The token occurs in the text as a whole token: not part of a longer name or number (`spec.kafka.replica` is not in
-    `spec.kafka.replicas`, 3 is not in 30 or 1.3.1); a sentence's final dot after it is allowed."""
-    return re.search(r"(?<![\w./\-])" + re.escape(token) + r"(?![\w/\-])(?!\.\w)", text) is not None
+    `spec.kafka.replicas`, 3 is not in 30 or 1.3.1); a sentence's final dot after it is allowed. A path slash before it is
+    fine (kbe/2: `kafka-features.sh` in bin/kafka-features.sh); a name of letters and hyphens only is compared without case."""
+    flags = re.I if _WORD_NAME.match(token) else 0
+    return re.search(r"(?<![\w.\-])" + re.escape(token) + r"(?![\w/\-])(?!\.\w)", text, flags) is not None
 
 
 def check_reply(obj, window_chunks, target):
@@ -222,6 +264,8 @@ def finish_entry(e, window_chunks, target, *, prompt_version, writer, created, c
     out["sources"] = [{"id": s, "source": byid[s]["source"], "path": byid[s]["path"], "commit": commits.get(byid[s]["source"])}
                       for s in e["sources"]]
     out["quotes"] = [{"chunk": x["chunk"], "text": x["text"]} for x in e["quotes"]]
+    for cid in title_support(e, byid):         # a name only the chunk's title line has: that line is shown as a quote
+        out["quotes"].append({"chunk": cid, "text": _title_line(byid[cid]), "title_line": True})
     out.update({"prompt_version": prompt_version, "writer": writer,
                 "window": {"target": target, "chunks": [c["id"] for c in window_chunks]}, "created": created})
     return out

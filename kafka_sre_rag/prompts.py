@@ -240,7 +240,7 @@ LOOKUP_CARDS_HEADER = (
 # object per entry). Every output row carries its version; a changed text needs a new version and a new sanity run. These
 # constants are not in frozen.json and no golden hash covers them (they are no part of the measured configuration). They
 # are written for and tried only on the slice's sanity chunks; no text of any evaluation item.
-KB_ENTRY_PROMPT_VERSION = "kbe/1"
+KB_ENTRY_PROMPT_VERSION = "kbe/2"
 KB_CHECK_PROMPT_VERSION = "kbc/1"
 
 KB_WRITER_SYSTEM = (
@@ -273,7 +273,13 @@ KB_WRITER_USER = (
     "that chunk as shown (its first line or its text), at most 300 characters; every source has at least one quote, "
     "and at least one quote is from the target chunk. Every claim of the statement and of \"applies_when\" is stated "
     "by the quotes, and every number and name in them and in the title appears in a quote.\n"
-    "- A \"cross\" entry only when every part of its statement is quoted from the chunk that states it.\n\n"
+    "- A \"cross\" entry only when every part of its statement is quoted from the chunk that states it.\n"
+    "- Count characters. A quote over 300 characters is rejected: use two shorter quotes from the same chunk. A statement "
+    "over 400 characters is rejected: write two entries.\n"
+    "- For a table row, quote the whole row from its first cell, so the name and its value are in one quote.\n"
+    "- Write each name exactly as a quote or the chunk's title line writes it: same case, no added class, prefix, path or "
+    "plural. If neither contains it, leave it out. Do not make up hyphenated words.\n"
+    "- File each quote under the id of the chunk it comes from, and list that chunk in sources.\n\n"
     "Reply with JSON only, one object and nothing else (no code fence, no text before or after it), in exactly this "
     "form: {\"entries\": [{\"kind\": \"value\", \"title\": \"...\", \"statement\": \"...\", \"applies_when\": \"...\", "
     "\"sources\": [\"<<TARGET>>\"], \"quotes\": [{\"chunk\": \"<<TARGET>>\", \"text\": \"...\"}]}]}")
