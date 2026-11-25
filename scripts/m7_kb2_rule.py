@@ -546,7 +546,7 @@ def main(argv=None):
     p = sub.add_parser("sanity-rule")
     p.add_argument("--write-dir", required=True)
     p.add_argument("--check-dir", required=True)
-    p.add_argument("--concurrency", type=int, default=3)
+    p.add_argument("--concurrency", type=int, default=1)  # W21: one request at a time
     p.add_argument("--total", type=int, default=FULL_WINDOWS)
     p.add_argument("--writer", required=True)
     p.add_argument("--checker", required=True)

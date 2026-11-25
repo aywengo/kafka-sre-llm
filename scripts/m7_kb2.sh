@@ -45,7 +45,7 @@ set -e
 MODE=; DRY=no; W=work/m7/kb; WSET=no; REPORT=runs/m7/KB2_PILOT.md; RSET=no; READING=; FAILAFTER=; PFOREIGN=; PBUSY=0; PSTOP=
 PWBAD=; PWRETRY=; PWGATE=; PCBAD=; PWRONG=
 DS=DeepSeek-V4.1-Flash-1017-oQ4e-mtp; GLM8=GLM-5.3-Flash-oQ8e-mtp; GLM4=GLM-5.3-Flash-oQ4e; CHK=$GLM8; FBNOTE=
-WCONC=3; CCONC=2; WMAX=3000; CMAX=1500
+WCONC=1; CCONC=1; WMAX=3000; CMAX=1500
 while [ $# -gt 0 ]; do case $1 in
   --sanity) MODE=sanity;; --full) MODE=full;; --dry-run) DRY=yes;;
   --work) W=${2:?}; WSET=yes; shift;; --report) REPORT=${2:?}; RSET=yes; shift;;

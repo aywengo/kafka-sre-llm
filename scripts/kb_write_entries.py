@@ -48,7 +48,8 @@ from kafka_sre_rag.generators import strip_think, is_loopback_host  # noqa: E402
 
 WRITER_MODEL = "DeepSeek-V4.1-Flash-1017-oQ4e-mtp"
 EXTRA_BODY = {"chat_template_kwargs": {"thinking_mode": "chat"}}     # DeepSeek's switch for thinking off (gen_v2.sh, the M7 judge)
-MAX_TOKENS, CONCURRENCY, RETRY_TEMPERATURE = 3000, 3, 0.3
+# One request at a time (W21: oMLX server requests stay sequential).
+MAX_TOKENS, CONCURRENCY, RETRY_TEMPERATURE = 3000, 1, 0.3
 SANITY_N, SANITY_SALT = 50, "kb2-sanity:"
 FILES = ("windows.jsonl", "entries_raw.jsonl", "entries_gate_rejects.jsonl")
 

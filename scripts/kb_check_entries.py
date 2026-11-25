@@ -39,7 +39,8 @@ import kb_write_entries as W  # noqa: E402
 
 CHECKER_MODEL = "GLM-5.3-Flash-oQ8e-mtp"
 FALLBACK_MODEL = "GLM-5.3-Flash-oQ4e"      # only by the conductor's note before the run (--fallback-note)
-MAX_TOKENS, CONCURRENCY = 1500, 2
+# One request at a time (W21: oMLX server requests stay sequential).
+MAX_TOKENS, CONCURRENCY = 1500, 1
 VERDICTS = ("ok", "partial", "wrong", "unsupported")
 FILES = ("check_windows.jsonl", "checks.jsonl")
 
