@@ -162,7 +162,9 @@ class Gate(unittest.TestCase):
 
     def test_reply_schema_and_duplicates(self):
         self.assertIsNotNone(K.check_reply([], [T, N1], "t1")[0])
-        self.assertIsNotNone(K.check_reply({"entries": [entry()] * 9}, [T, N1], "t1")[0])
+        self.assertIsNone(K.check_reply({"entries": [entry()] * 12}, [T, N1], "t1")[0])        # kbe/4: the cap is 12
+        self.assertIn("13 entries (at most 12)", K.check_reply({"entries": [entry()] * 13}, [T, N1], "t1")[0])
+        self.assertEqual(K.ENTRIES_MAX, 12)
         err, ok, rej = K.check_reply({"entries": [entry(), entry(statement=entry()["statement"].upper().replace("SPEC.KAFKA.REPLICAS", "spec.kafka.replicas")), entry(kind="tip")]}, [T, N1], "t1")
         self.assertIsNone(err)
         self.assertEqual(len(ok), 1)
@@ -183,7 +185,7 @@ class Finish(unittest.TestCase):
         self.assertIn("\nSource text:\n- \"The `spec.kafka.replicas` property", txt)
         self.assertEqual(K.render_check(e), [])
         e2 = K.finish_entry(entry(applies_when="KRaft mode"), [T, N1], "t1", prompt_version="kbe/1", writer="w", created="c", commits={})
-        self.assertIn("\nApplies when: KRaft mode\nSource text:", K.render_text(e2))
+        self.assertIn("\nApplies when: KRaft mode\nContext: Configuring brokers\nSource text:", K.render_text(e2))
         big = dict(e, quotes=[{"chunk": "t1", "text": "y" * 300}] * 4, statement="s" * 400)
         self.assertTrue(K.render_check(big))
 
@@ -195,7 +197,7 @@ class Finish(unittest.TestCase):
         self.assertNotIn("<<", m[1]["content"].replace("WINDOW <<TARGET>>", ""))
         c = P.kb_check_messages("W", "E")
         self.assertNotIn("<<", c[1]["content"])
-        self.assertEqual((P.KB_ENTRY_PROMPT_VERSION, P.KB_CHECK_PROMPT_VERSION), ("kbe/3", "kbc/2"))
+        self.assertEqual((P.KB_ENTRY_PROMPT_VERSION, P.KB_CHECK_PROMPT_VERSION), ("kbe/4", "kbc/3"))
 
 
 class GoldenUntouched(unittest.TestCase):
@@ -260,6 +262,92 @@ class Normalisations(unittest.TestCase):
         self.assertTrue(any("longer than 300" in r for r in K.gate_entry(self.e(quotes=[{"chunk": "t2", "text": long}]), self.W, "t2")))
         self.assertTrue(any("longer than 400" in r for r in K.gate_entry(self.e(statement="s" * 401), self.W, "t2")))
         self.assertTrue(K.gate_entry(self.e(statement="Call SinkTask.put now."), self.W, "t2"))            # a built name
+
+
+class Kbe4Trail(unittest.TestCase):
+    """kbe/4: the heading trail is derived from the chunks (title line, in-chunk headings, table caption), stored, rendered."""
+    MD = {"id": "m1", "source": "apache-kafka", "path": "raw/apache-kafka/docs/x.md", "title": "Monitoring > Streams metrics",
+          "text": "# Task metrics\n\nIntro sentence.\n\n## Debug level\n\nThe process-rate metric is only recorded at debug level.\n\n"
+                  "```\n# not a heading\n```\n\n## Other\n\nLater text."}
+    ADOC = {"id": "a1", "source": "strimzi", "path": "raw/strimzi/documentation/modules/y.adoc", "title": "Doc > Section > Sub",
+            "text": "= Operators\n\n== Topic Operator\n\nIntro.\n\n.Operator settings\n[cols=\"1,1\"]\n|===\n|name |value\n|`a` |one\n|===\n\n"
+                    "After the table.\n\n== User Operator\n\nUsers."}
+
+    def q(self, cid, text):
+        return [{"chunk": cid, "text": text}]
+
+    def test_title_line_and_headings_before_the_quote(self):
+        t = K.heading_trail(["m1"], self.q("m1", "The process-rate metric is only recorded at debug level."), {"m1": self.MD})
+        self.assertEqual(t, "Monitoring > Streams metrics > Task metrics > Debug level")      # the stack by level, outermost first
+        t = K.heading_trail(["m1"], self.q("m1", "Intro sentence."), {"m1": self.MD})
+        self.assertEqual(t, "Monitoring > Streams metrics > Task metrics")
+        t = K.heading_trail(["m1"], self.q("m1", "Later text."), {"m1": self.MD})
+        self.assertTrue(t.endswith("Task metrics > Other"), t)
+
+    def test_adoc_headings_levels_and_table_caption(self):
+        b = {"a1": self.ADOC}
+        self.assertEqual(K.heading_trail(["a1"], self.q("a1", "Intro."), b), "Doc > Section > Sub > Operators > Topic Operator")
+        self.assertEqual(K.heading_trail(["a1"], self.q("a1", "|`a` |one"), b), "Doc > Section > Sub > Operators > Topic Operator > Operator settings")
+        self.assertNotIn("Operator settings", K.heading_trail(["a1"], self.q("a1", "After the table."), b))     # outside the table
+        self.assertTrue(K.heading_trail(["a1"], self.q("a1", "Users."), b).endswith("Operators > User Operator"))
+
+    def test_code_block_hash_is_no_heading_and_title_only_fallback(self):
+        t = K.heading_trail(["m1"], self.q("m1", "# not a heading"), {"m1": self.MD})
+        self.assertNotIn("not a heading", t)
+        self.assertEqual(K.heading_trail(["m1"], [{"chunk": "m1", "text": "x", "title_line": True}], {"m1": self.MD}), "Monitoring > Streams metrics")
+        self.assertEqual(K.heading_trail([], [], {}), "")
+
+    def test_anchor_suffix_is_dropped(self):
+        c = dict(self.MD, title="Streams metrics {#kip-1}", text="## Header-aware stores {#kip-1271-headers}\n\nThe quoted sentence.")
+        self.assertEqual(K.heading_trail(["m1"], self.q("m1", "The quoted sentence."), {"m1": c}), "Streams metrics > Header-aware stores")
+
+    def test_several_sources_and_quotes_are_joined(self):
+        q = [{"chunk": "m1", "text": "Intro sentence."}, {"chunk": "m1", "text": "Later text."}, {"chunk": "a1", "text": "Intro."}]
+        t = K.heading_trail(["m1", "a1"], q, {"m1": self.MD, "a1": self.ADOC}, cap=400)
+        self.assertEqual(t.count(" | "), 2, t)
+
+    def test_truncation_cuts_the_crumb_middle_and_keeps_the_nearest_heading(self):
+        long = {"id": "l1", "source": "strimzi", "path": "raw/p.adoc", "title": " > ".join(f"Segment number {i}" for i in range(12)),
+                "text": "== Nearest heading here\n\nThe quoted sentence."}
+        t = K.heading_trail(["l1"], self.q("l1", "The quoted sentence."), {"l1": long})
+        self.assertLessEqual(len(t), K.TRAIL_MAX)
+        self.assertTrue(t.startswith("Segment number 0"), t)
+        self.assertTrue(t.endswith("Nearest heading here"), t)
+        self.assertIn(K.ELLIPSIS, t)
+        self.assertEqual(K.heading_trail(["l1"], self.q("l1", "The quoted sentence."), {"l1": long}, cap=40)[-20:], "Nearest heading here"[-20:])
+        # a title of one very long segment is cut in the middle
+        one = dict(long, title="T" * 400)
+        t = K.heading_trail(["l1"], self.q("l1", "The quoted sentence."), {"l1": one})
+        self.assertEqual(len(t), K.TRAIL_MAX)
+        self.assertTrue(t.endswith("> Nearest heading here") and K.ELLIPSIS in t)
+        # a nearest heading longer than the cap is cut in its middle, never dropped
+        big = dict(long, title="Doc", text="== " + "H" * 150 + "\n\nThe quoted sentence.")
+        self.assertEqual(len(K.heading_trail(["l1"], self.q("l1", "The quoted sentence."), {"l1": big}, cap=60)), 60)
+
+    def test_finish_entry_stores_and_render_shows_it(self):
+        e = {"kind": "fact", "title": "Process rate", "statement": "The process-rate metric is only recorded at debug level.",
+             "sources": ["m1"], "quotes": self.q("m1", "The process-rate metric is only recorded at debug level.")}
+        f = K.finish_entry(e, [self.MD], "m1", prompt_version="kbe/4", writer="w", created="c", commits={})
+        self.assertEqual(f["heading_trail"], "Monitoring > Streams metrics > Task metrics > Debug level")
+        self.assertIn("\nContext: Monitoring > Streams metrics > Task metrics > Debug level\nSource text:\n", K.render_text(f))
+        self.assertEqual(K.render_check(f), [])
+        g = {k: v for k, v in f.items() if k != "heading_trail"}                    # an entry of an earlier version renders as before
+        self.assertNotIn("Context:", K.render_text(g))
+
+    def test_checker_and_reading_see_the_trail(self):
+        import kb_check_entries as C
+        import m7_kb2_rule as R
+        e = K.finish_entry({"kind": "fact", "title": "Process rate", "statement": "The process-rate metric is only recorded at debug level.",
+                            "sources": ["m1"], "quotes": self.q("m1", "The process-rate metric is only recorded at debug level.")},
+                           [self.MD], "m1", prompt_version="kbe/4", writer="w", created="c", commits={})
+        e["id"] = "kbe-x"
+        row = json.loads(C.entry_lines([e]))
+        self.assertEqual(row["heading_trail"], e["heading_trail"])
+        self.assertIn("**Heading trail.** " + e["heading_trail"], R._bundle([e], {"m1": self.MD}, "T", "note"))
+        self.assertIn("heading trail", P.KB_CHECK_USER)
+        self.assertIn("neither in the statement", P.KB_CHECK_USER)
+        self.assertIn("added to the entry automatically", P.KB_WRITER_USER)
+        self.assertIn("Write 0 to 12 entries", P.KB_WRITER_USER)
 
 
 class Kbe3(unittest.TestCase):
@@ -328,4 +416,4 @@ class Kbe3(unittest.TestCase):
                   "When the entry's subject is named by a heading line inside the chunk, quote that heading line as well.",
                   "a statement true only under a condition must name it."):
             self.assertIn(t, w)
-        self.assertIn("drops a condition that the source (its heading or its context) places on it", P.KB_CHECK_USER)
+        self.assertIn("a condition from the chunk (a heading, the preceding sentence, a note or warning nearby) is neither in the statement", P.KB_CHECK_USER)

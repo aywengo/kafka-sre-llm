@@ -8,6 +8,7 @@ Spec: runs/m7/reports/kb2_design.md sections 1 to 3 (and 5 for the rendered form
   check_reply(obj, ...)          the reply's schema (retried when broken) and the gate of each entry
   gate_entry(e, window, target)  the reasons an entry fails the mechanical gate ([] = passes)
   finish_entry(...)              the code's fields: id, scope, pinned sources, provenance
+  heading_trail(...)             kbe/4: the source headings an entry stands under, derived from the chunks (not by a model)
   render(entry)                  the item an entry is in a pack (pack_text input), at most RENDER_MAX characters
 
 The gate (section 3): schema and size limits; every quote a substring of its chunk after whitespace normalisation; quote
@@ -26,7 +27,8 @@ KINDS = ("fact", "value", "procedure", "warning", "cross")
 TITLE_MAX, STATEMENT_MAX, APPLIES_MAX, QUOTE_MAX = 100, 400, 200, 300
 HEADING_MAX = 120                    # a heading line inside a chunk that counts as support (kbe/3)
 QUOTES_MIN, QUOTES_MAX, SOURCES_MIN, SOURCES_MAX = 1, 4, 1, 3
-ENTRIES_MAX = 8                      # per window
+ENTRIES_MAX = 12                     # per window (kbe/4: 12; kbe/3 and before: 8)
+TRAIL_MAX = 200                      # the heading trail of an entry, in characters (kbe/4)
 RENDER_MAX = 1500                    # the rendered entry, as a reranker passage
 SCOPE = {"strimzi": {"product": "Strimzi", "version": "1.3.1"},
          "apache-kafka": {"product": "Apache Kafka", "version": "4.3.2"}}
@@ -183,6 +185,138 @@ def gate_entry(e, window, target):
     return bad
 
 
+# ---------------------------------------------------------------- the heading trail (kbe/4, mechanical, not written by a model)
+_HEAD_MARK = re.compile(r"^\s*(#{1,6}|={1,6})\s+(\S.*?)\s*$")
+_CAPTION = re.compile(r"^\.(?=[A-Za-z0-9`*_])(\S.*?)\s*$")
+_TABLE_FENCE = re.compile(r"^\s*\|===+\s*$")
+_ANCHOR = re.compile(r"\s*\{#[^}]*\}\s*$")
+TRAIL_SEP = " > "
+ELLIPSIS = "\u2026"
+
+
+def _norm_map(text):
+    """(normalised text, index map): the text with white space collapsed (as norm_ws does) and, per character of it, its
+    index in the original; leading white space is dropped."""
+    out, idx, prev_space = [], [], True
+    for i, ch in enumerate(text or ""):
+        if ch.isspace():
+            if not prev_space:
+                out.append(" ")
+                idx.append(i)
+            prev_space = True
+        else:
+            out.append(ch)
+            idx.append(i)
+            prev_space = False
+    return "".join(out), idx
+
+
+def trail_before(text, pos):
+    """The in-chunk headings (a stack by level: markdown '#', AsciiDoc '=', not inside a code block) in force at character
+    pos of text, outermost first, and the caption (an AsciiDoc '.Caption' line) of the table the position is in, or None."""
+    stack, fence, in_table, caption, pending, off = [], False, False, None, None, 0
+    for line in (text or "").split("\n"):
+        if off > pos:
+            break
+        end = off + len(line)
+        if _FENCE.match(line):
+            fence = not fence
+        elif not fence:
+            if _TABLE_FENCE.match(line):
+                if in_table:
+                    in_table, caption = False, None
+                else:
+                    in_table, caption, pending = True, pending, None
+            elif not in_table:
+                m = _HEAD_MARK.match(line)
+                if m:
+                    lvl = len(m.group(1))
+                    name = _ANCHOR.sub("", m.group(2)).strip()          # a trailing {#anchor} is no part of the name
+                    stack = [(l, t) for l, t in stack if l < lvl] + [(lvl, name)]
+                    pending = None
+                else:
+                    c = _CAPTION.match(line)
+                    if c:
+                        pending = c.group(1)
+                    elif line.strip() and not line.lstrip().startswith("["):
+                        pending = None
+        off = end + 1
+    return [t for _, t in stack], (caption if in_table else None)
+
+
+def _mid(s, n):
+    """s cut to at most n characters by removing the middle (an ellipsis in its place)."""
+    if len(s) <= n:
+        return s
+    if n <= 1:
+        return ELLIPSIS[:n]
+    a = n // 2
+    return s[:a] + ELLIPSIS + s[len(s) - (n - 1 - a):]
+
+
+def _fit(crumb, rest, n):
+    """One trail part within n characters: the crumb (the chunk's title, segments split by ' > ') then the rest (the in-chunk
+    headings and the table caption, nearest last). The middle of the crumb gives way first (middle segments become an
+    ellipsis, then characters), then the outermost headings; the nearest heading stays (cut in the middle only when it alone
+    is too long)."""
+    segs = [x for x in crumb.split(TRAIL_SEP) if x] if crumb else []
+    rest = list(rest)
+    join = lambda a, b: TRAIL_SEP.join(a + b)  # noqa: E731
+    if len(join(segs, rest)) <= n:
+        return join(segs, rest)
+    for k in range(len(segs) - 2, 0, -1):                       # first segment, an ellipsis, the last k segments
+        cand = segs[:1] + [ELLIPSIS] + segs[len(segs) - k:]
+        if len(join(cand, rest)) <= n:
+            return join(cand, rest)
+    tail = TRAIL_SEP.join(rest)
+    room = n - len(tail) - (len(TRAIL_SEP) if tail else 0)
+    if segs and room >= 12:                                      # the crumb is cut in the middle
+        head = _mid(TRAIL_SEP.join(segs), room)
+        return TRAIL_SEP.join([head] + rest)
+    while len(rest) > 1 and len(TRAIL_SEP.join(rest)) > n:      # the crumb is gone: drop the outermost headings
+        rest = rest[1:]
+    return _mid(TRAIL_SEP.join(rest), n) if rest else _mid(TRAIL_SEP.join(segs), n)
+
+
+def heading_trail(sources, quotes, byid, cap=TRAIL_MAX):
+    """kbe/4: the heading trail of an entry, derived from its source chunks and its quotes (not by a model): per source chunk,
+    the chunk's title line without the source prefix (a breadcrumb such as 'Doc > Section'), the in-chunk headings in force
+    where each quote of that chunk stands, and the caption of the table the quote is a row of; parts of several chunks (or of
+    quotes under different headings) joined by ' | '; at most cap characters. Quotes that are a title or heading line are
+    not positions."""
+    parts = []
+    for cid in sources:
+        c = byid.get(cid)
+        if c is None:
+            continue
+        crumb = _ANCHOR.sub("", (c.get("title") or str(c.get("path", "")).rsplit("/", 1)[-1] or "").strip())
+        ntext, idx = _norm_map(c.get("text") or "")
+        variants = []
+        for x in quotes:
+            if x["chunk"] != cid or x.get("title_line") or x.get("heading_line"):
+                continue
+            q = norm_ws(x["text"])
+            at = ntext.find(q) if q else -1
+            if at < 0:
+                continue
+            heads, cap_ = trail_before(c.get("text") or "", idx[at])
+            rest = heads + ([cap_] if cap_ else [])
+            if rest not in variants:
+                variants.append(rest)
+        for rest in (variants or [[]]):
+            parts.append((crumb, rest))
+    uniq = []
+    for p in parts:
+        if p not in uniq:
+            uniq.append(p)
+    if not uniq:
+        return ""
+    sep = " | "
+    n = max(20, (cap - len(sep) * (len(uniq) - 1)) // len(uniq))
+    out = sep.join(_fit(cr, rest, n) for cr, rest in uniq)
+    return out if len(out) <= cap else _mid(out, cap)
+
+
 def _title_line(c):
     return chunk_view(c).split("\n", 1)[0]
 
@@ -296,7 +430,7 @@ def token_in(token, text):
 
 def check_reply(obj, window_chunks, target):
     """obj: the parsed reply. Returns (schema_error or None, passed entries as written, rejects [(entry, reasons)]).
-    A schema error (not an object with a list "entries" of at most 8) makes the reply invalid (retried, then failed)."""
+    A schema error (not an object with a list "entries" of at most ENTRIES_MAX = 12) makes the reply invalid (retried, then failed)."""
     if not isinstance(obj, dict) or not isinstance(obj.get("entries"), list):
         return "the reply is not an object with a list \"entries\"", [], []
     if len(obj["entries"]) > ENTRIES_MAX:
@@ -327,6 +461,9 @@ def finish_entry(e, window_chunks, target, *, prompt_version, writer, created, c
     out["sources"] = [{"id": s, "source": byid[s]["source"], "path": byid[s]["path"], "commit": commits.get(byid[s]["source"])}
                       for s in e["sources"]]
     out["quotes"] = [{"chunk": x["chunk"], "text": x["text"]} for x in e["quotes"]]
+    trail = heading_trail(e["sources"], out["quotes"], byid)     # kbe/4: from the chunks, before the support lines are added
+    if trail:
+        out["heading_trail"] = trail
     for cid, line, is_title in line_support(e, byid):     # a name only a title line or a heading line has: that line is shown as a quote
         out["quotes"].append({"chunk": cid, "text": line, ("title_line" if is_title else "heading_line"): True})
     out.update({"prompt_version": prompt_version, "writer": writer,
@@ -345,6 +482,7 @@ def render(entry):
             "PATHS": ", ".join(paths), "STATEMENT": entry["statement"],
             "APPLIES": (re.sub(r"<<APPLIES_WHEN>>", lambda m: entry["applies_when"], R["applies"])
                         if entry.get("applies_when") else ""),
+            "CONTEXT": (re.sub(r"<<TRAIL>>", lambda m: entry["heading_trail"], R["context"]) if entry.get("heading_trail") else ""),
             "QUOTES": "\n".join(re.sub(r"<<QUOTE>>", lambda m, t=norm_ws(q["text"]): t, R["quote"]) for q in entry["quotes"])}
     sub = lambda tpl: re.sub(r"<<([A-Z_]+)>>", lambda m: fill[m.group(1)], tpl)  # noqa: E731
     return {"source": entry["sources"][0]["source"], "title": sub(R["title"]), "path": paths[0], "text": sub(R["text"]),

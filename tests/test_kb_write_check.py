@@ -150,6 +150,19 @@ class Writer(unittest.TestCase):
         self.assertEqual(W.select([{"id": i} for i in ids], "sanity2"), s2)
         self.assertEqual(W.select([{"id": i} for i in ids], "sanity"), s1)    # the first selection is unchanged
 
+    def test_sanity3_selection(self):
+        ids = [f"id{i}" for i in range(600)]
+        s1, s2, s3 = W.sanity_ids(ids), W.sanity2_ids(ids), W.sanity3_ids(ids)
+        self.assertEqual(len(s3), 50)
+        self.assertEqual((set(s3) & set(s1), set(s3) & set(s2)), (set(), set()))      # fresh: disjoint from sanity and sanity2
+        self.assertEqual(s3, [i for i in ids if i in set(s3)])                        # index order
+        rest = [i for i in ids if i not in set(s1) | set(s2)]
+        self.assertEqual(set(s3), set(sorted(rest, key=lambda i: hashlib.sha256(("kb2-sanity3:" + i).encode()).hexdigest())[:50]))
+        self.assertEqual(W.sanity3_ids(ids), s3)                                      # deterministic
+        self.assertEqual(W.select([{"id": i} for i in ids], "sanity3"), s3)
+        self.assertEqual(W.select([{"id": i} for i in ids], "sanity2"), s2)           # the earlier selections are unchanged
+
+
     def test_request_body_and_no_address_written(self):
         seen = []
 

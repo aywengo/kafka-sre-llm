@@ -240,8 +240,8 @@ LOOKUP_CARDS_HEADER = (
 # object per entry). Every output row carries its version; a changed text needs a new version and a new sanity run. These
 # constants are not in frozen.json and no golden hash covers them (they are no part of the measured configuration). They
 # are written for and tried only on the slice's sanity chunks; no text of any evaluation item.
-KB_ENTRY_PROMPT_VERSION = "kbe/3"
-KB_CHECK_PROMPT_VERSION = "kbc/2"
+KB_ENTRY_PROMPT_VERSION = "kbe/4"
+KB_CHECK_PROMPT_VERSION = "kbc/3"
 
 KB_WRITER_SYSTEM = (
     "You turn pages of the Strimzi and Apache Kafka documentation into short, exact fact entries for operators. You "
@@ -253,7 +253,7 @@ KB_WRITER_USER = (
     "TARGET is the one you write entries for; the others are its neighbours on the same page and are there only so "
     "that a fact split over a chunk boundary can be written once.\n\n"
     "<<WINDOW>>\n\n"
-    "Write 0 to 8 entries for the target chunk <<TARGET>>. Prefer facts an operator needs: what a setting does, "
+    "Write 0 to 12 entries for the target chunk <<TARGET>>. Prefer facts an operator needs: what a setting does, "
     "defaults and limits, valid values and units, procedures and the order of their steps, warnings, preconditions and "
     "\"do not\" rules, compatibility and versions. Write no entry for a table of contents, boilerplate, a list of links "
     "or text that states no fact; then reply with an empty list.\n\n"
@@ -279,6 +279,10 @@ KB_WRITER_USER = (
     "over 400 characters is rejected: write two entries.\n"
     "- When a heading or an earlier sentence limits where a statement applies (a version, a feature, a component, a mode), "
     "carry that condition into the statement or its applies-when field; a statement true only under a condition must name it.\n"
+    "- The heading trail of the entry (the page title and the headings above the quote, and a table's caption) is added to "
+    "the entry automatically; do not repeat it. The statement must still name every condition stated in the sentence's "
+    "own paragraph or in the immediately preceding sentence (\"only at debug level\", \"if the Topic Operator is not "
+    "running\", \"only when the CA type is cert-manager\"), because the trail does not carry those.\n"
     "- For a table row, quote the whole row from its first cell, so the name and its value are in one quote.\n"
     "- Write each name exactly as a quote or the chunk's title line writes it: same case, no added class, prefix, path or "
     "plural. If neither contains it, leave it out. Do not make up hyphenated words.\n"
@@ -294,15 +298,17 @@ KB_CHECK_SYSTEM = (
 KB_CHECK_USER = (
     "Documentation chunks, each under a header line with its id:\n\n"
     "<<WINDOW>>\n\n"
-    "Entries, one JSON object per line, each with its title, its statement, the condition it applies to (if any) and its "
-    "quotes:"
+    "Entries, one JSON object per line, each with its title, its statement, the condition it applies to (if any), its "
+    "heading trail (the page title and the headings above the quote, added from the chunk by code; it is part of the entry "
+    "and is shown with it to the reader) and its quotes:"
     "\n\n<<ENTRIES>>\n\n"
     "For each entry give one verdict:\n"
     "- \"ok\" only when all three hold: (1) every claim of the title, of the statement and of \"applies_when\" is "
     "stated by the quoted spans; (2) nothing is added: no extra claim, no stronger or weaker wording, no dropped condition, negation, "
     "version or scope; (3) read in its chunk, each quote means what the statement says.\n"
-    "- \"partial\": part of it is supported, or something is added or dropped; so is an entry whose statement drops a "
-    "condition that the source (its heading or its context) places on it.\n"
+    "- \"partial\": part of it is supported, or something is added or dropped; so is an entry when a condition from the "
+    "chunk (a heading, the preceding sentence, a note or warning nearby) is neither in the statement (or applies_when) nor "
+    "in the heading trail.\n"
     "- \"wrong\": the chunks contradict it.\n"
     "- \"unsupported\": the quotes do not state it.\n"
     "Give one short reason per entry.\n\n"
@@ -311,11 +317,12 @@ KB_CHECK_USER = (
 
 # The rendered form of an entry in a pack (kb_entry.render): an item for pack_text, whose first line is
 # "<source> — <title line>". <<TITLE>>, <<PRODUCT>>, <<VERSION>>, <<PATHS>>, <<STATEMENT>>, <<APPLIES>> (empty, or the
-# applies line) and <<QUOTES>> (one quote line per quote) are filled with one re.sub. At most 1,500 characters in all.
+# applies line), <<CONTEXT>> (kbe/4: empty, or the heading-trail line) and <<QUOTES>> (one quote line per quote) are filled with one re.sub. At most 1,500 characters in all.
 KB_ENTRY_RENDER = {
     "title": "Fact entry: <<TITLE>> (<<PRODUCT>> <<VERSION>>; <<PATHS>>)",
-    "text": "<<STATEMENT>><<APPLIES>>\nSource text:\n<<QUOTES>>",
+    "text": "<<STATEMENT>><<APPLIES>><<CONTEXT>>\nSource text:\n<<QUOTES>>",
     "applies": "\nApplies when: <<APPLIES_WHEN>>",
+    "context": "\nContext: <<TRAIL>>",
     "quote": "- \"<<QUOTE>>\"",
 }
 

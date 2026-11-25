@@ -354,6 +354,8 @@ def _bundle(entries, chunks, title, note):
         out += [f"## Item {n} (`{e['id']}`, kind {e['kind']})", "", f"**Title.** {e['title']}", f"**Statement.** {e['statement']}"]
         if e.get("applies_when"):
             out.append(f"**Applies when.** {e['applies_when']}")
+        if e.get("heading_trail"):
+            out.append(f"**Heading trail.** {e['heading_trail']}")
         out.append("**Quotes.**")
         out += [f"- `{q['chunk']}`: \"{K.norm_ws(q['text'])}\"" for q in e["quotes"]]
         out += ["", "**Source chunks, as the model receives them.**", ""]
@@ -513,8 +515,8 @@ def cmd_audit_sample(a):
 
 def cmd_rule_text(a):
     print("**The sanity rule (kb2_design.md section 7, fixed before any entry exists).** The 50 slice chunks with the lowest "
-          "sha256(`kb2-sanity2:` + chunk id) (selection `sanity2`, drawn from the slice chunks that are not among the 50 of the earlier kbe/1 and kbe/2 runs, "
-          "which used `kb2-sanity:`), their windows, writer then checker, then a reading of 40 accepted and 20 rejected entries. "
+          "sha256(`kb2-sanity3:` + chunk id) (selection `sanity3`, drawn from the slice chunks that are not among the 100 of the earlier kbe/1 to kbe/3 runs, "
+          "which used `kb2-sanity:` and `kb2-sanity2:`), their windows, writer then checker, then a reading of 40 accepted and 20 rejected entries. "
           "Stop and rework the prompt (new version, new sanity run) if any holds: fewer than 95 % of windows give a valid reply; more than "
           "15 % of written entries fail the mechanical gate; median entries per window outside 1 to 8; the checker accepts fewer than 50 % "
           "or more than 98 % of gated entries; more than 4 of the 40 accepted entries are rated not ok; a projected full writer time over "
