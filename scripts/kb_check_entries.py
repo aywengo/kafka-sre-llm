@@ -48,6 +48,8 @@ FILES = ("check_windows.jsonl", "checks.jsonl")
 def entry_lines(entries):
     return "\n".join(json.dumps({"id": e["id"], "title": e["title"], "statement": e["statement"], **({"applies_when": e["applies_when"]} if e.get("applies_when") else {}),
                                  **({"heading_trail": e["heading_trail"]} if e.get("heading_trail") else {}),
+                                 **({"lead_in": e["lead_in"]} if e.get("lead_in") else {}),
+                                 **({"admonition": e["admonition"]} if e.get("admonition") else {}),
                                  "quotes": e["quotes"]}, ensure_ascii=False) for e in entries)
 
 

@@ -8,6 +8,7 @@ Spec: runs/m7/reports/kb2_design.md sections 1 to 3 (and 5 for the rendered form
   check_reply(obj, ...)          the reply's schema (retried when broken) and the gate of each entry
   gate_entry(e, window, target)  the reasons an entry fails the mechanical gate ([] = passes)
   finish_entry(...)              the code's fields: id, scope, pinned sources, provenance
+  context_notes(...)             kbe/5: the lead-in sentence and nearby admonitions, derived from the chunks (not by a model)
   heading_trail(...)             kbe/4: the source headings an entry stands under, derived from the chunks (not by a model)
   render(entry)                  the item an entry is in a pack (pack_text input), at most RENDER_MAX characters
 
@@ -317,6 +318,302 @@ def heading_trail(sources, quotes, byid, cap=TRAIL_MAX):
     return out if len(out) <= cap else _mid(out, cap)
 
 
+# ---------------------------------------------------------------- the lead-in and nearby admonitions (kbe/5, mechanical)
+CONTEXT_MAX = 400                    # trail + lead-in + admonition, in characters (about; kbe/5)
+LEAD_MIN = 24                        # the least a part keeps when the room is short
+_LIST_LINE = re.compile(r"^\s*(?:\*{1,5}|[\-+]|\d+[.)]|[a-z][.)]|\.{1,5})\s+\S")
+_MARKER_ONLY = re.compile(r"^\s*(?:\*{1,5}|-|\d+[.)]|[a-z][.)]|\.{1,5})\s*$")
+_ATTR_LINE = re.compile(r"^\s*\[([^\]\n]*)\]\s*$")
+_ADM_NAMES = ("NOTE", "WARNING", "IMPORTANT", "CAUTION")
+_ADM_ATTR = re.compile(r"^\s*(" + "|".join(_ADM_NAMES) + r")\b")
+_ADM_PARA = re.compile(r"^\s*(?:(NOTE|WARNING|IMPORTANT|CAUTION)\s*:\s*"                       # AsciiDoc  NOTE: text
+                       r"|>\s*\[!(NOTE|WARNING|IMPORTANT|CAUTION)\]\s*"                         # GitHub    > [!NOTE]
+                       r"|>?\s*\*{1,2}(Note|Warning|Important|Caution)\s*[:.]?\*{1,2}\s*[:.]?\s*)")   # **Note:** text, > **Note**
+_DELIM = re.compile(r"^={4,}\s*$")
+_HTML_TABLE = re.compile(r"^\s*<table\b", re.I)
+SHORT_SENTENCE = 80                  # a lead-in shorter than this takes the sentence before it as well
+_ABBREV_END = re.compile(r"(?:^|\s)(?:" + "|".join(re.escape(a) for a in sorted(ABBREVIATIONS)) + r")\.$", re.I)
+
+
+def _blocks(text):
+    """The chunk text as blocks (kind, start, end, body): kind is heading, code, table, list, admonition (body = its name and
+    text) or para; offsets are into text. Captions and attribute lines belong to no block."""
+    lines = (text or "").split("\n")
+    offs, o = [], 0
+    for ln in lines:
+        offs.append(o)
+        o += len(ln) + 1
+    n, i, out, adm = len(lines), 0, [], None
+
+    def end_of(j):
+        return offs[j] + len(lines[j])
+
+    def stop(ln):
+        return (not ln.strip() or _HEAD_MARK.match(ln) or _FENCE.match(ln) or _TABLE_FENCE.match(ln) or _DELIM.match(ln)
+                or _HTML_TABLE.match(ln) or ln.lstrip().startswith("|"))
+
+    while i < n:
+        ln = lines[i]
+        if not ln.strip():
+            i += 1
+            continue
+        if _FENCE.match(ln):                                      # a code block, to the closing fence
+            j = i + 1
+            while j < n and not (lines[j].strip() == ln.strip()):
+                j += 1
+            out.append(("code", offs[i], end_of(min(j, n - 1)), ""))
+            i, adm = j + 1, None
+            continue
+        if _HTML_TABLE.match(ln):                                 # an HTML table, to the line with </table>
+            j = i
+            while j < n and "</table>" not in lines[j].lower():
+                j += 1
+            out.append(("table", offs[i], end_of(min(j, n - 1)), ""))
+            i, adm = j + 1, None
+            continue
+        if ln.lstrip().startswith("|") and not _TABLE_FENCE.match(ln):     # a markdown table
+            j = i + 1
+            while j < n and lines[j].lstrip().startswith("|") and not _TABLE_FENCE.match(lines[j]):
+                j += 1
+            out.append(("table", offs[i], end_of(j - 1), ""))
+            i, adm = j, None
+            continue
+        if _TABLE_FENCE.match(ln):
+            j = i + 1
+            while j < n and not _TABLE_FENCE.match(lines[j]):
+                j += 1
+            out.append(("table", offs[i], end_of(min(j, n - 1)), ""))
+            i, adm = j + 1, None
+            continue
+        if _DELIM.match(ln):                                      # ==== : an admonition block when [NOTE] came before, else ignored
+            if adm:
+                j = i + 1
+                while j < n and not _DELIM.match(lines[j]):
+                    j += 1
+                body = " ".join(x.strip() for x in lines[i + 1:j] if x.strip())
+                out.append(("admonition", offs[i], end_of(min(j, n - 1)), adm + "\0" + norm_ws(body)))
+                i, adm = j + 1, None
+            else:
+                i += 1
+            continue
+        a = _ATTR_LINE.match(ln)
+        if a:
+            m = _ADM_ATTR.match(a.group(1))
+            if m:
+                adm = m.group(1)
+            i += 1
+            continue
+        if _CAPTION.match(ln) and not _LIST_LINE.match(ln):
+            i += 1
+            continue
+        if _HEAD_MARK.match(ln):
+            out.append(("heading", offs[i], end_of(i), ""))
+            i, adm = i + 1, None
+            continue
+        m = _ADM_PARA.match(ln)
+        if m or adm:
+            j = i + 1
+            while j < n and not stop(lines[j]):
+                j += 1
+            name = (m.group(1) or m.group(2) or m.group(3) or "").upper() if m else adm
+            first = ln[m.end():] if m else ln
+            body = " ".join([first.strip()] + [re.sub(r"^\s*>\s?", "", x).strip() for x in lines[i + 1:j]])
+            out.append(("admonition", offs[i], end_of(j - 1), name + "\0" + norm_ws(body)))
+            i, adm = j, None
+            continue
+        if _LIST_LINE.match(ln):
+            j = i + 1
+            while j < n:
+                if lines[j].strip():
+                    if (_HEAD_MARK.match(lines[j]) or _FENCE.match(lines[j]) or _TABLE_FENCE.match(lines[j]) or _DELIM.match(lines[j])
+                            or _HTML_TABLE.match(lines[j])):
+                        break
+                    if not (_LIST_LINE.match(lines[j]) or lines[j].startswith((" ", "\t")) or lines[j].strip() == "+"
+                            or lines[j - 1].strip() == "+"):          # a flush-left line that continues nothing ends the list
+                        break
+                    j += 1
+                else:                                             # a blank line ends the list unless more of it follows
+                    k = j + 1
+                    while k < n and not lines[k].strip():
+                        k += 1
+                    if k < n and (_LIST_LINE.match(lines[k]) or lines[k].startswith((" ", "\t", "+"))) and not _HEAD_MARK.match(lines[k]):
+                        j = k
+                    else:
+                        break
+            out.append(("list", offs[i], end_of(j - 1), ""))
+            i, adm = j, None
+            continue
+        j = i + 1
+        while j < n and not stop(lines[j]):
+            j += 1
+        out.append(("para", offs[i], end_of(j - 1), ""))
+        i, adm = j, None
+    return out
+
+
+def last_sentence(text):
+    """The last sentence of text (white space normalised); a sentence ends at . ! or ? and a space, never after e.g. / i.e. / etc.;
+    a trailing ':' stays part of it. '' when there is none."""
+    t = norm_ws(text)
+    if not t:
+        return ""
+    pieces = re.split(r"(?<=[.!?])\s+", t)
+    merged = []
+    for p in pieces:
+        if merged and _ABBREV_END.search(merged[-1]):
+            merged[-1] += " " + p
+        else:
+            merged.append(p)
+    return merged[-1]
+
+
+def lead_sentences(text):
+    """The sentence before the quote: the last sentence of text, and the one before it when the last is shorter than
+    SHORT_SENTENCE characters ('Such a record is called a tombstone.' alone says nothing about what the record is)."""
+    t = norm_ws(text)
+    last = last_sentence(t)
+    if last and len(last) < SHORT_SENTENCE and len(t) > len(last):
+        prev = last_sentence(t[:len(t) - len(last)])
+        if prev:
+            return prev + " " + last
+    return last
+
+
+def _item_before(text, s):
+    """The text of the list item the position s is in, from its marker to s, with its code blocks and '+' lines left out; '' when
+    s is not in a list item (an item goes on over '+' lines, code blocks and indented lines, not over a blank line without '+')."""
+    item, fence, blank, plus = None, False, False, False
+    for ln in text[:s].split("\n")[:-1] + [text[text.rfind("\n", 0, s) + 1:s]]:
+        if _FENCE.match(ln):
+            fence = not fence
+            if item is not None:
+                plus = False
+            continue
+        if fence:
+            continue
+        if not ln.strip():
+            blank = True
+            continue
+        if _LIST_LINE.match(ln) or _MARKER_ONLY.match(ln):
+            item, blank, plus = [ln], False, False
+        elif ln.strip() == "+":
+            plus, blank = True, False
+        elif (item is not None and not _HEAD_MARK.match(ln)
+              and (plus or ln.startswith((" ", "\t")) or (not blank and ln[:1].islower() and not item[-1].rstrip().endswith((".", "!", "?", ":"))))):
+            item.append(ln)
+            blank, plus = False, False
+        else:
+            item, blank, plus = None, False, False
+    if not item or fence or (blank and not plus):             # a blank line (without '+') between the item and the position
+        return ""
+    if s == 0 or text[s - 1] == "\n":                          # the position starts a line: does that line continue the item?
+        end = text.find("\n", s)
+        ln = text[s:end if end >= 0 else len(text)]
+        if not (plus or ln.startswith((" ", "\t")) or (ln[:1].islower() and not item[-1].rstrip().endswith((".", "!", "?", ":")))):
+            return ""
+    return _strip_list_marker(" ".join(item))
+
+
+def _strip_list_marker(s):
+    return re.sub(r"^\s*(?:\*{1,5}|[\-+]|\d+[.)]|[a-z][.)]|\.{1,5})\s+", "", s)
+
+
+def _adm_text(body):
+    name, _, txt = body.partition("\0")
+    return (name + ": " + txt).strip() if txt else name
+
+
+def lead_parts(chunk_text, qtext):
+    """(lead_in, [admonition, ...]) of the quote in the chunk text: lead_in is the sentence just before the quote in its paragraph
+    (or list item) or, when the quote starts a paragraph, list or table, the last sentence of the paragraph above it (not when
+    that is a heading, a code block, a table or an admonition); the admonitions are the NOTE / WARNING / IMPORTANT / CAUTION
+    blocks directly above and directly below the quote's block (one lead-in paragraph may stand between). All '' / []
+    when the quote is not found or is a title or heading line."""
+    text = chunk_text or ""
+    ntext, idx = _norm_map(text)
+    q = norm_ws(qtext)
+    at = ntext.find(q) if q else -1
+    if at < 0:
+        return "", []
+    s = idx[at]
+    blocks = _blocks(text)
+    k = next((b for b, x in enumerate(blocks) if x[1] <= s <= x[2]), None)
+    if k is None or blocks[k][0] in ("heading", "admonition", "code"):
+        return "", []
+    kind, start = blocks[k][0], blocks[k][1]
+    lead, lead_block = "", None
+    before = ""
+    item = _item_before(text, s)                              # the list item the quote is in (or continues), up to the quote
+    if kind == "para" and not item:
+        before = text[start:s]
+    elif kind in ("para", "list"):
+        before = item
+    if norm_ws(before):
+        lead = lead_sentences(before)
+    elif k > 0 and blocks[k - 1][0] == "para":
+        prev = blocks[k - 1]
+        lead, lead_block = lead_sentences(text[prev[1]:prev[2]]), k - 1
+    elif k > 1 and kind == "para" and blocks[k - 1][0] == "list" and blocks[k - 2][0] == "para":
+        prev = blocks[k - 2]                                  # a paragraph right after a list: the lead-in of that list
+        lead, lead_block = lead_sentences(text[prev[1]:prev[2]]), k - 2
+    adms = []
+    if k + 1 < len(blocks) and blocks[k + 1][0] == "admonition":
+        adms.append(_adm_text(blocks[k + 1][3]))
+    up = (lead_block if lead_block is not None else k) - 1
+    if up >= 0 and blocks[up][0] == "admonition":
+        adms.insert(0, _adm_text(blocks[up][3]))
+    return lead, adms
+
+
+def _cut(s, n, keep):
+    """s cut to at most n characters with an ellipsis; keep 'end' keeps the end (the nearest text), 'start' the start."""
+    if len(s) <= n:
+        return s
+    if n <= 1:
+        return ELLIPSIS[:n]
+    return ELLIPSIS + s[len(s) - (n - 1):] if keep == "end" else s[:n - 1].rstrip() + ELLIPSIS
+
+
+def _shares(lens, room):
+    """Water-filling: each part gets what it needs when the room allows, else an equal share of what is left (at least LEAD_MIN)."""
+    out, left, order = [0] * len(lens), room, sorted(range(len(lens)), key=lambda i: lens[i])
+    for r, i in enumerate(order):
+        fair = max(LEAD_MIN, left // (len(lens) - r))
+        out[i] = min(lens[i], fair)
+        left -= out[i]
+    return out
+
+
+def context_notes(sources, quotes, byid, trail, cap=CONTEXT_MAX):
+    """kbe/5: (lead_in, admonition) of an entry, derived from its source chunks and its quotes (not by a model). lead_in: per
+    quote, the sentence before it (see lead_parts), skipped when it already stands inside a quote of the entry; admonition: the
+    NOTE / WARNING / IMPORTANT / CAUTION blocks next to a quote, 'NAME: text'. Several are joined by ' | '. Trail, lead_in and
+    admonition together stay within cap characters (the trail keeps its own text; the nearest text of the others is kept, a
+    cut is marked with an ellipsis)."""
+    qnorm = [norm_ws(x["text"]) for x in quotes]
+    leads, adms = [], []
+    for cid in sources:
+        c = byid.get(cid)
+        if c is None:
+            continue
+        for x in quotes:
+            if x["chunk"] != cid or x.get("title_line") or x.get("heading_line"):
+                continue
+            lead, ad = lead_parts(c.get("text") or "", x["text"])
+            if lead and not any(lead in q for q in qnorm) and lead not in leads:
+                leads.append(lead)
+            adms.extend(a for a in ad if a not in adms and not any(a.partition(": ")[2] in q for q in qnorm))
+    parts = [("l", t) for t in leads] + [("a", t) for t in adms]
+    if not parts:
+        return "", ""
+    room = max(0, cap - len(trail or "")) - 3 * (len(parts) - 1)
+    room = max(room, LEAD_MIN * len(parts))
+    shares = _shares([len(t) for _, t in parts], room)
+    cut = [_cut(t, n, "end" if k == "l" else "start") for (k, t), n in zip(parts, shares)]
+    return (" | ".join(t for (k, _), t in zip(parts, cut) if k == "l"),
+            " | ".join(t for (k, _), t in zip(parts, cut) if k == "a"))
+
+
 def _title_line(c):
     return chunk_view(c).split("\n", 1)[0]
 
@@ -464,6 +761,11 @@ def finish_entry(e, window_chunks, target, *, prompt_version, writer, created, c
     trail = heading_trail(e["sources"], out["quotes"], byid)     # kbe/4: from the chunks, before the support lines are added
     if trail:
         out["heading_trail"] = trail
+    lead, adm = context_notes(e["sources"], out["quotes"], byid, trail)     # kbe/5: the sentence before the quote, a nearby note
+    if lead:
+        out["lead_in"] = lead
+    if adm:
+        out["admonition"] = adm
     for cid, line, is_title in line_support(e, byid):     # a name only a title line or a heading line has: that line is shown as a quote
         out["quotes"].append({"chunk": cid, "text": line, ("title_line" if is_title else "heading_line"): True})
     out.update({"prompt_version": prompt_version, "writer": writer,
@@ -483,6 +785,8 @@ def render(entry):
             "APPLIES": (re.sub(r"<<APPLIES_WHEN>>", lambda m: entry["applies_when"], R["applies"])
                         if entry.get("applies_when") else ""),
             "CONTEXT": (re.sub(r"<<TRAIL>>", lambda m: entry["heading_trail"], R["context"]) if entry.get("heading_trail") else ""),
+            "BEFORE": (re.sub(r"<<LEAD_IN>>", lambda m: entry["lead_in"], R["before"]) if entry.get("lead_in") else ""),
+            "NOTE": (re.sub(r"<<ADMONITION>>", lambda m: entry["admonition"], R["note"]) if entry.get("admonition") else ""),
             "QUOTES": "\n".join(re.sub(r"<<QUOTE>>", lambda m, t=norm_ws(q["text"]): t, R["quote"]) for q in entry["quotes"])}
     sub = lambda tpl: re.sub(r"<<([A-Z_]+)>>", lambda m: fill[m.group(1)], tpl)  # noqa: E731
     return {"source": entry["sources"][0]["source"], "title": sub(R["title"]), "path": paths[0], "text": sub(R["text"]),

@@ -356,6 +356,10 @@ def _bundle(entries, chunks, title, note):
             out.append(f"**Applies when.** {e['applies_when']}")
         if e.get("heading_trail"):
             out.append(f"**Heading trail.** {e['heading_trail']}")
+        if e.get("lead_in"):
+            out.append(f"**Lead-in (before the quote).** {e['lead_in']}")
+        if e.get("admonition"):
+            out.append(f"**Admonition (next to the quote).** {e['admonition']}")
         out.append("**Quotes.**")
         out += [f"- `{q['chunk']}`: \"{K.norm_ws(q['text'])}\"" for q in e["quotes"]]
         out += ["", "**Source chunks, as the model receives them.**", ""]

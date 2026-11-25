@@ -197,7 +197,7 @@ class Finish(unittest.TestCase):
         self.assertNotIn("<<", m[1]["content"].replace("WINDOW <<TARGET>>", ""))
         c = P.kb_check_messages("W", "E")
         self.assertNotIn("<<", c[1]["content"])
-        self.assertEqual((P.KB_ENTRY_PROMPT_VERSION, P.KB_CHECK_PROMPT_VERSION), ("kbe/4", "kbc/3"))
+        self.assertEqual((P.KB_ENTRY_PROMPT_VERSION, P.KB_CHECK_PROMPT_VERSION), ("kbe/5", "kbc/4"))
 
 
 class GoldenUntouched(unittest.TestCase):
@@ -327,7 +327,7 @@ class Kbe4Trail(unittest.TestCase):
     def test_finish_entry_stores_and_render_shows_it(self):
         e = {"kind": "fact", "title": "Process rate", "statement": "The process-rate metric is only recorded at debug level.",
              "sources": ["m1"], "quotes": self.q("m1", "The process-rate metric is only recorded at debug level.")}
-        f = K.finish_entry(e, [self.MD], "m1", prompt_version="kbe/4", writer="w", created="c", commits={})
+        f = K.finish_entry(e, [self.MD], "m1", prompt_version="kbe/5", writer="w", created="c", commits={})
         self.assertEqual(f["heading_trail"], "Monitoring > Streams metrics > Task metrics > Debug level")
         self.assertIn("\nContext: Monitoring > Streams metrics > Task metrics > Debug level\nSource text:\n", K.render_text(f))
         self.assertEqual(K.render_check(f), [])
@@ -339,15 +339,151 @@ class Kbe4Trail(unittest.TestCase):
         import m7_kb2_rule as R
         e = K.finish_entry({"kind": "fact", "title": "Process rate", "statement": "The process-rate metric is only recorded at debug level.",
                             "sources": ["m1"], "quotes": self.q("m1", "The process-rate metric is only recorded at debug level.")},
-                           [self.MD], "m1", prompt_version="kbe/4", writer="w", created="c", commits={})
+                           [self.MD], "m1", prompt_version="kbe/5", writer="w", created="c", commits={})
         e["id"] = "kbe-x"
         row = json.loads(C.entry_lines([e]))
         self.assertEqual(row["heading_trail"], e["heading_trail"])
         self.assertIn("**Heading trail.** " + e["heading_trail"], R._bundle([e], {"m1": self.MD}, "T", "note"))
         self.assertIn("heading trail", P.KB_CHECK_USER)
         self.assertIn("neither in the statement", P.KB_CHECK_USER)
-        self.assertIn("added to the entry automatically", P.KB_WRITER_USER)
+        self.assertIn("added to it automatically", P.KB_WRITER_USER)
         self.assertIn("Write 0 to 12 entries", P.KB_WRITER_USER)
+
+
+class Kbe5Context(unittest.TestCase):
+    """kbe/5: the lead-in sentence and nearby admonitions are derived from the chunk, capped, stored and rendered."""
+    def chunk(self, text):
+        return {"id": "c1", "source": "strimzi", "path": "raw/strimzi/documentation/modules/z.adoc", "title": "Doc > Page", "text": text}
+
+    def notes(self, text, quote, extra=None, trail="Doc > Page"):
+        qs = [{"chunk": "c1", "text": quote}] + (extra or [])
+        return K.context_notes(["c1"], qs, {"c1": self.chunk(text)}, trail)
+
+    def test_preceding_sentence_in_the_same_paragraph(self):
+        t = "= Page\n\nFirst sentence here is long enough to stand alone as a whole sentence. Second one is also quite long, running on and on and on, and on and on, and on and on again. Quoted fact is here."
+        self.assertEqual(self.notes(t, "Quoted fact is here.")[0], "Second one is also quite long, running on and on and on, and on and on, and on and on again.")
+        self.assertEqual(K.lead_parts(t, "Second one is also quite long, running on and on and on, and on and on, and on and on again.")[0],
+                         "First sentence here is long enough to stand alone as a whole sentence.")
+
+    def test_short_sentence_takes_the_one_before_and_abbreviations_do_not_split(self):
+        t = "A message with a key and a null payload is a delete. Such a record is a tombstone. Quoted fact is here."
+        self.assertEqual(self.notes(t, "Quoted fact is here.")[0], "A message with a key and a null payload is a delete. Such a record is a tombstone.")
+        t = "Use a listener, e.g. an internal one, for this traffic when the cluster is not exposed. Quoted fact is here."
+        self.assertEqual(self.notes(t, "Quoted fact is here.")[0], "Use a listener, e.g. an internal one, for this traffic when the cluster is not exposed.")
+
+    def test_quote_starting_a_paragraph_takes_the_paragraph_above(self):
+        t = "Intro that is not wanted at all.\n\nIf the Topic Operator is not running, finalizers are not processed by anything.\n\nQuoted fact is here."
+        self.assertEqual(self.notes(t, "Quoted fact is here.")[0], "If the Topic Operator is not running, finalizers are not processed by anything.")
+
+    def test_table_lead_in_asciidoc_markdown_and_html(self):
+        lead = "The following metrics are recorded at the debug level and only then, never at info:"
+        a = f"{lead}\n\n.Metrics\n[cols=\"1,1\"]\n|===\n|name |value\n|`a` |one\n|===\n"
+        self.assertEqual(self.notes(a, "|`a` |one")[0], lead)
+        m = f"{lead}\n\n| name | value |\n|---|---|\n| a | one |\n"
+        self.assertEqual(self.notes(m, "| a | one |")[0], lead)
+        h = f"{lead}  \n<table>  \n<tr>\n<td>\n\nprocess-rate\n</td>\n</tr>\n</table>\n"
+        self.assertEqual(self.notes(h, "process-rate")[0], lead)
+
+    def test_list_lead_in(self):
+        lead = "To handle larger messages, consider adjusting the following configurations:"
+        t = f"{lead}\n\n* Adjusting the batch size.\n** Set `a` at the broker level.\n* Increasing the fetch size (`b`).\n* Third item.\n"
+        self.assertEqual(self.notes(t, "Increasing the fetch size (`b`).")[0], lead)
+        self.assertEqual(self.notes(t, "Set `a` at the broker level.")[0], lead)
+        # a step continued over '+' and a code block: the sentence of the step is the lead-in
+        s = "== Steps\n\n. Create a `KafkaUser` resource in each namespace of the source and target clusters.\n+\n```\nkubectl apply -f x\n```\n+\nThe User Operator creates the users."
+        self.assertEqual(self.notes(s, "The User Operator creates the users.")[0], "Create a `KafkaUser` resource in each namespace of the source and target clusters.")
+
+    def test_paragraph_after_a_list_takes_the_list_lead_in(self):
+        t = "You must apply the following annotations to the resource to manage offsets of the connectors:\n\n* `a`\n* `b`\n\nThe `b` annotation must be set to the name."
+        self.assertEqual(self.notes(t, "The `b` annotation must be set to the name.")[0],
+                         "You must apply the following annotations to the resource to manage offsets of the connectors:")
+
+    def test_admonition_before_and_after(self):
+        t = ("NOTE: Only for the legacy mode of operation, which is going away.\n\nThe quoted passage is right here in its own paragraph.\n\n"
+             "[WARNING]\n====\nDo not do this on a running cluster.\n====\n\nAfter text that is far away.")
+        lead, adm = self.notes(t, "The quoted passage is right here in its own paragraph.")
+        self.assertEqual(adm, "NOTE: Only for the legacy mode of operation, which is going away. | WARNING: Do not do this on a running cluster.")
+        md = "> **Note**: Applies from version 4.\n\nThe quoted passage.\n\n**Important:** Be careful here.\n"
+        self.assertEqual(self.notes(md, "The quoted passage.")[1], "NOTE: Applies from version 4. | IMPORTANT: Be careful here.")
+        gh = "> [!CAUTION]\n> Data can be lost.\n\nThe quoted passage."
+        self.assertEqual(self.notes(gh, "The quoted passage.")[1], "CAUTION: Data can be lost.")
+        far = "NOTE: Far away.\n\nSomething in between.\n\nMore in between.\n\nThe quoted passage."
+        self.assertEqual(self.notes(far, "The quoted passage.")[1], "")           # not directly before it
+
+    def test_admonition_not_across_a_heading(self):
+        t = "NOTE: In the previous section.\n\n== Next section\n\nThe quoted passage."
+        self.assertEqual(self.notes(t, "The quoted passage."), ("", ""))
+
+    def test_quote_at_chunk_start_has_no_lead_in(self):
+        self.assertEqual(self.notes("Quoted fact is here. More text after it.", "Quoted fact is here."), ("", ""))
+        self.assertEqual(self.notes("== Heading\n\nQuoted fact is here.", "Quoted fact is here."), ("", ""))      # a heading is the trail's
+        self.assertEqual(self.notes("```\ncode line.\n```\n\nQuoted fact is here.", "Quoted fact is here."), ("", ""))
+
+    def test_lead_in_inside_the_quote_is_skipped(self):
+        t = "The first sentence of the paragraph is a fairly long one indeed. The second one follows it closely enough."
+        q2 = "The second one follows it closely enough."
+        full = "The first sentence of the paragraph is a fairly long one indeed. The second one follows it closely enough."
+        self.assertEqual(self.notes(t, q2)[0], "The first sentence of the paragraph is a fairly long one indeed.")
+        self.assertEqual(self.notes(t, q2, extra=[{"chunk": "c1", "text": "The first sentence of the paragraph is a fairly long one indeed."}])[0], "")
+        self.assertEqual(self.notes(t, full)[0], "")
+        self.assertEqual(self.notes(t, "not in the chunk"), ("", ""))
+        self.assertEqual(self.notes(t, q2, extra=[{"chunk": "c1", "text": "Doc", "title_line": True}])[0],
+                         "The first sentence of the paragraph is a fairly long one indeed.")
+
+    def test_cap_and_truncation(self):
+        lead = "L" * 60 + " " + "x" * 600 + " the nearest words " + "y" * 30 + ":"
+        t = f"{lead}\n\nThe quoted passage.\n\nNOTE: " + "N" * 700
+        trail = "T" * 200
+        l, a = self.notes(t, "The quoted passage.", trail=trail)
+        self.assertLessEqual(len(trail) + len(l) + len(a), K.CONTEXT_MAX)
+        self.assertTrue(l.startswith(K.ELLIPSIS) and l.endswith("y:"), l)       # the nearest text (the end) of the lead-in stays
+        self.assertTrue(a.endswith(K.ELLIPSIS) and a.startswith("NOTE: NNN"), a)     # the start of the note stays
+        self.assertGreater(len(l), 60)
+        self.assertGreater(len(a), 60)
+        l, a = self.notes(t, "The quoted passage.", trail="")
+        self.assertLessEqual(len(l) + len(a), K.CONTEXT_MAX)
+        # short parts are kept whole
+        self.assertEqual(self.notes("A sentence that is long enough to be a lead-in on its own, ending here:\n\nThe quoted passage.", "The quoted passage.")[0],
+                         "A sentence that is long enough to be a lead-in on its own, ending here:")
+
+    def test_several_quotes_are_joined(self):
+        t = ("First lead sentence, long enough to count as a whole sentence of its own.\n\nQuote one.\n\n"
+             "Second lead sentence, long enough to count as a whole sentence of its own.\n\nQuote two.")
+        l, _ = self.notes(t, "Quote one.", extra=[{"chunk": "c1", "text": "Quote two."}])
+        self.assertEqual(l.count(" | "), 1, l)
+
+    def test_finish_entry_stores_and_render_shows_it(self):
+        t = ("The following metrics are only recorded at the debug level, not at info:\n\n|===\n|name |value\n|`rate` |one\n|===\n\n"
+             "NOTE: Only when the feature is enabled.")
+        c = self.chunk(t)
+        e = {"kind": "fact", "title": "Rate", "statement": "The rate metric has the value one.", "sources": ["c1"],
+             "quotes": [{"chunk": "c1", "text": "|`rate` |one"}]}
+        f = K.finish_entry(e, [c], "c1", prompt_version="kbe/5", writer="w", created="c", commits={})
+        self.assertEqual(f["lead_in"], "The following metrics are only recorded at the debug level, not at info:")
+        self.assertEqual(f["admonition"], "NOTE: Only when the feature is enabled.")
+        r = K.render_text(f)
+        self.assertIn("\nContext: Doc > Page\nBefore: The following metrics are only recorded at the debug level, not at info:\n"
+                      "Note: NOTE: Only when the feature is enabled.\nSource text:\n", r)
+        self.assertEqual(K.render_check(f), [])
+        g = {k: v for k, v in f.items() if k not in ("lead_in", "admonition")}          # a kbe/4 entry renders as before
+        self.assertNotIn("Before:", K.render_text(g))
+        self.assertNotIn("Note:", K.render_text(g))
+        h = dict(g, heading_trail="X")
+        self.assertIn("\nContext: X\nSource text:", K.render_text(h))
+
+    def test_checker_and_reading_see_the_context(self):
+        import kb_check_entries as C
+        import m7_kb2_rule as R
+        e = {"id": "kbe-x", "kind": "fact", "title": "t", "statement": "s", "sources": [{"id": "c1", "path": "p"}],
+             "quotes": [{"chunk": "c1", "text": "q"}], "heading_trail": "A > B", "lead_in": "Lead sentence:", "admonition": "NOTE: n"}
+        row = json.loads(C.entry_lines([e]))
+        self.assertEqual((row["lead_in"], row["admonition"]), ("Lead sentence:", "NOTE: n"))
+        self.assertNotIn("lead_in", json.loads(C.entry_lines([{k: v for k, v in e.items() if k not in ("lead_in", "admonition")}])))
+        b = R._bundle([e], {"c1": self.chunk("q")}, "T", "note")
+        self.assertIn("**Lead-in (before the quote).** Lead sentence:", b)
+        self.assertIn("**Admonition (next to the quote).** NOTE: n", b)
+        self.assertIn("lead-in", P.KB_CHECK_USER)
+        self.assertIn("sentence just before the quote", P.KB_WRITER_USER)
 
 
 class Kbe3(unittest.TestCase):
