@@ -209,6 +209,65 @@ class SanityAndFull(unittest.TestCase):
             (sd / "MANIFEST.json").write_text(json.dumps(m))
             self.assertEqual(self.fg(sd, self._reading(d, order))[0], 2)
 
+    ITEMS = [("valid replies", True), ("gate failures", False), ("median entries written per window", True),
+             ("checker accepts", False), ("projected full writer time", True)]
+
+    def _waiver_dir(self, d, failed=("gate failures", "checker accepts"), selection="sanity4"):
+        sd, order = self._sanity_dir(d, mpass=False)
+        r = json.loads((sd / "sanity_result.json").read_text())
+        r["items"] = [{"name": n, "value": "v", "pass": n not in failed, "bar": "b"} for n, _ in self.ITEMS]
+        (sd / "sanity_result.json").write_text(json.dumps(r))
+        m = json.loads((sd / "MANIFEST.json").read_text())
+        m["options"].update({"selection": selection, "mode": "sanity"})
+        m["pins"] = {"kafka_sre_rag/kb_entry.py": "a" * 64}
+        (sd / "MANIFEST.json").write_text(json.dumps(m))
+        return sd
+
+    def _wreading(self, d, not_ok=3, **kw):
+        f = Path(d) / "waiver_reading.json"
+        o = {"run": "sanity4", "accepted_read": 40, "not_ok": not_ok, "reader": "complex-reviewer, blind", "date": "2026-11-25"}
+        o.update(kw)
+        f.write_text(json.dumps(o))
+        return f
+
+    def fgw(self, sd, reading, waiver="W27"):
+        return run(["full-gate", "--sanity-result", str(sd / "sanity_result.json"), "--sanity-dir", str(sd), "--writer", DS, "--checker", GLM8,
+                    "--waiver", waiver] + (["--reading", str(reading)] if reading else []))
+
+    def test_waiver_w27(self):
+        with tempfile.TemporaryDirectory() as d:
+            sd = self._waiver_dir(d)
+            code, out, err = self.fgw(sd, self._wreading(d, 3))
+            self.assertEqual(code, 0, err)
+            self.assertIn("Owner waiver W27", out)
+            self.assertIn("rated 3 of 40", out)
+            self.assertIn("a" * 64, out)                                                   # the sanity run's kb_entry.py pin, and the current one
+            self.assertEqual(self.fgw(sd, self._wreading(d, 4))[0], 0)
+            self.assertEqual(self.fgw(sd, self._wreading(d, 5))[0], 2)                      # more than 4 not ok
+            self.assertEqual(self.fgw(sd, None)[0], 2)                                      # no reading file
+            for bad in ({"run": "sanity3"}, {"accepted_read": 39}, {"not_ok": "3"}, {"not_ok": -1}, {"reader": ""}, {"date": None}):
+                self.assertEqual(self.fgw(sd, self._wreading(d, **bad))[0], 2, bad)
+            self.assertEqual(self.fgw(sd, self._wreading(d, 0), waiver="W28")[0], 2)         # only W27
+            # without the flag the old behaviour: a failed rule is refused
+            code, _, err = run(["full-gate", "--sanity-result", str(sd / "sanity_result.json"), "--sanity-dir", str(sd), "--writer", DS,
+                                "--checker", GLM8, "--reading", str(self._wreading(d, 0))])
+            self.assertEqual(code, 2)
+            self.assertIn("failed its rule", err)
+        for failed in (("gate failures",), ("checker accepts",), ("gate failures", "checker accepts", "valid replies"),
+                       ("gate failures", "checker accepts", "projected full writer time"), ("valid replies", "median entries written per window")):
+            with tempfile.TemporaryDirectory() as d:                                       # exactly the two waived bars, no other, no fewer
+                code, _, err = self.fgw(self._waiver_dir(d, failed=failed), self._wreading(d, 0))
+                self.assertEqual(code, 2, failed)
+                self.assertIn("covers only the failed bars", err)
+        with tempfile.TemporaryDirectory() as d:                                           # another sanity run than sanity4
+            self.assertEqual(self.fgw(self._waiver_dir(d, selection="sanity3"), self._wreading(d, 0))[0], 2)
+        with tempfile.TemporaryDirectory() as d:                                           # identity checks stay
+            sd = self._waiver_dir(d)
+            r = json.loads((sd / "sanity_result.json").read_text())
+            r["identity"]["checker"] = GLM4
+            (sd / "sanity_result.json").write_text(json.dumps(r))
+            self.assertEqual(self.fgw(sd, self._wreading(d, 0))[0], 2)
+
     def test_kb_hash_covers_the_message_builders(self):
         from unittest import mock
         from kafka_sre_rag import prompts as P
@@ -368,6 +427,33 @@ class DryRun(unittest.TestCase):
             self.assertNotIn("W16", hb)
             r = self.sh("--full", "--dry-run", "--work", w, "--sanity-reading", reading_file(w, notok=2), ok=(2,))   # another reading file: refused
             self.assertIn("sanity_reading_sha256", r.stderr)
+
+    def test_full_waiver_w27(self):
+        with tempfile.TemporaryDirectory() as d:
+            w = str(Path(d) / "kb")
+            self.sh("--sanity", "--dry-run", "--work", w)
+            rf = Path(d) / "wr.json"
+            rf.write_text(json.dumps({"run": "sanity4", "accepted_read": 40, "not_ok": 3, "reader": "complex-reviewer, blind", "date": "2026-11-25"}))
+            r = self.sh("--full", "--dry-run", "--work", w, "--waiver", "W27", "--sanity-reading", str(rf), ok=(2,))      # the stub sanity run passed: nothing to waive
+            self.assertIn("covers only the failed bars", r.stderr)
+            sr = Path(w, "sanity/sanity_result.json")                                          # make the stored result fail exactly the two waived bars
+            res = json.loads(sr.read_text())
+            for it in res["items"]:
+                it["pass"] = it["name"] not in ("gate failures", "checker accepts")
+            res["mechanical_pass"] = False
+            sr.write_text(json.dumps(res))
+            r = self.sh("--full", "--dry-run", "--work", w, "--sanity-reading", str(rf), ok=(2,))                       # no flag: refused as before
+            self.assertIn("failed its rule", r.stderr)
+            r = self.sh("--sanity", "--waiver", "W27", "--dry-run", "--work", w, ok=(2,))
+            self.assertIn("--waiver is for --full only", r.stderr)
+            r = self.sh("--full", "--dry-run", "--work", w, "--waiver", "W27", "--sanity-reading", str(rf))
+            self.assertIn("Owner waiver W27", r.stdout)
+            rep = Path(w, "KB2_PILOT_from_stub_data.md").read_text()
+            self.assertIn("Owner waiver W27", rep)
+            self.assertIn("rated 3 of 40", rep)
+            self.assertIn("Owner waiver W27", Path(w, "HEARTBEAT.md").read_text())
+            self.assertIn("W27", Path(w, "full/MANIFEST.json").read_text())
+            self.assertIn("stage audit done", r.stdout)
 
     def test_failed_sanity_rule_ends_failed(self):
         with tempfile.TemporaryDirectory() as d:

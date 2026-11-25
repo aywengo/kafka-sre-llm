@@ -430,6 +430,68 @@ def reading_count(result_path, key_path):
     return sum(1 for i in acc if rating[i] != "ok"), len(acc), sha256_file(result_path)
 
 
+WAIVER_ID = "W27"
+WAIVED_BARS = ("gate failures", "checker accepts")      # W27: the two bars of the fifth sanity run (selection sanity4) the Owner waived
+WAIVER_SELECTION = "sanity4"
+
+
+def waiver_reading(path):
+    """W27: the reading file of a waived full run is one JSON object {"run": "sanity4", "accepted_read": 40, "not_ok": n, "reader": TEXT,
+    "date": "YYYY-MM-DD"}: the blind reading's count of not-ok entries among the accepted ones it read. Returns the object; ValueError
+    when it is not usable (not that shape, another run, not 40 read, or more than SAN_READ_NOTOK_MAX not ok)."""
+    o = load_json(path)
+    if not isinstance(o, dict):
+        raise ValueError("the waiver's reading is not a JSON object")
+    if o.get("run") != WAIVER_SELECTION:
+        raise ValueError(f"the waiver's reading is for run {o.get('run')!r}, not {WAIVER_SELECTION!r}")
+    ar, n = o.get("accepted_read"), o.get("not_ok")
+    if not all(isinstance(x, int) and not isinstance(x, bool) for x in (ar, n)):
+        raise ValueError("accepted_read and not_ok must be whole numbers")
+    if ar != SAN_READ_ACC:
+        raise ValueError(f"accepted_read is {ar}, the reading sample has {SAN_READ_ACC}")
+    if n < 0 or n > ar:
+        raise ValueError(f"not_ok {n} is not between 0 and {ar}")
+    for k in ("reader", "date"):
+        if not isinstance(o.get(k), str) or not o[k].strip():
+            raise ValueError(f"the waiver's reading has no {k}")
+    return o
+
+
+def _waiver_gate(a, r, sm):
+    """Returns 0 and prints the basis, or 2 with a refusal: the stored sanity result fails exactly the two waived bars and passes the
+    others, belongs to selection sanity4, and the reading file (waiver_reading) has at most 4 not ok."""
+    if a.waiver != WAIVER_ID:
+        print(f"REFUSED: the only waiver is {WAIVER_ID}", file=sys.stderr)
+        return 2
+    sel = (sm.get("options") or {}).get("selection")
+    if sel != WAIVER_SELECTION or (sm.get("options") or {}).get("mode") != "sanity":
+        print(f"REFUSED: the {WAIVER_ID} waiver is for the sanity run of selection {WAIVER_SELECTION}, not {sel!r}", file=sys.stderr)
+        return 2
+    failed = sorted(it.get("name") for it in r.get("items") or [] if not it.get("pass"))
+    if failed != sorted(WAIVED_BARS) or len(r.get("items") or []) != 5:
+        print(f"REFUSED: the {WAIVER_ID} waiver covers only the failed bars {list(WAIVED_BARS)}; the sanity result fails {failed}", file=sys.stderr)
+        return 2
+    if not a.reading:
+        print("REFUSED: the waiver needs --sanity-reading FILE (the reading summary JSON)", file=sys.stderr)
+        return 2
+    try:
+        o = waiver_reading(a.reading)
+    except (OSError, ValueError) as e:
+        print(f"REFUSED: the waiver's reading {a.reading} is not usable: {e}", file=sys.stderr)
+        return 2
+    if o["not_ok"] > SAN_READ_NOTOK_MAX:
+        print(f"REFUSED: the waiver's reading rated {o['not_ok']} of {o['accepted_read']} accepted entries not ok (at most {SAN_READ_NOTOK_MAX})", file=sys.stderr)
+        return 2
+    pin = (sm.get("pins") or {}).get("kafka_sre_rag/kb_entry.py", "unknown")
+    now = sha256_file("kafka_sre_rag/kb_entry.py")
+    print(f"full gate: Owner waiver {WAIVER_ID}: the sanity run {WAIVER_SELECTION} (git head {(sm.get('info') or {}).get('git_head', 'unknown')}) "
+          f"failed only the bars {', '.join(WAIVED_BARS)} ({'; '.join(it['name'] + ': ' + it['value'] for it in r['items'] if not it['pass'])}); "
+          f"the reading ({o['reader']}, {o['date']}) rated {o['not_ok']} of {o['accepted_read']} accepted entries not ok; "
+          f"kafka_sre_rag/kb_entry.py sha256 in the sanity run {pin}, now {now} (the W27 gate fixes: backslash escapes, heading trail); "
+          f"reading file sha256 {sha256_file(a.reading)}")
+    return 0
+
+
 def cmd_full_gate(a):
     """The full run's preconditions: the sanity result passed its rule, for the same prompt versions, KB prompt texts, writer and
     checker as this run and as the sanity folder's MANIFEST.json; the reading's result file covers exactly the reading sample and
@@ -440,7 +502,7 @@ def cmd_full_gate(a):
     except (OSError, ValueError):
         print(f"REFUSED: the sanity run's result or manifest is missing or unreadable in {a.sanity_dir} (run --sanity first)", file=sys.stderr)
         return 2
-    if not r.get("mechanical_pass"):
+    if not r.get("mechanical_pass") and not a.waiver:
         print("REFUSED: the sanity run failed its rule (mechanical parts); rework the prompt first", file=sys.stderr)
         return 2
     now = run_identity(a.writer, a.checker)
@@ -455,6 +517,8 @@ def cmd_full_gate(a):
                   + "; ".join(f"{k}={str(other.get(k))[:16]}" for k in diff) + "; now: " + "; ".join(f"{k}={str(now[k])[:16]}" for k in diff)
                   + "): a new sanity run first", file=sys.stderr)
             return 2
+    if a.waiver:
+        return _waiver_gate(a, r, sm)
     if not a.reading:
         print("REFUSED: --sanity-reading FILE (the sanity reading's result) is required", file=sys.stderr)
         return 2
@@ -580,6 +644,7 @@ def main(argv=None):
     p.add_argument("--sanity-result", required=True)
     p.add_argument("--sanity-dir", required=True)
     p.add_argument("--reading", default=None)
+    p.add_argument("--waiver", default=None)
     p.add_argument("--writer", required=True)
     p.add_argument("--checker", required=True)
     p = sub.add_parser("index")

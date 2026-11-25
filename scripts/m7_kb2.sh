@@ -35,6 +35,8 @@
 #
 #   scripts/m7_kb2.sh --sanity > runs/m7/logs/m7_kb2.sanity.out 2>&1 &                          (J1)
 #   scripts/m7_kb2.sh --full --sanity-reading FILE > runs/m7/logs/m7_kb2.full.out 2>&1 &     (J2, W15's go)
+#   scripts/m7_kb2.sh --full --waiver W27 --sanity-reading FILE > runs/m7/logs/m7_kb2.full.out 2>&1 &     (W27: the Owner's waiver of two bars of the fifth sanity run; FILE is the reading summary JSON
+#        {"run":"sanity4","accepted_read":40,"not_ok":N,"reader":"...","date":"YYYY-MM-DD"}; refused unless the sanity result fails only "gate failures" and "checker accepts", and N is at most 4)
 #   scripts/m7_kb2.sh --sanity|--full --dry-run --work DIR [plants]     # stub server, stub writer and checker; nothing is written outside DIR
 # Options: --work DIR, --report FILE, --sanity-reading FILE (one JSON object per line: id, rating ok|partial|wrong, reason; the ids of
 #   W/sanity/reading/sanity_reading_key.json), --checker-model ID, --fallback-note TXT; dry runs only: --fail-after STAGE, --plant-foreign ID
@@ -43,14 +45,14 @@
 #   target chunk ids; see the writer's and checker's headers).
 # The server address and key come from OMLX_URL and OMLX_API_KEY or ~/.config/kafka-sre-llm/; they are never written or printed.
 set -e
-MODE=; DRY=no; W=work/m7/kb; WSET=no; REPORT=runs/m7/KB2_PILOT.md; RSET=no; READING=; FAILAFTER=; PFOREIGN=; PBUSY=0; PSTOP=
+MODE=; WAIVER=; DRY=no; W=work/m7/kb; WSET=no; REPORT=runs/m7/KB2_PILOT.md; RSET=no; READING=; FAILAFTER=; PFOREIGN=; PBUSY=0; PSTOP=
 PWBAD=; PWRETRY=; PWGATE=; PCBAD=; PWRONG=
 DS=DeepSeek-V4.1-Flash-1017-oQ4e-mtp; GLM8=GLM-5.3-Flash-oQ8e-mtp; GLM4=GLM-5.3-Flash-oQ4e; CHK=$GLM8; FBNOTE=
 WCONC=1; CCONC=1; WMAX=3000; CMAX=8000
 while [ $# -gt 0 ]; do case $1 in
   --sanity) MODE=sanity;; --full) MODE=full;; --dry-run) DRY=yes;;
   --work) W=${2:?}; WSET=yes; shift;; --report) REPORT=${2:?}; RSET=yes; shift;;
-  --sanity-reading) READING=${2:?}; shift;; --checker-model) CHK=${2:?}; shift;; --fallback-note) FBNOTE=${2:?}; shift;;
+  --sanity-reading) READING=${2:?}; shift;; --waiver) WAIVER=${2:?}; shift;; --checker-model) CHK=${2:?}; shift;; --fallback-note) FBNOTE=${2:?}; shift;;
   --fail-after) FAILAFTER=${2:?}; shift;; --plant-foreign) PFOREIGN=${2:?}; shift;; --plant-busy) PBUSY=${2:?}; shift;; --plant-stop) PSTOP=${2:?}; shift;;
   --plant-write-bad) PWBAD=${2:?}; shift;; --plant-write-retry) PWRETRY=${2:?}; shift;; --plant-write-gate) PWGATE=${2:?}; shift;; --plant-check-bad) PCBAD=${2:?}; shift;; --plant-wrong-model) PWRONG=${2:?}; shift;;
   *) echo "usage: scripts/m7_kb2.sh --sanity|--full [--sanity-reading FILE] [--dry-run --work DIR] (see the header)" >&2; exit 2;; esac
@@ -64,6 +66,8 @@ case $PBUSY in ''|*[!0-9]*) refuse "--plant-busy is a whole number";; esac
 if [ $DRY = no ]; then
   [ -z "$FAILAFTER$PFOREIGN$PSTOP$PWBAD$PWRETRY$PWGATE$PCBAD$PWRONG" ] && [ "$PBUSY" = 0 ] || refuse "--fail-after and the --plant-* options are for dry runs only"
 fi
+[ -z "$WAIVER" ] || [ $MODE = full ] || refuse "--waiver is for --full only"
+[ -z "$WAIVER" ] || [ "$WAIVER" = W27 ] || refuse "the only waiver is W27 (MILESTONE.md)"
 if [ $MODE = full ]; then
   [ -n "$READING" ] || refuse "--full needs --sanity-reading FILE (the sanity reading's result)"
   [ -s "$READING" ] || refuse "the sanity reading's result $READING is missing or empty"
@@ -110,9 +114,10 @@ VOUT=$(mktemp "${TMPDIR:-/tmp}/m7_kb2_verify.XXXXXX")
 .venv/bin/python -m kafka_sre_rag verify > $VOUT 2>&1 || { cat $VOUT >&2; refuse "kafka_sre_rag verify failed (frozen index, prompts, reranker revision or catalogues)"; }
 rm -f $VOUT
 if [ $MODE = full ]; then
-  FGOUT=$(.venv/bin/python $R full-gate --sanity-result $W/sanity/sanity_result.json --sanity-dir $W/sanity --reading $READING --writer $DS --checker $CHK) \
+  FGOUT=$(.venv/bin/python $R full-gate --sanity-result $W/sanity/sanity_result.json --sanity-dir $W/sanity --reading $READING ${WAIVER:+--waiver $WAIVER} --writer $DS --checker $CHK) \
     || refuse "the full run's preconditions do not hold (see above)"
   echo "$FGOUT"
+  [ -z "$WAIVER" ] || { [ -f $W/full/stage_header.done ] || hb "$N (full): $FGOUT"; }     # W27: the waiver and its basis are logged before the run
   [ -f $W/sanity/stage_report.done ] || refuse "the sanity run has not finished (no $W/sanity/stage_report.done)"
 fi
 
@@ -214,7 +219,7 @@ GIT_HEAD=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
 gstate() { sub=$1; shift
   .venv/bin/python $R $sub --work $RW $PINS $([ $DRY = yes ] && echo --dry) --opt "mode=$MODE" --opt "writer=$DS" --opt "checker=$CHK" --opt "fallback_note=$FBNOTE" \
     --opt "writer_concurrency=$WCONC" --opt "checker_concurrency=$CCONC" --opt "writer_max_tokens=$WMAX" --opt "checker_max_tokens=$CMAX" \
-    --opt "selection=$SEL" --opt "sanity_reading_sha256=$RSHA" --info "git_head=$GIT_HEAD" "$@"; }
+    --opt "selection=$SEL" --opt "sanity_reading_sha256=$RSHA" ${WAIVER:+--opt "waiver=$WAIVER"} --info "git_head=$GIT_HEAD" "$@"; }
 SCOUT=$(mktemp "${TMPDIR:-/tmp}/m7_kb2_startcheck.XXXXXX")
 if ! gstate start-check > $SCOUT 2>&1; then cat $SCOUT >&2; rm -f $SCOUT; moveaside; refuse "the start check failed (see above; nothing was moved or deleted)"; fi
 cat $SCOUT; rm -f $SCOUT
@@ -330,6 +335,7 @@ if ! stage_done report; then
       echo; echo '```'; cat $RW/sanity_rule.txt; echo '```'; echo
       echo "Reading sample: \`$RW/reading/sanity_reading.md\` (blind; the checker's verdicts in \`sanity_reading_key.json\`). $(cat $RW/reading_sample.txt)"
     else
+      [ -z "$WAIVER" ] || { echo "**Owner waiver $WAIVER (MILESTONE.md):** the sanity run's gate-failure bar (at most 15 %) and checker-accept ceiling (98 %) are waived for this full run; every other bar and the full run's audit (200 entries, at least 190 correct) stay. Basis: $FGOUT."; echo; }
       echo "Sanity reading: \`$READING\` (sha256 \`$RSHA\`). $FGOUT."
       echo; echo '```'; cat $RW/index.txt; cat $RW/audit.txt; echo '```'; echo
       echo "Accepted entries: \`$W/entries_index.jsonl\`. The audit (at least 190 of 200 ok) is a reading session; its bundles are in \`$RW/audit/\`."

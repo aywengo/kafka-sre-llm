@@ -608,3 +608,59 @@ class Kbe3(unittest.TestCase):
                   "a statement true only under a condition must name it."):
             self.assertIn(t, w)
         self.assertIn("a condition from the chunk (a heading, the preceding sentence, a note or warning nearby) is neither in the statement", P.KB_CHECK_USER)
+
+
+class W27Fixes(unittest.TestCase):
+    """W27: a backslash escape in the source is the plain character in the verbatim check; a name in the heading trail is supported."""
+    UP = {"id": "u1", "source": "apache-kafka", "path": "raw/apache-kafka/docs/upgrade.md", "title": "Upgrading to 4.0.1 > Notable changes in 4.0.1",
+          "text": "The enable.idempotence setting no longer falls back."}
+    SK = {"id": "s1", "source": "apache-kafka", "path": "raw/apache-kafka/docs/connect.md", "title": "Developing a Simple Connector > Sink Tasks",
+          "text": "The put() method should contain most of the implementation."}
+    ES = {"id": "e1", "source": "apache-kafka", "path": "raw/apache-kafka/docs/connect.md", "title": "Connect",
+          "text": "  * `group.id` \\- Unique name for the cluster; a \\*star\\*, a snake\\_case and a \\#tag"}
+
+    def e(self, cid, **kw):
+        d = {"kind": "fact", "title": "A setting", "statement": "It no longer falls back.", "sources": [cid],
+             "quotes": [{"chunk": cid, "text": ""}]}
+        d.update(kw)
+        return d
+
+    def test_a_escapes(self):
+        W = {"e1": self.ES}
+        self.assertEqual(K.gate_entry(self.e("e1", title="Escapes", statement="Plain characters.",
+                                            quotes=[{"chunk": "e1", "text": "a *star*, a snake_case and a #tag"}]), W, "e1"), [])
+        for q in ("`group.id` - Unique name for the cluster", "`group.id` \\- Unique name for the cluster"):
+            self.assertEqual(K.gate_entry(self.e("e1", title="group.id", statement="group.id is unique.", quotes=[{"chunk": "e1", "text": q}]), W, "e1"), [], q)
+        bad = self.e("e1", title="group.id", statement="group.id is unique.", quotes=[{"chunk": "e1", "text": "`group.id` - Another name"}])
+        self.assertTrue(any("not verbatim" in r for r in K.gate_entry(bad, W, "e1")))            # only the escape is forgiven
+        bad = self.e("e1", title="group.id", statement="group.id is unique.", quotes=[{"chunk": "e1", "text": "`group.id` -- Unique name"}])
+        self.assertTrue(K.gate_entry(bad, W, "e1"))
+        self.assertEqual(K.unescape("a\\-b \\* \\_ \\# \\x \\\\"), "a-b * _ # \\x \\\\")
+
+    def test_b_heading_trail(self):
+        W = {"u1": self.UP}
+        q = [{"chunk": "u1", "text": "The enable.idempotence setting no longer falls back."}]
+        ok = self.e("u1", statement="In Apache Kafka 4.0.1, enable.idempotence no longer falls back.", quotes=q)
+        self.assertEqual(K.gate_entry(ok, W, "u1"), [])
+        bad = self.e("u1", statement="In Apache Kafka 4.0.2, enable.idempotence no longer falls back.", quotes=q)      # another version
+        self.assertTrue(any("4.0.2" in r for r in K.gate_entry(bad, W, "u1")))
+        bad = self.e("u1", statement="In Apache Kafka 4.0, enable.idempotence no longer falls back.", quotes=q)        # a number of one dot is not a version
+        self.assertTrue(K.gate_entry(bad, W, "u1"))
+        bad = self.e("u1", statement="In Apache Kafka 4.0.10, enable.idempotence no longer falls back.", quotes=q)     # not a longer number
+        self.assertTrue(K.gate_entry(bad, W, "u1"))
+
+    def test_b_no_new_fuzzy_matching(self):
+        W = {"s1": self.SK}
+        q = [{"chunk": "s1", "text": "The put() method should contain most of the implementation."}]
+        for name in ("SinkTask", "Sink-Task", "SinkTasks"):
+            self.assertTrue(K.gate_entry(self.e("s1", title=f"{name} put() method", statement="put() holds the implementation.", quotes=q), W, "s1"), name)
+        self.assertEqual(K.gate_entry(self.e("s1", title="Sink Tasks put() method", statement="put() holds the implementation.", quotes=q), W, "s1"), [])
+        self.assertEqual(K.gate_entry(self.e("s1", statement="`Sink Tasks`: put() holds the implementation.", quotes=q), W, "s1"), [])
+
+    def test_trail_parts_follow_heading_trail(self):
+        c = {"id": "h1", "source": "strimzi", "path": "raw/strimzi/x.adoc", "title": "Doc > Section",
+             "text": "= " + "Very long heading about KafkaRebalance " * 12 + "\n\nSome text here that is quoted."}
+        e = self.e("h1", statement="About KafkaRebalance.", quotes=[{"chunk": "h1", "text": "Some text here that is quoted."}])
+        parts = K._trail_parts(e, {"h1": c})
+        self.assertTrue(parts and "KafkaRebalance" in parts[0])
+        self.assertEqual(K.gate_entry(e, {"h1": c}, "h1"), [])

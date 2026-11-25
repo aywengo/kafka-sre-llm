@@ -53,6 +53,14 @@ def norm_statement(s):
     return norm_ws(s).lower()
 
 
+_ESCAPE = re.compile(r"\\([\-*_#])")
+
+
+def unescape(s):
+    """W27: an AsciiDoc/markdown backslash escape (a backslash before - * _ or #) as the plain character, for the verbatim check."""
+    return _ESCAPE.sub(r"\1", s or "")
+
+
 def chunk_view(c):
     """A chunk as the model receives it in a pack: the title line, a newline, the text."""
     return prompts.pack_text([c])
@@ -172,7 +180,8 @@ def gate_entry(e, window, target):
             continue
         if cid not in src:
             bad.append(f"quote of {cid}: not one of the sources")
-        if norm_ws(x["text"]) not in views[cid]:
+        q = norm_ws(x["text"])
+        if q not in views[cid] and unescape(q) not in unescape(views[cid]):     # W27: a source's `\-` is a plain '-'
             bad.append(f"quote of {cid} is not verbatim: {norm_ws(x['text'])[:60]!r}")
             continue
         quoted.add(cid)
@@ -691,6 +700,26 @@ def _line_supports(token, field_text, line):
     return _number_in_title(token, field_text, line) if not re.search(r"[A-Za-z]", token) else _in_title(token, line)
 
 
+_VERSION = re.compile(r"^\d+(\.\d+){2,}$")
+
+
+def _version_in(token, part):
+    """W27: a dotted version number (at least two dots, as 4.0.1) is a name specific enough to stand without a neighbouring word:
+    a heading-trail part that has it as a whole token supports it."""
+    return bool(_VERSION.match(token)) and re.search(r"(?<![\w.\-])" + re.escape(token) + r"(?![\w\-])(?!\.\w)", norm_ws(unmark(part))) is not None
+
+
+def _trail_parts(e, window):
+    """W27: the parts of the entry's mechanical heading trail (heading_trail(), uncapped: the full breadcrumb and the in-chunk
+    headings and caption where the quotes stand), one per source chunk and quote position. A name in one part is supported by
+    the rules a title line gets, no others."""
+    try:
+        full = heading_trail([s for s in e["sources"] if s in window], e["quotes"], window, cap=10 ** 6)
+    except (KeyError, TypeError):
+        return []
+    return [p for p in full.split(" | ") if p]
+
+
 def _support(e, window):
     """Returns (unsupported [(field, token)], lines [(chunk id, line, is_title)]): the tokens that no quote contains and no
     source chunk's title line or heading line contains, and the lines that support a token (in source order, title line first;
@@ -715,6 +744,8 @@ def _support(e, window):
                 hit = next(((s, ln, ti) for ln, ti in cands if _line_supports(t, ftext, ln)), None)
                 if hit:
                     break
+            if hit is None and any(_line_supports(t, ftext, part) or _version_in(t, part) for part in _trail_parts(e, window)):
+                continue                       # W27: the heading trail (shown in the entry) has the name
             if hit is None:
                 bad.append((field, t))
             else:
