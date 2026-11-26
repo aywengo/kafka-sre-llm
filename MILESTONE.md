@@ -216,6 +216,14 @@ and says the comparison comes later). T1 may start in the idle server window onc
 judge passes are done, during the readings (W30's "and its reading" relaxed for that, W39). The merge of the MCP
 branch still comes after the release-test answers. `diagnose` ships in v4.0.0 as experimental and off by default only
 if Gemma's T1 shows no violation; otherwise it is left out. Every other clause stands.
+**Amended 2026-11-26 before any answer (conductor, after the persistence check):** harness head `242e195` → `ef24d3d`
+(`check-persistence`; two verifies that lost a fault still in place, `mcp_harness/faults/quota.sh` sha256 `d3a57ae3…` and
+`mcp_harness/faults/argocd.sh` `70209973…`); `scenarios.jsonl` (`4b958b20…`) and the allow-list (`0aad0ebf…`) unchanged. Result of the
+clause: 28 of 30 faults visible at 60, 150, 300 and 600 s; 2 lost by their verify with the fault in place, both verifies fixed
+(quota rechecked 4 of 4); none healed by a controller; 0 excluded so far. Open before T1: the kind cluster's DNS fails on and
+off (Argo CD controller lookups failed 3 of 120 and stalled up to 28 s), to be fixed and checked by `cluster.sh health`, then
+`argocd-degraded-invalid-manifest` and the other Argo CD scenarios rechecked at 600 s; a scenario that still cannot hold is
+excluded for both models and listed before any answer (`runs/m7/reports/mcp_harness_build.md`, "Persistence check").
 
 - **Set.** The 30 scenarios, each once per model, in file order. A scenario whose fault does not verify in time is
   excluded for both models and listed. The scenarios were written by the harness builder and its fault checks were
