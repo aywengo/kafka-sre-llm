@@ -16,8 +16,10 @@ case "$action:$variant" in
     pod_logs_match app=orders-consumer "SSLHandshakeException|SSL handshake failed|bad_certificate|certificate_unknown|Failed authentication" \
       && ! group_has_members orders-consumer ;;
   inject:user_secret_missing) vol_patch 2 app-consumer-tls ;;
-  verify:user_secret_missing)
-    K -n kafka get events --field-selector reason=FailedMount -o jsonpath='{.items[*].message}' | grep -q app-consumer-tls ;;
+  verify:user_secret_missing)  # a FailedMount event of the consumer pod that exists now (events of earlier runs linger)
+    pod=$(K -n kafka get pods -l app=orders-consumer -o jsonpath='{.items[0].metadata.name}')
+    [ -n "$pod" ] && K -n kafka get events --field-selector "reason=FailedMount,involvedObject.name=$pod" \
+      -o jsonpath='{.items[*].message}' | grep -q app-consumer-tls ;;
   revert:*) K -n kafka replace -f "$ROOT/mcp_harness/manifests/clients.yaml" >/dev/null ;;
   *) echo "usage: $0 inject|verify|revert truststore_wrong_ca|selfsigned_client_cert|user_secret_missing" >&2; exit 2 ;;
 esac

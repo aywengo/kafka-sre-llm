@@ -38,6 +38,7 @@ healthy() {
   check "node schedulable" "[ -z \"\$(K get node $NODE -o jsonpath='{.spec.unschedulable}')\" ]"
   check "operator ready" "deploy_ready kafka strimzi-cluster-operator"
   check "operator watches kafka" "[ \"\$(K -n kafka get deploy strimzi-cluster-operator -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name==\"STRIMZI_NAMESPACE\")].valueFrom.fieldRef.fieldPath}')\" = metadata.namespace ]"
+  check "Kafka kafka and pool broker without Warning conditions" "[ -z \"\$(K -n kafka get kafka kafka -o jsonpath='{.status.conditions[?(@.type==\"Warning\")].reason}')\$(K -n kafka get kafkanodepool broker -o jsonpath='{.status.conditions[?(@.type==\"Warning\")].reason}')\" ]"
   check "Kafka kafka Ready" "[ \"\$(K -n kafka get kafka kafka -o jsonpath='{.status.conditions[?(@.type==\"Ready\")].status}')\" = True ]"
   check "3 broker pods ready" "[ \"\$(K -n kafka get pods -l strimzi.io/pool-name=broker -o jsonpath='{range .items[*]}{.status.containerStatuses[0].ready}{\"\\n\"}{end}' | grep -c true)\" = 3 ]"
   check "only pool broker" "[ \"\$(K -n kafka get kafkanodepools -o name | wc -l | tr -d ' ')\" = 1 ]"
