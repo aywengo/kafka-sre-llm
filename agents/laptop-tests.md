@@ -72,6 +72,19 @@ oMLX at the address from the environment.
 Both options use the same model repository for the download, `mlx-community/Qwen3.8-27B-4bit`
 (`--model-repo` changes it).
 
+**Release configuration R (Gemma 4 31B 4-bit with lookup cards; M7 W33, W37).** The release model is no longer the
+Qwen default above. `--config R` (given on every phase, or only on the first one: the folder remembers it) reads the
+model name, the request body, the model repository `mlx-community/gemma-4-31b-it-4bit` at its pinned commit and the
+`--lookup-cards` flag from `eval/m7/release_test/configs.json` (its sha256 is checked; `--configs-sha256` if the file was
+changed on purpose) and uses exactly them in every phase; `--model`, `--extra-body`, `--model-repo`, `--max-tokens` or
+`--k` other than R's are refused, and one output folder holds one configuration. The one-shot command is the `ask_command`
+of that file. **The service has no lookup cards**, so with R the speed, sustained and memory phases run one-shot only
+(`speed` has the single condition `oneshot-default`; `sustained` uses `--runtime oneshot`; `memory` asks its three questions
+one-shot), and `SUMMARY.md` says so; there are no first-word, service cold start or idle-service figures. `install-check --run`
+downloads the pinned commit into `models/gemma-4-31b-it-4bit` (`--revision` is added). Serving parameters for R are
+only `--weights-dir models/gemma-4-31b-it-4bit` (and `OMLX_URL`, with the model on the server under the name in the file).
+Without `--config` the Qwen defaults of this plan apply unchanged.
+
 ## Steps
 
 Times are ranges, with the basis in the last section. Each step prints one line per item and can be run again: a
@@ -143,6 +156,11 @@ finished item is skipped.
     the catalogues), then compares with the stored `s6-A1` result. It is resumable: run it again after an interruption.
     `--n N` answers and scores only the first N of the 60 ids (a prefix, so `--n 10` first and the full run later
     continue from the same answers); a partial run is shown in `SUMMARY.md` as partial, with the answers present of 60.
+    With `--config R` the comparison needs a reference made with R on the Mac Studio, passed as `--reference PATH`
+    (`score` refuses without it: the Qwen result stored in `eval/m4/laptop/ids.json` is not R's). The Mac Studio makes it once:
+    `.venv/bin/python scripts/laptop_bench.py --config R --out OUT-REF make-reference --ref-out PATH` (the same 60 ids and the
+    same `eval2.py answer` command as `score`, with `--lookup-cards --catalogue`; resumable; refuses to overwrite PATH). The
+    reference's path, sha256 and run id are recorded in the bench's `config.json`, in `score/compare.json` and in `SUMMARY.md`.
     45 to 90 min. Turn Wi-Fi on again after this step.
 
 12. **Bundle.** `.venv/bin/python scripts/laptop_bench.py --out OUT bundle` writes `OUT/SUMMARY.md` (every bar, the measured
