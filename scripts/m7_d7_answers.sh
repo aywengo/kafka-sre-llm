@@ -7,9 +7,12 @@
 #   they differ only in the pack file):
 #   A  the frozen packs, replayed from work/m7/d7/packs_A.jsonl (+ .manifest.json)
 #   K  the frozen + entries packs, replayed from work/m7/d7/packs_K.jsonl (+ .manifest.json)
-#   Both files are written by task I5 in the replay format of work/m7/six_arm/packs_frozen_d5.jsonl (--packs-a and --packs-k name other paths).
-# Models: --models takes a list from gemma31,qwen (both by default, the rule as fixed); the answers are made gemma31 first, then qwen, each loaded alone and unloaded
-#   after its stages. The chosen list is written into the report header and the manifest before any answer exists.
+#   Both files are written by task I5 (scripts/m7_d7_served.py packs: work/m7/d7/packs_frozen_d7.jsonl and packs_entries_d7.jsonl, the defaults; --packs-a and --packs-k name other
+#   paths) in the replay format of work/m7/six_arm/packs_frozen_d5.jsonl. An entry is a `kbe:<id>` in the K pack, replayed through the runtime's own path (evalhooks.chunks_by_ids ->
+#   kafka_sre_rag.kb_entries.resolve_pack, hash-checked record). The manifest's created_at (whole seconds, UTC) is used for the header-before-K check next to the file times.
+# Models: W39 (the Owner, before any answer): stage 2 runs on Gemma 4 31B only, so --models defaults to gemma31 and the rule text says so. Qwen stays possible only by an
+#   explicit --models naming it (qwen or gemma31,qwen); the header then records that Qwen is outside the fixed rule and its numbers decide nothing. Answers are made gemma31
+#   first, then qwen, each loaded alone and unloaded after its stages. The chosen list is written into the report header and the manifest before any answer exists.
 # Two runs in one work folder: `--arms A` runs alone BEFORE the entries pack exists (the frozen packs are all it needs); a later `--arms K` run resumes in the same
 #   folder (the manifest does not hold the arms). The first run writes the report header with the rule text (scripts/m7_d7_answers_rule.py rule-text) and prints it for
 #   the conductor to copy into runs/m7/D7_LEDGER.md; it records the header's time and hash (HEADER_RECORD.json). Arm K is refused unless the header was written before the K
@@ -35,7 +38,7 @@
 #   In a dry run the stand-in packs are made in DIR/in (K only once the header exists, as I5 would, unless --plant-k-first).
 # The server address and key come from OMLX_URL and OMLX_API_KEY or ~/.config/kafka-sre-llm/; they are never written or printed.
 set -e
-DRY=no; W=work/m7/d7_answers; WSET=no; REPORT=runs/m7/M7_D7_ANSWERS.md; RSET=no; MODELS=gemma31,qwen; ARMS=A,K; PA=work/m7/d7/packs_A.jsonl; PK=work/m7/d7/packs_K.jsonl
+DRY=no; W=work/m7/d7_answers; WSET=no; REPORT=runs/m7/M7_D7_ANSWERS.md; RSET=no; MODELS=gemma31; ARMS=A,K; PA=work/m7/d7/packs_frozen_d7.jsonl; PK=work/m7/d7/packs_entries_d7.jsonl
 PASET=no; PKSET=no; G31=gemma-4-31b-it-4bit; QID=Qwen3.8-27B-4bit; SPS=0; FAILAFTER=; PFOREIGN=; PBUSY=0; PLOAD=; DRYITEMS=0; PKFIRST=no
 DS=DeepSeek-V4.1-Flash-1017-oQ4e-mtp
 while [ $# -gt 0 ]; do case $1 in
@@ -114,9 +117,9 @@ if [ $DRY = yes ]; then    # the stand-ins of a dry run (the only thing written 
     .venv/bin/python $R dry-packs --items $ITEMS --rubrics $RUBS --chunks $CHUNKS --out-dir $W/in --arm K > /dev/null || refuse "the stand-in K packs could not be made"; fi
 fi
 .venv/bin/python $R gate-inputs --items $ITEMS --rubrics $RUBS --chunk-check $CC --slice-tags $TAGS $DRYFLAG || refuse "the D7 files are not what the chain expects (see above)"
-.venv/bin/python $R check-packs --arm A --packs $PA --items $ITEMS --chunks $CHUNKS --work $W || refuse "the A pack file is not usable (see above; arm A needs only the frozen packs)"
+.venv/bin/python $R check-packs --arm A --packs $PA --items $ITEMS --chunks $CHUNKS --work $W $DRYFLAG || refuse "the A pack file is not usable (see above; arm A needs only the frozen packs)"
 if [ $WANTK = yes ]; then
-  .venv/bin/python $R check-packs --arm K --packs $PK --a-packs $PA --items $ITEMS --chunks $CHUNKS --work $W || refuse "the K pack file is not usable (see above; run --arms A first, and --arms K when the entries pack exists)"
+  .venv/bin/python $R check-packs --arm K --packs $PK --a-packs $PA --items $ITEMS --chunks $CHUNKS --work $W $DRYFLAG || refuse "the K pack file is not usable (see above; run --arms A first, and --arms K when the entries pack exists)"
 fi
 
 SJSON=; STUB=$W/stub_server_status.json
@@ -214,7 +217,7 @@ if ! gstate start-check > $SCOUT 2>&1; then
 cat $SCOUT; rm -f $SCOUT
 if [ -f $L/$N.failed ]; then echo "rerun after a stop; the earlier failure was: $(tail -n 1 $L/$N.failed)"; rm -f $L/$N.failed; fi
 gstate manifest > /dev/null
-.venv/bin/python $R check-packs --arm A --packs $PA --items $ITEMS --chunks $CHUNKS --work $W --record > /dev/null || refuse_late "the A pack file could not be recorded (see above)"
+.venv/bin/python $R check-packs --arm A --packs $PA --items $ITEMS --chunks $CHUNKS --work $W $DRYFLAG --record > /dev/null || refuse_late "the A pack file could not be recorded (see above)"
 recheck() { rc=$(gstate start-check 2>&1) || { echo "$rc" >&2; fail "the start check failed before the stage $1: something pinned changed since the chain started"; }; }
 mark() { st=$1; shift; .venv/bin/python $R mark --work $W --stage $st --out "$@" > /dev/null; echo "stage $st done"; planted $st; }
 
@@ -226,7 +229,7 @@ echo "the rule (printed before any call and before any entries pack exists; the 
 .venv/bin/python $R rule-text
 echo "rule sha256: $(.venv/bin/python -c 'import sys; sys.path.insert(0, "scripts"); import m7_d7_answers_rule as r; print(r.rule_sha256())')"
 echo
-echo "planned: D7 $ND scenarios; models $MODELS (in this order); arms of this run $ARMS; calls: $CNT (judge rows per arm: models x $ND x 2); model-server time (inferred in kb2_design.md section 7, not measured): about 7 to 7.5 h for both models and both arms with the judging"
+echo "planned: D7 $ND scenarios; models $MODELS (in this order); arms of this run $ARMS; calls: $CNT (judge rows per arm: models x $ND x 2); model-server time (inferred in kb2_design.md section 7, not measured): about 7 to 7.5 h was the design's figure for both models and both arms with the judging; Gemma alone is about half of that"
 [ $DRY = no ] || echo "DRY RUN: stub answers, stub judge, stub server status; no number below is a measurement"
 status RUNNING no "$N running ($ARMS); markers $L/$N.done / .failed"
 
@@ -239,7 +242,7 @@ if ! stage_done header; then
     echo "# M7 I6: D7's answers, Z4 stage 2 (nothing lost)$([ $DRY = yes ] && echo ' (DRY RUN: stub answers, stub judge, stub server; no number below is a measurement)')"
     echo
     echo "Written by \`scripts/m7_d7_answers.sh\` on $(date +%Y-%m-%d) (git $GIT_HEAD). **Models of this run (in the order of their answers): $(echo $MODELS | sed 's/,/, /g')**; ids: gemma31 \`$G31\`, qwen \`$QID\`; judge \`$DS\` ($JSETTING, instruction v2, coverage role, two passes). Arms A (frozen packs) and K (frozen + entries packs) are replayed from files; the pack files are recorded by hash at their first acceptance. Blind letters of the reading bundles: seed $SEED. Rule: \`$R\`."
-    echo
+    case ",$MODELS," in *,qwen,*) echo "**Qwen is in this run by explicit request and lies outside the fixed rule** (W39: Z4's stage 2 is Gemma 4 31B only). Its numbers are reported, decide nothing and do not count toward Z4."; echo;; esac
     .venv/bin/python $R rule-text
     echo "**The order that makes the rule binding.** This header was written before the K pack file was created (stage marker \`$W/stage_header.done\`, record \`$W/HEADER_RECORD.json\` with the time and the hash of this text); the chain refuses to answer arm K otherwise. The chain checks the order from the files' creation times (the earlier of the birth time and the modification time); a file copied after the header looks new, so this is evidence, not proof."
     echo
@@ -253,7 +256,7 @@ if ! stage_done header; then
 fi
 k_order() { .venv/bin/python $R check-k-order --work $W --header $HEAD --k-packs $PK; }
 if [ $WANTK = yes ]; then k_order || refuse_late "arm K is refused (see above): the rule text's header must be written before the K pack file is created"; fi
-if [ $WANTK = yes ]; then .venv/bin/python $R check-packs --arm K --packs $PK --a-packs $PA --items $ITEMS --chunks $CHUNKS --work $W --record || refuse_late "the K pack file could not be recorded (see above)"; fi
+if [ $WANTK = yes ]; then .venv/bin/python $R check-packs --arm K --packs $PK --a-packs $PA --items $ITEMS --chunks $CHUNKS --work $W $DRYFLAG --record || refuse_late "the K pack file could not be recorded (see above)"; fi
 
 # ---------------------------------------------------------------- the answers (server; each model alone, one request at a time)
 .venv/bin/python scripts/m5_g_rule.py harness-items --in $ITEMS --out $W/items_d7_h.jsonl --domain d7 > /dev/null || fail "harness items of D7"

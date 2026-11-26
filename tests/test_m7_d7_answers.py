@@ -17,7 +17,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(ROOT / "tests"))
+sys.path.insert(0, str(ROOT / "tests" / "fixtures" / "kb_i4_i5"))
+import fixtures as F  # noqa: E402
 import m7_d7_answers_rule as R  # noqa: E402
+import test_kb_entries as TKE  # noqa: E402  (its Base builds the entries fixtures and a KbEntries with a stand-in reranker; nothing real is loaded)
+from unittest import mock  # noqa: E402
 
 DS = "DeepSeek-V4.1-Flash-1017-oQ4e-mtp"
 SIX = ROOT / "work/m7/six_arm"
@@ -47,13 +52,19 @@ class Syntax(unittest.TestCase):
 
     def test_rule_text_is_the_designs(self):
         t = R.RULE_TEXT
-        for s in ("mean - 1.645 SE) is above -0.04", "sqrt(60)", "0 confirmed new harmful consequences", "Both models must meet both conditions", "W19", "W37", "not measured",
-                  "240 answers", "deepseek-nothink-12k", "2,048-token", "thinking off"):
+        for s in ("mean - 1.645 SE) is above -0.04", "sqrt(60)", "0 confirmed new harmful consequences", "Gemma 4 31B alone is the full rule", "W19", "W37", "W39", "not measured",
+                  "120 answers", "deepseek-nothink-12k", "2,048-token", "thinking off"):
             self.assertIn(s, t)
 
     def test_rule_text_does_not_depend_on_the_options(self):
         self.assertEqual(run(["rule-text"])[1].rstrip("\n"), R.RULE_TEXT.rstrip("\n"))
         self.assertEqual(len(R.rule_sha256()), 64)
+
+    def test_rule_text_says_gemma_only_and_the_default_is_gemma(self):
+        self.assertEqual(R.DEFAULT_MODELS, "gemma31")
+        self.assertIn("Gemma 4 31B 4-bit on frozen packs", R.RULE_TEXT)
+        self.assertIn("Qwen3.8-27B is outside this rule", R.RULE_TEXT)
+        self.assertNotIn("Both models must", R.RULE_TEXT)
 
     def test_models_default_order_and_refusals(self):
         self.assertEqual(R.parse_models("qwen,gemma31"), ["gemma31", "qwen"])     # Gemma first, whatever the order given
@@ -67,7 +78,8 @@ class Syntax(unittest.TestCase):
             R.parse_arms("B")
 
     def test_call_counts(self):
-        self.assertEqual(run(["call-counts", "--nd", "60"])[1].strip(), "ans_A_gemma31=60 ans_A_qwen=60 ans_K_gemma31=60 ans_K_qwen=60 judge_A=240 judge_K=240")
+        self.assertEqual(run(["call-counts", "--nd", "60"])[1].strip(), "ans_A_gemma31=60 ans_K_gemma31=60 judge_A=120 judge_K=120")      # W39: Gemma only by default
+        self.assertEqual(run(["call-counts", "--nd", "60", "--models", "qwen,gemma31"])[1].strip(), "ans_A_gemma31=60 ans_A_qwen=60 ans_K_gemma31=60 ans_K_qwen=60 judge_A=240 judge_K=240")
         self.assertEqual(run(["call-counts", "--nd", "60", "--models", "gemma31", "--arms", "A"])[1].strip(), "ans_A_gemma31=60 judge_A=120")
 
 
@@ -102,27 +114,37 @@ class Rule(unittest.TestCase):
             f.write_text(json.dumps({"stub": stub, "models": models}))
             return run(["rule", "--measures", str(f)])
 
-    def test_both_models_hold_is_not_final_without_the_reading(self):
-        code, out, _ = self.rule({"gemma31": measure("gemma31", 0.0), "qwen": measure("qwen", 0.01)})
-        self.assertEqual(code, 0)
-        last = out.strip().splitlines()[-1]
-        self.assertIn("NOT FINAL", last)
-        self.assertNotIn("MET)", last.replace("NOT MET", ""))
-        self.assertIn("needs the reading", out)
-        self.assertNotIn("Z4 part 3 MET", last)
-
-    def test_one_model_is_not_measured_for_the_other(self):
+    def test_gemma_alone_is_the_full_rule_and_is_not_final_without_the_reading(self):
         code, out, _ = self.rule({"gemma31": measure("gemma31", 0.0)})
         self.assertEqual(code, 0)
-        self.assertIn("qwen: not measured (not in this run)", out)
-        self.assertIn("Z4 part 3 NOT MEASURED (no result for qwen", out.strip().splitlines()[-1])
+        last = out.strip().splitlines()[-1]
+        self.assertIn("Z4 part 3 NOT FINAL (the coverage condition holds for Gemma 4 31B, the full rule under W39", last)
+        self.assertNotIn("NOT MEASURED", last)
+        self.assertNotIn("Z4 part 3 MET", last)
+        self.assertIn("needs the reading", out)
+        self.assertNotIn("qwen", out)
 
-    def test_a_failing_model_is_not_met(self):
+    def test_qwen_is_outside_the_rule_whatever_it_shows(self):
         out = self.rule({"gemma31": measure("gemma31", 0.0), "qwen": measure("qwen", -0.2)})[1]
-        self.assertIn("Z4 part 3 NOT MET (the coverage condition fails for qwen)", out.strip().splitlines()[-1])
+        self.assertIn("NOT FINAL", out.strip().splitlines()[-1])
+        self.assertIn("qwen: outside the fixed rule (W39); reported, decides nothing: coverage FAILS", out)
+
+    def test_qwen_alone_leaves_gemma_not_measured(self):
+        code, out, _ = self.rule({"qwen": measure("qwen", 0.0)})
+        self.assertEqual(code, 0)
+        self.assertIn("gemma31: not measured (not in this run)", out)
+        self.assertIn("Z4 part 3 NOT MEASURED (no coverage result for Gemma 4 31B", out.strip().splitlines()[-1])
+
+    def test_gemma_arm_a_only_is_not_measured(self):
+        out = self.rule({"gemma31": measure("gemma31", 0.0, arms=("A",))})[1]
+        self.assertIn("Z4 part 3 NOT MEASURED", out.strip().splitlines()[-1])
+
+    def test_a_failing_gemma_is_not_met(self):
+        out = self.rule({"gemma31": measure("gemma31", -0.2)})[1]
+        self.assertIn("Z4 part 3 NOT MET (the coverage condition fails for Gemma 4 31B", out.strip().splitlines()[-1])
 
     def test_stub_data_is_marked(self):
-        self.assertIn("(STUB DATA)", self.rule({"gemma31": measure("gemma31", 0.0), "qwen": measure("qwen", 0.0)}, stub=True)[1].strip().splitlines()[-1])
+        self.assertIn("(STUB DATA)", self.rule({"gemma31": measure("gemma31", 0.0)}, stub=True)[1].strip().splitlines()[-1])
 
 
 # ---------------------------------------------------------------- pack files and the header before K, on small fixtures
@@ -224,8 +246,7 @@ class PackFiles(Fixture):
         k = self.packs("packs_K.jsonl", {i: base[i] + ["entry:e0001"] for i in self.ids})
         code, _, err = self.check("K", k, a)
         self.assertEqual(code, 2)
-        self.assertIn("not chunks of the frozen index", err)
-        self.assertIn("I4", err)
+        self.assertIn("not chunks of the frozen index", err)       # an id that is neither a chunk nor a kbe: entry
 
     def test_k_must_hold_the_frozen_pack_and_at_most_ten_items(self):
         a = self.a()
@@ -323,6 +344,132 @@ class HeaderBeforeK(Fixture):
             self.assertEqual(code, 2)
 
 
+# ---------------------------------------------------------------- entries (kbe:) in the K pack, replayed through the runtime's own path
+Q = TKE.Q
+
+
+def ke_err(msg):
+    from kafka_sre_rag import kb_entries
+    return kb_entries.KbEntriesError(msg)
+
+
+class KbeInPacks(TKE.Base):
+    """I5's K pack holds `kbe:<entry id>` items after the frozen chunks. The chain accepts them when the hash-checked entries index resolves them (kafka_sre_rag.kb_entries.default_kb,
+    the path evalhooks.chunks_by_ids takes), and a replayed K item's request body is the one pipeline.ask(..., kb_entries=...) builds for the same terms. Fixtures only: no index, no model."""
+
+    def setUp(self):
+        super().setUp()
+        self.kb = self.load()
+        self.d = self.tmp / "chain"
+        self.d.mkdir()
+        self.work = self.d / "w"
+        self.work.mkdir()
+        wl(self.d / "items.jsonl", [{"id": "x1", "question": Q}])
+        wl(self.d / "chunks.jsonl", [{"id": c} for c in F.CH])
+
+    def packs(self, name, pack, **man):
+        p = self.d / name
+        wl(p, [{"id": "x1", "pack": pack, "error": None}])
+        m = {"kind": "m7-d7-packs", "count": 1, "pack_file_sha256": sha(p), "created_at": "2026-11-26T20:00:00Z"}
+        m.update(man)
+        Path(str(p) + ".manifest.json").write_text(json.dumps(m))
+        return p
+
+    def frozen_ids(self):
+        return [c["id"] for c in self.frozen()]
+
+    def k_ids(self):
+        out, info = self.kb.merge(self.frozen(), Q, "terms one, terms two")
+        self.assertTrue(info["added"], "the fixture must add at least one entry")
+        return [i["id"] for i in out]
+
+    def args(self, arm, p, a=None, dry=False):
+        args = ["check-packs", "--arm", arm, "--packs", str(p), "--items", str(self.d / "items.jsonl"), "--chunks", str(self.d / "chunks.jsonl"), "--work", str(self.work)]
+        if a:
+            args += ["--a-packs", str(a)]
+        if dry:
+            args.append("--dry")
+        return args
+
+    def check(self, arm, p, a=None, dry=False):
+        with mock.patch("kafka_sre_rag.kb_entries.default_kb", return_value=self.kb):
+            return run(self.args(arm, p, a, dry))
+
+    def test_the_merged_ids_are_kbe_ids_and_the_k_pack_is_accepted(self):
+        ids = self.k_ids()
+        self.assertTrue(any(i.startswith("kbe:") for i in ids))
+        a = self.packs("packs_frozen_d7.jsonl", self.frozen_ids())
+        k = self.packs("packs_entries_d7.jsonl", ids)
+        self.assertEqual(self.check("A", a)[0], 0)
+        code, out, err = self.check("K", k, a)
+        self.assertEqual(code, 0, err)
+        self.assertIn("start with their frozen pack", out)
+
+    def test_an_entry_the_index_lacks_is_refused(self):
+        a = self.packs("packs_frozen_d7.jsonl", self.frozen_ids())
+        k = self.packs("packs_entries_d7.jsonl", self.frozen_ids() + ["kbe:kbe-0000000000000000"])
+        code, _, err = self.check("K", k, a)
+        self.assertEqual(code, 2)
+        self.assertIn("not in the entries index", err)
+
+    def test_an_entries_index_that_cannot_be_used_is_refused_with_the_reason(self):
+        a = self.packs("packs_frozen_d7.jsonl", self.frozen_ids())
+        k = self.packs("packs_entries_d7.jsonl", self.k_ids())
+        with mock.patch("kafka_sre_rag.kb_entries.default_kb", side_effect=ke_err("the sha256 of the index differs from the record")):
+            code, _, err = run(self.args("K", k, a))
+        self.assertEqual(code, 2)
+        self.assertIn("entries index cannot be used", err)
+        self.assertIn("differs from the record", err)
+
+    def test_the_frozen_pack_holds_no_entries_and_a_stand_in_pack_is_not_for_a_real_run(self):
+        a = self.packs("packs_frozen_d7.jsonl", self.k_ids())
+        self.assertEqual(self.check("A", a)[0], 2)
+        a = self.packs("packs_frozen_d7.jsonl", self.frozen_ids(), stand_in=True)
+        code, _, err = self.check("A", a)
+        self.assertEqual(code, 2)
+        self.assertIn("stand_in", err)
+        self.assertEqual(self.check("A", a, dry=True)[0], 0)
+
+    def test_the_created_at_of_a_manifest_in_whole_seconds_is_judged_with_that_tolerance(self):
+        import datetime
+        h = self.work / "report_header.md"
+        h.write_text("# h\n\n" + R.RULE_TEXT)
+        self.assertEqual(run(["header-record", "--work", str(self.work), "--header", str(h), "--models", "gemma31"])[0], 0)
+        t0 = json.loads((self.work / "HEADER_RECORD.json").read_text())["written_at_epoch"]
+        time.sleep(0.05)
+
+        def stamp(t):
+            return datetime.datetime.fromtimestamp(t, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        k = self.packs("packs_entries_d7.jsonl", self.k_ids(), created_at=stamp(t0))          # whole seconds: the header's own second is not certainly earlier
+        self.assertEqual(run(["check-k-order", "--work", str(self.work), "--header", str(h), "--k-packs", str(k)])[0], 0)
+        for f in (k, Path(str(k) + ".manifest.json")):
+            f.unlink()
+        k = self.packs("packs_entries_d7.jsonl", self.k_ids(), created_at=stamp(t0 - 5))      # seconds before the header: refused
+        code, _, err = run(["check-k-order", "--work", str(self.work), "--header", str(h), "--k-packs", str(k)])
+        self.assertEqual(code, 2)
+        self.assertIn("before the header", err)
+
+    def test_the_request_body_of_a_replayed_k_item_equals_pipelines_with_entries(self):
+        import eval2
+        from kafka_sre_rag import config, generators, pipeline, retrieval
+        ids = self.k_ids()
+        with mock.patch("kafka_sre_rag.retrieval.select", return_value=self.frozen()):
+            ans = pipeline.ask(Q, TKE.Gen(), config.load(), kb_entries=self.kb)
+        self.assertTrue(ans.kb_entries["added"])
+        self.assertEqual(ans.kb_entries["added"], [i[len("kbe:"):] for i in ids if i.startswith("kbe:")])      # the same entries, in the same order
+        want_body = generators.OpenAIChatGenerator("http://example.invalid/v1", "stub", extra_body=R.EB).request_body(ans.messages, R.SA.ANSWER_LIMIT, False)
+        want_parts = generators.body_parts(want_body)
+        want_hash = eval2.messages_fingerprint(ans.messages)[0]
+        with mock.patch("kafka_sre_rag.kb_entries.default_kb", return_value=self.kb), \
+                mock.patch.object(retrieval.RT, "index", return_value=(list(F.CH.values()), None, None)):
+            h, parts = R.expected_parts({"id": "x1", "question": Q}, ids, "stub", streamed=False)
+            h0, parts0 = R.expected_parts({"id": "x1", "question": Q}, self.frozen_ids(), "stub", streamed=False)
+        self.assertEqual(h, want_hash)
+        self.assertEqual(parts, want_parts)
+        self.assertNotEqual(h0, want_hash)                                                    # the frozen pack alone gives another prompt: the entries are in it
+        self.assertEqual({k: v for k, v in parts0.items() if k != "messages_sha256"}, {k: v for k, v in want_parts.items() if k != "messages_sha256"})
+
+
 # ---------------------------------------------------------------- the request bodies against the reference call
 @unittest.skipUnless(HAVE_SIX, "the stored six-arm test (work/m7/six_arm) and the index are not here")
 class BodiesAgainstTheSixArmArmA(unittest.TestCase):
@@ -370,13 +517,14 @@ class DryRuns(unittest.TestCase):
         self._t.cleanup()
 
     def test_both_models_a_then_k_in_one_folder(self):
-        code, out, err = chain(self.w, "--arms", "A")
+        code, out, err = chain(self.w, "--arms", "A", "--models", "gemma31,qwen")
         self.assertEqual(code, 0, out + err)
         self.assertIn("rule sha256:", out)                                                  # printed for the conductor's ledger
         self.assertTrue((self.w / "D7_LEDGER_rule_text.md").is_file())
         head = (self.w / "report_header.md").read_text()
         self.assertIn(R.RULE_TEXT, head)
         self.assertIn("gemma31, qwen", head)                                                 # the chosen models are in the header
+        self.assertIn("Qwen is in this run by explicit request and lies outside the fixed rule", head)   # W39: Qwen only by an explicit --models, recorded as outside the rule
         man = json.loads((self.w / "MANIFEST.json").read_text())
         self.assertEqual(man["options"]["models"], "gemma31,qwen")                           # and in the manifest
         self.assertFalse((self.w / "in/packs_K.jsonl").exists())                              # arm A ran before the entries pack existed
@@ -388,7 +536,7 @@ class DryRuns(unittest.TestCase):
         self.assertTrue(order[0].find("gemma-4-31b") >= 0 and order[1].find("Qwen3.8") >= 0, order)   # Gemma first, each model alone
         # the later K run resumes in the same folder
         a_before = {f: sha(self.w / f) for f in ("ans_d7_A_gemma31.jsonl", "ans_d7_A_qwen.jsonl", "judge_d7_A.jsonl", "report_header.md")}
-        code, out, err = chain(self.w, "--arms", "K")
+        code, out, err = chain(self.w, "--arms", "K", "--models", "gemma31,qwen")
         self.assertEqual(code, 0, out + err)
         self.assertEqual(a_before, {f: sha(self.w / f) for f in a_before})                   # arm A and the header were not touched
         self.assertIn("written before the K pack", out)
@@ -406,20 +554,22 @@ class DryRuns(unittest.TestCase):
         # a second invocation of each changes nothing
         before = tree(self.w)
         for arm in ("A", "K", "A,K"):
-            code, out, err = chain(self.w, "--arms", arm)
+            code, out, err = chain(self.w, "--arms", arm, "--models", "gemma31,qwen")
             self.assertEqual(code, 0, out + err)
         self.assertEqual(before, tree(self.w))
 
-    def test_one_model(self):
-        code, out, err = chain(self.w, "--arms", "A", "--models", "gemma31")
+    def test_default_is_gemma_only(self):
+        code, out, err = chain(self.w, "--arms", "A")                                          # no --models: W39's default
         self.assertEqual(code, 0, out + err)
         self.assertFalse((self.w / "ans_d7_A_qwen.jsonl").exists())
-        self.assertIn("**Models of this run (in the order of their answers): gemma31**", (self.w / "report_header.md").read_text())
+        head = (self.w / "report_header.md").read_text()
+        self.assertIn("**Models of this run (in the order of their answers): gemma31**", head)
+        self.assertNotIn("Qwen is in this run", head)
         self.assertEqual(json.loads((self.w / "MANIFEST.json").read_text())["options"]["models"], "gemma31")
-        code, out, err = chain(self.w, "--arms", "K", "--models", "gemma31")
+        code, out, err = chain(self.w, "--arms", "K")
         self.assertEqual(code, 0, out + err)
-        self.assertIn("qwen: not measured (not in this run)", out)
-        self.assertIn("Z4 part 3 NOT MEASURED (no result for qwen", out.strip().splitlines()[-1])
+        self.assertNotIn("qwen", out.split("DRY RUN")[-1].lower().replace("qwen3.8", ""))
+        self.assertIn("Z4 part 3 NOT FINAL (the coverage condition holds for Gemma 4 31B", out.strip().splitlines()[-1])   # Gemma alone is the full rule, not "not measured"
         self.assertEqual(sorted(json.loads((self.w / "reading/KEY.json").read_text())["sets"]), ["A_gemma31", "K_gemma31"])
         # the models are fixed at the first run: another list is refused
         code, out, err = chain(self.w, "--arms", "K", "--models", "gemma31,qwen")
@@ -480,7 +630,7 @@ class DryRuns(unittest.TestCase):
         self.assertNotIn("unloaded", (self.w / "HEARTBEAT.md").read_text() if (self.w / "HEARTBEAT.md").exists() else "")
 
     def test_w2_a_foreign_model_that_appears_later_refuses(self):
-        code, out, err = chain(self.w, "--arms", "A", "--plant-load-before", "ans_A_qwen=some-other-clients-model")
+        code, out, err = chain(self.w, "--arms", "A", "--models", "gemma31,qwen", "--plant-load-before", "ans_A_qwen=some-other-clients-model")
         self.assertEqual(code, 2, out + err)
         self.assertTrue((self.w / "ans_d7_A_gemma31.jsonl").is_file())                      # the first model was answered and unloaded
         self.assertFalse((self.w / "ans_d7_A_qwen.jsonl").exists())

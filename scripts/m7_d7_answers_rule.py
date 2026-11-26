@@ -44,6 +44,8 @@ SCHEMA = 1
 MODELS = ("gemma31", "qwen")                   # the order of the answers: Gemma first, each model alone on the server
 MODEL_IDS = {"gemma31": "gemma-4-31b-it-4bit", "qwen": "Qwen3.8-27B-4bit"}
 ARMS = ("A", "K")
+DEFAULT_MODELS = "gemma31"                      # W39: stage 2 runs on Gemma 4 31B only; Qwen only by an explicit --models naming it (outside the fixed rule)
+DECIDED_MODEL = "gemma31"                      # the model the rule decides on
 N_SCENARIOS = 60
 Z90 = SA.Z90
 COV_LOWER_MIN = -0.04                          # the lower end of the 90 % interval of the paired coverage difference K - A must be above this
@@ -51,30 +53,32 @@ BUNDLE_SEED = 20261126                         # drawn before any answer exists;
 MAX_PACK_ITEMS = 10                            # the merge of section 5: at most 10 items in an entries pack
 EB = {"chat_template_kwargs": {"enable_thinking": False}}
 CODE_FILES = ("scripts/m7_d7_answers.sh", "scripts/m7_d7_answers_rule.py", "scripts/m7_ka2_rule.py", "scripts/m7_kb2_rule.py")
-EVAL_DIR_PINS = ()
+PACK_PREFIX = "kbe:"                           # kafka_sre_rag/kb_entries.PACK_PREFIX: an entry in a stored pack
 
 RULE_TEXT = """\
-## The rule of Z4 part 3, "nothing lost" on D7's answers (fixed before any D7 pack with entries exists)
+## The rule of Z4 part 3, "nothing lost" on D7's answers (fixed before any D7 pack with entries exists; amended by W39 before any answer)
 
 Source: `runs/m7/reports/kb2_design.md` section 6 (stage 2: the conductor's proposal) as amended by section 10; `MILESTONE.md` W19 (nothing lost over all 60 scenarios),
 W33 and W37 (the release no longer waits on the bars: the result of Z4 is reported as met, not met or not measured, with its number and denominator; the rule itself is
-unchanged until the Owner answers). This text is written into the chain's header and into `runs/m7/D7_LEDGER.md` before any D7 pack with entries exists; it is not changed after that.
+unchanged except as W39 says) and **W39 (the Owner, before any D7 answer: stage 2 runs on Gemma 4 31B only; Qwen's arms are not run, and the entries are documented as measured on
+Gemma only)**. This text is written into the chain's header and into `runs/m7/D7_LEDGER.md` before any D7 pack with entries exists; it is not changed after that.
 
-**The measurement.** Qwen3.8-27B 4-bit and Gemma 4 31B 4-bit, each on frozen packs (arm A) and frozen + entries packs (arm K), the default prompt, temperature 0, a 2,048-token
-answer limit, thinking off, the packs replayed from stage 1 (no search call in an answer), one request at a time, all 60 D7 scenarios (240 answers). Two judge passes (the M7
-judge setting `deepseek-nothink-12k`, coverage role, instruction v2) against `eval/m7/d7/rubrics.jsonl`; a blind reading of the D7 answers by Claude readers (W18), the answers of
-a scenario in one bundle under blind letters. The mechanical items are not part of this stage.
+**The measurement.** Gemma 4 31B 4-bit on frozen packs (arm A) and frozen + entries packs (arm K), the default prompt, temperature 0, a 2,048-token answer limit, thinking off,
+the packs replayed from stage 1 (no search call in an answer), one request at a time, all 60 D7 scenarios (120 answers). Two judge passes (the M7 judge setting
+`deepseek-nothink-12k`, coverage role, instruction v2) against `eval/m7/d7/rubrics.jsonl`; a blind reading of the D7 answers by Claude readers (W18), the answers of a scenario in
+one bundle under blind letters. The mechanical items are not part of this stage. Qwen3.8-27B is outside this rule: a run that names it explicitly records that in its header, its
+numbers are reported and decide nothing.
 
-**The rule, per model, K against A, over all 60 scenarios.**
+**The rule, Gemma 4 31B, K against A, over all 60 scenarios.**
 1. Judged coverage (the mean of the two passes per answer), paired by scenario. The standard error is the standard deviation of the 60 paired differences divided by
    sqrt(60). **The lower end of the 90 % interval (mean - 1.645 SE) is above -0.04.**
 2. **0 confirmed new harmful consequences** in K (W6: a harmful statement of K is new when no harmful statement in that scenario's A answer has the same consequence; confirmed
    by the blind reading).
-Both models must meet both conditions. Wrong statements per 10 answers (paired, 90 % interval), the in-slice (40) and out-of-slice (20) parts and the other measures printed
+Gemma 4 31B alone is the full rule. Wrong statements per 10 answers (paired, 90 % interval), the in-slice (40) and out-of-slice (20) parts and the other measures printed
 beside are reported, not decided.
 
-**What the code applies and what it leaves.** The code applies condition 1. Condition 2 needs the blind reading: the code prints "needs the reading" and never "met". A model
-that is not in a run, an arm that was not answered, or a missing measure is "not measured", never a pass. A run of one model cannot meet a rule that names both.
+**What the code applies and what it leaves.** The code applies condition 1. Condition 2 needs the blind reading: the code prints "needs the reading" and never "met". A run
+without Gemma 4 31B, an arm that was not answered, or a missing measure is "not measured", never a pass.
 
 **The judge.** The M7 judge, DeepSeek, is also the entry writer; a judge may prefer text in its own wording, so judged coverage of K could be biased upwards. The served count
 of stage 1 is rated by Claude readers, not by DeepSeek, and the blind reading is the second measure of the answers. The result names this risk beside the coverage number.
@@ -255,11 +259,24 @@ def cmd_check_packs(a):
                or not all(isinstance(c, str) and c for c in by[i]["pack"]) or len(set(by[i]["pack"])) != len(by[i]["pack"])]
         if bad:
             raise DaError(f"arm {a.arm}: {len(bad)} scenarios have an error row, an empty pack or a repeated id (first: {bad[0]})")
+        if man.get("stand_in") and not a.dry:
+            raise DaError(f"arm {a.arm}: the pack manifest says stand_in: the packs were made with a stand-in reranker or stand-in search terms; a real run does not answer them")
         chunk_ids = {json.loads(l)["id"] for l in Path(a.chunks).read_text(encoding="utf-8").splitlines() if l.strip()}
-        unknown = sorted({c for r in rows for c in r["pack"] if c not in chunk_ids})
+        kbe = sorted({c for r in rows for c in r["pack"] if c.startswith(PACK_PREFIX)})
+        unknown = sorted({c for r in rows for c in r["pack"] if not c.startswith(PACK_PREFIX) and c not in chunk_ids})
         if unknown:
-            raise DaError(f"arm {a.arm}: {len(unknown)} pack ids are not chunks of the frozen index (first: {unknown[0]}); the replay renders chunks only, so an entry id in a pack "
-                          f"needs the runtime option of I4 (kafka_sre_rag/kb_entries) before this chain can answer it")
+            raise DaError(f"arm {a.arm}: {len(unknown)} pack ids are not chunks of the frozen index (first: {unknown[0]})")
+        if kbe:     # entries of a K pack: replayed through the runtime's own path (evalhooks.chunks_by_ids -> kb_entries.resolve_pack with the hash-checked record)
+            if a.arm == "A":
+                raise DaError("arm A: the frozen packs hold no entries (kbe: ids)")
+            from kafka_sre_rag import kb_entries
+            try:
+                kb = kb_entries.default_kb()
+            except kb_entries.KbEntriesError as e:
+                raise DaError(f"arm {a.arm}: the packs name entries, and the entries index cannot be used: {e}")
+            missing = [c for c in kbe if c[len(PACK_PREFIX):] not in kb.byid]
+            if missing:
+                raise DaError(f"arm {a.arm}: {len(missing)} entry ids are not in the entries index of the record (first: {missing[0]})")
         note = ""
         if a.arm == "K":
             if not a.a_packs:
@@ -368,8 +385,8 @@ def cmd_check_k_order(a):
                 t = _epoch(man[k])
                 if t is None:
                     raise DaError(f"the K manifest's {k} cannot be read")
-                if not t > t0:
-                    raise DaError(f"the K manifest says it was {k} {man[k]}, not after the header ({rec['written_at']})")
+                if t < math.floor(t0):     # I5 writes whole seconds (UTC): the true time lies in [t, t + 1 s), so only a value before the header's second is certainly earlier
+                    raise DaError(f"the K manifest says it was {k} {man[k]}, before the header ({rec['written_at']})")
     except (DaError, OSError, ValueError, KeyError) as e:
         print(f"REFUSED: {e}", file=sys.stderr)
         return 2
@@ -400,11 +417,20 @@ def cmd_dry_packs(a):
                 head.append(c)
         return head[:n]
 
+    entry_ids = []
+    if a.arm == "K":     # real entries when the record and its index are usable here (replayed through the runtime's own path); else chunk ids stand in for them
+        try:
+            from kafka_sre_rag import kb_entries
+            entry_ids = [PACK_PREFIX + e["id"] for e in kb_entries.default_kb().rows]
+        except Exception:
+            entry_ids = []
     rows = []
     for k, i in enumerate(items):
         base = frozen(i, 6)
         if a.arm == "A":
             rows.append((i, base))
+        elif entry_ids:
+            rows.append((i, base + [entry_ids[(k * 3 + j) % len(entry_ids)] for j in range(2 + k % 3)]))   # 2 to 4 entries
         else:
             extra = [c for c in chunk_ids[1000 + k * 5:] if c not in base][:2 + k % 3]   # stand-ins for 2 to 4 entries
             rows.append((i, base + extra))
@@ -639,33 +665,31 @@ def evaluate_model(e):
 
 def cmd_rule(a):
     m = load_json(a.measures)
-    words = {}
     try:
-        for model in MODELS:
-            if model not in (m.get("models") or {}):
-                words[model] = "not measured"
-                print(f"{model}: not measured (not in this run)")
-                continue
-            e = m["models"][model]
-            w, txt = evaluate_model(e)
-            words[model] = w
-            print(f"{model}: coverage condition {w}")
-            print(f"  {'holds' if w == 'holds' else 'FAILS' if w == 'FAILS' else 'not measured'}: {txt}")
-            print(f"  harm condition (0 confirmed new harmful consequences in K): needs the reading")
+        if DECIDED_MODEL not in (m.get("models") or {}):
+            word = "not measured"
+            print(f"{DECIDED_MODEL}: not measured (not in this run)")
+        else:
+            e = m["models"][DECIDED_MODEL]
+            word, txt = evaluate_model(e)
+            print(f"{DECIDED_MODEL}: coverage condition {word}")
+            print(f"  {txt}")
+            print("  harm condition (0 confirmed new harmful consequences in K): needs the reading")
             if "coverage_diff" in e:
                 print(f"  reported: in-slice {iv(e['coverage_diff_in_slice'])}; out-of-slice {iv(e['coverage_diff_out_of_slice'])}; cut K {e['rows_K']['cut']}, A {e['rows_A']['cut']}")
+        if "qwen" in (m.get("models") or {}):
+            e = m["models"]["qwen"]
+            w, txt = evaluate_model(e)
+            print(f"qwen: outside the fixed rule (W39); reported, decides nothing: coverage {w}; {txt}")
     except (KeyError, TypeError) as err:
         print(f"the rule could not be applied: {type(err).__name__}: {err}", file=sys.stderr)
         return 2
-    failed = [k for k, v in words.items() if v == "FAILS"]
-    missing = [k for k, v in words.items() if v == "not measured"]
-    if failed:
-        verdict = f"Z4 part 3 NOT MET (the coverage condition fails for {', '.join(failed)})" + (f"; not measured: {', '.join(missing)}" if missing else "")
-    elif missing:
-        verdict = f"Z4 part 3 NOT MEASURED (no result for {', '.join(missing)}{'; the coverage condition holds for ' + ', '.join(k for k, v in words.items() if v == 'holds') if 'holds' in words.values() else ''}; " \
-                  f"the harm condition needs the reading)"
+    if word == "FAILS":
+        verdict = "Z4 part 3 NOT MET (the coverage condition fails for Gemma 4 31B, the full rule under W39)"
+    elif word == "not measured":
+        verdict = "Z4 part 3 NOT MEASURED (no coverage result for Gemma 4 31B; the harm condition needs the reading)"
     else:
-        verdict = "Z4 part 3 NOT FINAL (the coverage condition holds for both models; the harm condition needs the blind reading, so nothing is called met yet)"
+        verdict = "Z4 part 3 NOT FINAL (the coverage condition holds for Gemma 4 31B, the full rule under W39; the harm condition needs the blind reading, so nothing is called met yet)"
     print(f"M7 D7 ANSWERS (Z4 part 3, nothing lost) DONE{' (STUB DATA)' if m.get('stub') else ''}: {verdict}; per W37 the result is reported as met, not met or not measured, with its number and denominator")
     return 0
 
@@ -700,6 +724,7 @@ def main(argv=None):
         p.add_argument(x, required=True)
     p.add_argument("--a-packs", default=None)
     p.add_argument("--record", action="store_true")
+    p.add_argument("--dry", action="store_true", help="a dry run's stand-in packs are accepted")
     p = sub.add_parser("header-record")
     p.add_argument("--work", required=True)
     p.add_argument("--header", required=True)
@@ -719,15 +744,15 @@ def main(argv=None):
     p.add_argument("--non-streamed", action="store_true", help="the stub backend of a dry run records the non-streamed body; a real run streams the draft")
     p = sub.add_parser("call-counts")
     p.add_argument("--nd", type=int, required=True)
-    p.add_argument("--models", default=",".join(MODELS))
+    p.add_argument("--models", default=DEFAULT_MODELS)
     p.add_argument("--arms", default=",".join(ARMS))
     p = sub.add_parser("reading-sets")
     p.add_argument("--work", required=True)
-    p.add_argument("--models", default=",".join(MODELS))
+    p.add_argument("--models", default=DEFAULT_MODELS)
     p = sub.add_parser("measures")
     for x in ("--work", "--rubrics", "--slice-tags"):
         p.add_argument(x, required=True)
-    p.add_argument("--models", default=",".join(MODELS))
+    p.add_argument("--models", default=DEFAULT_MODELS)
     p.add_argument("--stub", action="store_true")
     p = sub.add_parser("rule")
     p.add_argument("--measures", required=True)
