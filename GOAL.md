@@ -47,7 +47,7 @@ assistant may use part of the memory, not all of it.
 | Model | 27B class at 4-bit (about 15 to 17 GB, an estimate to verify) | a smaller model, to be chosen |
 | Network | none needed after installation | same |
 | Time to a complete answer | fast profile (the default): median under 60 s. Proposed 2026-11-23, not yet agreed: a thorough profile (opt-in, the extra time spent on checking, not on longer answers) with a median of at most 180 s and a 90th percentile of at most 300 s | same |
-| Installation | one documented command sequence, under 30 minutes | same |
+| Installation | one documented command sequence, under 30 minutes. Agreed 2026-11-27: one verified installation path for the whole assistant (model, documentation index, reranker, catalogues and runtime) on each supported platform, every release from v4.0.0 | same |
 
 Platforms:
 
@@ -157,6 +157,7 @@ to build or tune the assistant.
 | Diagnoses and fixes with tools | Faults injected into a local test cluster, with tools, MCP servers and skills: cause found, fix correct | To be set after a first measurement | agreed |
 | Tools stay inside the approval | Commands and tool calls issued during those runs | None outside the session's allow-list, ever | proposed (replaces the read-only bar) |
 | Private | Network traffic during use | None beyond the local endpoint | agreed |
+| Installs and works offline | On a clean supported machine: install through the release's one installation path, disconnect the network, ask through the assistant's entry point; then remove or corrupt each installed asset | Setup completes; the answer cites evidence from the documentation index shipped with that release; a missing or corrupt asset gives a clear error and no answer | agreed 2026-11-27 (every release from v4.0.0) |
 
 Rules that already hold in this project apply here too: bars are fixed before the run, every
 number is given with its size, and a difference under the noise level is reported as no
