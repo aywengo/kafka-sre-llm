@@ -1,7 +1,7 @@
 #!/bin/bash
 # Fault kind acl: KafkaUser app-consumer lacks an ACL the consumer needs.
 #   acl.sh inject|verify|revert group_acl_misnamed|topic_acl_missing
-set -uo pipefail
+set -u  # no pipefail: a predicate ending in grep -q must not fail on SIGPIPE upstream
 source "$(dirname "$0")/../lib.sh"
 action=$1 variant=$2
 acls() { K -n kafka patch kafkauser app-consumer --type merge -p "{\"spec\":{\"authorization\":{\"type\":\"simple\",\"acls\":$1}}}" >/dev/null; }

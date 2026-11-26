@@ -46,6 +46,7 @@ healthy() {
   check "consumer ready" "deploy_ready kafka orders-consumer"
   check "no under-replicated partitions" "[ \"\$(urp_count)\" = 0 ]"
   v=$(group_lag orders-consumer); check "orders-consumer lag below 300 (now ${v:-unknown})" "[ -n \"$v\" ] && [ \"$v\" -lt 300 ]"
+  check "git daemon ready" "deploy_ready argocd gitserver"
   check "Argo CD app Synced" "[ \"\$(app_field '{.status.sync.status}')\" = Synced ]"
   check "Argo CD app Healthy" "[ \"\$(app_field '{.status.health.status}')\" = Healthy ]"
   check "topics orders, payments, inventory Ready" "[ \"\$(K -n kafka get kafkatopics orders payments inventory -o jsonpath='{range .items[*]}{.status.conditions[?(@.type==\"Ready\")].status}{\"\\n\"}{end}' | grep -c True)\" = 3 ]"
@@ -98,6 +99,12 @@ cmd_reset() {
   K -n kafka scale deploy strimzi-cluster-operator --replicas=1 >/dev/null 2>&1
   K -n kafka annotate kafka kafka strimzi.io/pause-reconciliation- >/dev/null 2>&1
   gitops_configmap
+  # after a restart of the node the git daemon's pod can stay in phase Unknown (its repository lives in an
+  # emptyDir); a new pod rebuilds the repository from the ConfigMap at the base commit
+  if ! deploy_ready argocd gitserver; then
+    K -n argocd delete pod -l app=gitserver --wait=false >/dev/null 2>&1
+    wait_until 120 "git daemon ready" deploy_ready argocd gitserver
+  fi
   gitserver_exec "git reset -q --hard base && git log --oneline -1" >/dev/null 2>&1
   replace_or_create "$HARNESS/manifests/argocd.yaml"
   argo_refresh

@@ -1,7 +1,7 @@
 #!/bin/bash
 # Fault kind client_tls: the consumer's TLS material is wrong.
 #   client_tls.sh inject|verify|revert truststore_wrong_ca|selfsigned_client_cert|user_secret_missing
-set -uo pipefail
+set -u  # no pipefail: a predicate ending in grep -q must not fail on SIGPIPE upstream
 source "$(dirname "$0")/../lib.sh"
 action=$1 variant=$2
 vol_patch() {  # vol_patch INDEX SECRET: point volume INDEX of the consumer at another secret

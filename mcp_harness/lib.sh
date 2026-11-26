@@ -59,6 +59,14 @@ gitserver_exec() {  # run a shell snippet in the GitOps repository of the git da
 op_env() {  # op_env NAME VALUE: set an env var of the cluster operator to a plain value (rolls the operator)
   K -n kafka get deploy strimzi-cluster-operator -o json | "$PY" "$HARNESS/jsonedit.py" env "$1" "$2" | K replace -f - >/dev/null
 }
+op_wait_down() {  # wait (up to 90 s) until no cluster operator pod is ready, so a later spec change is not reconciled
+  local i
+  for i in $(seq 1 45); do
+    [ -z "$(K -n kafka get pods -l name=strimzi-cluster-operator -o jsonpath='{range .items[?(@.status.containerStatuses[0].ready==true)]}{.metadata.name}{end}')" ] && return 0
+    sleep 2
+  done
+  return 1
+}
 kafka_spec_bump() {  # change the Kafka spec (a dynamic cluster-wide setting), so generation moves past observedGeneration
   K -n kafka patch kafka kafka --type merge -p '{"spec":{"kafka":{"config":{"log.retention.ms":259200000}}}}' >/dev/null
 }

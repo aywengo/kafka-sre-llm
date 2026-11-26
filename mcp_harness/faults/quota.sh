@@ -3,7 +3,7 @@
 #   quota.sh inject|verify|revert consumer_byte_rate|producer_byte_rate
 # consumer_byte_rate is set on KafkaUser app-consumer (the user operator applies it); producer_byte_rate is set
 # with kafka-configs.sh on the user ANONYMOUS (the plain listener), outside any KafkaUser.
-set -uo pipefail
+set -u  # no pipefail: a predicate ending in grep -q must not fail on SIGPIPE upstream
 source "$(dirname "$0")/../lib.sh"
 action=$1 variant=$2
 KC=(/opt/kafka/bin/kafka-configs.sh --bootstrap-server localhost:9092)

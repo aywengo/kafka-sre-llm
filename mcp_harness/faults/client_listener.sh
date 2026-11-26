@@ -1,7 +1,7 @@
 #!/bin/bash
 # Fault kind client_listener: a client's security protocol does not match the listener it connects to.
 #   client_listener.sh inject|verify|revert plaintext_to_tls_port|ssl_to_plain_port
-set -uo pipefail
+set -u  # no pipefail: a predicate ending in grep -q must not fail on SIGPIPE upstream
 source "$(dirname "$0")/../lib.sh"
 action=$1 variant=$2
 case "$action:$variant" in

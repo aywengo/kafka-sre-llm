@@ -186,6 +186,9 @@ class ServerTest(unittest.TestCase):
             self.assertNotIn(leaked, out)
         self.assertIn("secret: app-consumer", out)       # a Secret's name is not its value
         self.assertIn("secretName: app-consumer", out)
+        kept = "automountServiceAccountToken: false\n- serviceAccountToken:\n    expirationSeconds: 3600\n"
+        self.assertEqual(srv.redact(kept), kept)
+        self.assertEqual(srv.redact("token: abc.def"), "token: [REDACTED]")
 
     def test_output_cap(self):
         r = FakeRunner({"get": "x" * 50000})
@@ -288,6 +291,27 @@ class LoopTest(unittest.TestCase):
         self.assertEqual(out[0][0], "a")
         self.assertEqual(out[0][2], {"x": 1})
         self.assertEqual(out[1][2], None)
+
+    def test_openai_client_request_and_native_calls(self):
+        import httpx
+        from kafka_sre_rag.tools.loop import OpenAIChatModel
+        seen = []
+
+        def handler(request):
+            seen.append(json.loads(request.content))
+            msg = {"role": "assistant", "content": None, "tool_calls": [
+                {"id": "c1", "type": "function", "function": {"name": "k8s_get", "arguments": "{\"kind\": \"nodes\"}"}}]}
+            return httpx.Response(200, json={"choices": [{"message": msg}]})
+
+        m = OpenAIChatModel("http://127.0.0.1:9/v1", "some-model", transport=httpx.MockTransport(handler))
+        tools = Session(AllowList.load(), [FakeServer()]).openai_tools()
+        r = m.chat([{"role": "user", "content": "q"}], tools)
+        self.assertEqual(r["tool_calls"], [{"id": "c1", "name": "k8s_get", "arguments": "{\"kind\": \"nodes\"}"}])
+        body = seen[0]
+        self.assertEqual((body["temperature"], body["stream"], body["tool_choice"], body["model"]), (0.0, False, "auto", "some-model"))
+        self.assertEqual(len(body["tools"]), 8)
+        m.chat([{"role": "user", "content": "q"}], None)
+        self.assertNotIn("tools", seen[1])
 
     def test_bad_json_arguments_are_invalid(self):
         res, *_ = self.run_loop([{"tool_calls": [{"name": "k8s_get", "arguments": "{not json"}]}, {"content": "x"}])

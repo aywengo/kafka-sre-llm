@@ -1,7 +1,7 @@
 #!/bin/bash
 # Fault kind bootstrap: the producer's bootstrap address is wrong.
 #   bootstrap.sh inject|verify|revert misnamed_service|wrong_namespace|wrong_port
-set -uo pipefail
+set -u  # no pipefail: a predicate ending in grep -q must not fail on SIGPIPE upstream
 source "$(dirname "$0")/../lib.sh"
 action=$1 variant=$2
 case "$action:$variant" in

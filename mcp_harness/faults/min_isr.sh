@@ -1,7 +1,7 @@
 #!/bin/bash
 # Fault kind min_isr: producer writes with acks=all fail because min.insync.replicas cannot be met.
 #   min_isr.sh inject|verify|revert above_replication_factor|equal_to_rf_broker_down
-set -uo pipefail
+set -u  # no pipefail: a predicate ending in grep -q must not fail on SIGPIPE upstream
 source "$(dirname "$0")/../lib.sh"
 action=$1 variant=$2
 topic_minisr() {

@@ -2,7 +2,7 @@
 # Fault kinds argocd_out_of_sync and argocd_degraded: the Application kafka-topics (automated sync, prune on,
 # selfHeal off) that manages topics payments and inventory and user app-payments from the in-cluster git daemon.
 #   argocd.sh inject|verify|revert live_edit|wrong_path|wrong_revision|topic_rf_too_high|invalid_manifest
-set -uo pipefail
+set -u  # no pipefail: a predicate ending in grep -q must not fail on SIGPIPE upstream
 source "$(dirname "$0")/../lib.sh"
 action=$1 variant=$2
 commit() {  # commit FILE CONTENT-FILE MESSAGE: add a file to the GitOps repository and commit (idempotent)

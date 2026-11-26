@@ -1,7 +1,7 @@
 #!/bin/bash
 # Fault kind broker_unavailable: one broker is not running, so partitions are under-replicated.
 #   broker_unavailable.sh inject|verify|revert pod_pending_node_cordoned|pod_missing_operator_down
-set -uo pipefail
+set -u  # no pipefail: a predicate ending in grep -q must not fail on SIGPIPE upstream
 source "$(dirname "$0")/../lib.sh"
 action=$1 variant=$2
 case "$action:$variant" in

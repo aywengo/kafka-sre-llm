@@ -124,8 +124,10 @@ for _t in TOOLS:
 _PEM = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", re.S)
 # Keys whose value is a credential. A bare "secret:" (Strimzi's status.secret, a volume's secretName) is the
 # name of a Secret, not its value, and is kept.
-_KV = re.compile(r"(?i)((?:password|passwd|token|api[_-]?key|private[_-]?key|client[_-]?secret|secret[_-]?key)"
-                 r"\"?\s*[=:]\s*\"?)([^\s\"',}]+)")
+# The key must start a word (automountServiceAccountToken: false is not a credential) and the value is on the
+# same line.
+_KV = re.compile(r"(?i)((?<![a-z])(?:password|passwd|token|api[_-]?key|private[_-]?key|client[_-]?secret|secret[_-]?key)"
+                 r"\"?[ \t]*[=:][ \t]*\"?)([^\s\"',}]+)")
 _ENV = re.compile(r"(?im)(name:\s*\S*(?:PASSWORD|PASSWD|SECRET|TOKEN|API_?KEY)\S*\s*\n\s*value:\s*)(\S.*)$")
 _BLOB = re.compile(r"(?m)^(\s*(?:[a-z0-9_.-]+\.(?:key|p12|jks|password)|tls\.key|ca\.key)\s*:\s*)(\S{16,})$")
 

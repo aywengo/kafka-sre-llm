@@ -1,7 +1,7 @@
 #!/bin/bash
 # Fault kind storage: broker storage that cannot be provisioned or resized.
 #   storage.sh inject|verify|revert new_pool_missing_storage_class|resize_not_supported
-set -uo pipefail
+set -u  # no pipefail: a predicate ending in grep -q must not fail on SIGPIPE upstream
 source "$(dirname "$0")/../lib.sh"
 action=$1 variant=$2
 case "$action:$variant" in

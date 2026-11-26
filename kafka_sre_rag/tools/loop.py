@@ -109,12 +109,13 @@ class ScriptedModel:
 class OpenAIChatModel:
     """An OpenAI-compatible /v1/chat/completions endpoint (the oMLX server later), non-streaming, temperature 0."""
 
-    def __init__(self, base_url, model, api_key=None, max_tokens=2048, temperature=0.0, timeout=600, extra_body=None):
+    def __init__(self, base_url, model, api_key=None, max_tokens=2048, temperature=0.0, timeout=600, extra_body=None,
+                 transport=None):
         import httpx
         self.url = base_url.rstrip("/") + ("/chat/completions" if base_url.rstrip("/").endswith("/v1") else "/v1/chat/completions")
         self.model, self.max_tokens, self.temperature, self.extra = model, max_tokens, temperature, extra_body or {}
         headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
-        self.http = httpx.Client(timeout=timeout, headers=headers)
+        self.http = httpx.Client(timeout=timeout, headers=headers, transport=transport)
         self.identity = {"backend": "openai", "model": model}
 
     def chat(self, messages, tools):

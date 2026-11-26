@@ -2,7 +2,7 @@
 # Fault kind broker_crashloop: a change to the node pool makes the rolled broker fail at start; the operator stops
 # the rolling update after the first pod, so one broker crash-loops and the other two keep serving.
 #   broker_crashloop.sh inject|verify|revert bad_jvm_option|heap_too_small
-set -uo pipefail
+set -u  # no pipefail: a predicate ending in grep -q must not fail on SIGPIPE upstream
 source "$(dirname "$0")/../lib.sh"
 action=$1 variant=$2
 crashing() { pod_waiting_reason strimzi.io/pool-name=broker | grep -Eq "CrashLoopBackOff|Error|OOMKilled"; }
