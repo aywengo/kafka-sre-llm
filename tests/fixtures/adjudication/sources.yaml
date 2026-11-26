@@ -1,0 +1,7 @@
+sources:
+  - name: strimzi
+    ref: 9.9.9
+  - name: apache-kafka
+    ref: 8.8.8
+  - name: kubernetes
+    ref: "cccccccccccc3333"
