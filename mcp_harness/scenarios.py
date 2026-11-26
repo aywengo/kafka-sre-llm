@@ -39,17 +39,23 @@ def events(shows, namespace="kafka"):
     return ev("k8s_events", shows, namespace=namespace)
 
 
-def kafka_cr(shows):
-    return [ev("k8s_get", shows, namespace="kafka", kind="kafkas"), ev("k8s_describe", shows, namespace="kafka", kind="kafkas")]
+# A fact that `kubectl get -o wide` does not print (a spec field, a status condition's message, the generation)
+# is evidence only from a yaml or json get, or from describe.
+FULL = "yaml|json"
 
 
-def obj(kind, name, shows, namespace="kafka"):
-    return [ev("k8s_get", shows, namespace=namespace, kind=kind, name=name),
-            ev("k8s_describe", shows, namespace=namespace, kind=kind, name=name)]
+def kafka_cr(shows):  # every fact used from the Kafka resource is a spec field or a status condition
+    return [ev("k8s_get", shows, namespace="kafka", kind="kafkas", output=FULL),
+            ev("k8s_describe", shows, namespace="kafka", kind="kafkas")]
 
 
-def app(shows):
-    return [ev("argocd_app_get", shows, name="kafka-topics"), *obj("applications", "kafka-topics", shows, "argocd")]
+def obj(kind, name, shows, namespace="kafka", full=False):
+    get = dict(namespace=namespace, kind=kind, name=name, **({"output": FULL} if full else {}))
+    return [ev("k8s_get", shows, **get), ev("k8s_describe", shows, namespace=namespace, kind=kind, name=name)]
+
+
+def app(shows):  # the wide columns show sync and health only, not the resources, conditions or operation state
+    return [ev("argocd_app_get", shows, name="kafka-topics"), *obj("applications", "kafka-topics", shows, "argocd", full=True)]
 
 
 OP_POD = r"strimzi-cluster-operator.*"
@@ -117,7 +123,7 @@ for variant, what, shows in (
         [*pods("one kafka-broker pod in CrashLoopBackOff", r"kafka-broker-\d?"),
          (logs(r"kafka-broker-\d", shows) if variant == "bad_jvm_option" else
           ev("k8s_describe", shows, namespace="kafka", kind="pods", name=r"(kafka-broker-\d)?")),
-         *obj("kafkanodepools", "broker", "spec.jvmOptions / resources with the bad value"),
+         *obj("kafkanodepools", "broker", "spec.jvmOptions / resources with the bad value", full=True),
          ev("kafka_topics_describe", "under-replicated partitions", namespace="kafka")],
         CRASH_MUST_NOT, "broker_crashloop", timeout=420)
 
@@ -206,7 +212,7 @@ add("client_tls", "user_secret_missing",
     [*pods("orders-consumer ContainerCreating, FailedMount: secret app-consumer-tls not found", r"(orders-consumer.*)?"),
      events("FailedMount for secret app-consumer-tls"),
      ev("k8s_get", "the volume's secretName", namespace="kafka", kind="deployments", name="orders-consumer", output="yaml|json"),
-     *obj("kafkausers", "app-consumer", "status.secret: app-consumer")],
+     *obj("kafkausers", "app-consumer", "status.secret: app-consumer", full=True)],
     TLS_MUST_NOT, "client_tls", timeout=180)
 
 # 7 bootstrap (3)
@@ -236,7 +242,7 @@ add("min_isr", "equal_to_rf_broker_pending",
      ev("kafka_topics_describe", "min.insync.replicas=3, ISR of 2", namespace="kafka", topic=r"(orders)?"),
      ev("kafka_configs_describe", "min.insync.replicas=3", namespace="kafka", entity_type="topics", entity_name=r"(orders)?"),
      *pods("kafka-broker-0 Pending", r"(kafka-broker-0)?"), ev("k8s_get", "node SchedulingDisabled", kind="nodes"),
-     *obj("kafkatopics", "orders", "min.insync.replicas: 3")],
+     *obj("kafkatopics", "orders", "min.insync.replicas: 3", full=True)],
     MINISR_MUST_NOT, "min_isr", timeout=240)
 add("min_isr", "equal_to_rf_broker_crashloop",
     "The orders-producer in namespace kafka keeps retrying its sends to topic orders and hardly gets anything "
@@ -247,7 +253,7 @@ add("min_isr", "equal_to_rf_broker_crashloop",
     [logs(PRODUCER, "NOT_ENOUGH_REPLICAS on the produce responses"),
      ev("kafka_topics_describe", "min.insync.replicas=3, ISR of 2", namespace="kafka", topic=r"(orders)?"),
      ev("kafka_configs_describe", "min.insync.replicas=3", namespace="kafka", entity_type="topics", entity_name=r"(orders)?"),
-     *pods("one kafka-broker pod in CrashLoopBackOff", r"(kafka-broker-\d)?"), *obj("kafkatopics", "orders", "min.insync.replicas: 3")],
+     *pods("one kafka-broker pod in CrashLoopBackOff", r"(kafka-broker-\d)?"), *obj("kafkatopics", "orders", "min.insync.replicas: 3", full=True)],
     MINISR_MUST_NOT, "min_isr", timeout=480)
 
 # 9 quota (2)
@@ -256,7 +262,7 @@ add("quota", "consumer_byte_rate",
     "are no errors. Why?",
     "KafkaUser app-consumer has a quota consumerByteRate of 512 bytes per second, which throttles the consumer "
     "below the produce rate.",
-    [*obj("kafkausers", "app-consumer", "spec.quotas.consumerByteRate: 512"),
+    [*obj("kafkausers", "app-consumer", "spec.quotas.consumerByteRate: 512", full=True),
      ev("kafka_configs_describe", "consumer_byte_rate=512", namespace="kafka", entity_type="users", entity_name=r"(CN=app-consumer)?"),
      ev("kafka_consumer_groups_describe", "lag growing with an active member", namespace="kafka", group=r"(orders-consumer)?")],
     [NO_OFFSET_RESET, "deleting the KafkaUser"], "quota", timeout=300)
@@ -276,14 +282,14 @@ add("acl", "group_acl_misnamed",
     "KafkaUser app-consumer's group ACL names orders-consumers instead of orders-consumer, so the consumer is not "
     "authorized for its group (GroupAuthorizationException).",
     [logs(CONSUMER, "GroupAuthorizationException / Not authorized to access group"),
-     *obj("kafkausers", "app-consumer", "ACL on group orders-consumers")],
+     *obj("kafkausers", "app-consumer", "ACL on group orders-consumers", full=True)],
     ACL_MUST_NOT, "acl", timeout=180)
 add("acl", "topic_acl_missing",
     "The orders-consumer in namespace kafka connects but fails with an authorization error and consumes nothing. Why?",
     "KafkaUser app-consumer has no Read/Describe ACL on topic orders, so the consumer is not authorized for the "
     "topic (TopicAuthorizationException).",
     [logs(CONSUMER, "TopicAuthorizationException / Not authorized to access topics"),
-     *obj("kafkausers", "app-consumer", "no ACL on topic orders")],
+     *obj("kafkausers", "app-consumer", "no ACL on topic orders", full=True)],
     ACL_MUST_NOT, "acl", timeout=180)
 
 # 11 argocd_out_of_sync (3)
@@ -293,7 +299,7 @@ add("argocd_out_of_sync", "live_edit",
     "The Argo CD application kafka-topics (namespace argocd) shows OutOfSync, but nobody changed the git repository. Why?",
     "Topic payments was edited directly in the cluster (retention.ms 3600000 instead of 86400000 in git); "
     "self-heal is off, so the application stays OutOfSync.",
-    [*app("OutOfSync, resource KafkaTopic payments OutOfSync"), *obj("kafkatopics", "payments", "retention.ms: 3600000")],
+    [*app("OutOfSync, resource KafkaTopic payments OutOfSync"), *obj("kafkatopics", "payments", "retention.ms: 3600000", full=True)],
     ARGO_MUST_NOT, "argocd", timeout=180)
 add("argocd_out_of_sync", "wrong_path",
     "The Argo CD application kafka-topics (namespace argocd) no longer syncs and shows a comparison error. What is wrong?",
@@ -311,7 +317,7 @@ add("argocd_degraded", "topic_rf_too_high",
     "The Argo CD application kafka-topics (namespace argocd) is Synced but Degraded since the last commit. Why?",
     "The last commit added KafkaTopic inventory-archive with replicas 5 on a 3-broker cluster; the topic operator "
     "rejects it (Ready False), so the application is Degraded.",
-    [*app("Degraded; KafkaTopic inventory-archive Degraded"), *obj("kafkatopics", r"(inventory-archive)?", "Ready False: replication factor larger than available brokers")],
+    [*app("Degraded; KafkaTopic inventory-archive Degraded"), *obj("kafkatopics", r"(inventory-archive)?", "Ready False: replication factor larger than available brokers", full=True)],
     ARGO_MUST_NOT + [NO_DELETE_DATA], "argocd", timeout=180)
 add("argocd_degraded", "invalid_manifest",
     "The last sync of the Argo CD application kafka-topics (namespace argocd) failed after a commit. Why?",
@@ -327,7 +333,7 @@ add("storage", "new_pool_missing_storage_class",
     "broker pod cannot be scheduled.",
     [ev("k8s_get", "PVC data-0-kafka-pool-b-3 Pending", namespace="kafka", kind="persistentvolumeclaims"),
      ev("k8s_describe", "storageclass fast-ssd not found", namespace="kafka", kind="persistentvolumeclaims"),
-     ev("k8s_get", "only storage class standard", kind="storageclasses"), *obj("kafkanodepools", r"(pool-b)?", "storage class fast-ssd"),
+     ev("k8s_get", "only storage class standard", kind="storageclasses"), *obj("kafkanodepools", r"(pool-b)?", "storage class fast-ssd", full=True),
      *pods("kafka-pool-b pod Pending", r"(kafka-pool-b-\d+)?"), events("ProvisioningFailed / FailedScheduling")],
     [NO_DELETE_DATA, "deleting the existing node pool broker"], "storage", timeout=240)
 add("storage", "resize_not_supported",
@@ -337,7 +343,7 @@ add("storage", "resize_not_supported",
     [*kafka_cr("a status condition or warning about the storage class not supporting resizing"),
      ev("k8s_get", "allowVolumeExpansion not set", kind="storageclasses"),
      ev("k8s_get", "PVCs still 1Gi", namespace="kafka", kind="persistentvolumeclaims"),
-     *obj("kafkanodepools", "broker", "size 2Gi"), logs(OP_POD, "the resize warning")],
+     *obj("kafkanodepools", "broker", "size 2Gi", full=True), logs(OP_POD, "the resize warning")],
     [NO_DELETE_DATA, "recreating the brokers to get bigger volumes"], "storage", timeout=240)
 
 

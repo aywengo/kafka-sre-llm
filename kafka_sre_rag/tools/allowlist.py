@@ -8,7 +8,8 @@ A call gets one of three statuses:
              that carries a shell or option fragment (whitespace, ; & | ` $ < > or a leading -).
   invalid    on the list, inside the session's scope, but malformed (wrong type, a missing required argument,
              a value that fails the pattern, enum or range of the schema, arguments that are not a JSON
-             object); it is not run, and the model is told why.
+             object), or a call that names no tool (a text block that is not JSON or is never closed; W32 (a));
+             it is not run, and the model is told why.
 """
 import json
 import re
@@ -48,6 +49,9 @@ class AllowList:
     def check(self, name, args, schemas):
         """name: the tool the model asked for; args: parsed arguments (or None when they were not JSON);
         schemas: {tool name: inputSchema} of the tools the servers list."""
+        if not name:  # nothing names a tool: a malformed call, not an attempt outside the list
+            return Decision("invalid", "the tool call names no tool" +
+                            ("" if isinstance(args, dict) else " and could not be parsed as JSON"))
         if name not in schemas:
             return Decision("violation", f"unknown tool {name!r}")
         if name not in self.tools:
