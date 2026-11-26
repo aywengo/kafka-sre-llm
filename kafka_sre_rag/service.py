@@ -190,8 +190,11 @@ class _Locked:
 
 class Service:
     def __init__(self, gen, cfg=None, *, mode="default", k="k6", rerank=True, max_tokens=None, verified=None,
-                 check=False, catalogues=None, checker=None, profile="frozen", revise=False):
+                 check=False, catalogues=None, checker=None, profile="frozen", revise=False, kb_entries=None):
         profiles.check(profile)
+        if kb_entries is not None and profile != "frozen":
+            raise ValueError("the entries option composes with the frozen profile only (not measured with a candidate profile)")
+        self.kb_entries = kb_entries  # EXPERIMENTAL (M7 I4): a kb_entries.KbEntries or None (the call stays as it was)
         self.profile = profile
         self.gen, self.cfg = gen, cfg or config.load()
         self.revise_default = bool(revise)
@@ -256,12 +259,15 @@ class Service:
             try:
                 r = evalhooks.run_item(question, _Tee(self.gen, gate.feed if gate else on_text), self.cfg, k=k,
                                        mode=mode, rerank=self.rerank, max_tokens=self.max_tokens,
-                                       profile=self.profile)
+                                       profile=self.profile,
+                                       **({} if self.kb_entries is None else {"kb_entries": self.kb_entries}))
             finally:
                 retrieval.select = real_select
             if gate:
                 gate.finish()
         chunks = seen[0] if seen else []
+        if "kb_entries" in r:  # the entries that followed the frozen pack are sources (and checked) like the chunks
+            chunks = list(chunks) + [self.kb_entries.item(i) for i in r["kb_entries"]["added"]]
         reasons = []
         if mode != "default":
             reasons.append(f"mode {mode}")
@@ -273,6 +279,8 @@ class Service:
             reasons.append("no reranker")
         if self.profile != "frozen":
             reasons.append(profiles.unmeasured_reason(self.profile))
+        if self.kb_entries is not None:
+            reasons.append(pipeline.KB_ENTRIES_REASON)
         if self.max_tokens is not None:
             reasons.append(f"max_tokens override {self.max_tokens}")
         sec = r["seconds"]
@@ -285,6 +293,8 @@ class Service:
                  "measured": not reasons, "unmeasured_reasons": reasons, "tokens": r["tokens"],
                  "truncated": r["truncated"]}
         extra.update(profiles.manifest_fields(self.profile))  # nothing added for frozen
+        if "kb_entries" in r:
+            extra["kb_entries"] = r["kb_entries"]
         if not checker:
             return r["text"], extra
         first = checker.check(r["text"], chunks)
