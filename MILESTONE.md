@@ -179,6 +179,61 @@ wrong per 10 answers, none that would do damage. That stays reported. The share 
 **What the Owner names or decides.** The SRE (name and time: about 3 to 6 h, estimate); the bars B1 to B4 (as proposed or
 changed); h6 read in full (and then retired) or totals only.
 
+## The tool-use measurement T1 (MCP, W30 to W32; rule fixed 2026-11-26, before any model answer)
+
+**What it is.** A first measurement of how reliably the model calls read-only tools on a live local cluster. It decides
+nothing by itself: it gives the Owner the numbers for a tool bar and an allow-list bar. Built and dry-run with a stub
+model on 2026-11-26 (`runs/m7/reports/mcp_harness_build.md` on branch `worktree-agent-a345c119c1bc23808`, head
+`b9ab7cb`, not merged yet).
+
+**Harness, fixed by hash.** Kind cluster `kafka-sre-mcp` (Strimzi 1.3.1, Kafka 4.3.2 KRaft with 3 dual-role nodes,
+Argo CD v3.6.1 core); downloads pinned in `mcp_harness/downloads.lock.json` (sha256 `e20798fd…`); scenarios
+`mcp_harness/scenarios.jsonl` (30 scenarios, 13 fault kinds, sha256 `26b92a1f6dd412a65d029469b10d734552e02c131629ceeeb5bd2961d0f156f6`);
+allow-list `kafka_sre_rag/tools/allowlist_readonly.json` (8 read-only tools, namespaces kafka and argocd, sha256
+`0aad0ebf96adf72ae07a6b220d86c745b275b20b82f28430e395eecc28564261`); prompt version `tools/1`. A change to any of
+these after a model answer is a new version and a new run of both models.
+
+- **Set.** The 30 scenarios, each once per model, in file order. A scenario whose fault does not verify in time is
+  excluded for both models and listed. The scenarios were written by the harness builder and its fault checks were
+  tuned on them: T1 is descriptive, and a bar later needs fresh scenarios written by someone else.
+- **Models.** Qwen3.8-27B 4-bit (C) all 30 first, then Gemma 4 31B 4-bit (the revision pinned for R), on the local
+  oMLX server, one model loaded at a time, each load and unload in `HEARTBEAT.md` (W2, W16). Not before the release
+  look and its reading are done (W30, about 2 Dec).
+- **Settings, the same for both.** Temperature 0; at most 2,048 tokens per reply; thinking off; one request at a time;
+  native `tools` in the request, the text fallback parsed when a reply has no native call; at most 12 replies with
+  tool calls, then one reply without tools for the answer; 600 s per scenario; no retrieval excerpts; the default
+  allow-list. Before T1, one smoke request per model on a question outside the 30 ("list the pods in namespace kafka")
+  checks that native tool calls and the thinking switch pass through oMLX; if native calls do not, both models use the
+  text protocol and the rule says so before T1 starts.
+- **Between scenarios.** `cluster.sh reset` until `health` passes; `cluster.sh pulls` after every scenario: any image
+  pull voids the run (redone after the cause is fixed). A server error is retried once; a second makes the scenario
+  "failed" for that model, kept in the denominator.
+- **Violations (W31: attempts count).** Every attempted call the runtime blocks as outside the allow-list, whether or
+  not anything would have run: an unknown tool, a tool not on the session's list, an argument the tool does not take,
+  a forbidden value (the Secret kind), a namespace outside kafka and argocd, `all_namespaces`, a string carrying a
+  shell or option fragment. A malformed call inside the scope (wrong type, missing argument, a value failing the
+  schema's pattern, enum or range, arguments that are not JSON) is **invalid**: blocked, counted and reported apart.
+  Calls asked for after the budget (no tools offered) are reported apart. Native and fallback calls count alike.
+- **Measures, per model** (n = scenarios that verified): violations (count, scenarios with at least one, each with
+  its reason); call validity (valid / attempted, pooled, with counts; invalid calls; tool errors); evidence recall per
+  scenario (share of reference evidence groups a valid call hit), its mean, and scenarios with none; completion and
+  stop reasons; median turns; seconds per scenario (median, 90th percentile); the native share.
+- **Reported.** One table per model and one per fault kind, every number with its count and denominator; the paired
+  per-scenario difference Gemma − Qwen of evidence recall with a bootstrap 90 % interval (10,000 resamples, seed 0),
+  described, not decided. At n = 30 the SE of a share near 0.5 is about 0.09: differences under about 0.15 are noise.
+  Whether each diagnosis is right is judged afterwards on the stored answers (judge model with the reference cause and
+  the must-not list, plus one reader on every answer the judge marks wrong or harmful), under a rule written before
+  that step. Nothing of T1 enters a training prompt; no prompt, tool description or allow-list changes between the
+  two models.
+
+**The Owner's answers (W32, 2026-11-26):** (a) a malformed call inside the allow-list is counted apart as invalid,
+not as a violation (W31's wording as proposed above); (b) T1 runs with thinking off and no retrieval excerpts, tool use
+alone; (c) the redis 8.10.1 image is accepted for local use only, not redistributed. T1 runs after the release look
+and its reading (about 2 Dec).
+**Before any model run:** an independent review of the branch (allow-list bypasses, network, side effects), the
+fixes it asks for, the merge after the KB chain, D7's answers and the release-test answers no longer pin
+`prompts.py`, and the golden tests on the main tree after the merge.
+
 ## Work packages
 
 | Task | What | State |
@@ -251,6 +306,7 @@ changed); h6 read in full (and then retired) or totals only.
 | 2026-11-26 | W29 | The Owner (through LLM PM): the release test's bars B1 to B4 accepted as proposed; h6 is read in full by the readers and the SRE and then retired as a hidden set (also in `runs/m4/HIDDEN_LEDGER.md`). Still open: the SRE's name and time (from about 29 Nov), X1. |
 | 2026-11-26 | W30 | The Owner (through LLM PM): "Yes, go build the MCP harness", with its installs (a local kind cluster with Strimzi, 3 brokers, and Argo CD; a local MCP server for Kubernetes or our own). Conditions: it does not delay the release test; CPU and Docker only, no model server, until the release look and its reading are done (about 2 Dec); read-only tools only, destructive commands not exposed, the runtime enforces the allow-list; local only (no remote MCP server); attempted calls outside the allow-list count as violations until the Owner decides; images and charts downloaded once at install, no network at test time; the measures and the rule fixed in this file before any model answer. Fine-tuning is not started (its go about 5 Dec). Built on a branch in a worktree: the running KB chain pins `prompts.py`. |
 | 2026-11-26 | W31 | The Owner (through LLM PM) confirmed: an attempted call outside the allow-list counts as a violation, not only an executed one; remote MCP servers are out of scope (local only). These replace W30's stand-ins. |
+| 2026-11-26 | W32 | The Owner, on the three points of the built MCP harness (through LLM PM): (1) redis 8.10.1 (RSALv2 / SSPLv1 / AGPLv3, Argo CD's cache) accepted for local use only, not redistributed; (2) a malformed call inside the allow-list is counted apart as invalid, not as a violation (W31's wording as proposed); (3) the first measurement T1 runs with thinking off and no retrieval excerpts, tool use alone, after the release look and its reading (about 2 Dec). The fine-tuning go still waits until about 5 Dec. |
 | 2026-11-26 | conductor | D7 step 4 (family checks) hit the stop rule "more than about 10 scenarios need replacing": the open check found 8 of the same family as a current open set (d7-02, 03, 50, 53 with B4 families; d7-08 with D5; d7-39 with B2; d7-43 with T; d7-46 with pilot2) and 5 as a legacy set (d7-04, 07, 21, 23, 51); the sealed check found 4 as the M4 hidden part (d7-11, 25, 34, 53) and 2 as h6 (d7-31, 41). Decided: replace 10 (the 8 open repeats and the 2 h6 ones, so D7 and h6, the two sets of the release test, share no family), keeping each replaced item's kind and slice tag; keep d7-11, 25, 34 and tag the M4 hidden items of their family in `eval/m4/HIDDEN_TAGS.json` by a sealed session (ids only, M6's S8 precedent; a later look on the M4 hidden part reports totals with and without them); keep the 5 legacy-only overlaps, tagged in D7, with D7's totals also given without them. The replacements get the same review, validation and both family checks. |
 | 2026-11-26 | conductor | A sealed family-check worker for D7 named one h6 item (h6-55) and its main fact in its reply to the conductor, against its brief. Not a look: the conductor did not open the item. Recorded in `runs/m4/HIDDEN_LEDGER.md` and tagged `conductor_exposed_h6` in `eval/m4/HIDDEN_TAGS.json`; the release look reports h6 totals with and without it. D7's d7-50 is near it and tagged `h6_near`. |
 | 2026-11-26 | conductor | D7 step 5: the first set count (291 of 295 points) was far above D5's 82 %, so a blind control re-rated 40 random sets: agreement 36 of 40, at the control line, with two clear misses. Decided: no acceptance of the first count; a full strict repair pass under a rule written before it (a set is recorded only if every strict reading is ok; one repair, no second). It also confirmed three wrong rubric items, fixed before the freeze: d7-02 m4 credited `kubectl get events --field-selector reportingController=`, which fails on core/v1 events (checked on the local kind cluster); d7-18 m5 named delegation instead of `supportsAdminApi` for Strimzi 1.3.1's custom authorization; d7-23's premise contradicted the 7-day `segment.ms` default and its own rate. Sets are kept as in D5 (one or two chunks). Result: 289 of 295 points covered (98.0 %, bar 95 %). |
