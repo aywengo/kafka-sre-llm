@@ -204,7 +204,7 @@ for s in $(echo $SETS | tr ',' ' '); do
     SETARGS=; for arm in $(echo $ARMS | tr ',' ' '); do SETARGS="$SETARGS $arm=$W/ans_${s}_$arm.jsonl$EXT"; done
     if [ $s = d7 ]; then
       $PY $H bundle --configs "$CONFIGS" --arms "$ARMS" --set d7 --items "$ITEMS" --rubrics "$RUBS" --answers $SETARGS --chunks "$CHUNKS" --out $W/reading_d7 --second-fraction $SECOND || fail "the d7 bundles could not be made"
-      mark bundle_d7 $W/reading_d7/KEY.json
+      if [ -f $W/reading_d7/KEY.json ]; then mark bundle_d7 $W/reading_d7/KEY.json; else mark bundle_d7 $W/reading_d7/NO_BUNDLE_single_arm.txt; fi
     else
       $PY $H bundle --configs "$CONFIGS" --arms "$ARMS" --set h6 --items "$ITEMS" --rubrics "$RUBS" --answers $SETARGS --chunks "$CHUNKS" --out $W/reading_h6 --sessions $H6S || fail "the h6 sealed bundles could not be made"
       mark bundle_h6 $W/reading_h6/blind_key.json.enc
@@ -221,6 +221,7 @@ fi
 RJ=; MEAS=
 for s in $(echo $SETS | tr ',' ' '); do
   set_files $s
+  [ -f $W/stage_judge_$s.done ] && [ -f $W/stage_bundle_$s.done ] || refuse "the before-reading phase is not done for $s (stage markers missing in $W)"
   SETARGS=; for arm in $(echo $ARMS | tr ',' ' '); do SETARGS="$SETARGS $arm=$W/ans_${s}_$arm.jsonl$EXT"; done
   FIND=; VERD=; PK=
   if [ $s = d7 ]; then
@@ -230,14 +231,14 @@ for s in $(echo $SETS | tr ',' ' '); do
       FIND="--findings $W/findings_d7.jsonl"
       $PY $H pack-input --configs "$CONFIGS" --arms "$ARMS" --set d7 --items "$ITEMS" --answers $SETARGS --findings $W/findings_d7.jsonl --out-dir $W/pack_input_d7 || fail "the d7 pack input could not be made"
     fi
-    VERD="--verdicts $VD7"; PK="--pack-key $PKD7"; OUTM=$W/measures_d7.json
+    VERD=; PK=; [ -z "$VD7" ] || VERD="--verdicts $VD7"; [ -z "$PKD7" ] || PK="--pack-key $PKD7"; OUTM=$W/measures_d7.json
   else
     if [ -n "$H6DIR" ]; then
       $PY $H unblind --set h6 --dir "$H6DIR" --out $W/findings_h6.jsonl.enc --reader $FREADER || fail "the h6 findings could not be unblinded"
       FIND="--findings $W/findings_h6.jsonl.enc"
       $PY $H pack-input --configs "$CONFIGS" --arms "$ARMS" --set h6 --items "$ITEMS" --answers $SETARGS --findings $W/findings_h6.jsonl.enc --out-dir $W/pack_input_h6 || fail "the h6 pack input could not be made"
     fi
-    VERD="--verdicts $VH6"; PK="--pack-key $PKH6"; OUTM=$W/measures_h6.json.enc
+    VERD=; PK=; [ -z "$VH6" ] || VERD="--verdicts $VH6"; [ -z "$PKH6" ] || PK="--pack-key $PKH6"; OUTM=$W/measures_h6.json.enc
   fi
   JF=$W/judge_$s.jsonl$EXT
   $PY $H measures --set $s --arms "$ARMS" --items "$ITEMS" --rubrics "$RUBS" --answers $SETARGS --judge $JF $FIND --first-reader $FREADER $VERD $PK --out $OUTM || fail "the measures of $s could not be made"

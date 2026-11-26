@@ -328,7 +328,7 @@ def chunk_key(c):
 
 
 def keys_resolver(chunks_path):
-    """Dry runs only: a source maps to a chunk by (source, title, path); an ambiguous key is refused."""
+    """Dry runs only: a source maps to a chunk by (source, title, path); an ambiguous key takes its first chunk."""
     by = {}
     for c in (json.loads(l) for l in Path(chunks_path).read_text(encoding="utf-8").splitlines() if l.strip()):
         by.setdefault(chunk_key(c), []).append(c["id"])
@@ -337,9 +337,9 @@ def keys_resolver(chunks_path):
         ids = []
         for s in sources:
             c = by.get(chunk_key(s)) or []
-            if len(c) != 1:
-                raise Refused("a source maps to no chunk or to several (keys resolver)")
-            ids.append(c[0])
+            if not c:
+                raise Refused("a source maps to no chunk (keys resolver)")
+            ids.append(c[0])     # an ambiguous key takes its first chunk: a stub run only; the real resolver recomputes the pack
         return ids
     return resolve
 
@@ -363,10 +363,10 @@ def retrieval_resolver(chunks_path):
 
 def cmd_packs(a):
     hid = a.set == "h6"
-    items = {it["id"]: it for it in E.read_items(a.items)}
-    resolve = keys_resolver(a.chunks) if a.resolver == "keys" else retrieval_resolver(a.chunks if a.chunks_override else None)
     if a.resolver == "keys" and not a.stub:
         raise Refused("the keys resolver is for stub runs only")
+    items = {it["id"]: it for it in E.read_items(a.items)}
+    resolve = keys_resolver(a.chunks) if a.resolver == "keys" else retrieval_resolver(a.chunks if a.chunks_override else None)
     tag = f"[packs {a.arm} {a.set}]"
     rows = load_rows(a.answers)
     todo = [r for r in rows if not r.get("error") and not r.get("pack")]
@@ -548,6 +548,11 @@ def cmd_bundle(a):
             if d.exists() and any(d.iterdir()):
                 raise Refused(f"{d.name} exists and is not empty; not overwriting")
         key = out / "KEY.json"
+        if len(sets) < 2:     # eval2_blind.py needs two or more answer sets: with one arm there is nothing to shuffle across configurations
+            out.mkdir(parents=True, exist_ok=True)
+            (out / "NO_BUNDLE_single_arm.txt").write_text("One arm only: scripts/eval2_blind.py needs two or more answer sets, so no blind bundle was made.\n", encoding="utf-8")
+            print("d7: one arm only; eval2_blind.py makes no bundle for a single answer set (nothing to shuffle across configurations); no reading bundle was made")
+            return 0
         p = run_py([str(ROOT / "scripts/eval2_blind.py"), "bundle", "--items", a.items, "--rubrics", a.rubrics, "--answers", *a.answers, "--chunks", a.chunks,
                     "--out", str(first), "--key", str(key), "--seed", str(SEEDS["bundle"]), "--second-reader", str(a.second_fraction), "--second-out", str(second),
                     "--harm-consequences"], quiet=True)

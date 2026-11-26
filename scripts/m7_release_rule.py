@@ -244,10 +244,12 @@ def bars_for_set(name, arms, rows, adj, candidate, control, resamples=RESAMPLES,
     if not have_c:
         out["B2"] = {"state": "not measured", "clauses": [clause("M", "not measured", f"{name}: {control} is not an arm of this run" if candidate in rows else f"{name}: no answers of {candidate}")]}
     else:
-        mr, mc = with_m(rows[candidate], reading), with_m(rows[control], reading)
+        ac, ar = (adj or {}).get(control), (adj or {}).get(candidate)
+        adj_done = all(x is not None and x.get("pending") == 0 for x in (ac, ar))
+        mr, mc = with_m(rows[candidate], reading and adj_done), with_m(rows[control], reading and adj_done)
         diffs, nsc, bad = paired(mr, mc, "M")
         if untrusted or bad or not diffs:
-            why = note or (f"{bad} of {nsc} scenarios incomplete (a pending adjudication, an error or a missing answer)" if (bad or not diffs) else "")
+            why = note or (f"{bad} of {nsc} scenarios incomplete (the reading or the SRE's adjudication is not complete, an error or a missing answer)" if (bad or not diffs) else "")
             out["B2"] = {"state": "not measured", "clauses": [clause("M", "not measured", f"{name}: M not measured: {why}")]}
         else:
             mean, lo, hi = bootstrap_ci(diffs, resamples)
