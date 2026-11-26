@@ -1,0 +1,12 @@
+{
+  "version": "allow/1",
+  "note": "The default session allow-list: read-only tools of the local k8s server, in namespaces kafka and argocd (and cluster-scoped kinds). The runtime enforces it; the model cannot change it.",
+  "servers": {
+    "k8s": {"transport": "stdio", "command": ["{python}", "-m", "kafka_sre_rag.tools.k8s_server"]}
+  },
+  "tools": ["k8s_get", "k8s_describe", "k8s_logs", "k8s_events", "kafka_topics_describe",
+            "kafka_consumer_groups_describe", "kafka_configs_describe", "argocd_app_get"],
+  "namespaces": ["kafka", "argocd"],
+  "all_namespaces": false,
+  "forbidden_values": {"kind": ["secret", "secrets"]}
+}

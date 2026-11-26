@@ -177,6 +177,8 @@ def build_parser():
     v = sub.add_parser("verify", help="check the index sha256 and the prompt hashes against frozen.json; "
                                       "reports the catalogue hash")
     v.add_argument("--catalogues", metavar="DIR", default=None, help="default: work/m4/catalogues")
+    from .tools import cli as tools_cli  # EXPERIMENTAL (M7, W30): diagnose with read-only tools
+    tools_cli.add_parser(sub)
     return ap
 
 
@@ -421,6 +423,9 @@ def run_one(question, gen, cfg, a, checker=None):
 
 def main(argv=None):
     a = build_parser().parse_args(argv)
+    if a.cmd == "diagnose":
+        from .tools import cli as tools_cli
+        return tools_cli.main(a)
     if a.cmd != "verify":
         why = answer_profile_error(a)
         if why:
