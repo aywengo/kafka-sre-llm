@@ -3,6 +3,11 @@
     .venv/bin/python mcp_harness/harness.py check-faults [--ids ID ...] [--hold 30] --out FILE.jsonl
         per scenario: inject (twice: idempotent), poll verify until the fault is visible, verify once more after
         --hold seconds (does the fault persist?), revert, reset to healthy
+    .venv/bin/python mcp_harness/harness.py check-persistence [--ids ID ...] [--checks 60,150,300,600] --out FILE.jsonl
+        [--resume]
+        per scenario: inject, verify, then verify again at each check time after the fault became visible (also with
+        only the last 330 s of pod logs, so a log line from before a heal does not count), revert, reset, the
+        image-pull check; one row per scenario and check time. --resume skips scenarios already in FILE.
     .venv/bin/python mcp_harness/harness.py run --model stub [--ids ID ...] --out RUN_DIR
     .venv/bin/python mcp_harness/harness.py run --model openai --model-name NAME [--base-url URL] --out RUN_DIR
         per scenario: healthy check, inject, verify, the diagnosis loop (trace RUN_DIR/traces/<id>.jsonl), revert,
@@ -227,6 +232,93 @@ def cmd_check_faults(a):
     log(f"image pulls: {txt.strip()} ({'none' if code == 0 else 'PULLS SEEN'})")
 
 
+FRESH_S = 330  # log window of the "fresh" verify: the longest crash-loop back-off (300 s) and some slack
+
+
+def verify_since(sc, since):
+    """The scenario's verify, with the log window of lib.sh pod_logs_match starting at `since` (epoch seconds)."""
+    keep = os.environ.get("FAULT_SINCE")
+    os.environ["FAULT_SINCE"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(since))
+    try:
+        return still_visible(sc)
+    finally:
+        if keep is None:
+            os.environ.pop("FAULT_SINCE", None)
+        else:
+            os.environ["FAULT_SINCE"] = keep
+
+
+def wait_for(target, what):
+    """Sleep until time.monotonic() reaches target, with a line a minute so the log keeps growing."""
+    while (left := target - time.monotonic()) > 0:
+        log(f"  waiting for {what} ({left:.0f} s left)")
+        time.sleep(min(60.0, left))
+
+
+def persistence_done(out, checks):
+    """Scenario ids with all their check rows (or a not-visible row) in out: a resumed run skips them."""
+    seen = {}
+    for line in out.read_text().splitlines():
+        r = json.loads(line)
+        seen.setdefault(r["id"], set()).add(r["check_s"])
+    return {i for i, s in seen.items() if None in s or set(checks) <= s}
+
+
+def cmd_check_persistence(a):
+    checks = sorted({int(x) for x in a.checks.split(",")})
+    out = Path(a.out)
+    if out.exists() and not a.resume:
+        sys.exit(f"{out} exists; give a new path or --resume")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    done = persistence_done(out, checks) if out.exists() else set()
+    ensure_kubeconfig()
+    t_all = time.monotonic()
+    for sc in pick(a.ids):
+        if sc["id"] in done:
+            log(f"{sc['id']}: already in {out.name}; skipped")
+            continue
+        log(f"{sc['id']}: start")
+        if not ensure_healthy():
+            sys.exit("cluster not healthy; stopped")
+        t, t_inject = time.monotonic(), time.time()
+        ok, secs, aborted, results = False, 0.0, None, []
+        try:
+            ok, secs = inject_verified(sc)
+            log(f"  verify: {'VISIBLE' if ok else 'NOT VISIBLE'} after {secs} s")
+            t_vis = time.monotonic()
+            for c in checks if ok else []:
+                wait_for(t_vis + c, f"the {c} s check")
+                at = round(time.monotonic() - t_vis, 1)
+                visible = still_visible(sc)
+                fresh = verify_since(sc, max(t_inject, time.time() - FRESH_S))
+                results.append({"check_s": c, "at_s": at, "visible": visible, "fresh": fresh})
+                log(f"  check {c} s (at {at} s): {'visible' if visible else 'GONE'}; "
+                    f"with logs of the last {FRESH_S} s only: {'visible' if fresh else 'GONE'}")
+        except Exception as e:  # noqa: BLE001 - only the type is printed
+            aborted = type(e).__name__
+            log(f"  aborted: {aborted}")
+        finally:
+            healthy = restore(sc)
+        code, txt = cluster("pulls", 120)
+        log(f"  image pulls: {txt.strip()} ({'none' if code == 0 else 'PULLS SEEN'})")
+        if aborted:  # no rows: a resumed run repeats the scenario
+            sys.exit(f"stopped: {aborted} in {sc['id']}")
+        common = {"verify_seconds": secs, "healthy_after": healthy, "no_pulls": code == 0,
+                  "scenario_seconds": round(time.monotonic() - t, 1)}
+        rows = [dict(id=sc["id"], **r, **common) for r in results] or \
+            [dict(id=sc["id"], check_s=None, at_s=None, visible=False, fresh=None, **common)]
+        with out.open("a") as f:
+            f.writelines(json.dumps(r) + "\n" for r in rows)
+        gone = [r["check_s"] for r in results if not r["visible"]]
+        log(f"  {sc['id']}: " + ("not visible" if not results else
+                                 f"GONE at the {gone[0]} s check" if gone else f"visible at all {len(checks)} checks"))
+        if not healthy:
+            sys.exit("cluster not healthy after the revert; stopped")
+        if code:
+            sys.exit("an image pull was seen; stopped")
+    log(f"done in {time.monotonic() - t_all:.0f} s")
+
+
 def make_session():
     return session_from(None, str(KUBECONFIG), CONTEXT)
 
@@ -308,6 +400,11 @@ def main(argv=None):
     c.add_argument("--ids", nargs="*")
     c.add_argument("--out", required=True)
     c.add_argument("--hold", type=int, default=30, help="seconds to wait before verifying once more (0: no check)")
+    p = sub.add_parser("check-persistence")
+    p.add_argument("--ids", nargs="*")
+    p.add_argument("--out", required=True)
+    p.add_argument("--checks", default="60,150,300,600", help="seconds after the fault became visible")
+    p.add_argument("--resume", action="store_true", help="append to --out, skipping scenarios it already holds")
     r = sub.add_parser("run")
     r.add_argument("--model", choices=["stub", "openai"], required=True)
     r.add_argument("--model-name")
@@ -320,7 +417,7 @@ def main(argv=None):
     r.add_argument("--extra-body", help="JSON merged into each request body")
     r.add_argument("--text-protocol", action="store_true")
     a = ap.parse_args(argv)
-    (cmd_check_faults if a.cmd == "check-faults" else cmd_run)(a)
+    {"check-faults": cmd_check_faults, "check-persistence": cmd_check_persistence, "run": cmd_run}[a.cmd](a)
 
 
 if __name__ == "__main__":

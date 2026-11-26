@@ -801,6 +801,42 @@ class ReviewHarnessTest(unittest.TestCase):
         self.assertLess(self.calls.index("hold 150"), self.calls.index("reverify"))
         self.assertLess(self.calls.index("reverify"), self.calls.index("restore"))
 
+    def test_check_persistence_one_row_per_check_then_restore_and_resume(self):
+        now = [1000.0]
+        self.patch(self.h.time, "monotonic", lambda: now[0])
+        self.patch(self.h.time, "sleep", lambda s: now.__setitem__(0, now[0] + s))
+        seen = iter([True, True, False, False])  # the fault heals between the 150 s and the 300 s check
+        self.patch(self.h, "still_visible", lambda s: self.calls.append(f"verify {now[0] - 1000.0:.0f}") or next(seen))
+        since = []
+        self.patch(self.h, "verify_since", lambda s, t: since.append(t) or True)
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d) / "p.jsonl"
+            args = type("A", (), dict(ids=None, out=str(out), checks="600,60,300,150", resume=False))()
+            self.h.cmd_check_persistence(args)
+            rows = [json.loads(x) for x in out.read_text().splitlines()]
+            self.assertEqual([(r["check_s"], r["visible"]) for r in rows],
+                             [(60, True), (150, True), (300, False), (600, False)])
+            self.assertEqual([r["at_s"] for r in rows], [60.0, 150.0, 300.0, 600.0])
+            self.assertTrue(all(r["healthy_after"] and r["no_pulls"] for r in rows))
+            self.assertLess(self.calls.index("verify 600"), self.calls.index("restore"))
+            self.assertTrue(any("GONE at the 300 s check" in str(c) for c in self.calls))
+            self.assertEqual(len(since), 4)
+            with self.assertRaises(SystemExit):  # an existing file needs --resume
+                self.h.cmd_check_persistence(args)
+            self.calls.clear()
+            args.resume = True
+            self.h.cmd_check_persistence(args)  # all checks are on file: nothing runs again
+            self.assertNotIn("restore", self.calls)
+            self.assertEqual(len(out.read_text().splitlines()), 4)
+
+    def test_verify_since_sets_the_log_window_and_puts_it_back(self):
+        got = []
+        self.patch(self.h, "still_visible", lambda s: got.append(os.environ.get("FAULT_SINCE")) or True)
+        with unittest.mock.patch.dict(os.environ, {"FAULT_SINCE": "2026-01-01T00:00:00Z"}):
+            self.assertTrue(self.h.verify_since({}, 0))
+            self.assertEqual(os.environ["FAULT_SINCE"], "2026-01-01T00:00:00Z")
+        self.assertEqual(got, ["1970-01-01T00:00:00Z"])
+
 
 class FaultCheckFixesTest(unittest.TestCase):
     """Fixes from fault check 7: the user operator removes a quota on a user without a KafkaUser (ANONYMOUS) at its
