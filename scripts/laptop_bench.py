@@ -521,12 +521,12 @@ class RealRunner(Runner):
         return d
 
     def start(self):
+        if self.kind == "service" and self.cfg.get("lookup_cards"):
+            raise RuntimeError("the service has no lookup cards; run one-shot for this configuration")
         if self.cfg["backend"] == "openai":
             self.omlx = omlx_pid(self.base)
         if self.kind != "service":
             return {"startup_s": None, "omlx_pid_found": bool(self.omlx)}
-        if self.cfg.get("lookup_cards"):
-            raise RuntimeError("the service has no lookup cards; run one-shot for this configuration")
         port = int(self.cfg["port"])
         self.out.mkdir(parents=True, exist_ok=True)
         self.logf = open(self.out / f"service_{self.tag}.log", "w", encoding="utf-8")
@@ -1306,7 +1306,11 @@ def bars(d):
         B.append(("Cold start against warm (service)", f"first question {fmt(sd[0]['wall_s'])} s, median of the others {fmt(med([r['wall_s'] for r in sd[1:]]))} s; service ready in {fmt(sd[0].get('startup_s'))} s",
                   f"{len(sd)} questions", "reported", "reported"))
     cold = [r for r in d.get("cold", []) if not r.get("error")]
-    if cold:
+    if cold and (d["config"] or {}).get("lookup_cards"):   # one-shot rows: no service, no first words
+        B.append(("First question of the memory phase (one-shot, includes the start of the process and the load of the index and the reranker)",
+                  f"{fmt(cold[0]['wall_s'])} s; later two questions {fmt(med([r['wall_s'] for r in cold[1:]]))} s",
+                  f"{len(cold)} questions", "reported", "reported"))
+    elif cold:
         B.append(("Cold start of the whole assistant (first question after the server was restarted, memory phase)",
                   f"{fmt(cold[0]['wall_s'])} s, first words {fmt(cold[0]['ttft_s'])} s; service ready in {fmt(cold[0].get('startup_s'))} s; later two questions {fmt(med([r['wall_s'] for r in cold[1:]]))} s",
                   f"{len(cold)} questions", "reported", "reported"))
@@ -1331,10 +1335,12 @@ def bars(d):
             B.append((f"Sustained use, {lab}", f"only {len(t)} of {BARS['sustained_n']} questions; drift not computed", f"{len(t)}", "30 questions", "not run in full"))
     if not d["sustained"]:
         B.append(("Sustained use", "-", "-", "30 in a row, on power and on battery", "not run"))
-    wl = [r for r in ok_rows if r.get("label") == "working-laptop" and r["cond"] == "service-default"]
-    if wl and sd:
-        B.append(("A working laptop (apps open), service default", f"median {fmt(med([r['wall_s'] for r in wl]))} s against {fmt(med([r['wall_s'] for r in sd]))} s with nothing else open",
-                  f"{len(wl)} and {len(sd)} questions", "median under 60 s", "pass" if med([r["wall_s"] for r in wl]) < BARS["median_answer_s"] else "FAIL"))
+    wl_cond = "oneshot-default" if (d["config"] or {}).get("lookup_cards") else "service-default"   # the service has no lookup cards
+    wl = [r for r in ok_rows if r.get("label") == "working-laptop" and r["cond"] == wl_cond]
+    base = sd if wl_cond == "service-default" else od
+    if wl and base:
+        B.append((f"A working laptop (apps open), {wl_cond.replace('-', ' ')}", f"median {fmt(med([r['wall_s'] for r in wl]))} s against {fmt(med([r['wall_s'] for r in base]))} s with nothing else open",
+                  f"{len(wl)} and {len(base)} questions", "median under 60 s", "pass" if med([r["wall_s"] for r in wl]) < BARS["median_answer_s"] else "FAIL"))
     else:
         B.append(("A working laptop (apps open)", "-", "-", "median under 60 s", "not run (speed --label working-laptop)"))
     c = d["compare"]

@@ -124,13 +124,15 @@ class ReleaseConfig(unittest.TestCase):
         rc, text = bench("--stub", "--out", str(self.out), "sustained", "--label", "ac", "--runtime", "service", "--force")
         self.assertEqual(rc, 2)
         runner = lb.RealRunner("service", {"lookup_cards": True, "backend": "openai", "port": 1}, self.t, "x")
-        with self.assertRaises(RuntimeError):
-            runner.start()
+        with mock.patch.object(lb, "omlx_pid", side_effect=AssertionError("looked for the server")):
+            with self.assertRaises(RuntimeError):      # refused before anything touches the server or a process
+                runner.start()
 
     def test_every_phase_runs_with_r_and_with_the_old_defaults(self):
         ref = self.t / "ref_R.json"
         for label, pre, out in (("R", ["--config", "R"], self.t / "r"), ("old", [], self.t / "o")):
             steps = [["preflight"], ["install-check", "--run"], ["speed", "--n-service", "3", "--n-oneshot", "2"],
+                     ["speed", "--label", "working-laptop", "--conds", "oneshot-default", "--n-oneshot", "2", "--apps", "browser"],
                      ["sustained", "--label", "ac", "--n", "6", "--force"], ["memory", "--baseline-s", "1"]]
             steps += [["make-reference", "--ref-out", str(ref)], ["score", "--n", "5", "--reference", str(ref)]] if label == "R" else [["score", "--n", "5"]]
             steps.append(["bundle"])
@@ -144,6 +146,12 @@ class ReleaseConfig(unittest.TestCase):
             if label == "R":
                 self.assertEqual(conds, {"oneshot-default"})
                 self.assertIn("one-shot only", md)
+                wl = [l for l in md.splitlines() if l.startswith("| A working laptop")]
+                self.assertEqual(len(wl), 1)
+                self.assertIn("oneshot default", wl[0])
+                self.assertNotIn("not run", wl[0])
+                self.assertNotIn("service ready", md)
+                self.assertIn("First question of the memory phase", md)
                 self.assertIn(str(ref), md)
                 self.assertTrue((out / "sustained/ac/rows.jsonl").exists())
                 cmp = json.loads((out / "score/compare.json").read_text())
