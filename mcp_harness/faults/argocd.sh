@@ -12,10 +12,25 @@ commit() {  # commit FILE CONTENT-FILE MESSAGE: add a file to the GitOps reposit
   argo_refresh
 }
 cond_types() { app_field '{.status.conditions[*].type}'; }
+# Automated sync without self-heal leaves drift in the cluster alone only when a sync to the current revision is on
+# record (status.operationState). `cluster.sh reset` replaces the Application, which drops its status and that
+# record, and then the first drift is synced back at once (seen 2026-11-26: OutOfSync for under a second).
+sync_on_record() {
+  [ "$(app_field '{.status.operationState.phase}')" = Succeeded ] &&
+    [ -n "$(app_field '{.status.sync.revision}')" ] &&
+    [ "$(app_field '{.status.operationState.syncResult.revision}')" = "$(app_field '{.status.sync.revision}')" ]
+}
 case "$action:$variant" in
   inject:live_edit)
+    if ! sync_on_record; then
+      K -n argocd patch application kafka-topics --type merge \
+        -p '{"operation":{"initiatedBy":{"username":"harness-inject"},"sync":{"revision":"main"}}}' >/dev/null
+      wait_until 120 "a sync to the current revision on record" sync_on_record >/dev/null || exit 1
+    fi
     K -n kafka patch kafkatopic payments --type merge -p '{"spec":{"config":{"retention.ms":"3600000"}}}' >/dev/null; argo_refresh ;;
-  verify:live_edit) [ "$(app_field '{.status.sync.status}')" = OutOfSync ] ;;
+  verify:live_edit)  # OutOfSync, the edit still live, and nothing that would sync it back
+    [ "$(app_field '{.status.sync.status}')" = OutOfSync ] && sync_on_record &&
+      [ "$(K -n kafka get kafkatopic payments -o jsonpath='{.spec.config.retention\.ms}')" = 3600000 ] ;;
   inject:wrong_path)
     K -n argocd patch application kafka-topics --type merge -p '{"spec":{"source":{"path":"kafka-prod"}}}' >/dev/null; argo_refresh ;;
   inject:wrong_revision)

@@ -269,9 +269,10 @@ add("quota", "consumer_byte_rate",
 add("quota", "producer_byte_rate",
     "The orders-producer in namespace kafka shows very high send latency and far fewer records per second than "
     "configured. Brokers look healthy. Why?",
-    "A producer_byte_rate quota of 300 bytes per second on user ANONYMOUS (the plain listener's principal) throttles "
-    "the producer.",
-    [ev("kafka_configs_describe", "producer_byte_rate=300 for ANONYMOUS", namespace="kafka", entity_type="users", entity_name=r"(ANONYMOUS)?"),
+    "A producer_byte_rate quota of 300 bytes per second on client id perf-producer-client (the producer's client.id, "
+    "set with kafka-configs.sh outside any KafkaUser) throttles the producer.",
+    [ev("kafka_configs_describe", "producer_byte_rate=300 for client perf-producer-client", namespace="kafka",
+        entity_type="clients", entity_name=r"(perf-producer-client)?"),
      logs(PRODUCER, "records/sec far below 20, high latency")],
     ["restarting the brokers", NO_DELETE_DATA], "quota", timeout=180)
 

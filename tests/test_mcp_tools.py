@@ -747,6 +747,7 @@ class ReviewHarnessTest(unittest.TestCase):
         self.patch(h, "restore", lambda s: self.calls.append("restore") or True)
         self.patch(h, "cluster", lambda action, timeout=0: (0, '{"new_image_refs": 0, "pulling_events": 0}'))
         self.patch(h, "make_session", lambda: Session(AllowList.load(), [FakeServer()]))
+        self.patch(h, "still_visible", lambda s: self.calls.append("reverify") or True)
         self.patch(h, "log", lambda msg: self.calls.append(msg))
 
     def patch(self, obj, name, value):
@@ -782,10 +783,47 @@ class ReviewHarnessTest(unittest.TestCase):
             self.assertEqual((final["type"], final["stop"]), ("final", "failed"))
             row = json.loads((Path(d) / "runs.jsonl").read_text().splitlines()[-1])
             self.assertEqual(row["diagnosis"]["stop"], "failed")
+            self.assertTrue(row["visible_after"])  # the fault was verified once more after the session
+            self.assertLess(self.calls.index("reverify"), self.calls.index("restore"))
             self.calls.clear()
             self.h.cmd_run(self.args(d))  # a rerun: the failed scenario stays as it is
             self.assertTrue(any("skipped" in str(c) for c in self.calls))
             self.assertNotIn("restore", self.calls)
+
+    def test_check_faults_records_whether_the_fault_persists(self):
+        self.patch(self.h, "still_visible", lambda s: self.calls.append("reverify") or False)
+        self.patch(self.h.time, "sleep", lambda s: self.calls.append(f"hold {s}"))
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d) / "fc.jsonl"
+            self.h.cmd_check_faults(type("A", (), dict(ids=None, out=str(out), hold=150))())
+            row = json.loads(out.read_text().splitlines()[-1])
+        self.assertEqual((row["visible"], row["persists"], row["healthy_after"]), (True, False, True))
+        self.assertLess(self.calls.index("hold 150"), self.calls.index("reverify"))
+        self.assertLess(self.calls.index("reverify"), self.calls.index("restore"))
+
+
+class FaultCheckFixesTest(unittest.TestCase):
+    """Fixes from fault check 7: the user operator removes a quota on a user without a KafkaUser (ANONYMOUS) at its
+    2-minute timer, so producer_byte_rate sits on the producer's client id; the resize revert pauses reconciliation
+    before it corrects the recorded size, so a reconciliation still running with 2Gi cannot write 2Gi back."""
+
+    def test_producer_quota_is_on_the_client_id_in_fault_and_evidence(self):
+        q = (ROOT / "mcp_harness/faults/quota.sh").read_text()
+        self.assertIn("CLIENT=perf-producer-client", q)
+        self.assertIn('--alter --entity-type clients --entity-name "$CLIENT" --add-config producer_byte_rate=300', q)
+        self.assertNotIn("--entity-name ANONYMOUS --add-config", q)
+        sc = {json.loads(x)["id"]: json.loads(x) for x in (ROOT / "mcp_harness/scenarios.jsonl").read_text().splitlines()}
+        ev = [e for e in sc["quota-producer-byte-rate"]["reference_evidence"] if e["tool"] == "kafka_configs_describe"]
+        self.assertEqual([(e["match"]["entity_type"], e["match"]["entity_name"]) for e in ev],
+                         [("clients", "(perf-producer-client)?")])
+
+    def test_resize_revert_pauses_before_it_corrects_and_unpauses_last(self):
+        s = (ROOT / "mcp_harness/faults/storage.sh").read_text()
+        r = s[s.index("revert:resize_not_supported)"):]
+        r = r[:r.index(";;")]
+        order = [r.index(x) for x in ("pause-reconciliation=true", "wait_until", "strimzipodset kafka-broker",
+                                      "replace -f")]
+        self.assertEqual(order, sorted(order))
 
 
 if __name__ == "__main__":

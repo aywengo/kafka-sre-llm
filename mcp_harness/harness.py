@@ -1,7 +1,8 @@
 """Runner of the MCP harness on the local kind cluster (CPU and Docker only; no network after fetch.sh).
 
-    .venv/bin/python mcp_harness/harness.py check-faults [--ids ID ...] --out FILE.jsonl
-        per scenario: inject (twice: idempotent), poll verify until the fault is visible, revert, reset to healthy
+    .venv/bin/python mcp_harness/harness.py check-faults [--ids ID ...] [--hold 30] --out FILE.jsonl
+        per scenario: inject (twice: idempotent), poll verify until the fault is visible, verify once more after
+        --hold seconds (does the fault persist?), revert, reset to healthy
     .venv/bin/python mcp_harness/harness.py run --model stub [--ids ID ...] --out RUN_DIR
     .venv/bin/python mcp_harness/harness.py run --model openai --model-name NAME [--base-url URL] --out RUN_DIR
         per scenario: healthy check, inject, verify, the diagnosis loop (trace RUN_DIR/traces/<id>.jsonl), revert,
@@ -68,6 +69,12 @@ def wait_verify(sc):
             return False, round(el, 1)
         log(f"  {sc['id']}: fault not visible yet ({el:.0f} s)")
         time.sleep(10)
+
+
+def still_visible(sc):
+    """One more verify: a fault some controller undoes on its own is no fault to diagnose."""
+    code, _ = sh(sc["verify"], timeout=120)
+    return code == 0
 
 
 def inject_verified(sc):
@@ -195,16 +202,20 @@ def cmd_check_faults(a):
         if not ensure_healthy():
             sys.exit("cluster not healthy; stopped")
         t = time.monotonic()
-        ok, secs, aborted = False, 0.0, None
+        ok, secs, aborted, persists = False, 0.0, None, None
         try:
             ok, secs = inject_verified(sc)
             log(f"  verify: {'VISIBLE' if ok else 'NOT VISIBLE'} after {secs} s")
+            if ok and a.hold > 0:
+                time.sleep(a.hold)
+                persists = still_visible(sc)
+                log(f"  after {a.hold} s: {'still visible' if persists else 'GONE'}")
         except Exception as e:  # noqa: BLE001 - only the type is printed
             aborted = type(e).__name__
             log(f"  aborted: {aborted}")
         finally:
             healthy = restore(sc)
-        row = {"id": sc["id"], "visible": ok, "verify_seconds": secs, "healthy_after": healthy,
+        row = {"id": sc["id"], "visible": ok, "verify_seconds": secs, "persists": persists, "healthy_after": healthy,
                "seconds": round(time.monotonic() - t, 1), **({"aborted": aborted} if aborted else {})}
         with out.open("a") as f:
             f.write(json.dumps(row) + "\n")
@@ -269,6 +280,8 @@ def cmd_run(a):
                     row["diagnosis"]["error"] = res["error"]
                 log(f"  diagnosis: {res['stop']}, {res['turns']} turns, calls {res['calls']}, "
                     f"after the budget {res['after_budget_calls']}")
+                row["visible_after"] = still_visible(sc)  # the fault was still there when the session ended
+                log(f"  fault still visible after the session: {'yes' if row['visible_after'] else 'NO'}")
         except Exception as e:  # noqa: BLE001 - only the type is printed: a message can carry the server URL
             aborted = row["aborted"] = type(e).__name__
             log(f"  aborted: {aborted}")
@@ -294,6 +307,7 @@ def main(argv=None):
     c = sub.add_parser("check-faults")
     c.add_argument("--ids", nargs="*")
     c.add_argument("--out", required=True)
+    c.add_argument("--hold", type=int, default=30, help="seconds to wait before verifying once more (0: no check)")
     r = sub.add_parser("run")
     r.add_argument("--model", choices=["stub", "openai"], required=True)
     r.add_argument("--model-name")
