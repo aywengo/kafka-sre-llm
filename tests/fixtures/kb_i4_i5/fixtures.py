@@ -108,15 +108,19 @@ def ledger_text(den_sha):
 
 
 def terms_rows():
+    items_sha = hashlib.sha256(jl(ITEMS).encode("utf-8")).hexdigest()
     out = []
     for it in ITEMS:
         q = it["question"] + (("\n\nEvidence:\n" + it["evidence"]) if it.get("evidence") else "")
         msgs = prompts.expand_messages(q)
         blob = json.dumps([{"role": m["role"], "content": m["content"]} for m in msgs], sort_keys=True, ensure_ascii=False,
                           separators=(",", ":")).encode("utf-8")
-        out.append({"id": it["id"], "expansion": "widget operator, reconcile, pool, labels, annotations, drain, interval", "model": "qwen-stub",
+        out.append({"id": it["id"], "search_terms": "widget operator, reconcile, pool, labels, annotations, drain, interval",
+                    "terms": ["widget operator", "reconcile", "pool", "labels", "annotations", "drain", "interval"], "terms_malformed": False,
+                    "raw_reply": "widget operator, reconcile, pool, labels, annotations, drain, interval", "model": "qwen-stub",
+                    "settings": {"max_tokens": 300, "temperature": 0}, "items_sha256": items_sha, "step": "S0",
                     "prompt_sha256": hashlib.sha256(blob).hexdigest(), "prompt_chars": sum(len(m["content"]) for m in msgs),
-                    "max_tokens": 300, "tokens": 12, "truncated": False, "seconds": 0.1})
+                    "tokens": 12, "truncated": False, "seconds": 0.1})
     return out
 
 

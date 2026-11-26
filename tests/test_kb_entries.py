@@ -197,8 +197,8 @@ class Merge(Base):
         self.assertLessEqual(len(out), 10)
         self.assertEqual(len(out) - 6, len(info["added"]))
         self.assertTrue(0 < len(info["added"]) <= 4)
-        self.assertTrue(all(i["id"].startswith("kbe-") and i["entry"] for i in out[6:]))
-        self.assertEqual([i["id"] for i in out[6:]], info["added"])
+        self.assertTrue(all(i["id"].startswith("kbe:kbe-") and i["entry"] for i in out[6:]))
+        self.assertEqual([i["id"] for i in out[6:]], [KE.PACK_PREFIX + a for a in info["added"]])
 
     def test_the_item_is_the_rendered_entry(self):
         kb = self.load()
@@ -233,7 +233,7 @@ class Merge(Base):
         self.assertEqual(info["added"][0], first)
         self.assertLessEqual(len(prompts.pack_text(out)), need)
         for it in out[6:]:
-            self.assertEqual(prompts.pack_text([it]), kb.byid[it["id"]]["rendered"])    # whole
+            self.assertEqual(prompts.pack_text([it]), kb.byid[it["id"][len(KE.PACK_PREFIX):]]["rendered"])    # whole
         out, info = kb.merge(fz, Q, "widget", max_chars=need - 1)
         self.assertNotIn(first, info["added"])
         self.assertLessEqual(len(prompts.pack_text(out)), need - 1)
@@ -324,9 +324,9 @@ class Merge(Base):
             back = KE.resolve_pack(ids, kb)
         self.assertEqual([prompts.pack_text([x]) for x in back], [prompts.pack_text([x]) for x in out])
         with self.assertRaises(KeyError):
-            KE.resolve_pack(["kbe-0000000000000000"], kb)
+            KE.resolve_pack(["kbe:kbe-0000000000000000"], kb)
         with self.assertRaises(KeyError):
-            KE.resolve_pack(["kbe-0000000000000000"], None)
+            KE.resolve_pack(["kbe:kbe-0000000000000000"], None)
 
 
 class OptionOffIsByteIdentical(Base):
@@ -440,7 +440,7 @@ class OptionOn(Base):
         self.assertIn(pipeline.KB_ENTRIES_REASON, extra["unmeasured_reasons"])
         self.assertFalse(extra["measured"])
         self.assertEqual(extra["chunk_ids"][:6], [c["id"] for c in self.fz()])
-        self.assertEqual(extra["chunk_ids"][6:], extra["kb_entries"]["added"])
+        self.assertEqual(extra["chunk_ids"][6:], [KE.PACK_PREFIX + a for a in extra["kb_entries"]["added"]])
         self.assertEqual(len(extra["sources"]), len(extra["chunk_ids"]))
 
 

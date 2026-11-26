@@ -3,7 +3,7 @@
 
   packs     for each D7 scenario: arm A (the frozen pack on the stored search terms) and arm K (the same frozen pack, then up to 4
             fact entries, kafka_sre_rag/kb_entries.py), written in the replay format of work/m7/six_arm/packs_frozen_d5.jsonl
-            (id, pack, error) with a .manifest.json, so scripts/eval2.py --replay-packs can use them (K lists chunk ids and `kbe-`
+            (id, pack, error) with a .manifest.json, so scripts/eval2.py --replay-packs can use them (K lists chunk ids and `kbe:` 
             entry ids; kb_entries.resolve_pack turns them into items). Also the depth controls: the frozen ranking's chunks to 10
             (top10) and r4g2's pack, for the covering-set count only. Resumable; a line per scenario; refuses an existing output.
   bundles   the blind rating bundles: per scenario the union of both packs (which is the K pack), 1 to 3 decoy entries (written from
@@ -15,16 +15,21 @@
             label or a quote that is not verbatim are dropped and counted. The denominator is read from the ledger (its file and
             sha256; the file's sha256 must equal it). Refuses any unrated point. Prints the bar part and the parts of the row.
 
-Search terms (written by task I7, one row per scenario, work/m7/d7/search_terms.jsonl):
-  {"id": scenario id, "expansion": text, "model": id, "prompt_sha256": sha256 of the canonical messages of
-   prompts.expand_messages(full_question(item)) (eval2.messages_fingerprint's form), "prompt_chars": int, "max_tokens": int,
-   "tokens": int, "truncated": bool, "seconds": float}; ids equal the items' ids; prompt_sha256 is checked here.
+Search terms (written by task I7, work/m7/d7/search_terms.jsonl): one row per scenario in items order, with the fields id,
+  search_terms, terms, terms_malformed, raw_reply, prompt_sha256, prompt_chars, model, settings, items_sha256, tokens, truncated,
+  seconds, step ("S0") and, in stub rows only, stub. The `search_terms` string is replayed exactly as stored (it is what
+  retrieval.select receives); `terms` is never used. Here: ids equal the items' ids, prompt_sha256 is the sha256 of the canonical
+  messages of prompts.expand_messages(full_question(item)) (eval2.messages_fingerprint's form), items_sha256 (when present) is the
+  items file's, and a stub row is refused unless --stand-in (a dry run).
+Pack ids: a chunk is listed by its id, an entry by "kbe:" + its id (kb_entries.PACK_PREFIX); evalhooks.chunks_by_ids (so
+  scripts/eval2.py answer --replay-packs) resolves them through kafka_sre_rag/kb_entries.py against the record's hash.
 Rating file (one row per scenario and point; a second rater's file has the same form):
   {"id": scenario id, "point": must id, "sets": [{"items": ["i03"], "quotes": {"i03": "verbatim text"}}, ...], "rater": name}
   sets [] means that no item states the point; a missing row or a missing "sets" is an unrated point.
 Exit codes: 0 done; 1 a check of a run failed; 2 refused or an input is missing.
 """
 import argparse
+import datetime
 import hashlib
 import json
 import math
@@ -38,6 +43,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 from kafka_sre_rag import config, prompts  # noqa: E402
+from kafka_sre_rag.kb_entries import PACK_PREFIX  # noqa: E402
 
 BAR_PP = 15.0
 TOP10 = (10, 24000)                       # the depth control: the frozen selection rule with 10 items and the entries pack's cap
@@ -119,7 +125,7 @@ def load_chunks(index_path=None):
     return {c["id"]: c for c in read_jsonl(p)}
 
 
-def load_terms(path, items, expect_sha=None):
+def load_terms(path, items, expect_sha=None, items_sha=None, allow_stub=False):
     """The stored search terms, checked against the items and the runtime's expansion call."""
     p = Path(path)
     if not p.is_file():
@@ -137,8 +143,12 @@ def load_terms(path, items, expect_sha=None):
     by = {r["id"]: r for r in rows}
     for it in items:
         r = by[it["id"]]
-        if not isinstance(r.get("expansion"), str):
-            raise Refused(f"{it['id']}: no expansion text")
+        if not isinstance(r.get("search_terms"), str):
+            raise Refused(f"{it['id']}: no search_terms string")
+        if r.get("stub") and not allow_stub:
+            raise Refused(f"{it['id']}: a stub row (a dry run's search terms are not used for real packs)")
+        if items_sha and r.get("items_sha256") not in (None, items_sha):
+            raise Refused(f"{it['id']}: the row was made for other items (items_sha256 differs)")
         got = messages_fingerprint(prompts.expand_messages(full_question(it)))[0]
         if r.get("prompt_sha256") != got:
             raise Refused(f"{it['id']}: prompt_sha256 is not that of prompts.expand_messages(full_question(item))")
@@ -155,7 +165,8 @@ class StandInReranker:
 
 def pack_manifest(name, ids, path, extra):
     return {"kind": "m7-d7-packs", "count": len(ids), "pack_file_sha256": sha256_file(path), "setting": name,
-            "source": "scripts/m7_d7_served.py packs", **extra}
+            "source": "scripts/m7_d7_served.py packs",
+            "created_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), **extra}
 
 
 def cmd_packs(a):
@@ -163,7 +174,7 @@ def cmd_packs(a):
     items = read_jsonl(a.items)
     if not items:
         raise Refused(f"no items in {a.items}")
-    terms, terms_sha = load_terms(a.terms, items, a.terms_sha256)
+    terms, terms_sha = load_terms(a.terms, items, a.terms_sha256, sha256_file(a.items), allow_stub=a.stand_in)
     out_dir = Path(a.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     names = ("frozen", "entries", "top10", "r4g2")
@@ -189,7 +200,7 @@ def cmd_packs(a):
     print(f"[packs] {len(items)} scenarios, {len(done)} already done, {len(todo)} to do", flush=True)
     for n, it in enumerate(todo, 1):
         t0 = time.monotonic()
-        q, exp = full_question(it), terms[it["id"]]["expansion"]
+        q, exp = full_question(it), terms[it["id"]]["search_terms"]
         frozen = retrieval.select(q, exp, index_path=ip)
         t1 = time.monotonic()
         merged, info = kb.merge(frozen, q, exp)
@@ -274,18 +285,18 @@ def cmd_bundles(a):
         cover = sorted({c for v in spts.values() for s in v["sets"] for c in s})
         raw = []                                              # (role, type, id, item dict)
         for uid in pk_k[sid]:
-            if uid.startswith("kbe-"):
-                raw.append(("pack", "entry", uid, kb.item(uid)))
+            if uid.startswith(PACK_PREFIX):
+                raw.append(("pack", "entry", uid, kb.item(uid[len(PACK_PREFIX):])))
             else:
                 if uid not in chunks:
                     raise Refused(f"{sid}: chunk {uid} is not in the chunk index")
                 raw.append(("pack", "chunk", uid, chunks[uid]))
         # decoys: entries written from the covering chunks (a source of the entry is one) that the K pack does not hold
-        cand = sorted((e["id"] for e in kb.rows if e["id"] not in in_k and any(s["id"] in cover for s in e["sources"])),
-                      key=lambda eid: sort_key(a.seed, "decoy", sid, eid))
+        cand = sorted((PACK_PREFIX + e["id"] for e in kb.rows if PACK_PREFIX + e["id"] not in in_k
+                       and any(s["id"] in cover for s in e["sources"])), key=lambda uid: sort_key(a.seed, "decoy", sid, uid))
         n_dec = DECOYS[0] + int(sort_key(a.seed, "ndecoy", sid)[:8], 16) % (DECOYS[1] - DECOYS[0] + 1)
-        for eid in cand[:n_dec]:
-            raw.append(("decoy", "entry", eid, kb.item(eid)))
+        for uid in cand[:n_dec]:
+            raw.append(("decoy", "entry", uid, kb.item(uid[len(PACK_PREFIX):])))
         if not cand:
             no_decoy.append(sid)
         n_ctrl = math.ceil(CONTROL_SHARE * len(raw) / (1 - CONTROL_SHARE))
@@ -503,11 +514,11 @@ def compute(a):
     for nm, fam in (("frozen", a.packs_frozen), ("entries_pack_chunks", a.packs_entries), ("top10", a.packs_top10), ("r4g2", a.packs_r4g2)):
         if not fam:
             continue
-        pm = {r["id"]: [x for x in r["pack"] if not x.startswith("kbe-")] for r in read_jsonl(fam)}
+        pm = {r["id"]: [x for x in r["pack"] if not x.startswith(PACK_PREFIX)] for r in read_jsonl(fam)}
         cov["denominator"][nm] = cover_count(denom, pts, pm)
         cov["whole_d7"][nm] = cover_count([k for k in covered if k[0] in sids], pts, pm)
     res["covering_set_count"] = cov
-    n_with = sum(any(x.startswith("kbe-") for x in pk["K"][s]) for s in sids)
+    n_with = sum(any(x.startswith(PACK_PREFIX) for x in pk["K"][s]) for s in sids)
     n_rated = sum(any(entry_sets[k] for k in allpts if k[0] == s) for s in sids)
     res["entries_in_packs"] = {"scenarios": len(sids), "with_an_entry_in_the_pack": n_with, "with_an_entry_in_a_rated_set": n_rated}
     ctrl = [(s, c) for s in sids for c in key["scenarios"][s]["controls"]]

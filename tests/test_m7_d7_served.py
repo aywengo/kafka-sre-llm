@@ -94,7 +94,7 @@ class Base(unittest.TestCase):
                     if all(c in by_id for c in cs):
                         sets.append(self.named([by_id[c] for c in cs]))
                     for it in items:
-                        if it["type"] == "entry" and it["role"] == "pack" and sorted(s["id"] for s in self.rows[it["id"]]["sources"]) == sorted(cs):
+                        if it["type"] == "entry" and it["role"] == "pack" and sorted(s["id"] for s in self.rows[it["id"][len(KE.PACK_PREFIX):]]["sources"]) == sorted(cs):
                             sets.append(self.named([it]))
                 if extra:
                     extra(sid, m["id"], items, sets)
@@ -120,7 +120,7 @@ class Base(unittest.TestCase):
                     for cs in m["chunk_sets"]:
                         if set(cs) <= pack:
                             return True
-                        if any(i.startswith("kbe-") and sorted(s["id"] for s in self.rows[i]["sources"]) == sorted(cs) for i in pack):
+                        if any(i.startswith("kbe:") and sorted(s["id"] for s in self.rows[i[4:]]["sources"]) == sorted(cs) for i in pack):
                             return True
                     return False
                 exp[(r["id"], m["id"])] = {"A": srv(A[r["id"]]), "K": srv(K[r["id"]])}
@@ -140,12 +140,16 @@ class Terms(Base):
         self.assertEqual(len(by), 3)
         rows = [json.loads(l) for l in self.P["search_terms.jsonl"].read_text().splitlines()]
         for name, mut in (("hash", lambda r: r[0].update(prompt_sha256="0" * 64)), ("ids", lambda r: r.pop()), ("dup", lambda r: r.append(r[0])),
-                          ("text", lambda r: r[0].update(expansion=None))):
+                          ("text", lambda r: r[0].update(search_terms=None)),
+                          ("stub", lambda r: r[0].update(stub=True)), ("items", lambda r: r[0].update(items_sha256="0" * 64))):
             rr = copy.deepcopy(rows)
             mut(rr)
             bad = self.write_rating(rr, "t.jsonl")
             with self.assertRaises(S.Refused, msg=name):
-                S.load_terms(bad, items)
+                S.load_terms(bad, items, None, S.sha256_file(self.P["items.jsonl"]))
+        rr = copy.deepcopy(rows)
+        rr[0]["stub"] = True
+        S.load_terms(self.write_rating(rr, "t.jsonl"), items, allow_stub=True)          # a dry run may use stub rows
         with self.assertRaises(S.Refused):
             S.load_terms(self.P["search_terms.jsonl"], items, "0" * 64)
         with self.assertRaises(S.Refused):
@@ -166,6 +170,7 @@ class Packs(Base):
             self.assertEqual((man["kind"], man["count"], man["setting"]), ("m7-d7-packs", 3, name))
             self.assertEqual(man["pack_file_sha256"], hashlib.sha256(path.read_bytes()).hexdigest())
             self.assertIsNone(man.get("mode"))
+            self.assertRegex(man["created_at"], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
         self.assertTrue(eval2.read_manifest(self.out / "packs_entries_d7.jsonl")["stand_in"])
 
     def test_entries_pack_starts_with_the_frozen_pack_and_has_at_most_four_more(self):
@@ -174,8 +179,8 @@ class Packs(Base):
         for s in A:
             self.assertEqual(K[s][:len(A[s])], A[s])
             self.assertTrue(len(A[s]) <= len(K[s]) <= len(A[s]) + 4)
-            self.assertTrue(all(i.startswith("kbe-") for i in K[s][len(A[s]):]))
-            self.assertTrue(all(not i.startswith("kbe-") for i in A[s]))
+            self.assertTrue(all(i.startswith("kbe:kbe-") for i in K[s][len(A[s]):]))
+            self.assertTrue(all(not i.startswith("kbe") for i in A[s]))
             self.assertLessEqual(len(self.pk("top10")[s]), 10)
 
     def test_the_frozen_arm_is_the_runtimes_select_itself(self):
@@ -185,15 +190,55 @@ class Packs(Base):
         terms = {r["id"]: r for r in S.read_jsonl(self.P["search_terms.jsonl"])}
         with mock.patch.object(retrieval.RT, "reranker", lambda: stand):
             for it in S.read_jsonl(self.P["items.jsonl"]):
-                want = [c["id"] for c in retrieval.select(S.full_question(it), terms[it["id"]]["expansion"], index_path=str(self.P["chunks.jsonl"]))]
+                want = [c["id"] for c in retrieval.select(S.full_question(it), terms[it["id"]]["search_terms"], index_path=str(self.P["chunks.jsonl"]))]
                 self.assertEqual(self.pk("frozen")[it["id"]], want)
 
     def test_replayed_entry_ids_resolve_to_items(self):
         self.make_packs()
         kb = KE.KbEntries.load(self.record, index_path=self.P["entries_index.jsonl"], reranker=S.StandInReranker())
         ids = self.pk("entries")["fx-01"]
+        self.assertTrue(any(i.startswith("kbe:") for i in ids))
         items = KE.resolve_pack(ids, kb, index_path=str(self.P["chunks.jsonl"]))
         self.assertEqual([i["id"] for i in items], ids)
+
+    def test_a_replayed_k_pack_gives_the_prompt_of_ask_with_kb_entries(self):
+        from kafka_sre_rag import config, evalhooks, pipeline, retrieval
+        from test_eval2 import Gen
+        self.make_packs()
+        stand = S.StandInReranker()
+        kb = KE.KbEntries.load(self.record, index_path=self.P["entries_index.jsonl"], reranker=stand)
+        terms = {r["id"]: r for r in S.read_jsonl(self.P["search_terms.jsonl"])}
+        idx = str(self.P["chunks.jsonl"])
+        for it in S.read_jsonl(self.P["items.jsonl"]):
+            q, exp = S.full_question(it), terms[it["id"]]["search_terms"]
+            with mock.patch.object(retrieval.RT, "reranker", lambda: stand):
+                frozen = retrieval.select(q, exp, index_path=idx)
+            g_ask = Gen()
+            with mock.patch("kafka_sre_rag.retrieval.select", return_value=frozen):
+                g_ask.chat = (lambda real, e: (lambda m, n, t=None: (e, 1, False) if m[0]["content"] == prompts.EXPAND_SYSTEM else real(m, n, t)))(g_ask.chat, exp)
+                ans = pipeline.ask(q, g_ask, config.load(), kb_entries=kb)
+            # the harness's replay: the stored K pack, resolved through chunks_by_ids against the record (default_kb), no search
+            g_rep = Gen()
+            with mock.patch.object(KE, "default_kb", return_value=kb):
+                r = evalhooks.run_item(q, g_rep, config.load(), pack_ids=self.pk("entries")[it["id"]], index_path=idx)
+            self.assertEqual(r["messages"], ans.messages, it["id"])
+            self.assertEqual(r["pack"], self.pk("entries")[it["id"]])
+            self.assertIn("Fact entry: ", r["messages"][1]["content"])
+
+    def test_default_kb_checks_the_record_hash(self):
+        KE._DEFAULT.clear()
+        self.addCleanup(KE._DEFAULT.clear)
+        with self.assertRaises(KE.KbEntriesError):
+            KE.default_kb(self.tmp / "no_such_record.json")
+        self.record.write_text(json.dumps(dict(json.loads(self.record.read_text()), sha256="0" * 64)))
+        with mock.patch.object(KE, "_index_path", return_value=self.P["entries_index.jsonl"]):
+            with self.assertRaises(KE.KbEntriesError):
+                KE.default_kb(self.record)
+
+    def test_chunk_only_packs_are_resolved_as_before(self):
+        from kafka_sre_rag import evalhooks
+        got = evalhooks.chunks_by_ids(["c03", "c01"], str(self.P["chunks.jsonl"]))
+        self.assertEqual([c["id"] for c in got], ["c03", "c01"])
 
     def test_a_line_per_scenario_a_done_marker_and_no_overwrite(self):
         out = self.make_packs()
@@ -250,7 +295,7 @@ class Bundles(Base):
             cover = {c for r in map(json.loads, self.P["rubrics.jsonl"].read_text().splitlines()) if r["id"] == sid
                      for m in r["must"] for cs in m["chunk_sets"] for c in cs}
             for d in decoys:
-                e = self.rows[d["id"]]
+                e = self.rows[d["id"][len(KE.PACK_PREFIX):]]
                 self.assertNotIn(d["id"], K_[sid])
                 self.assertTrue(any(s["id"] in cover for s in e["sources"]))
             for c in (i for i in items if i["role"] == "control"):
@@ -265,7 +310,7 @@ class Bundles(Base):
         key = self.make_bundles()
         for sid, sc in key["scenarios"].items():
             text = (self.tmp / "bundles" / f"bundle_{sid}.md").read_text()
-            for bad in ("decoy", "control", "frozen", "kbe-", "arm ", "K pack", "entries pack", "retrieved"):
+            for bad in ("decoy", "control", "frozen", "kbe-", "kbe:", "arm ", "K pack", "entries pack", "retrieved"):
                 self.assertNotIn(bad, text, (sid, bad))
             for it in sc["items"]:
                 self.assertIn(f"### {it['label']}", text)
@@ -494,8 +539,8 @@ class Count(Base):
 
 class Pure(unittest.TestCase):
     ITEMS = {"i01": {"label": "i01", "role": "pack", "type": "chunk", "id": "c1", "text": "T\nalpha beta"},
-             "i02": {"label": "i02", "role": "pack", "type": "entry", "id": "kbe-1", "text": "T\ngamma  delta"},
-             "i03": {"label": "i03", "role": "decoy", "type": "entry", "id": "kbe-2", "text": "T\nalpha beta"},
+             "i02": {"label": "i02", "role": "pack", "type": "entry", "id": "kbe:kbe-1", "text": "T\ngamma  delta"},
+             "i03": {"label": "i03", "role": "decoy", "type": "entry", "id": "kbe:kbe-2", "text": "T\nalpha beta"},
              "i04": {"label": "i04", "role": "control", "type": "chunk", "id": "c9", "text": "T\nalpha beta"}}
 
     def sets(self, *items, quotes=None):
@@ -517,9 +562,9 @@ class Pure(unittest.TestCase):
 
     def test_served_needs_every_item_of_the_set_in_the_pack(self):
         self.assertTrue(S.served([("i01",)], self.ITEMS, {"c1"}))
-        self.assertTrue(S.served([("i01", "i02")], self.ITEMS, {"c1", "kbe-1"}))
+        self.assertTrue(S.served([("i01", "i02")], self.ITEMS, {"c1", "kbe:kbe-1"}))
         self.assertFalse(S.served([("i01", "i02")], self.ITEMS, {"c1"}))             # an entry credits the arm that holds it
-        self.assertFalse(S.served([("i04",)], self.ITEMS, {"c1", "kbe-1"}))           # a control is in no pack
+        self.assertFalse(S.served([("i04",)], self.ITEMS, {"c1", "kbe:kbe-1"}))           # a control is in no pack
 
     def test_ledger_parsing(self):
         h = "a" * 64

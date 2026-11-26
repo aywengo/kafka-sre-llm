@@ -10,6 +10,9 @@ GROUNDED_MODES = tuple(prompts.GROUNDED)  # EXPERIMENTAL: grounded-g1, grounded-
 
 def chunks_by_ids(ids, index_path=None):
     """Full chunk dicts for the given ids, in the given order. Raises KeyError for an id the index lacks."""
+    if any(str(i).startswith("kbe:") for i in ids):  # EXPERIMENTAL (M7 I4): entries of a stored K pack; chunk-only packs are as before
+        from . import kb_entries
+        return kb_entries.resolve_pack(ids, kb_entries.default_kb(), index_path)
     from . import retrieval
     path = str(index_path or config.index_file())
     by_id = {c["id"]: c for c in retrieval.RT.index(path)[0]}

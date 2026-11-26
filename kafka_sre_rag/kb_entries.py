@@ -31,6 +31,7 @@ MAX_ITEMS, MAX_CHARS = 10, 24000        # the whole pack after the merge (sectio
 POOL = 24                                # BM25 candidates that are reranked
 PASSAGE_CHARS = 1500                     # a reranker passage, as for chunks
 RRF_K = 60
+PACK_PREFIX = "kbe:"                     # an entry in a stored pack (replay format): PACK_PREFIX + the entry's id
 RECORD_FIELDS = ("schema", "file", "sha256", "entries", "slice_sha256", "writer", "checker", "created")
 
 
@@ -173,7 +174,7 @@ class KbEntries:
     def item(self, entry_id, bm25_rank=None, ce_score=None):
         e = self.byid[entry_id]
         it = kb_entry.render(e)
-        it["id"] = e["id"]                 # so that a pack lists entries by id like chunks (the item has no other use of it)
+        it["id"] = PACK_PREFIX + e["id"]   # a pack lists entries by this id, as it lists chunks by theirs; replay resolves it
         it.update(bm25_rank=bm25_rank, ce_score=ce_score, entry=True)
         return it
 
@@ -208,18 +209,30 @@ class KbEntries:
 
 
 # ---------------------------------------------------------------- stored packs
+_DEFAULT = {}
+
+
+def default_kb(record_path=None):
+    """The entries of the record (hash checked), loaded once per record; for the replay of a stored pack (no search is made)."""
+    key = str(record_path or RECORD)
+    if key not in _DEFAULT:
+        _DEFAULT[key] = KbEntries.load(record_path)
+    return _DEFAULT[key]
+
+
 def resolve_pack(ids, kb=None, index_path=None):
-    """Pack items for a stored pack (replay): a chunk id from the chunk index, a `kbe-` id from the entries (kb: a KbEntries).
-    Raises KeyError for an id that is in neither. evalhooks.chunks_by_ids does the chunk part only."""
+    """Pack items for a stored pack (replay): a chunk id from the chunk index, a `kbe:` id from the entries (kb: a KbEntries). The
+    items are those of the runtime (kb.item: the same rendering as with --kb-entries). Raises KeyError for an id in neither."""
     from . import evalhooks
-    chunk_ids = [i for i in ids if not str(i).startswith("kbe-")]
+    chunk_ids = [i for i in ids if not str(i).startswith(PACK_PREFIX)]
     chunks = dict(zip(chunk_ids, evalhooks.chunks_by_ids(chunk_ids, index_path))) if chunk_ids else {}
     out = []
     for i in ids:
-        if str(i).startswith("kbe-"):
-            if kb is None or i not in kb.byid:
+        if str(i).startswith(PACK_PREFIX):
+            eid = i[len(PACK_PREFIX):]
+            if kb is None or eid not in kb.byid:
                 raise KeyError(i)
-            out.append(kb.item(i))
+            out.append(kb.item(eid))
         else:
             out.append(chunks[i])
     return out
