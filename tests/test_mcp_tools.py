@@ -373,14 +373,26 @@ class ScorerTest(unittest.TestCase):
             {"type": "call", "name": "k8s_get", "arguments": {"kind": "nodes"}, "status": "ok", "channel": "native", "is_error": True},
             {"type": "call", "name": "k8s_get", "arguments": {"kind": "secrets"}, "status": "violation", "reason": "r", "channel": "text"},
             {"type": "call", "name": "k8s_logs", "arguments": {"namespace": "kafka", "pod": "orders-1"}, "status": "invalid", "channel": "native"},
+            {"type": "request", "turn": "final", "n_calls": 2},
             {"type": "final", "turns": 3, "seconds": 12.5, "stop": "answer", "answer": "a"}]
         r = score.score_trace(events, sc)
         self.assertEqual((r["attempted"], r["valid"], r["violations"], r["invalid"], r["tool_errors"]), (4, 2, 1, 1, 1))
         self.assertEqual((r["relevant"], r["evidence_groups"], r["evidence_hit"]), (1, 2, 1))
         self.assertEqual((r["call_validity"], r["relevant_share"], r["evidence_recall"], r["native_share"]), (0.5, 0.5, 0.5, 0.75))
         self.assertIsNone(r["diagnosis_correct"])
+        self.assertEqual(r["calls_after_cap"], 2)
         s = score.summarize([r, dict(r, violations=0, seconds=20.0)])
         self.assertEqual((s["scenarios"], s["violations"], s["scenarios_with_violation"]), (2, 1, 1))
+
+    def test_paired_compare(self):
+        score = load("score")
+        a = [{"id": str(i), "evidence_recall": 0.5} for i in range(10)]
+        b = [{"id": str(i), "evidence_recall": 0.5 + (0.1 if i % 2 else 0.0)} for i in range(10)] + [{"id": "x", "evidence_recall": 1.0}]
+        c = score.compare(a, b, resamples=2000)
+        self.assertEqual((c["pairs"], c["mean_difference"]), (10, 0.05))
+        self.assertLessEqual(c["interval_90"][0], 0.05)
+        self.assertGreaterEqual(c["interval_90"][1], 0.05)
+        self.assertEqual(c, score.compare(a, b, resamples=2000))  # seeded
 
     def test_stub_script_concretizes_evidence(self):
         h = load("harness")

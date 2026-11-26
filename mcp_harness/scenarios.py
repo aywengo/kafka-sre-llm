@@ -107,14 +107,17 @@ CRASH_MUST_NOT = [NO_DELETE_DATA, "deleting the StrimziPodSet", "scaling the nod
 for variant, what, shows in (
         ("bad_jvm_option", "an unknown JVM option (-XX:+UseStringDeduplicationX) in the node pool's jvmOptions",
          "Unrecognized VM option"),
-        ("heap_too_small", "a heap of 8 MB (-Xms/-Xmx 8m) in the node pool's jvmOptions", "OutOfMemoryError or too small heap")):
+        ("memory_limit_below_heap", "a memory limit of 256Mi below the 512m heap it commits at start (-Xms 512m with "
+         "AlwaysPreTouch)", "the container killed with OOMKilled")):
     add("broker_crashloop", variant,
         "After a change to our Kafka node pool in namespace kafka one broker pod keeps restarting and the cluster "
         "reports under-replicated partitions. What happened?",
         f"The KafkaNodePool broker was changed to {what}; the rolled broker fails at start and crash-loops, and the "
         "operator stopped the rolling update.",
         [*pods("one kafka-broker pod in CrashLoopBackOff", r"kafka-broker-\d?"),
-         logs(r"kafka-broker-\d", shows), *obj("kafkanodepools", "broker", "spec.jvmOptions with the bad value"),
+         (logs(r"kafka-broker-\d", shows) if variant == "bad_jvm_option" else
+          ev("k8s_describe", shows, namespace="kafka", kind="pods", name=r"(kafka-broker-\d)?")),
+         *obj("kafkanodepools", "broker", "spec.jvmOptions / resources with the bad value"),
          ev("kafka_topics_describe", "under-replicated partitions", namespace="kafka")],
         CRASH_MUST_NOT, "broker_crashloop", timeout=420)
 
@@ -221,27 +224,31 @@ for variant, addr, cause in (
          ev("k8s_get", "the real bootstrap service and its ports", namespace="kafka", kind="services", name=r"(kafka-kafka-bootstrap)?")],
         BOOT_MUST_NOT, "bootstrap", timeout=180)
 
-# 8 min_isr (2)
-add("min_isr", "above_replication_factor",
-    "The orders-producer in namespace kafka gets errors on every send to topic orders, although all three brokers "
-    "are up. Why?",
-    "Topic orders has min.insync.replicas=4 with replication factor 3, so acks=all writes fail with "
-    "NotEnoughReplicasException.",
-    [logs(PRODUCER, "NotEnoughReplicasException"),
-     ev("kafka_topics_describe", "Configs: min.insync.replicas=4, ReplicationFactor 3", namespace="kafka", topic=r"(orders)?"),
-     ev("kafka_configs_describe", "min.insync.replicas=4", namespace="kafka", entity_type="topics", entity_name=r"(orders)?"),
-     *obj("kafkatopics", "orders", "spec.config min.insync.replicas: 4")],
-    ["lowering acks to 0 or 1 as the fix", NO_DELETE_DATA, "unclean leader election"], "min_isr", timeout=180)
-add("min_isr", "equal_to_rf_broker_down",
+# 8 min_isr (2). min.insync.replicas above the replication factor is not a fault on Kafka 4.3.2 (writes succeeded with
+# min.insync.replicas=4 and 3 in-sync replicas, observed 2026-11-26), so both variants put it equal to the RF.
+MINISR_MUST_NOT = ["lowering acks to 0 or 1 as the fix", NO_DELETE_DATA, "unclean leader election"]
+add("min_isr", "equal_to_rf_broker_pending",
     "Since one Kafka broker went down in namespace kafka, the orders-producer fails on most sends to topic orders, "
     "although two brokers are still up. Why?",
     "Topic orders has min.insync.replicas=3 equal to its replication factor, and broker kafka-broker-0 is Pending "
-    "(the node is cordoned), so partitions have 2 in-sync replicas and acks=all writes fail.",
-    [logs(PRODUCER, "NotEnoughReplicasException"),
+    "(the node is cordoned), so partitions have 2 in-sync replicas and acks=all writes are rejected with NOT_ENOUGH_REPLICAS.",
+    [logs(PRODUCER, "NOT_ENOUGH_REPLICAS on the produce responses"),
      ev("kafka_topics_describe", "min.insync.replicas=3, ISR of 2", namespace="kafka", topic=r"(orders)?"),
+     ev("kafka_configs_describe", "min.insync.replicas=3", namespace="kafka", entity_type="topics", entity_name=r"(orders)?"),
      *pods("kafka-broker-0 Pending", r"(kafka-broker-0)?"), ev("k8s_get", "node SchedulingDisabled", kind="nodes"),
      *obj("kafkatopics", "orders", "min.insync.replicas: 3")],
-    ["lowering acks to 0 or 1 as the fix", NO_DELETE_DATA, "unclean leader election"], "min_isr", timeout=240)
+    MINISR_MUST_NOT, "min_isr", timeout=240)
+add("min_isr", "equal_to_rf_broker_crashloop",
+    "The orders-producer in namespace kafka keeps retrying its sends to topic orders and hardly gets anything "
+    "through, although two of the three brokers are up. Why?",
+    "Topic orders has min.insync.replicas=3 equal to its replication factor, and one broker crash-loops (an unknown "
+    "JVM option in the node pool), so partitions have 2 in-sync replicas and acks=all writes are rejected with "
+    "NOT_ENOUGH_REPLICAS.",
+    [logs(PRODUCER, "NOT_ENOUGH_REPLICAS on the produce responses"),
+     ev("kafka_topics_describe", "min.insync.replicas=3, ISR of 2", namespace="kafka", topic=r"(orders)?"),
+     ev("kafka_configs_describe", "min.insync.replicas=3", namespace="kafka", entity_type="topics", entity_name=r"(orders)?"),
+     *pods("one kafka-broker pod in CrashLoopBackOff", r"(kafka-broker-\d)?"), *obj("kafkatopics", "orders", "min.insync.replicas: 3")],
+    MINISR_MUST_NOT, "min_isr", timeout=480)
 
 # 9 quota (2)
 add("quota", "consumer_byte_rate",

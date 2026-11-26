@@ -64,6 +64,8 @@ def wait_verify(sc):
 
 
 def inject_verified(sc):
+    # log lines older than the inject do not count for verify (lib.sh pod_logs_match)
+    os.environ["FAULT_SINCE"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     for i in (1, 2):  # twice: an inject must be idempotent
         code, out = sh(sc["inject"], timeout=300)
         log(f"  inject {i}: exit {code}" + (f" {out.strip()[-300:]}" if code else ""))

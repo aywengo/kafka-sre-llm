@@ -10,9 +10,11 @@ vol_patch() {  # vol_patch INDEX SECRET: point volume INDEX of the consumer at a
 }
 case "$action:$variant" in
   inject:truststore_wrong_ca) vol_patch 1 kafka-clients-ca-cert ;;  # the clients CA instead of the cluster CA
-  verify:truststore_wrong_ca) pod_logs_match app=orders-consumer "PKIX|SSLHandshake|certificate" ;;
+  verify:truststore_wrong_ca) pod_logs_match app=orders-consumer "PKIX path|SSLHandshakeException|SSL handshake failed" ;;
   inject:selfsigned_client_cert) K -n kafka set env deploy/orders-consumer KEYSTORE_MODE=selfsigned >/dev/null ;;
-  verify:selfsigned_client_cert) pod_logs_match app=orders-consumer "SSL|authentication|bad_certificate|certificate" && ! group_has_members orders-consumer ;;
+  verify:selfsigned_client_cert)
+    pod_logs_match app=orders-consumer "SSLHandshakeException|SSL handshake failed|bad_certificate|certificate_unknown|Failed authentication" \
+      && ! group_has_members orders-consumer ;;
   inject:user_secret_missing) vol_patch 2 app-consumer-tls ;;
   verify:user_secret_missing)
     K -n kafka get events --field-selector reason=FailedMount -o jsonpath='{.items[*].message}' | grep -q app-consumer-tls ;;

@@ -17,6 +17,11 @@ case "$action:$variant" in
     K -n kafka delete pod kafka-broker-1 --ignore-not-found --wait=true >/dev/null ;;
   verify:pod_missing_operator_down)
     ! K -n kafka get pod kafka-broker-1 >/dev/null 2>&1 && [ "$(urp_count)" -gt 0 ] ;;
-  revert:pod_missing_operator_down) K -n kafka scale deploy strimzi-cluster-operator --replicas=1 >/dev/null ;;
+  revert:pod_missing_operator_down)
+    K -n kafka scale deploy strimzi-cluster-operator --replicas=1 >/dev/null
+    # the restarted StrimziPodSet controller does not recreate a pod deleted while it was down until the
+    # StrimziPodSet changes; a harmless annotation makes it reconcile now
+    wait_until 180 "operator ready" deploy_ready kafka strimzi-cluster-operator
+    K -n kafka annotate strimzipodset kafka-broker mcp-harness/nudge="$(date +%s)" --overwrite >/dev/null ;;
   *) echo "usage: $0 inject|verify|revert pod_pending_node_cordoned|pod_missing_operator_down" >&2; exit 2 ;;
 esac

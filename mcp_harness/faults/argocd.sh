@@ -14,7 +14,7 @@ commit() {  # commit FILE CONTENT-FILE MESSAGE: add a file to the GitOps reposit
 cond_types() { app_field '{.status.conditions[*].type}'; }
 case "$action:$variant" in
   inject:live_edit)
-    K -n kafka patch kafkatopic payments --type merge -p '{"spec":{"config":{"retention.ms":"3600000"}}}' >/dev/null ;;
+    K -n kafka patch kafkatopic payments --type merge -p '{"spec":{"config":{"retention.ms":"3600000"}}}' >/dev/null; argo_refresh ;;
   verify:live_edit) [ "$(app_field '{.status.sync.status}')" = OutOfSync ] ;;
   inject:wrong_path)
     K -n argocd patch application kafka-topics --type merge -p '{"spec":{"source":{"path":"kafka-prod"}}}' >/dev/null; argo_refresh ;;

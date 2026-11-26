@@ -78,8 +78,10 @@ pod_waiting_reason() {  # pod_waiting_reason SELECTOR: waiting reasons of the fi
   K -n kafka get pods -l "$1" -o jsonpath='{range .items[*]}{.status.containerStatuses[0].state.waiting.reason}{" "}{.status.containerStatuses[0].lastState.terminated.reason}{"\n"}{end}'
 }
 pod_logs_match() {  # pod_logs_match SELECTOR REGEX: the recent log of a matching pod (current or previous) matches
-  local p; for p in $(K -n kafka get pods -l "$1" -o name); do
-    { K -n kafka logs "$p" --tail=300 2>/dev/null; K -n kafka logs "$p" --previous --tail=300 2>/dev/null; } | grep -Eq "$2" && return 0
+  # FAULT_SINCE (RFC 3339, set by harness.py at inject time) keeps out lines an earlier scenario left in the log
+  local p since=(); [ -n "${FAULT_SINCE:-}" ] && since=(--since-time="$FAULT_SINCE")
+  for p in $(K -n kafka get pods -l "$1" -o name); do
+    { K -n kafka logs "$p" --tail=300 "${since[@]}" 2>/dev/null; K -n kafka logs "$p" --previous --tail=300 "${since[@]}" 2>/dev/null; } | grep -Eq "$2" && return 0
   done; return 1
 }
 group_has_members() {

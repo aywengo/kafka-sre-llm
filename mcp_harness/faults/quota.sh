@@ -17,7 +17,7 @@ case "$action:$variant" in
     broker_exec "${KC[@]}" --alter --entity-type users --entity-name ANONYMOUS --add-config producer_byte_rate=300 >/dev/null ;;
   verify:producer_byte_rate)
     broker_exec "${KC[@]}" --describe --entity-type users --entity-name ANONYMOUS 2>/dev/null | grep -q producer_byte_rate \
-      && pod_logs_match app=orders-producer "[0-9.]+ ms avg latency" ;;
+      && pod_logs_match app=orders-producer " [0-9]\.[0-9] records/sec" ;;  # throttled to under 10 records a second
   revert:consumer_byte_rate) K -n kafka replace -f "$ROOT/mcp_harness/manifests/kafka.yaml" >/dev/null ;;
   revert:producer_byte_rate)
     if broker_exec "${KC[@]}" --describe --entity-type users --entity-name ANONYMOUS 2>/dev/null | grep -q producer_byte_rate; then
