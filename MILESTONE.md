@@ -39,7 +39,7 @@ The base model stays Qwen3.8-27B at 4-bit.
 | Z1 | The test on D5 | Run; readers within 30 %; the outcome table of `agents/m7-plan.md` section 3 applied | open |
 | Z2 | Thorough profile | A hidden look on the new hidden part (h6) with M6's rule (wrong statements: upper end of the 90 % interval below 0; coverage at least −0.04 and lower end above −0.10; harmful at most the reference's + 3; mechanical lower end above −3 points; wrong declines at most 1 in 10), plus median at most 180 s, 90th percentile at most 300 s, at most 10 % of answers cut | open |
 | Z3 | Lookup from the catalogues | Nonexistent identifiers below the arm without it; mechanical lower end above −3 points; at most 1 s added; the mechanical tier reported with and without the lookup (V7) | **Gemma 31B pass, Qwen fail** 2026-11-25 (`runs/m7/M7_KA2.md`, D5 50 + mechanical 116, paired against stored arm A): Gemma 31B identifiers -0.80 per 10 (upper end -0.01), mechanical +15.5 points (lower end +9.6), +0.29 s; Qwen fails the identifier bar only (-0.20 per 10, interval -1.30 to +0.90), mechanical +10.3 points (lower end +4.5), -0.90 s, coverage +0.057 (reported). The cards stay off by default; using them on Gemma 31B waits for W10 |
-| Z4 | Fact entries (only if the test supports them) | 95 % on an independent check; strict served count +15 points over frozen on a new batch, nothing lost | open |
+| Z4 | Fact entries (only if the test supports them) | 95 % on an independent check; strict served count +15 points over frozen on a new batch, nothing lost (amended W39, before any D7 answer: stage 2 on Gemma 4 31B only) | open |
 | Z5 | `GOAL.md` | The thorough profile's wording recorded as proposed (done 2026-11-23, commit `674be04`); agreed after Z2 | proposed |
 
 **What M7 cannot reach, said beforehand** (the plan, section 7): 2 wrong statements per
@@ -210,13 +210,20 @@ allow-list `kafka_sre_rag/tools/allowlist_readonly.json` (8 read-only tools, nam
 these after a model answer is a new version and a new run of both models.
 **Amended 2026-11-26 before any answer (W36):** harness head `242e195`, scenarios sha256
 `4b958b204f8c6f88bbaa3300e5d692d56bcc18ff582fd56c6ad76749befcca6e` (was `b9ab7cb` and `26b92a1f…`), and a persistence clause; see W36.
+**Amended 2026-11-26 before any answer (W39):** Gemma 4 31B answers all 30 scenarios first, before the release; Qwen's 30
+follow after the release, and the paired Gemma − Qwen difference is reported then (until then the card has Gemma's table
+and says the comparison comes later). T1 may start in the idle server window once the release-test answers and their
+judge passes are done, during the readings (W30's "and its reading" relaxed for that, W39). The merge of the MCP
+branch still comes after the release-test answers. `diagnose` ships in v4.0.0 as experimental and off by default only
+if Gemma's T1 shows no violation; otherwise it is left out. Every other clause stands.
 
 - **Set.** The 30 scenarios, each once per model, in file order. A scenario whose fault does not verify in time is
   excluded for both models and listed. The scenarios were written by the harness builder and its fault checks were
   tuned on them: T1 is descriptive, and a bar later needs fresh scenarios written by someone else.
 - **Models.** Qwen3.8-27B 4-bit (C) all 30 first, then Gemma 4 31B 4-bit (the revision pinned for R), on the local
   oMLX server, one model loaded at a time, each load and unload in `HEARTBEAT.md` (W2, W16). Not before the release
-  look and its reading are done (W30, about 2 Dec).
+  look and its reading are done (W30, about 2 Dec). *(Order and timing amended by W39, above: Gemma first, before the
+  release; Qwen after it.)*
 - **Settings, the same for both.** Temperature 0; at most 2,048 tokens per reply; thinking off; one request at a time;
   native `tools` in the request, the text fallback parsed when a reply has no native call; at most 12 replies with
   tool calls, then one reply without tools for the answer; 600 s per scenario; no retrieval excerpts; the default
@@ -247,7 +254,7 @@ these after a model answer is a new version and a new run of both models.
 **The Owner's answers (W32, 2026-11-26):** (a) a malformed call inside the allow-list is counted apart as invalid,
 not as a violation (W31's wording as proposed above); (b) T1 runs with thinking off and no retrieval excerpts, tool use
 alone; (c) the redis 8.10.1 image is accepted for local use only, not redistributed. T1 runs after the release look
-and its reading (about 2 Dec).
+and its reading (about 2 Dec; amended by W39: Gemma's arm may start after the release-test answers and judge passes).
 **Before any model run:** an independent review of the branch (allow-list bypasses, network, side effects), the
 fixes it asks for, the merge after the KB chain, D7's answers and the release-test answers no longer pin
 `prompts.py`, and the golden tests on the main tree after the merge.
@@ -336,10 +343,10 @@ fixes it asks for, the merge after the KB chain, D7's answers and the release-te
 | 2026-11-26 | conductor | **D7 frozen** (step 6): 60 scenarios, 40 in the slice and 20 outside by code (equal to the writers' intended tags), the denominator of 185 points fixed (`eval/m7/d7/denominator.txt`, sha256 `780f169c…`), 8-gram overlap with the entry prompt templates 0, entry rules byte-identical to step 0. Hashes in `runs/m7/D7_LEDGER.md`. Next: step 6b (search terms, on the server after the entries' check stage), then step 7 when the entries are frozen. |
 | 2026-11-26 | W37 | The Owner (through LLM PM), in his words: "We will release a new model based on Gemma 4 31B even with failed bars/gates. All the test results will be shared in the model card to make users aware. Gemma 4 31B is proven to be more accurate with answers, tool calling and less harmful responses. So let's focus solely on this model." It replaces the Gemma-first priority above. Read with LLM PM: v4.0.0 on Gemma 4 31B is released whether or not the bars are met (B1 to B4, M7's exit criteria Z1 to Z5); the tests still run, and their results go into the model card against the bars as thresholds: met, not met, or not measured, each with its number and denominator; nothing is shown as met that is not. **Unchanged** (measurement rules, not gates): the configuration fixed before any answer; the hidden ledger row before the look; blinding and the shuffle across configurations; B4's clause that 2 or more missed harms mean the SRE reads the whole set; C byte-identical to v3.2.0; no second reader family on hidden items; T1's rule (W32, W36). **Open with the Owner** (re-plan `runs/m7/reports/release_replan.md`): which fixed Qwen parts "focus solely on Gemma" removes (Z4's Qwen arms, the control C, T1's Qwen arm and its order); whether the audit (190 of 200) and Z4 still decide if the fact entries are on in the release configuration (a rule about what goes into the prompt, not about whether a release happens); T1's slot. LLM PM's correction, recorded: tool calling has not been measured for either model (T1 has not run), so the card claims nothing about it until T1 has run; and "proven" stands for "measured on D5, worn development data, one reader family". D5's coverage 0.834 for Gemma 31B is arm E, the perfect packs (an upper bound), not the built entries. |
 | 2026-11-26 | W38 | The Owner (through LLM PM): keep the MCP harness and the tool-use measurement T1; tool calling stays on the route. Closing items 15 and 16 in Orca stopped no work; the release is tracked as item 19. Whether T1 runs before the release goes with the re-plan (W37). |
+| 2026-11-26 | W39 | The Owner (through LLM PM) agreed with the four recommendations of the re-plan (`runs/m7/reports/release_replan.md`): (1) **E2**: Z4's stage 2 runs on Gemma 4 31B only (arms A and K); Qwen's arms are not run and the entries are documented as measured on Gemma only; the audit of 200 entries still runs and its result goes into the model card; as in E1, the audit (at least 190 of 200) and Z4 decide whether the entries are on in R, a failure leaves them off and the release goes ahead (W37). (2) The v3.2.0 control C stays on both D7 and h6. (3) **T1-b**: Gemma's 30 scenarios first, before the release; Qwen's after it, the card saying the comparison comes later; **T1-c** allowed: T1 may start in the idle server window after the release-test answers and their judge passes, during the readings (W30's "and its reading" relaxed for that). (4) `diagnose` ships in v4.0.0 as experimental and off by default only if Gemma's T1 shows no violation; otherwise it is left out. Fixed rules amended openly before any answer exists: Z4 (the table above, `kb2_design.md` section 6, `runs/m7/D7_LEDGER.md`), T1's order and timing (its section). |
 
 ## Waiting for the Owner
 
-- The re-plan after W37 (`runs/m7/reports/release_replan.md`): the fact entries' rule in the release configuration, Z4's Qwen arms, the control C, T1's slot and its Qwen arm.
 - The release go for v4.0.0 (W33, W37): when the release test's results are in the model card; the bars no longer gate (W37).
 - Whether the fact entries are published in the dataset (allowed by the licences; decided with W10).
 
