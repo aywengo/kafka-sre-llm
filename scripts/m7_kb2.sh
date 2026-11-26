@@ -37,24 +37,26 @@
 #   scripts/m7_kb2.sh --full --sanity-reading FILE > runs/m7/logs/m7_kb2.full.out 2>&1 &     (J2, W15's go)
 #   scripts/m7_kb2.sh --full --waiver W27 --sanity-reading FILE > runs/m7/logs/m7_kb2.full.out 2>&1 &     (W27: the Owner's waiver of two bars of the fifth sanity run; FILE is the reading summary JSON
 #        {"run":"sanity4","accepted_read":40,"not_ok":N,"reader":"...","date":"YYYY-MM-DD"}; refused unless the sanity result fails only "gate failures" and "checker accepts", and N is at most 4)
+#   --repin-check "NOTE" (W28): resume a stopped run whose check-side code changed (scripts/kb_check_entries.py, m7_kb2.sh, m7_kb2_rule.py); only when the writer stage is done and the
+#        writer-side pins, the KB prompt texts, the checker and every option are unchanged; logged in the manifest (repins), HEARTBEAT.md and the report. Anything else still refuses.
 #   scripts/m7_kb2.sh --sanity|--full --dry-run --work DIR [plants]     # stub server, stub writer and checker; nothing is written outside DIR
 # Options: --work DIR, --report FILE, --sanity-reading FILE (one JSON object per line: id, rating ok|partial|wrong, reason; the ids of
 #   W/sanity/reading/sanity_reading_key.json), --checker-model ID, --fallback-note TXT; dry runs only: --fail-after STAGE, --plant-foreign ID
 #   (a model of another client loaded at the start), --plant-busy N (the first N status reads show an active request), --plant-stop N (the stub server answers
-#   HTTP 500 after N calls: a stop inside a stage), --plant-wrong-model N (another model answers after N calls: a refusal), --plant-write-bad IDS, --plant-write-retry IDS, --plant-write-gate IDS, --plant-check-bad IDS (comma lists of
+#   HTTP 500 after N calls: a stop inside a stage), --plant-wrong-model N (another model answers after N calls: a refusal), --plant-check-stop N (like --plant-stop, in the check stage only), --plant-write-bad IDS, --plant-write-retry IDS, --plant-write-gate IDS, --plant-check-bad IDS (comma lists of
 #   target chunk ids; see the writer's and checker's headers).
 # The server address and key come from OMLX_URL and OMLX_API_KEY or ~/.config/kafka-sre-llm/; they are never written or printed.
 set -e
 MODE=; WAIVER=; DRY=no; W=work/m7/kb; WSET=no; REPORT=runs/m7/KB2_PILOT.md; RSET=no; READING=; FAILAFTER=; PFOREIGN=; PBUSY=0; PSTOP=
-PWBAD=; PWRETRY=; PWGATE=; PCBAD=; PWRONG=
+PWBAD=; PWRETRY=; PWGATE=; PCBAD=; PWRONG=; PCSTOP=
 DS=DeepSeek-V4.1-Flash-1017-oQ4e-mtp; GLM8=GLM-5.3-Flash-oQ8e-mtp; GLM4=GLM-5.3-Flash-oQ4e; CHK=$GLM8; FBNOTE=
-WCONC=1; CCONC=1; WMAX=3000; CMAX=8000
+WCONC=1; CCONC=1; WMAX=3000; CMAX=8000; REPIN=
 while [ $# -gt 0 ]; do case $1 in
   --sanity) MODE=sanity;; --full) MODE=full;; --dry-run) DRY=yes;;
   --work) W=${2:?}; WSET=yes; shift;; --report) REPORT=${2:?}; RSET=yes; shift;;
-  --sanity-reading) READING=${2:?}; shift;; --waiver) WAIVER=${2:?}; shift;; --checker-model) CHK=${2:?}; shift;; --fallback-note) FBNOTE=${2:?}; shift;;
+  --repin-check) REPIN=${2:?}; shift;; --sanity-reading) READING=${2:?}; shift;; --waiver) WAIVER=${2:?}; shift;; --checker-model) CHK=${2:?}; shift;; --fallback-note) FBNOTE=${2:?}; shift;;
   --fail-after) FAILAFTER=${2:?}; shift;; --plant-foreign) PFOREIGN=${2:?}; shift;; --plant-busy) PBUSY=${2:?}; shift;; --plant-stop) PSTOP=${2:?}; shift;;
-  --plant-write-bad) PWBAD=${2:?}; shift;; --plant-write-retry) PWRETRY=${2:?}; shift;; --plant-write-gate) PWGATE=${2:?}; shift;; --plant-check-bad) PCBAD=${2:?}; shift;; --plant-wrong-model) PWRONG=${2:?}; shift;;
+  --plant-write-bad) PWBAD=${2:?}; shift;; --plant-write-retry) PWRETRY=${2:?}; shift;; --plant-write-gate) PWGATE=${2:?}; shift;; --plant-check-bad) PCBAD=${2:?}; shift;; --plant-wrong-model) PWRONG=${2:?}; shift;; --plant-check-stop) PCSTOP=${2:?}; shift;;
   *) echo "usage: scripts/m7_kb2.sh --sanity|--full [--sanity-reading FILE] [--dry-run --work DIR] (see the header)" >&2; exit 2;; esac
   shift; done
 refuse() { echo "REFUSED: $1; nothing started" >&2; exit 2; }
@@ -64,8 +66,9 @@ R=scripts/m7_kb2_rule.py; N=m7_kb2; L=runs/m7/logs
 case $CHK in "$GLM8") ;; "$GLM4") case "$FBNOTE" in *[![:space:]]*) ;; *) refuse "the checker $GLM4 needs --fallback-note (the conductor's note before the run)";; esac;; *) refuse "the checker is $GLM8 (or $GLM4 with --fallback-note)";; esac
 case $PBUSY in ''|*[!0-9]*) refuse "--plant-busy is a whole number";; esac
 if [ $DRY = no ]; then
-  [ -z "$FAILAFTER$PFOREIGN$PSTOP$PWBAD$PWRETRY$PWGATE$PCBAD$PWRONG" ] && [ "$PBUSY" = 0 ] || refuse "--fail-after and the --plant-* options are for dry runs only"
+  [ -z "$FAILAFTER$PFOREIGN$PSTOP$PWBAD$PWRETRY$PWGATE$PCBAD$PWRONG$PCSTOP" ] && [ "$PBUSY" = 0 ] || refuse "--fail-after and the --plant-* options are for dry runs only"
 fi
+[ -z "$REPIN" ] || case "$REPIN" in *[![:space:]]*) ;; *) refuse "--repin-check needs the conductor's note";; esac
 [ -z "$WAIVER" ] || [ $MODE = full ] || refuse "--waiver is for --full only"
 [ -z "$WAIVER" ] || [ "$WAIVER" = W27 ] || refuse "the only waiver is W27 (MILESTONE.md)"
 if [ $MODE = full ]; then
@@ -207,7 +210,7 @@ fi
 # the gate has passed: the work and log folders are written from here on
 mkdir -p $W $RW $L
 if [ $DRY = yes ]; then
-  export KB_STUB_WRITE_BAD="$PWBAD" KB_STUB_WRITE_RETRY="$PWRETRY" KB_STUB_WRITE_GATE="$PWGATE" KB_STUB_CHECK_BAD="$PCBAD" KB_STUB_STOP_AFTER="$PSTOP" KB_STUB_WRONG_MODEL_AFTER="$PWRONG"
+  export KB_STUB_WRITE_BAD="$PWBAD" KB_STUB_WRITE_RETRY="$PWRETRY" KB_STUB_WRITE_GATE="$PWGATE" KB_STUB_CHECK_BAD="$PCBAD" KB_STUB_STOP_AFTER="$PSTOP" KB_STUB_CHECK_STOP_AFTER="$PCSTOP" KB_STUB_WRONG_MODEL_AFTER="$PWRONG"
   G="scripts/run_guarded.py --other-retries 0 --max-restarts 0 --wait-min 0"; STALL=2     # a dry run never sleeps or restarts (a failure classed as GPU or memory ends it)
 else
   G="scripts/run_guarded.py --heartbeat runs/v3/HEARTBEAT.md --other-retries 0"; STALL=20     # no retry without the chain's server gate (review of f45dd13)
@@ -221,8 +224,10 @@ gstate() { sub=$1; shift
     --opt "writer_concurrency=$WCONC" --opt "checker_concurrency=$CCONC" --opt "writer_max_tokens=$WMAX" --opt "checker_max_tokens=$CMAX" \
     --opt "selection=$SEL" --opt "sanity_reading_sha256=$RSHA" ${WAIVER:+--opt "waiver=$WAIVER"} --info "git_head=$GIT_HEAD" "$@"; }
 SCOUT=$(mktemp "${TMPDIR:-/tmp}/m7_kb2_startcheck.XXXXXX")
-if ! gstate start-check > $SCOUT 2>&1; then cat $SCOUT >&2; rm -f $SCOUT; moveaside; refuse "the start check failed (see above; nothing was moved or deleted)"; fi
-cat $SCOUT; rm -f $SCOUT
+if ! gstate start-check ${REPIN:+--repin-check "$REPIN"} > $SCOUT 2>&1; then cat $SCOUT >&2; rm -f $SCOUT; moveaside; refuse "the start check failed (see above; nothing was moved or deleted)"; fi
+cat $SCOUT
+if grep -q '^REPIN: ' $SCOUT; then hb "$N ($MODE): W28 re-pin of the check stage (--repin-check; the writer stage and the writer-side pins are unchanged): $(grep '^REPIN: ' $SCOUT | cut -c8-600)"; fi
+rm -f $SCOUT
 if [ -f $L/$N.$MODE.failed ]; then echo "rerun after a stop; the earlier failure was: $(tail -n 1 $L/$N.$MODE.failed)"; rm -f $L/$N.$MODE.failed; fi
 gstate manifest
 recheck() { rc=$(gstate start-check 2>&1) || { echo "$rc" >&2; fail "the start check failed before the stage $1: something pinned changed since the chain started"; }; }
@@ -336,6 +341,7 @@ if ! stage_done report; then
       echo "Reading sample: \`$RW/reading/sanity_reading.md\` (blind; the checker's verdicts in \`sanity_reading_key.json\`). $(cat $RW/reading_sample.txt)"
     else
       [ -z "$WAIVER" ] || { echo "**Owner waiver $WAIVER (MILESTONE.md):** the sanity run's gate-failure bar (at most 15 %) and checker-accept ceiling (98 %) are waived for this full run; every other bar and the full run's audit (200 entries, at least 190 correct) stay. Basis: $FGOUT."; echo; }
+      RPN=$(.venv/bin/python $R repins --work $RW); [ -z "$RPN" ] || { echo "**Re-pin of the check stage (W28, --repin-check):** the check stage's code changed after the writer stage; the writer-side pins, the check prompt and the checker were unchanged:"; echo; echo "$RPN" | sed 's/^/- /'; echo; }
       echo "Sanity reading: \`$READING\` (sha256 \`$RSHA\`). $FGOUT."
       echo; echo '```'; cat $RW/index.txt; cat $RW/audit.txt; echo '```'; echo
       echo "Accepted entries: \`$W/entries_index.jsonl\`. The audit (at least 190 of 200 ok) is a reading session; its bundles are in \`$RW/audit/\`."

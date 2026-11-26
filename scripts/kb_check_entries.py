@@ -12,6 +12,7 @@ retried once (temperature 0.3); entries still without a verdict are checked in h
 
 Outputs in --out-dir: checks.jsonl (one row per entry: id, window, verdict, reason, attempts, versions, checker) and
 check_windows.jsonl (one row per window that has gated entries: counts, seconds, tokens; the resume key). A line per window:
+  [check-call] <window> whole|half entries=N bound=B tokens=T 3.2s finish=stop   (one line per model call, W28; the bound is min(--max-tokens, 2000 + 1000 per entry))
   [check] 12/50 <target id> entries=4 ok=3 partial=1 wrong=0 unsupported=0 unchecked=0 3.2s tokens=210
 Refused: a writer folder that is not finished (no window row for every window of its done marker) or holds another entry
 prompt version; an output folder with rows of another check prompt version or checker model. A second run with every window
@@ -41,6 +42,7 @@ CHECKER_MODEL = "GLM-5.3-Flash-oQ8e-mtp"
 FALLBACK_MODEL = "GLM-5.3-Flash-oQ4e"      # only by the conductor's note before the run (--fallback-note)
 # One request at a time (W21: oMLX server requests stay sequential).
 MAX_TOKENS, CONCURRENCY = 8000, 1       # W26: 4000 -> 8000 (see runs/m7/reports/kb2_w24_build.md)
+BOUND_BASE, BOUND_PER_ENTRY = 2000, 1000   # W28: per-call bound min(--max-tokens, 2000 + 1000 * entries in the call)
 VERDICTS = ("ok", "partial", "wrong", "unsupported")
 FILES = ("check_windows.jsonl", "checks.jsonl")
 
@@ -81,26 +83,40 @@ def stub_checker():
     return handler
 
 
-def check_window(client, win, entries, max_tokens):
+def call_bound(cap, n_entries):
+    """The token bound of one call: min(cap, BOUND_BASE + BOUND_PER_ENTRY * entries) (W28: a runaway reply to the cap of a 3-entry window
+    took over 20 minutes without a log line). Set from the full run's 417 single-call windows: none exceeded 2000 + 1000 per entry."""
+    return min(cap, BOUND_BASE + BOUND_PER_ENTRY * n_entries)
+
+
+def check_window(client, win, entries, max_tokens, wid=None, log=None):
     """Two attempts on the whole window (temperature 0, then 0.3, the retry only fills gaps). Entries still without a verdict
-    (a reply cut at max_tokens, or none that parses) are then checked in halves, each half one call at temperature 0, down to
-    a single entry (W26: two windows of the fourth sanity run had two cut replies each and went unchecked)."""
+    (a reply cut at its bound, or none that parses) are then checked in halves, each half one call at temperature 0, down to
+    a single entry (W26). Every call is bounded by its entries (call_bound) and prints one line (W28). A half whose reply is cut
+    is asked once more (temperature 0.3); cut twice at its bound, its entries stay unchecked and are not halved further.
+    Returns (verdicts, attempts, seconds, tokens, cut_replies, calls)."""
     t0 = time.monotonic()
     wtext = K.window_text(win, None)
     ids = {e["id"] for e in entries}
     got, calls, tokens, cut = {}, 0, 0, 0
+    wid = wid or (entries[0]["window"]["target"] if entries else "?")
 
-    def ask(es, temp):
+    def ask(es, temp, kind):
         nonlocal calls, tokens, cut
         calls += 1
-        r = client.chat(P.kb_check_messages(wtext, entry_lines(es)), max_tokens, temperature=temp)
+        bound = call_bound(max_tokens, len(es))
+        t1 = time.monotonic()
+        r = client.chat(P.kb_check_messages(wtext, entry_lines(es)), bound, temperature=temp)
         tokens += r["tokens"]
-        if r.get("finish") == "length":
+        was_cut = r.get("finish") == "length"
+        if was_cut:
             cut += 1
-        return parse_verdicts(W.parse_json(r["text"]), {e["id"] for e in es})
+        (log or (lambda m: print(m, flush=True)))(f"[check-call] {wid} {kind} entries={len(es)} bound={bound} tokens={r['tokens']} "
+                                                  f"{round(time.monotonic() - t1, 2)}s finish={r.get('finish')}")
+        return parse_verdicts(W.parse_json(r["text"]), {e["id"] for e in es}), was_cut
 
     for temp in (0.0, W.RETRY_TEMPERATURE):
-        got = {**ask(entries, temp), **got}     # a verdict of the first reply is never replaced by the retry's; the retry only fills gaps
+        got = {**ask(entries, temp, "whole")[0], **got}     # a verdict of the first reply is never replaced by the retry's; the retry only fills gaps
         if len(got) == len(ids):
             break
     attempts = calls
@@ -111,9 +127,17 @@ def check_window(client, win, entries, max_tokens):
         mid = (len(es) + 1) // 2
         for half in (es[:mid], es[mid:]):
             todo = [e for e in half if e["id"] not in got]
-            if todo:
-                got.update({k: v for k, v in ask(todo, 0.0).items() if k not in got})
-                split([e for e in todo if e["id"] not in got])
+            if not todo:
+                continue
+            res, was_cut = ask(todo, 0.0, "half")
+            if was_cut:
+                res2, cut2 = ask(todo, W.RETRY_TEMPERATURE, "half")
+                res = {**res, **res2}
+                if cut2:
+                    got.update({k: v for k, v in res.items() if k not in got})
+                    continue                                   # cut twice at its bound: unchecked, no further halving
+            got.update({k: v for k, v in res.items() if k not in got})
+            split([e for e in todo if e["id"] not in got])
     split([e for e in entries if e["id"] not in got])
     return got, attempts, round(time.monotonic() - t0, 2), tokens, cut, calls
 
@@ -221,6 +245,8 @@ def main(argv=None):
     todo = [w for w in wins if w not in done]
     if todo:
         if a.backend == "stub":
+            if os.environ.get("KB_STUB_CHECK_STOP_AFTER"):     # a dry run's planted stop inside the check stage only (the writer's stub stop is KB_STUB_STOP_AFTER)
+                os.environ["KB_STUB_STOP_AFTER"] = os.environ["KB_STUB_CHECK_STOP_AFTER"]
             transport, url, key = W.stub_transport(stub_checker()), "http://stub.invalid/v1", None
         else:
             transport = None
@@ -240,7 +266,7 @@ def main(argv=None):
             if stop.is_set():
                 return None
             _, win = K.window_of(slice_chunks, pos[w])
-            return check_window(client, win, by_win[w], a.max_tokens)
+            return check_window(client, win, by_win[w], a.max_tokens, wid=w)
         err = None
         with cf.ThreadPoolExecutor(max_workers=max(1, a.concurrency)) as ex:
             futs = {ex.submit(job, w): w for w in todo}

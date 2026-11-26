@@ -198,6 +198,71 @@ class Writer(unittest.TestCase):
         self.assertNotIn("secret-key-xyz", blob)
 
 
+class CheckWindowBounds(unittest.TestCase):
+    """W28: one line per call, a per-call bound by the entries, cut twice -> unchecked without halving, a runaway reply bounded."""
+
+    class Fake:
+        def __init__(self, fn):
+            self.fn, self.calls = fn, []
+
+        def chat(self, messages, max_tokens, temperature=0.0):
+            ids = re.findall(r'"id": "(kbe-[0-9a-f]{16})"', messages[-1]["content"])
+            self.calls.append((len(ids), max_tokens, temperature))
+            return self.fn(ids, max_tokens, temperature)
+
+    @staticmethod
+    def entries(n):
+        return [{"id": f"kbe-{i:016x}", "title": "t", "statement": "s", "quotes": ["q"], "window": {"target": "w1"}} for i in range(1, n + 1)]
+
+    def check(self, fn, n, cap=8000):
+        cl = self.Fake(fn)
+        lines = []
+        with mock.patch.object(C.K, "window_text", return_value="W"):
+            res = C.check_window(cl, None, self.entries(n), cap, wid="w1", log=lines.append)
+        return cl, lines, res
+
+    @staticmethod
+    def ok(ids):
+        return json.dumps({"verdicts": [{"id": i, "verdict": "ok", "reason": "x"} for i in ids]})
+
+    def test_bound_by_entries_and_line_per_call(self):
+        self.assertEqual([C.call_bound(8000, n) for n in (1, 3, 6, 7, 12)], [3000, 5000, 8000, 8000, 8000])
+        cl, lines, (got, attempts, _, tokens, cut, calls) = self.check(lambda ids, mt, t: {"text": self.ok(ids), "tokens": 50, "finish": "stop"}, 3)
+        self.assertEqual((calls, cut, len(got), tokens), (1, 0, 3, 50))
+        self.assertEqual(cl.calls, [(3, 5000, 0.0)])
+        self.assertEqual(len(lines), 1)
+        self.assertRegex(lines[0], r"^\[check-call\] w1 whole entries=3 bound=5000 tokens=50 [\d.]+s finish=stop$")
+        _, _, res = self.check(lambda ids, mt, t: {"text": self.ok(ids), "tokens": 1, "finish": "stop"}, 3, cap=1000)
+        self.assertEqual(res[5], 1)                                         # the cap still wins when lower
+
+    def test_runaway_reply_is_bounded_and_cut_twice_is_unchecked(self):
+        run_away = lambda ids, mt, t: {"text": "x" * 10, "tokens": mt, "finish": "length"}      # every reply runs to its bound
+        cl, lines, (got, attempts, _, tokens, cut, calls) = self.check(run_away, 3)
+        self.assertEqual(got, {})
+        self.assertTrue(all(mt <= 5000 for _, mt, _ in cl.calls))
+        self.assertEqual(attempts, 2)
+        # whole x2, then the half of 2 entries (cut, retried, cut: stop) and the half of 1 entry (cut, retried, cut: stop): no call below a half
+        self.assertEqual([(n, mt) for n, mt, _ in cl.calls], [(3, 5000), (3, 5000), (2, 4000), (2, 4000), (1, 3000), (1, 3000)])
+        self.assertEqual((calls, cut), (6, 6))
+        self.assertEqual(tokens, sum(mt for _, mt, _ in cl.calls))
+        self.assertEqual(len(lines), 6)
+        self.assertEqual(sum(1 for l in lines if " half " in l), 4)
+
+    def test_cut_once_then_retry_succeeds_and_halves_continue(self):
+        seen = {}
+
+        def fn(ids, mt, t):
+            if len(ids) == 4:
+                return {"text": "", "tokens": mt, "finish": "length"}
+            seen[tuple(ids)] = seen.get(tuple(ids), 0) + 1
+            if len(ids) == 2 and seen[tuple(ids)] == 1 and ids[0].endswith("1"):      # the first half is cut once, then answers
+                return {"text": "", "tokens": mt, "finish": "length"}
+            return {"text": self.ok(ids), "tokens": 10, "finish": "stop"}
+        cl, lines, (got, attempts, _, tokens, cut, calls) = self.check(fn, 4)
+        self.assertEqual(len(got), 4)
+        self.assertEqual((attempts, cut, calls), (2, 3, 5))
+
+
 class Checker(unittest.TestCase):
     def setUp(self):
         self.td = tempfile.TemporaryDirectory()
@@ -217,6 +282,8 @@ class Checker(unittest.TestCase):
         self.assertEqual(code, 0)
         lines = [l for l in out.splitlines() if re.match(r"\[check\] \d+/6 c\d{3} entries=\d+ ok=\d+ partial=\d+ wrong=\d+ unsupported=\d+ unchecked=\d+", l)]
         self.assertEqual(len(lines), 6)
+        calls = [l for l in out.splitlines() if l.startswith("[check-call] ")]
+        self.assertGreaterEqual(len(calls), 6)                              # W28: one line per model call, ahead of the window's line
         ch = rows(self.wd / "checks.jsonl")
         self.assertEqual(len(ch), 6)
         v = {r["window"]: r["verdict"] for r in ch}

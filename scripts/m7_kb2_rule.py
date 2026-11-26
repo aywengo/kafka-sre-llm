@@ -14,6 +14,7 @@
 Exit codes: 0 done; 1 a check failed; 2 refused or an input is missing.
 """
 import argparse
+import datetime
 import hashlib
 import json
 import os
@@ -94,13 +95,13 @@ def state(a):
 
 
 def manifest_hash(m):
-    return sha256_text(json.dumps({k: v for k, v in m.items() if k != "info"}, sort_keys=True))
+    return sha256_text(json.dumps({k: v for k, v in m.items() if k not in ("info", "repins")}, sort_keys=True))
 
 
 def diff(old, new):
     out = []
     for k in sorted(set(old) | set(new)):
-        if k == "info" or old.get(k) == new.get(k):
+        if k in ("info", "repins") or old.get(k) == new.get(k):
             continue
         if isinstance(old.get(k), dict) and isinstance(new.get(k), dict):
             out += [f"{k}.{kk}: stored {str(old[k].get(kk))[:16]}, now {str(new[k].get(kk))[:16]}"
@@ -108,6 +109,73 @@ def diff(old, new):
         else:
             out.append(f"{k}: stored {old.get(k)!r}, now {new.get(k)!r}")
     return out
+
+
+# the only pins a re-pin of the check stage may change (W28): the checker's own code and the chain's script and rule file
+REPIN_CHECK_PINS = ("scripts/kb_check_entries.py", "scripts/m7_kb2.sh", "scripts/m7_kb2_rule.py")
+
+
+def repin_problems(old, new, work):
+    """Why a re-pin of the check stage is not allowed (an empty list when it is): the writer stage must be done and every writer-side
+    pin, the KB prompt texts (hash) and versions, the checker and every option unchanged; only REPIN_CHECK_PINS may differ."""
+    out = []
+    w = Path(work)
+    if not (w / "stage_write.done").is_file():
+        out.append("the writer stage is not done (no stage_write.done)")
+    if (w / "stage_check.done").is_file():
+        out.append("the check stage is already done (nothing to resume)")
+    for k in ("kb_prompts_sha256", "entry_prompt_version", "check_prompt_version", "schema", "kind"):
+        if old.get(k) != new.get(k):
+            out.append(f"{k} differs (stored {str(old.get(k))[:16]}, now {str(new.get(k))[:16]})")
+    if old.get("options") != new.get("options"):
+        out += [f"option {k} differs (stored {old['options'].get(k)!r}, now {new['options'].get(k)!r})"
+                for k in sorted(set(old["options"]) | set(new["options"])) if old["options"].get(k) != new["options"].get(k)]
+    op, np_ = old.get("pins", {}), new.get("pins", {})
+    for k in sorted(set(op) | set(np_)):
+        if op.get(k) != np_.get(k) and k not in REPIN_CHECK_PINS:
+            out.append(f"pin {k} differs and is not a check-side file")
+    return out
+
+
+def repin_check(a, old, new):
+    """W28: the explicit, logged re-pin of a stopped run whose check-side code changed. Rewrites the manifest (new pins, a `repins` entry) and
+    the stage markers' manifest hash (their outputs are checked as before). Returns 0, or 2 with the reasons printed."""
+    note = (a.repin_check or "").strip()
+    if not note:
+        print("REFUSED: --repin-check needs the conductor's note", file=sys.stderr)
+        return 2
+    bad = repin_problems(old, new, a.work)
+    if bad:
+        print("REFUSED: --repin-check is only for the check stage's own code (nothing was changed):", file=sys.stderr)
+        for b in bad[:12]:
+            print("  " + b, file=sys.stderr)
+        return 2
+    changed = {k: {"old": old["pins"].get(k), "new": new["pins"].get(k)} for k in sorted(set(old["pins"]) | set(new["pins"])) if old["pins"].get(k) != new["pins"].get(k)}
+    entry = {"at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"), "note": note, "pins": changed,
+             "git_head": new.get("info", {}).get("git_head", "unknown")}
+    mnew = {**new, "info": old.get("info", new.get("info", {})), "repins": list(old.get("repins") or []) + [entry]}
+    oldhash, newhash = manifest_hash(old), manifest_hash(mnew)
+    wd = Path(a.work)
+    markers = sorted(wd.glob("stage_*.done"))
+    for f in markers:
+        rec = load_json(f)
+        if rec.get("manifest_sha256") != oldhash:
+            print(f"REFUSED: {f.name} was written for another manifest (nothing was changed)", file=sys.stderr)
+            return 2
+    for f in markers:
+        rec = load_json(f)
+        rec["manifest_sha256"] = newhash
+        f.write_text(json.dumps(rec, indent=1, sort_keys=True) + "\n", encoding="utf-8")
+    (wd / "MANIFEST.json").write_text(json.dumps(mnew, indent=1, sort_keys=True) + "\n", encoding="utf-8")
+    print("REPIN: " + json.dumps({"note": note, "pins": {k: {"old": str(v["old"])[:16], "new": str(v["new"])[:16]} for k, v in changed.items()}}, sort_keys=True))
+    return 0
+
+
+def cmd_repins(a):
+    m = Path(a.work) / "MANIFEST.json"
+    for r in (load_json(m).get("repins") or []) if m.exists() else []:
+        print(f"{r['at']}: {r['note']} ({', '.join(sorted(r['pins']))})")
+    return 0
 
 
 def cmd_manifest(a):
@@ -135,6 +203,13 @@ def cmd_start_check(a):
         print(f"REFUSED: {e}", file=sys.stderr)
         return 2
     d = diff(old, new)
+    if d and getattr(a, "repin_check", None) is not None:
+        rc = repin_check(a, old, new)
+        if rc:
+            return rc
+        old, d = load_json(m), []
+    elif getattr(a, "repin_check", None) is not None:
+        print("--repin-check: the manifest equals the state now; nothing to re-pin")
     if d:
         print("REFUSED: the stored manifest differs from the state now (nothing was moved or deleted):", file=sys.stderr)
         for x in d[:12]:
@@ -607,6 +682,8 @@ def main(argv=None):
         p.add_argument("--opt", action="append", default=[])
         p.add_argument("--info", action="append", default=[])
         p.add_argument("--dry", action="store_true")
+        if name == "start-check":
+            p.add_argument("--repin-check", default=None, help="W28: the conductor's note; re-pins the check-side files of a stopped run (see repin_problems)")
     p = sub.add_parser("mark")
     p.add_argument("--work", required=True)
     p.add_argument("--stage", required=True)
@@ -655,8 +732,10 @@ def main(argv=None):
         p.add_argument(x, required=True)
     p.add_argument("--record", default="runs/v3/INDEX_FROZEN.json")
     sub.add_parser("rule-text")
+    p = sub.add_parser("repins")
+    p.add_argument("--work", required=True)
     a = ap.parse_args(argv)
-    return {"manifest": cmd_manifest, "start-check": cmd_start_check, "mark": cmd_mark, "server-gate": cmd_server_gate,
+    return {"manifest": cmd_manifest, "start-check": cmd_start_check, "repins": cmd_repins, "mark": cmd_mark, "server-gate": cmd_server_gate,
             "stub-status": cmd_stub_status, "stub-load": cmd_stub_load, "stub-unload": cmd_stub_unload, "sanity-rule": cmd_sanity_rule,
             "reading-sample": cmd_reading_sample, "full-gate": cmd_full_gate, "index": cmd_index, "audit-sample": cmd_audit_sample,
             "rule-text": cmd_rule_text}[a.cmd](a)

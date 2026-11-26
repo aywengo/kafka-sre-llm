@@ -343,6 +343,92 @@ class NoHangAfterServerError(unittest.TestCase):
             self.assertEqual(self._run(C.main, cb, dict(clean, KB_STUB_WRONG_MODEL_AFTER="")), 0)
 
 
+class RepinCheck(unittest.TestCase):
+    """W28: --repin-check resumes a stopped run whose check-side code changed, and only then."""
+    CHECK_FILES = ("scripts/kb_check_entries.py", "scripts/m7_kb2.sh", "scripts/m7_kb2_rule.py")
+    WRITER_FILES = ("kafka_sre_rag/prompts.py", "kafka_sre_rag/kb_entry.py", "scripts/kb_write_entries.py", "scripts/kb_slice.py")
+
+    def setUp(self):
+        self.td = tempfile.TemporaryDirectory()
+        self.cwd = os.getcwd()
+        self.d = Path(self.td.name)
+        os.chdir(self.d)
+        for f in self.CHECK_FILES + self.WRITER_FILES:
+            Path(f).parent.mkdir(parents=True, exist_ok=True)
+            Path(f).write_text("v1 " + f)
+        self.work = str(self.d / "w")
+        Path(self.work).mkdir()
+        self.pins = [x for f in self.CHECK_FILES + self.WRITER_FILES for x in ("--pin", f)]
+        self.opts = ["--opt", f"checker={GLM8}", "--opt", f"writer={DS}", "--opt", "checker_max_tokens=8000"]
+        self.assertEqual(self.call("manifest")[0], 0)
+        Path("out.txt").write_text("x")
+        self.assertEqual(run(["mark", "--work", self.work, "--stage", "write", "--out", "out.txt"])[0], 0)
+
+    def tearDown(self):
+        os.chdir(self.cwd)
+        self.td.cleanup()
+
+    def call(self, sub, *extra, opts=None):
+        return run([sub, "--work", self.work, *self.pins, *(opts or self.opts), *extra])
+
+    def manifest(self):
+        return json.loads(Path(self.work, "MANIFEST.json").read_text())
+
+    def test_check_side_change_is_repinned_and_logged(self):
+        Path("scripts/kb_check_entries.py").write_text("v2 checker")
+        Path("scripts/m7_kb2.sh").write_text("v2 chain")
+        code, _, err = self.call("start-check")
+        self.assertEqual(code, 2)                                           # without the option: refused as before
+        self.assertIn("stored manifest differs", err)
+        old = self.manifest()
+        self.assertEqual(self.call("start-check", "--repin-check", " ")[0], 2)
+        code, out, err = self.call("start-check", "--repin-check", "conductor: bound each call")
+        self.assertEqual(code, 0, err)
+        self.assertIn("REPIN: ", out)
+        m = self.manifest()
+        self.assertEqual(len(m["repins"]), 1)
+        self.assertEqual(m["repins"][0]["note"], "conductor: bound each call")
+        self.assertEqual(set(m["repins"][0]["pins"]), {"scripts/kb_check_entries.py", "scripts/m7_kb2.sh"})
+        self.assertEqual(m["repins"][0]["pins"]["scripts/kb_check_entries.py"]["old"], old["pins"]["scripts/kb_check_entries.py"])
+        self.assertEqual(m["pins"]["scripts/kb_check_entries.py"], R.sha256_file("scripts/kb_check_entries.py"))
+        self.assertIn("bound each call", run(["repins", "--work", self.work])[1])
+        code, out, _ = self.call("start-check")                             # afterwards the plain check passes, the stage marker follows the new manifest
+        self.assertEqual(code, 0)
+        self.assertIn("1 stage(s) done: write", out)
+        self.assertEqual(self.call("start-check", "--repin-check", "again")[0], 0)      # nothing to re-pin: harmless
+        self.assertEqual(len(self.manifest()["repins"]), 1)
+
+    def refused(self, *extra, opts=None):
+        before = Path(self.work, "MANIFEST.json").read_text(), Path(self.work, "stage_write.done").read_text()
+        code, _, err = self.call("start-check", "--repin-check", "note", *extra, opts=opts)
+        self.assertEqual(code, 2, err)
+        self.assertEqual((Path(self.work, "MANIFEST.json").read_text(), Path(self.work, "stage_write.done").read_text()), before)   # nothing changed
+        return err
+
+    def test_refused_when_a_writer_side_pin_differs(self):
+        for f in self.WRITER_FILES:
+            Path("scripts/kb_check_entries.py").write_text("v2 " + f)
+            Path(f).write_text("changed " + f)
+            self.assertIn(f"pin {f} differs", self.refused())
+            Path(f).write_text("v1 " + f)
+
+    def test_refused_when_check_prompt_or_checker_differs(self):
+        Path("scripts/kb_check_entries.py").write_text("v2")
+        with unittest.mock.patch.object(R.P, "KB_CHECK_PROMPT_VERSION", "kbc/5"):
+            self.assertIn("check_prompt_version differs", self.refused())
+        with unittest.mock.patch.object(R.P, "KB_CHECK_SYSTEM", R.P.KB_CHECK_SYSTEM + " more"):
+            self.assertIn("kb_prompts_sha256 differs", self.refused())
+        self.assertIn("option checker differs", self.refused(opts=["--opt", f"checker={GLM4}", "--opt", f"writer={DS}", "--opt", "checker_max_tokens=8000"]))
+        self.assertIn("option writer differs", self.refused(opts=["--opt", f"checker={GLM8}", "--opt", "writer=other", "--opt", "checker_max_tokens=8000"]))
+
+    def test_refused_without_the_writer_stage_done(self):
+        Path("scripts/kb_check_entries.py").write_text("v2")
+        Path(self.work, "stage_write.done").rename(Path(self.work, "stage_header.done"))
+        code, _, err = self.call("start-check", "--repin-check", "note")
+        self.assertEqual(code, 2)
+        self.assertIn("writer stage is not done", err)
+
+
 def reading_file(w, notok=1):
     """A sanity reading's result for a dry run: every id of the sample, the first NOTOK accepted ones rated partial."""
     key = json.loads(Path(w, "sanity/reading/sanity_reading_key.json").read_text())
@@ -427,6 +513,39 @@ class DryRun(unittest.TestCase):
             self.assertNotIn("W16", hb)
             r = self.sh("--full", "--dry-run", "--work", w, "--sanity-reading", reading_file(w, notok=2), ok=(2,))   # another reading file: refused
             self.assertIn("sanity_reading_sha256", r.stderr)
+
+    def test_check_stop_and_resume_with_repin(self):
+        with tempfile.TemporaryDirectory() as d:
+            w = str(Path(d) / "kb")
+            self.sh("--sanity", "--dry-run", "--work", w)
+            rf = reading_file(w, notok=1)
+            r = self.sh("--full", "--dry-run", "--work", w, "--sanity-reading", rf, "--plant-check-stop", "30", ok=(1,))
+            self.assertIn("the checker", r.stdout)
+            cw = Path(w, "full/check_windows.jsonl")
+            kept = cw.read_text().splitlines()
+            self.assertGreater(len(kept), 0)                                    # part of the check stage was done
+            self.assertFalse(Path(w, "full/stage_check.done").exists())
+            self.assertIn("[check-call]", Path(w, "logs/m7_kb2.full.check.log").read_text())
+            mp = Path(w, "full/MANIFEST.json")                                  # the check-side code changed since the run started
+            m = json.loads(mp.read_text())
+            m["pins"]["scripts/kb_check_entries.py"] = "0" * 64
+            mp.write_text(json.dumps(m, indent=1, sort_keys=True) + "\n")
+            for sm in Path(w, "full").glob("stage_*.done"):                      # the markers were written for the manifest of the old code
+                rec = json.loads(sm.read_text())
+                rec["manifest_sha256"] = R.manifest_hash(m)
+                sm.write_text(json.dumps(rec, indent=1, sort_keys=True) + "\n")
+            r = self.sh("--full", "--dry-run", "--work", w, "--sanity-reading", rf, ok=(2,))
+            self.assertIn("stored manifest differs", r.stderr)                  # the old behaviour
+            self.assertEqual(cw.read_text().splitlines(), kept)
+            r = self.sh("--full", "--dry-run", "--work", w, "--sanity-reading", rf, "--repin-check", "conductor W28 test")
+            self.assertIn("REPIN: ", r.stdout)
+            self.assertEqual(cw.read_text().splitlines()[:len(kept)], kept)     # the checked windows were kept
+            self.assertNotIn("[write]", r.stdout)
+            self.assertIn("W28 re-pin", Path(w, "HEARTBEAT.md").read_text())
+            self.assertIn("conductor W28 test", Path(w, "full/MANIFEST.json").read_text())
+            self.assertIn("Re-pin of the check stage", Path(w, "KB2_PILOT_from_stub_data.md").read_text())
+            self.assertTrue(Path(w, "full/stage_report.done").exists())
+            r = self.sh("--full", "--dry-run", "--work", w, "--sanity-reading", rf, "--repin-check", "x", ok=(0,))
 
     def test_full_waiver_w27(self):
         with tempfile.TemporaryDirectory() as d:
