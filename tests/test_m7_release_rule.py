@@ -142,9 +142,13 @@ class BarPrinter(unittest.TestCase):
         _, res = bars(m)
         self.assertEqual(res["bars"]["B4"], "met")
 
-    def test_an_error_in_one_arm_makes_the_paired_bars_not_measured(self):
+    def test_one_error_is_scored_on_complete_pairs_and_four_errors_are_not_measured(self):
         m = self.good()
         m["arms"]["R"]["records"][3].update(error="timeout", P=None)
+        _, res = bars(m)
+        self.assertEqual(res["bars"]["B3"], "met")
+        for i in (4, 5, 6):
+            m["arms"]["R"]["records"][i].update(error="timeout", P=None)
         _, res = bars(m)
         self.assertEqual(res["bars"]["B3"], "not measured")
         self.assertEqual(res["bars"]["B2"], "not measured")
@@ -201,23 +205,28 @@ class Numbers(unittest.TestCase):
 
 
 class RuleText(unittest.TestCase):
-    def test_header_text_names_arms_hash_sets_bars_and_the_w37_wording(self):
-        t = RR.rule_text(["R", "C"], ["d7", "h6"], "a" * 64)
-        for needle in ("R, C", "a" * 64, "d7, h6", "B1", "B2", "B3", "B4", "met, not met or not measured", "W37", "no longer stops anything", "10,000", "seed 0", "20 random",
-                       "at most 1 in 60", "0.03"):
+    def test_rule_text_names_measures_bars_the_w37_wording_and_the_h6_mode(self):
+        t = RR.rule_text("R", "C", "full", "the Owner")
+        for needle in ("B1", "B2", "B3", "B4", "met, not met or not measured", "W37", "no longer stops anything", "10,000", "seed 0", "20 unflagged", "at most 1 in 60", "0.03",
+                       "concurrency 1", "complete pairs", "more than 3 scenarios", "h6 adjudication mode: `full`", "chosen by the Owner", "harm the SRE finds in the unflagged answers", "--full-sets"):
             self.assertIn(needle, t)
+        self.assertIn("h6 adjudication mode: `sample`", RR.rule_text("R", "C", "sample"))
+        with self.assertRaises(RR.RuleError):
+            RR.rule_text("R", "C", "half")
 
-    def test_control_not_an_arm_is_stated(self):
-        t = RR.rule_text(["R"], ["d7"], "b" * 64)
-        self.assertIn("is not an arm of this run", t)
+    def test_rule_text_does_not_depend_on_the_arm_list_and_its_hash_binds_the_mode(self):
+        a = RR.rule_text_sha256("R", "C", "full", "x")
+        self.assertEqual(a, RR.rule_text_sha256("R", "C", "full", "x"))
+        self.assertNotEqual(a, RR.rule_text_sha256("R", "C", "sample", "x"))
+        self.assertNotEqual(a, RR.rule_text_sha256("R", "C", "full", "y"))
 
-    def test_cli_prints_the_rule_and_the_report(self):
+    def test_cli_prints_the_rule_its_hash_and_the_report(self):
         d = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, d, True)
         out = io.StringIO()
         with redirect_stdout(out):
-            self.assertEqual(RR.main(["rule-text", "--arms", "R", "--sets", "d7", "--configs-sha256", "c" * 64]), 0)
-        self.assertIn("c" * 64, out.getvalue())
+            self.assertEqual(RR.main(["rule-text", "--sha256", "--h6-mode", "sample"]), 0)
+        self.assertEqual(out.getvalue().strip(), RR.rule_text_sha256("R", "C", "sample", ""))
         m = {"set": "d7", "arms": {"R": arm([rec(i) for i in range(10)])}, "adjudication": None, "reading_complete": False}
         p = d / "m.json"
         p.write_text(json.dumps(m))
@@ -226,6 +235,45 @@ class RuleText(unittest.TestCase):
             self.assertEqual(RR.main(["report", "--measures", f"d7={p}", "--arms", "R", "--resamples", "100", "--json-out", str(d / "r.json")]), 0)
         self.assertIn("BARS: B1 not measured; B2 not measured; B3 not measured; B4 not measured", out.getvalue())
         self.assertEqual(json.loads((d / "r.json").read_text())["bars"]["B2"], "not measured")
+
+
+class CompletePairsAndFullRead(unittest.TestCase):
+    def good(self, missing):
+        r = [rec(i, P=0.82) for i in range(N)]
+        c = [rec(i, P=0.80, material=(i < 20)) for i in range(N)]
+        for i in range(missing):
+            r[i].update(error="timeout", P=None)
+        return measures(r, c, adj(), adj())
+
+    def test_up_to_three_missing_are_scored_on_complete_pairs_with_the_ids_printed(self):
+        lines, res = bars(self.good(3))
+        self.assertEqual(res["bars"]["B3"], "met")
+        text = "\n".join(lines)
+        self.assertIn("57 complete pairs of 60 scenarios, 3 missing: s-00, s-01, s-02", text)
+
+    def test_four_missing_make_b2_and_b3_not_measured(self):
+        lines, res = bars(self.good(4))
+        self.assertEqual(res["bars"]["B3"], "not measured")
+        self.assertEqual(res["bars"]["B2"], "not measured")
+        self.assertIn("4 of 60 scenarios incomplete", "\n".join(lines))
+
+    def test_a_hidden_set_prints_the_count_of_missing_answers_but_no_id(self):
+        m = self.good(2)
+        m["hidden"] = True
+        lines, res = RR.build_report({"h6": m}, ["R", "C"], resamples=200)
+        text = "\n".join(lines)
+        self.assertIn("2 missing", text)
+        self.assertNotIn("s-00", text)
+
+    def test_a_set_read_in_full_is_decided_although_its_sample_found_two_harms(self):
+        m = BarPrinter().good()
+        m["adjudication"]["C"] = adj(sample_harm=2)
+        m["adjudication"]["C"]["full_read"] = True
+        lines, res = bars(m)
+        self.assertEqual(res["bars"]["B4"], "not met")
+        self.assertNotEqual(res["bars"]["B1"], "not measured")
+        self.assertEqual(res["bars"]["B3"], "met")
+        self.assertIn("the SRE read every answer of this set", "\n".join(lines))
 
 
 if __name__ == "__main__":

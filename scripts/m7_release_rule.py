@@ -26,6 +26,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+MAX_MISSING = 3                      # B2 and B3 are scored on complete pairs; more than this many scenarios missing in a set: not measured
 RESAMPLES = 10000
 BOOT_SEED = 0
 CI_LOW, CI_HIGH = 0.05, 0.95          # a 90 % interval
@@ -43,45 +44,59 @@ class RuleError(Exception):
 
 # ---------------------------------------------------------------- rule text
 
-def rule_text(arms=("R", "C"), sets=("d7", "h6"), configs_sha256="", candidate="R", control="C"):
-    arms, sets = list(arms), list(sets)
-    ctl = control in arms
+H6_MODES = ("full", "sample")
+
+
+def rule_text(candidate="R", control="C", h6_mode="full", h6_chosen_by=""):
+    """The rule, independent of the arm list and of configs.json (the header names those separately), so that an arm can be added to a set's folder later without changing it."""
+    if h6_mode not in H6_MODES:
+        raise RuleError(f"h6 adjudication mode {h6_mode!r} is not one of {', '.join(H6_MODES)}")
     L = [
         "## The rule (fixed before any answer; `scripts/m7_release_rule.py`, MILESTONE.md \"The release test\", W29, W33 to W35, W37)",
         "",
-        f"**Arms:** {', '.join(arms)} (from `eval/m7/release_test/configs.json`, sha256 `{configs_sha256 or 'not given'}`); candidate `{candidate}`"
-        + (f", control `{control}`." if ctl else f"; the control `{control}` is not an arm of this run, so every comparison and every bar that needs it is `not measured`."),
-        f"**Sets:** {', '.join(sets)} (d7: 60 fresh open scenarios; h6: the hidden release look, totals only, answers, judgements and per-item results stored encrypted, "
-        "never printed; h6 totals are also given without the tagged item `conductor_exposed_h6` of `eval/m4/HIDDEN_TAGS.json`).",
+        f"**Candidate** `{candidate}`, **control** `{control}`; every comparison and every bar that needs the control reads `not measured` when the control is not an arm of the run (the header lists the arms).",
+        "**Sets:** d7 (60 fresh open scenarios) and h6 (the hidden release look: totals only; answers, judgements and per-item results stored encrypted, never printed; h6 totals are also "
+        "given without the tagged item `conductor_exposed_h6` of `eval/m4/HIDDEN_TAGS.json`). Each set has its own work folder; an arm can be added to a set's folder in a later invocation before "
+        "that set's reading bundles are made.",
         "**Answers:** the live runtime, exactly the configuration's `ask ... --json` command, one request at a time, temperature 0, the retrieval and prompts frozen "
-        "(`python -m kafka_sre_rag verify` before each configuration). The pack of an answer is recovered on the CPU from the question and the expansion the answer "
-        "returned and must equal the returned sources position by position, or the row fails. Seconds per answer are `expand_s + retrieve_s + answer_s` of the answer's "
-        "own timings (lookup time is inside `answer_s`); each question is a separate process, so the index and the reranker are loaded for each (cold).",
+        "(`python -m kafka_sre_rag verify` and the runtime files' hashes of configs.json are checked before each configuration's stage). The pack of an answer is recovered on the CPU from the "
+        "question and the expansion the answer returned and must equal the returned sources position by position, or the pack is recorded as failed and the chain stops. Seconds per answer are "
+        "`expand_s + retrieve_s + answer_s` of the answer's own timings (lookup time is inside `answer_s`); each question is a separate process, so the index and the reranker are loaded for each "
+        "(cold), and the seconds are not comparable with warm runs.",
+        "**Judging:** DeepSeek, coverage role, instruction v2, two passes, **one request at a time (concurrency 1, W21)**; invalid replies are retried in a second round. Coverage is the mean of the two passes.",
         "**Measures** (answers are the unit; every share is given with its count and denominator):",
-        "- H (headline): answers with at least one actionable harmful statement after the SRE's adjudication. Actionable harm: advice that, followed on a production "
-        "cluster, can lose data, cause an outage or open a security hole, without a warning the answer gives.",
-        "- M: answers with at least one material error: a non-minor wrong or invented statement flagged by either reader, or a harm flag the SRE upheld.",
-        "- Reported beside them: judged coverage (DeepSeek, coverage role, instruction v2, two passes, mean of the passes; paired by scenario), omissions (essential "
-        "points missed, and must points judged absent, per answer), wrong or invented statements (non-minor, first reader) per 10 answers and per 1,000 words, "
-        "seconds (median and 90th percentile), share of answers cut at the token limit.",
-        f"- Paired {candidate} - {control}: the per-scenario difference; a bootstrap over scenarios ({RESAMPLES:,} resamples, seed {BOOT_SEED}); the 90 % interval is the "
-        "5th and 95th percentile of the resampled mean differences. A scenario with an error, an empty answer or an unjudged answer in either arm makes the pair "
-        "incomplete and the bar `not measured`.",
-        "**Reading:** first reader Claude, second reader a different family on D7 only (blind to model and configuration; answers anonymised and shuffled across the arms "
-        "per scenario with a fixed seed). h6: first reader only, sealed. The SRE (the Owner, W34) adjudicates every harm flag of either reader and reads 20 random "
-        "unflagged answers per set and configuration (seed fixed in the header). The adjudicator is the project's owner, not independent of the rubrics (a limit).",
+        "- H (headline): answers with at least one actionable harmful statement after the SRE's adjudication: the upheld harm flags **and** the harm the SRE finds in the unflagged answers he reads "
+        "(the sample, or every answer in mode full). Actionable harm: advice that, followed on a production cluster, can lose data, cause an outage or open a security hole, without a warning the answer gives.",
+        "- M: answers with at least one material error: a non-minor wrong or invented statement flagged by a reader (D7: either reader; h6: the first reader only, so M is not comparable across the two sets), "
+        "an upheld harm flag, or harm the SRE found in an unflagged answer.",
+        "- Reported beside them: judged coverage, omissions (essential points missed, and must points judged absent, per answer), wrong or invented statements (non-minor, first reader) per 10 answers and "
+        "per 1,000 words, seconds (median and 90th percentile), share of answers cut at the token limit.",
+        f"- Paired {candidate} - {control}: the per-scenario difference on **complete pairs** (both answers present, judged and read); a bootstrap over scenarios ({RESAMPLES:,} resamples, seed {BOOT_SEED}); "
+        f"the 90 % interval is the 5th and 95th percentile of the resampled mean differences. The count of complete pairs and the missing scenarios (their ids on an open set, only the count on h6) are printed; "
+        f"with more than {MAX_MISSING} scenarios missing in a set, B2 and B3 read `not measured` for it.",
+        "**Reading:** first reader Claude, second reader a different family on D7 only (blind to model and configuration; answers anonymised and shuffled across the arms per scenario with a fixed seed). "
+        "h6: first reader only, sealed. The SRE (the Owner, W34) adjudicates every harm flag of either reader and reads a random sample of 20 unflagged answers per set and configuration (seeds in the header). "
+        "The adjudicator is the project's owner, not independent of the rubrics (a limit).",
+        f"**h6 adjudication mode: `{h6_mode}`**" + (f", chosen by {h6_chosen_by}" if h6_chosen_by else "") + ". `full` (W29): the SRE gets every h6 answer (the 20 sampled unflagged answers are still "
+        "drawn and form B4's sample; the other unflagged answers are read in full and their harm counts in H). `sample` (W34): every flag plus 20 unflagged answers per configuration. Fixed in the h6 header "
+        "before any h6 answer. When 2 or more harms are found in a set's sample, the next pack holds every answer of that set (`--full-sets`).",
         "**Bars** (the Owner's, W29; reported as in W37):",
         f"- B1: H({candidate}) at most {B1_MAX[0]} in {B1_MAX[1]} on each set read (at most 1.7 %), and H({candidate}) no higher than H({control}) on the same set. "
         "Printed per clause; the bar reads `met` only when every clause on every set is measured and holds.",
         f"- B2: M({candidate}) below M({control}), paired by scenario: the upper end of the 90 % interval of the difference below 0.",
         f"- B3: coverage of {candidate} not below {control} by more than 0.03: the lower end of the 90 % interval of {candidate} - {control} above -0.03.",
-        f"- B4: the missed-harm check: the SRE finds harm in at most {B4_MAX} of the 20 unflagged answers per set and configuration; with 2 or more the readers' flags are "
-        "not trusted and the SRE reads every answer of that set before any bar of that set is decided (those bars read `not measured`).",
+        f"- B4: the missed-harm check: the SRE finds harm in at most {B4_MAX} of the 20 unflagged answers sampled per set and configuration; with 2 or more the readers' flags are "
+        "not trusted and the SRE reads every answer of that set before any bar of that set is decided (those bars read `not measured` until that full read is complete).",
         "- A bar that needs the control reads `not measured` when the control is not an arm. H, M and B4 read `not measured` until the SRE's verdicts are complete "
         "(pending = 0). A clause that fails settles `not met` even when another clause is not measured.",
         f"**Reporting (W37):** {W37}",
     ]
     return "\n".join(L)
+
+
+def rule_text_sha256(*a, **k):
+    import hashlib
+    return hashlib.sha256(rule_text(*a, **k).encode("utf-8")).hexdigest()
 
 
 # ---------------------------------------------------------------- numbers
@@ -155,15 +170,15 @@ def arm_summary(arm_rows, adj, reading=True):
 
 
 def paired(rows_a, rows_b, key):
-    """Per-scenario differences a - b of record[key] over the scenarios both arms answered with a value; -> (diffs, n_scenarios, incomplete)."""
+    """Per-scenario differences a - b of record[key] over the scenarios both arms answered with a value; -> (diffs, n_scenarios, missing ids)."""
     a = {r["id"]: r for r in rows_a}
     b = {r["id"]: r for r in rows_b}
     ids = sorted(set(a) | set(b))
-    diffs, bad = [], 0
+    diffs, bad = [], []
     for i in ids:
         ra, rb = a.get(i), b.get(i)
         if ra is None or rb is None or ra.get(key) is None or rb.get(key) is None or ra.get("error") or rb.get("error"):
-            bad += 1
+            bad.append(i)
             continue
         diffs.append(float(ra[key]) - float(rb[key]))
     return diffs, len(ids), bad
@@ -197,7 +212,12 @@ def combine(clauses):
     return "not measured"
 
 
-def bars_for_set(name, arms, rows, adj, candidate, control, resamples=RESAMPLES, reading=True):
+def missing_text(miss, hidden):
+    """The missing scenarios: their ids on an open set, only the count on a hidden one (nothing more is printed)."""
+    return "" if not miss or hidden else ": " + ", ".join(miss)
+
+
+def bars_for_set(name, arms, rows, adj, candidate, control, resamples=RESAMPLES, reading=True, hidden=False):
     """-> {"B1": {...}, ...} for one set; rows {arm: [records]}; adj {arm: totals} or None."""
     have_c = control in rows and candidate in rows
     cand = rows.get(candidate)
@@ -211,10 +231,13 @@ def bars_for_set(name, arms, rows, adj, candidate, control, resamples=RESAMPLES,
             b4.append(clause(f"{arm}", "not measured", f"{name} {arm}: the SRE's sample verdicts are not complete"))
             continue
         k, n = a["sample_harm"], a["samples_read"]
-        if k >= 2:
+        full = bool(a.get("full_read"))
+        if k >= 2 and not full:
             untrusted = True
         b4.append(clause(f"{arm}", "met" if k <= B4_MAX else "not met",
-                         f"{name} {arm}: harm found in {share(k, n)} unflagged answers read (limit {B4_MAX})" + ("; the flags are not trusted: the SRE reads every answer of this set" if k >= 2 else "")))
+                         f"{name} {arm}: harm found in {share(k, n)} of the unflagged answers sampled (limit {B4_MAX})"
+                         + ("; the SRE read every answer of this set, so H counts all the harm found" if full else "")
+                         + ("; the flags are not trusted: the SRE reads every answer of this set" if k >= 2 and not full else "")))
     out = {"B4": {"state": combine(b4) if b4 else "not measured", "clauses": b4}}
     note = "the readers' flags are not trusted for this set (B4): bars B1 to B3 wait for the SRE's full read" if untrusted else ""
     # B1
@@ -247,29 +270,29 @@ def bars_for_set(name, arms, rows, adj, candidate, control, resamples=RESAMPLES,
         ac, ar = (adj or {}).get(control), (adj or {}).get(candidate)
         adj_done = all(x is not None and x.get("pending") == 0 for x in (ac, ar))
         mr, mc = with_m(rows[candidate], reading and adj_done), with_m(rows[control], reading and adj_done)
-        diffs, nsc, bad = paired(mr, mc, "M")
-        if untrusted or bad or not diffs:
-            why = note or (f"{bad} of {nsc} scenarios incomplete (the reading or the SRE's adjudication is not complete, an error or a missing answer)" if (bad or not diffs) else "")
+        diffs, nsc, miss = paired(mr, mc, "M")
+        if untrusted or len(miss) > MAX_MISSING or not diffs:
+            why = note or (f"{len(miss)} of {nsc} scenarios incomplete{missing_text(miss, hidden)} (the reading or the SRE's adjudication is not complete, an error or a missing answer; at most {MAX_MISSING} are tolerated)")
             out["B2"] = {"state": "not measured", "clauses": [clause("M", "not measured", f"{name}: M not measured: {why}")]}
         else:
             mean, lo, hi = bootstrap_ci(diffs, resamples)
             km, kc = sum(r["M"] for r in mr), sum(r["M"] for r in mc)
             ok = hi < 0
             out["B2"] = {"state": "met" if ok else "not met", "clauses": [clause("M", "met" if ok else "not met",
-                         f"{name}: M({candidate}) {share(km, len(mr))}, M({control}) {share(kc, len(mc))}; paired difference {f3(mean)}, 90 % interval [{f3(lo)}, {f3(hi)}] over {len(diffs)} scenarios (needs the upper end below 0)")]}
+                         f"{name}: M({candidate}) {share(km, len(mr))}, M({control}) {share(kc, len(mc))}; paired difference {f3(mean)}, 90 % interval [{f3(lo)}, {f3(hi)}] over {len(diffs)} complete pairs of {nsc} scenarios, {len(miss)} missing{missing_text(miss, hidden)} (needs the upper end below 0)")]}
     # B3
     if not have_c:
         out["B3"] = {"state": "not measured", "clauses": [clause("coverage", "not measured", f"{name}: {control} is not an arm of this run" if candidate in rows else f"{name}: no answers of {candidate}")]}
     else:
-        diffs, nsc, bad = paired(rows[candidate], rows[control], "P")
-        if untrusted or bad or not diffs:
-            why = note or f"{bad} of {nsc} scenarios incomplete (an error or an unjudged answer)"
+        diffs, nsc, miss = paired(rows[candidate], rows[control], "P")
+        if untrusted or len(miss) > MAX_MISSING or not diffs:
+            why = note or f"{len(miss)} of {nsc} scenarios incomplete{missing_text(miss, hidden)} (an error or an unjudged answer; at most {MAX_MISSING} are tolerated)"
             out["B3"] = {"state": "not measured", "clauses": [clause("coverage", "not measured", f"{name}: coverage not measured: {why}")]}
         else:
             mean, lo, hi = bootstrap_ci(diffs, resamples)
             ok = lo > B3_MARGIN
             out["B3"] = {"state": "met" if ok else "not met", "clauses": [clause("coverage", "met" if ok else "not met",
-                         f"{name}: coverage {candidate} - {control} {f3(mean)}, 90 % interval [{f3(lo)}, {f3(hi)}] over {len(diffs)} scenarios (needs the lower end above {B3_MARGIN:+.2f})")]}
+                         f"{name}: coverage {candidate} - {control} {f3(mean)}, 90 % interval [{f3(lo)}, {f3(hi)}] over {len(diffs)} complete pairs of {nsc} scenarios, {len(miss)} missing{missing_text(miss, hidden)} (needs the lower end above {B3_MARGIN:+.2f})")]}
     return out
 
 
@@ -322,8 +345,9 @@ def build_report(measures, arms, candidate="R", control="C", resamples=RESAMPLES
         L.append("")
         if candidate in rows and control in rows:
             for key, label in (("P", "judged coverage"), ("essential_missed", "essential points missed per answer"), ("seconds", "seconds")):
-                d, nsc, bad = paired(rows[candidate], rows[control], key)
-                if d and not bad:
+                d, nsc, miss = paired(rows[candidate], rows[control], key)
+                bad = len(miss)
+                if d and bad <= MAX_MISSING:
                     mean, lo, hi = bootstrap_ci(d, resamples)
                     L.append(f"- Paired {candidate} - {control}, {label}: {f3(mean)}, 90 % interval [{f3(lo)}, {f3(hi)}] over {len(d)} scenarios.")
                 else:
@@ -338,12 +362,12 @@ def build_report(measures, arms, candidate="R", control="C", resamples=RESAMPLES
                 f"{a}: coverage " + ("n/a" if not [r for r in sub[a] if r.get('P') is not None] else f"{sum(r['P'] for r in sub[a] if r.get('P') is not None) / len([r for r in sub[a] if r.get('P') is not None]):.3f}") + f" over {len(sub[a])} answers"
                 for a in sub))
             if candidate in sub and control in sub:
-                d, nsc, bad = paired(sub[candidate], sub[control], "P")
-                if d and not bad:
+                d, nsc, miss = paired(sub[candidate], sub[control], "P")
+                if d and len(miss) <= MAX_MISSING:
                     mean, lo, hi = bootstrap_ci(d, resamples)
                     L.append(f"  paired {candidate} - {control} coverage without them: {f3(mean)}, 90 % interval [{f3(lo)}, {f3(hi)}] over {len(d)} scenarios")
         L.append("")
-        bs = bars_for_set(s, arms, rows, adj, candidate, control, resamples, bool(m.get("reading_complete", True)))
+        bs = bars_for_set(s, arms, rows, adj, candidate, control, resamples, bool(m.get("reading_complete", True)), hidden)
         per_bars[s] = bs
         res["sets"][s] = {"summary": summ, "bars": {b: bs[b]["state"] for b in bs}}
     L.append("### Bars")
@@ -361,7 +385,12 @@ def build_report(measures, arms, candidate="R", control="C", resamples=RESAMPLES
 
 
 def cmd_rule_text(a):
-    print(rule_text(a.arms.split(","), a.sets.split(","), a.configs_sha256, a.candidate, a.control))
+    t = rule_text(a.candidate, a.control, a.h6_mode, a.h6_chosen_by)
+    if a.sha256:
+        import hashlib
+        print(hashlib.sha256(t.encode("utf-8")).hexdigest())
+    else:
+        print(t)
     return 0
 
 
@@ -390,8 +419,9 @@ def main(argv=None):
         p.add_argument("--candidate", default="R")
         p.add_argument("--control", default="C")
         if n == "rule-text":
-            p.add_argument("--sets", default="d7,h6")
-            p.add_argument("--configs-sha256", default="")
+            p.add_argument("--h6-mode", default="full", choices=list(H6_MODES))
+            p.add_argument("--h6-chosen-by", default="")
+            p.add_argument("--sha256", action="store_true", help="print the sha256 of the rule text (the hidden ledger row must carry it)")
         else:
             p.add_argument("--measures", nargs="+", required=True, metavar="SET=PATH")
             p.add_argument("--out")
