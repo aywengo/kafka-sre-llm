@@ -73,9 +73,12 @@ EOF
   verify:invalid_manifest)
     # Argo CD retries the failed automated sync (limit 5, with backoff); while an attempt runs the message is briefly
     # "Retrying operation. Attempt #N" or "waiting for healthy state of ..." instead of the failure (seen 2026-11-26),
-    # so a retry counts too. payments-dlq pending in the target state keeps out a message from before the commit.
-    dlq_pending && { app_field '{.status.operationState.message}'; app_field '{.status.conditions[*].message}'; } \
-      | grep -qi "invalid\|greater than or equal\|Retrying operation\|waiting for healthy state" ;;
+    # so such a message counts once a retry is on record (retryCount >= 1: a sync has failed), not during the first
+    # attempt. payments-dlq pending in the target state keeps out a message from before the commit.
+    msg=$({ app_field '{.status.operationState.message}'; app_field '{.status.conditions[*].message}'; })
+    retries=$(app_field '{.status.operationState.retryCount}')
+    dlq_pending && { grep -qi "invalid\|greater than or equal" <<<"$msg" ||
+      { [ "${retries:-0}" -ge 1 ] && grep -qi "Retrying operation\|waiting for healthy state" <<<"$msg"; }; } ;;
   revert:*)
     K replace -f "$ROOT/mcp_harness/manifests/argocd.yaml" >/dev/null
     gitserver_exec "git reset -q --hard base"

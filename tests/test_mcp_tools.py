@@ -873,6 +873,8 @@ class FaultCheckFixesTest(unittest.TestCase):
         self.assertIn("dlq_pending &&", v)
         for word in ("invalid", "greater than or equal", "Retrying operation", "waiting for healthy state"):
             self.assertIn(word, v)
+        # a retry message counts only once a sync has failed (retryCount >= 1), not during the first attempt
+        self.assertIn('[ "${retries:-0}" -ge 1 ] && grep -qi "Retrying operation\\|waiting for healthy state"', v)
         d = s[s.index("dlq_pending() {"):]
         d = d[:d.index("\n}")]
         self.assertIn("OutOfSync", d)
