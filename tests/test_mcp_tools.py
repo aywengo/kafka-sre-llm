@@ -2,11 +2,14 @@
 import importlib.util
 import io
 import json
+import os
 import re
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
+import unittest.mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -47,7 +50,7 @@ class FakeServer:
 
 class FakeRunner(srv.Runner):
     def __init__(self, outputs=None):
-        super().__init__(context="ctx", run=self.fake)
+        super().__init__(context="ctx", kubeconfig="kc", run=self.fake)
         self.argvs, self.outputs = [], outputs or {}
 
     def fake(self, argv):
@@ -143,12 +146,12 @@ class ServerTest(unittest.TestCase):
         srv.call_tool(r, "k8s_get", {"kind": "kafka", "namespace": "kafka", "output": "yaml"})
         srv.call_tool(r, "k8s_logs", {"namespace": "kafka", "pod": "p-0", "tail": 50, "previous": True})
         srv.call_tool(r, "k8s_events", {"namespace": "kafka", "types": "Warning"})
-        self.assertEqual(r.argvs[0], ["kubectl", "--context", "ctx", "--request-timeout=20s", "get",
+        self.assertEqual(r.argvs[0], ["kubectl", "--kubeconfig", "kc", "--context", "ctx", "--request-timeout=20s", "get",
                                       "kafkas.kafka.strimzi.io", "-n", "kafka", "-o", "yaml"])
-        self.assertEqual(r.argvs[1][4:], ["logs", "-n", "kafka", "p-0", "--tail=50", "--previous"])
-        self.assertEqual(r.argvs[2][4:], ["events", "-n", "kafka", "--types", "Warning"])
+        self.assertEqual(r.argvs[1][6:], ["logs", "-n", "kafka", "p-0", "--tail=50", "--previous"])
+        self.assertEqual(r.argvs[2][6:], ["events", "-n", "kafka", "--types", "Warning"])
         for argv in r.argvs:
-            self.assertIn(argv[4], ("get", "describe", "logs", "events"))
+            self.assertIn(argv[6], ("get", "describe", "logs", "events"))
 
     def test_namespace_required_for_namespaced_kinds(self):
         r = FakeRunner()
@@ -166,8 +169,8 @@ class ServerTest(unittest.TestCase):
         self.assertFalse(err)
         self.assertIn("kafka-broker-1", text)
         execv = r.argvs[-1]
-        self.assertEqual(execv[4:10], ["exec", "-n", "kafka", "kafka-broker-1", "-c", "kafka"])
-        self.assertEqual(execv[11:], ["/opt/kafka/bin/kafka-topics.sh", "--bootstrap-server", "localhost:9092",
+        self.assertEqual(execv[6:12], ["exec", "-n", "kafka", "kafka-broker-1", "-c", "kafka"])
+        self.assertEqual(execv[13:], ["/opt/kafka/bin/kafka-topics.sh", "--bootstrap-server", "localhost:9092",
                                       "--describe", "--topic", "orders", "--under-replicated-partitions"])
         srv.call_tool(r, "kafka_consumer_groups_describe", {"namespace": "kafka", "group": "g", "mode": "members"})
         self.assertIn("--describe", r.argvs[-1])
@@ -213,8 +216,11 @@ class ServerTest(unittest.TestCase):
         self.assertIn("error", resp[3])
 
     def test_real_subprocess_server(self):
-        s = StdioServer("k8s", {"command": ["{python}", "-m", "kafka_sre_rag.tools.k8s_server", "--context", "none"],
-                                "cwd": str(ROOT)})
+        kc = tempfile.NamedTemporaryFile("w", suffix=".kubeconfig", delete=False)
+        kc.close()
+        self.addCleanup(Path(kc.name).unlink)
+        s = StdioServer("k8s", {"command": ["{python}", "-m", "kafka_sre_rag.tools.k8s_server", "--kubeconfig", kc.name,
+                                            "--context", "none"], "cwd": str(ROOT)})
         try:
             self.assertEqual(s.server_info["name"], srv.SERVER_INFO["name"])
             self.assertEqual({t["name"] for t in s.tools}, set(SCHEMAS))
@@ -374,13 +380,15 @@ class ScorerTest(unittest.TestCase):
             {"type": "call", "name": "k8s_get", "arguments": {"kind": "secrets"}, "status": "violation", "reason": "r", "channel": "text"},
             {"type": "call", "name": "k8s_logs", "arguments": {"namespace": "kafka", "pod": "orders-1"}, "status": "invalid", "channel": "native"},
             {"type": "request", "turn": "final", "n_calls": 2},
+            {"type": "after_budget_call", "name": "k8s_get", "status": "violation"},
+            {"type": "after_budget_call", "name": "k8s_get", "status": "ok"},
             {"type": "final", "turns": 3, "seconds": 12.5, "stop": "answer", "answer": "a"}]
         r = score.score_trace(events, sc)
         self.assertEqual((r["attempted"], r["valid"], r["violations"], r["invalid"], r["tool_errors"]), (4, 2, 1, 1, 1))
         self.assertEqual((r["relevant"], r["evidence_groups"], r["evidence_hit"]), (1, 2, 1))
         self.assertEqual((r["call_validity"], r["relevant_share"], r["evidence_recall"], r["native_share"]), (0.5, 0.5, 0.5, 0.75))
         self.assertIsNone(r["diagnosis_correct"])
-        self.assertEqual(r["calls_after_cap"], 2)
+        self.assertEqual((r["calls_after_cap"], r["calls_after_cap_outside"]), (2, 1))
         s = score.summarize([r, dict(r, violations=0, seconds=20.0)])
         self.assertEqual((s["scenarios"], s["violations"], s["scenarios_with_violation"]), (2, 1, 1))
 
@@ -417,6 +425,367 @@ class DownloadsTest(unittest.TestCase):
             self.assertIn(img.split("@")[0], refs, img)
         self.assertIn("imagePullPolicy: IfNotPresent", text)
         self.assertNotIn("imagePullPolicy: Always", text)
+
+
+# ---- review fixes (S1 to S7, N1, N2, N4, N5) ----------------------------------------------------------------------
+
+FAKE_URL = "http://made-up-host.invalid:9999/v1"  # a made-up address: it must never reach a trace or a log
+
+
+class FakeHTTPError(Exception):
+    def __init__(self, status):
+        super().__init__(f"Server error '{status}' for url '{FAKE_URL}/chat/completions'")
+        self.response = type("R", (), {"status_code": status})()
+
+
+class ReviewLoopTest(unittest.TestCase):
+    def run_loop(self, model, **kw):
+        fake = FakeServer()
+        session = Session(AllowList.load(), [fake])
+        with tempfile.TemporaryDirectory() as d:
+            trace = Path(d) / "t.jsonl"
+            res = run("why?", model, session, trace_path=str(trace), on_event=None, retry_wait=0, **kw)
+            text = trace.read_text()
+        return res, [json.loads(x) for x in text.splitlines()], fake, text
+
+    def test_s1_a_failed_request_is_retried_once(self):
+        model = ScriptedModel([FakeHTTPError(500), {"content": "the cause"}])
+        res, events, _, text = self.run_loop(model)
+        self.assertEqual((res["stop"], res["answer"]), ("answer", "the cause"))
+        errs = [e for e in events if e["type"] == "model_error"]
+        self.assertEqual([(e["attempt"], e["error"], e["http_status"]) for e in errs], [(1, "FakeHTTPError", 500)])
+        self.assertNotIn("made-up-host", text)
+
+    def test_s1_two_failures_end_the_session_as_failed(self):
+        model = ScriptedModel([{"tool_calls": [{"name": "k8s_get", "arguments": {"kind": "nodes"}}]},
+                               FakeHTTPError(503), TimeoutError("connect timed out to " + FAKE_URL)])
+        res, events, _, text = self.run_loop(model)
+        self.assertEqual((res["stop"], res["turns"], res["answer"]), ("failed", 1, None))
+        self.assertEqual(res["error"], {"error": "TimeoutError", "http_status": None})
+        self.assertEqual(events[-1]["type"], "final")
+        self.assertEqual([e["http_status"] for e in events if e["type"] == "model_error"], [503, None])
+        self.assertNotIn("made-up-host", text)
+
+    def test_s1_another_exception_aborts_without_a_final_event(self):
+        class Broken(FakeServer):
+            def call(self, name, args):
+                raise RuntimeError(FAKE_URL)
+        with tempfile.TemporaryDirectory() as d:
+            trace = Path(d) / "t.jsonl"
+            with self.assertRaises(RuntimeError):
+                run("why?", ScriptedModel([{"tool_calls": [{"name": "k8s_get", "arguments": {"kind": "nodes"}}]}]),
+                    Session(AllowList.load(), [Broken()]), trace_path=str(trace), on_event=None, retry_wait=0)
+            text = trace.read_text()
+        last = json.loads(text.splitlines()[-1])
+        self.assertEqual((last["type"], last["error"]), ("aborted", "RuntimeError"))
+        self.assertNotIn("made-up-host", text)
+
+    def test_s2_a_ninth_call_is_still_checked(self):
+        calls = [{"name": "k8s_get", "arguments": {"kind": "nodes"}}] * 8 + [
+            {"name": "k8s_get", "arguments": {"kind": "secrets", "namespace": "kafka"}},
+            {"name": "k8s_logs", "arguments": {"namespace": "kafka", "pod": "Bad_Name"}},
+            {"name": "k8s_get", "arguments": {"kind": "nodes"}}]
+        res, events, fake, _ = self.run_loop(ScriptedModel([{"tool_calls": calls}, {"content": "x"}]))
+        self.assertEqual([e["status"] for e in events if e["type"] == "call"][8:], ["violation", "invalid", "skipped"])
+        self.assertEqual(res["calls"], {"ok": 8, "violation": 1, "invalid": 1, "skipped": 1, "error": 0})
+        self.assertEqual(len(fake.calls), 8)
+
+    def test_s3_a_text_call_that_is_not_json_is_invalid(self):
+        content = '<tool_call>{"name": "k8s_get", "arguments": {"kind": </tool_call><tool_call>{"arguments": {}}</tool_call>'
+        res, events, fake, _ = self.run_loop(ScriptedModel([{"content": content}, {"content": "done"}]))
+        calls = [e for e in events if e["type"] == "call"]
+        self.assertEqual([(c["status"], c["name"]) for c in calls], [("invalid", ""), ("invalid", "")])
+        self.assertIn("could not be parsed", calls[0]["reason"])
+        self.assertEqual((res["calls"]["violation"], res["calls"]["invalid"], fake.calls), (0, 2, []))
+
+    def test_s4_text_calls_after_the_budget_are_checked_not_run_and_no_answer(self):
+        first = {"tool_calls": [{"name": "k8s_get", "arguments": {"kind": "nodes"}}]}
+        final = ('<tool_call>{"name": "k8s_get", "arguments": {"kind": "secrets", "namespace": "kafka"}}</tool_call>\n'
+                 '<tool_call>{"name": "k8s_get", "arguments": {"kind": "pods", "namespace": "kafka"}}</tool_call>')
+        res, events, fake, _ = self.run_loop(ScriptedModel([first, {"content": final}]), max_turns=1)
+        self.assertEqual((res["stop"], res["answer"]), ("turn_cap", None))
+        self.assertEqual(res["after_budget_calls"], {"calls": 2, "violation": 1, "invalid": 0})
+        self.assertEqual([e["status"] for e in events if e["type"] == "after_budget_call"], ["violation", "ok"])
+        self.assertEqual(len(fake.calls), 1)  # only the call of turn 1 ran
+        r = load("score").score_trace(events, {"id": "x", "kind": "k", "reference_evidence": []})
+        self.assertEqual((r["attempted"], r["calls_after_cap"], r["calls_after_cap_outside"], r["answered"]), (1, 2, 1, False))
+        res, *_ = self.run_loop(ScriptedModel([first, {"content": "The cause is X.\n" + final}]), max_turns=1)
+        self.assertEqual(res["answer"], "The cause is X.")
+
+    def test_s6_each_request_gets_the_time_left_and_the_cap_is_time_cap(self):
+        model = ScriptedModel([{"tool_calls": [{"name": "k8s_get", "arguments": {"kind": "nodes"}}], "finish_reason": "tool_calls"},
+                               {"content": "final", "finish_reason": "length"}])
+        res, events, *_ = self.run_loop(model, max_turns=1, max_seconds=30)
+        timeouts = [r["timeout"] for r in model.requests]
+        self.assertEqual(len(timeouts), 2)  # the final request too
+        self.assertTrue(all(0 < t <= 30 for t in timeouts), timeouts)
+        self.assertGreaterEqual(timeouts[0], timeouts[1])
+        self.assertEqual([e["finish_reason"] for e in events if e["type"] == "request"], ["tool_calls", "length"])
+
+        class Slow:
+            identity = {"backend": "stub", "model": "slow"}
+
+            def __init__(self):
+                self.timeouts = []
+
+            def chat(self, messages, tools, timeout=None):
+                self.timeouts.append(timeout)
+                time.sleep(timeout)
+                raise TimeoutError("read timed out")
+        slow = Slow()
+        res, events, *_ = self.run_loop(slow, max_seconds=0.4)
+        self.assertEqual((res["stop"], res["turns"], res["answer"]), ("time_cap", 0, None))
+        self.assertEqual(len(slow.timeouts), 1)  # no retry at the cap
+        self.assertLessEqual(slow.timeouts[0], 0.4)
+        self.assertTrue([e for e in events if e["type"] == "model_error"][0]["at_time_cap"])
+
+        class Late(Slow):
+            def chat(self, messages, tools, timeout=None):
+                time.sleep(timeout + 0.1)
+                return {"content": "a late answer", "tool_calls": [], "finish_reason": "stop"}
+        res, events, *_ = self.run_loop(Late(), max_seconds=0.3)
+        self.assertEqual((res["stop"], res["answer"]), ("time_cap", None))
+        self.assertTrue([e for e in events if e["type"] == "request"][0]["late"])
+
+    def test_s6_an_unclosed_tool_call_is_invalid_not_an_answer(self):
+        content = 'Let me check.\n<tool_call>{"name": "k8s_get", "arguments": {"kind": "pods"'
+        self.assertEqual(parse_text_calls(content)[0][0], "")
+        res, events, fake, _ = self.run_loop(ScriptedModel([{"content": content}, {"content": "the cause"}]))
+        self.assertEqual((res["stop"], res["turns"], res["answer"]), ("answer", 2, "the cause"))
+        self.assertEqual([e["status"] for e in events if e["type"] == "call"], ["invalid"])
+
+    def test_openai_client_timeout_and_finish_reason(self):
+        import httpx
+        from kafka_sre_rag.tools.loop import OpenAIChatModel
+        seen = []
+
+        def handler(request):
+            seen.append(request.extensions.get("timeout"))
+            return httpx.Response(200, json={"choices": [{"message": {"content": "x"}, "finish_reason": "length"}]})
+        m = OpenAIChatModel("http://127.0.0.1:9/v1", "m", transport=httpx.MockTransport(handler))
+        self.assertEqual(m.chat([{"role": "user", "content": "q"}], None, timeout=7.5)["finish_reason"], "length")
+        self.assertEqual(seen[0]["read"], 7.5)
+
+
+class ReviewScorerTest(unittest.TestCase):
+    def test_s5_an_errored_call_is_no_evidence(self):
+        score = load("score")
+        sc = {"id": "x", "kind": "k", "reference_evidence": [
+            {"tool": "k8s_get", "match": {"kind": "kafkatopics", "namespace": "kafka", "name": "orders", "output": "yaml|json"},
+             "shows": "min.insync.replicas: 3"}]}
+        call = {"type": "call", "name": "k8s_get", "status": "ok", "channel": "native",
+                "arguments": {"kind": "kafkatopics", "namespace": "kafka", "name": "orders", "output": "yaml"}}
+        r = score.score_trace([dict(call, is_error=True), {"type": "final", "stop": "answer", "answer": "a"}], sc)
+        self.assertEqual((r["valid"], r["tool_errors"], r["relevant"], r["evidence_hit"]), (1, 1, 0, 0))
+        r = score.score_trace([call, {"type": "final", "stop": "answer", "answer": "a"}], sc)
+        self.assertEqual((r["relevant"], r["evidence_hit"]), (1, 1))
+        wide = dict(call, arguments=dict(call["arguments"], output="wide"))
+        self.assertEqual(score.score_trace([wide], sc)["evidence_hit"], 0)  # -o wide does not show the config
+
+    def test_s5_facts_wide_does_not_show_need_yaml_or_json(self):
+        sc = [json.loads(x) for x in (ROOT / "mcp_harness/scenarios.jsonl").read_text().splitlines()]
+        need = re.compile(r"min\.insync|observedGeneration|ComparisonError|operationState|ACL|quotas|status\.secret|"
+                          r"jvmOptions|storage class fast|size 2Gi|retention\.ms|listener|warning about")
+        for s in sc:
+            for it in s["reference_evidence"]:
+                if it["tool"] == "k8s_get" and need.search(it["shows"]):
+                    self.assertEqual(it["match"].get("output"), "yaml|json", (s["id"], it["shows"]))
+
+
+class ReviewServerTest(unittest.TestCase):
+    def test_s7_redaction(self):
+        cases = {
+            "json env": '{"name": "DB_PASSWORD", "value": "made-up-pw-1"}',
+            "json env escaped": '{\\"name\\":\\"API_TOKEN\\",\\"value\\":\\"made-up-tok-2\\"}',
+            "PGPASSWORD": "      PGPASSWORD:  made-up-pw-3",
+            "AWS secret": "      AWS_SECRET_ACCESS_KEY:  made-up-aws-4",
+            "env line in a log": "export AWS_SECRET_ACCESS_KEY=made-up-aws-5 && run",
+            "json map": '{"PGPASSWORD": "made-up-pw-6"}',
+            "yaml env": "- name: KAFKA_SASL_JAAS_CONFIG_PASSWORD\n  value: made-up-pw-7",
+            "bearer": "Authorization: Bearer made-up-bearer-token-8",
+            "bearer in a log": "sending header bearer abcdefgh.made-up-9",
+            "basic": "authorization: Basic made-up-basic-10",
+        }
+        for what, text in cases.items():
+            out = srv.redact(text)
+            self.assertNotIn("made-up", out, what)
+            self.assertIn("[REDACTED]", out, what)
+        kept = ("automountServiceAccountToken: false\n      KEYSTORE_MODE:  selfsigned\n      STRIMZI_NAMESPACE:  kafka-prod\n"
+                "  secret: app-consumer\n" '{"name": "BOOTSTRAP", "value": "kafka-kafka-bootstrap:9093"}\n'
+                "      DB_PASSWORD:  <set to the key 'password' in secret 'db'>  Optional: false")
+        self.assertEqual(srv.redact(kept), kept)
+
+    def test_s7_last_applied_configuration_is_dropped(self):
+        lac = '{"apiVersion":"apps/v1","spec":{"env":[{"name":"X","value":"made-up-lac"}]}}'
+        yaml_text = ("metadata:\n  annotations:\n    deployment.kubernetes.io/revision: \"3\"\n"
+                     "    kubectl.kubernetes.io/last-applied-configuration: |\n      " + lac + "\n"
+                     "  creationTimestamp: \"2026-11-26T09:45:00Z\"\n  name: orders-consumer\n")
+        json_text = json.dumps({"metadata": {"annotations": {"kubectl.kubernetes.io/last-applied-configuration": lac + "\n",
+                                                             "other": "kept"}, "name": "orders-consumer"}}, indent=1)
+        describe = ("Annotations:      deployment.kubernetes.io/revision: 3\n"
+                    "                  kubectl.kubernetes.io/last-applied-configuration:\n                    " + lac + "\n"
+                    "Selector:         app=orders-consumer\n")
+        for text in (yaml_text, json_text, describe):
+            out = srv.redact(text)
+            self.assertNotIn("made-up-lac", out)
+            self.assertIn("orders-consumer", out)
+            self.assertIn("last-applied-configuration", out)
+        self.assertEqual(json.loads(srv.redact(json_text))["metadata"]["annotations"]["other"], "kept")
+        self.assertIn("creationTimestamp", srv.redact(yaml_text))
+        self.assertIn("Selector:", srv.redact(describe))
+
+    def test_n1_no_value_starting_with_a_dash(self):
+        r = FakeRunner()
+        for name, args in (("kafka_topics_describe", {"namespace": "kafka", "topic": "--delete"}),
+                           ("k8s_get", {"kind": "pods", "namespace": "kafka", "selector": "-l"}),
+                           ("kafka_configs_describe", {"namespace": "kafka", "entity_type": "users", "entity_name": "--alter"}),
+                           ("kafka_consumer_groups_describe", {"namespace": "kafka", "group": "-x"})):
+            err, text = srv.call_tool(r, name, args)
+            self.assertTrue(err, (name, args))
+            self.assertIn("invalid arguments", text)
+        self.assertEqual(r.argvs, [])
+        self.assertEqual(validate({"namespace": "kafka", "topic": "__consumer_offsets"}, SCHEMAS["kafka_topics_describe"]), [])
+        self.assertEqual(validate({"kind": "pods", "selector": "strimzi.io/cluster=kafka,!x"}, SCHEMAS["k8s_get"]), [])
+        self.assertEqual(validate({"namespace": "kafka", "entity_type": "users", "entity_name": "CN=app-consumer"},
+                                  SCHEMAS["kafka_configs_describe"]), [])
+
+    def test_n2_the_server_survives_bad_json_and_bad_messages(self):
+        r = FakeRunner({"pods": "not json", "applications.argoproj.io": "not json either"})
+        err, text = srv.call_tool(r, "kafka_topics_describe", {"namespace": "kafka"})
+        self.assertTrue(err)
+        self.assertIn("could not read the broker pods", text)
+        err, text = srv.call_tool(r, "argocd_app_get", {"name": "kafka-topics"})
+        self.assertTrue(err)
+        self.assertIn("could not read the Application", text)
+        out = io.StringIO()
+        lines = ["[1, 2]", "{bad", json.dumps({"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": "oops"}),
+                 json.dumps({"jsonrpc": "2.0", "id": 6, "method": "ping"})]
+        srv.serve(FakeRunner(), io.StringIO("\n".join(lines) + "\n"), out)
+        resp = [json.loads(x) for x in out.getvalue().splitlines()]
+        self.assertEqual([x.get("error", {}).get("code") for x in resp], [-32600, -32700, -32603, None])
+        self.assertEqual(resp[-1]["result"], {})
+
+    def test_s7_server_refuses_to_start_without_kubeconfig_and_context(self):
+        with self.assertRaises(ValueError):
+            srv.Runner(None, "kc")
+        with self.assertRaises(ValueError):
+            srv.Runner("ctx", None)
+        base = [sys.executable, "-m", "kafka_sre_rag.tools.k8s_server"]
+        for extra in ([], ["--context", "kind-x"], ["--kubeconfig", "/nonexistent/kubeconfig", "--context", "kind-x"]):
+            p = subprocess.run(base + extra, cwd=ROOT, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=60)
+            self.assertEqual(p.returncode, 2, (extra, p.stderr))
+        from kafka_sre_rag.tools.cli import session_from
+        for kc, ctx in ((None, "ctx"), ("/nonexistent/kubeconfig", "ctx")):
+            with self.assertRaises(ValueError):
+                session_from(None, kc, ctx)
+
+    def test_s7_diagnose_requires_kubeconfig_and_context(self):
+        from kafka_sre_rag import __main__ as cli_main
+        for argv in (["diagnose", "q", "--tools", "mcp", "--stub", "x.json"],
+                     ["diagnose", "q", "--tools", "mcp", "--stub", "x.json", "--kube-context", "kind-x"],
+                     ["diagnose", "q", "--tools", "mcp", "--stub", "x.json", "--kubeconfig", "kc"]):
+            with self.assertRaises(SystemExit) as cm, unittest.mock.patch("sys.stderr", io.StringIO()):
+                cli_main.main(argv)
+            self.assertEqual(cm.exception.code, 2, argv)
+
+    def test_n4_no_secret_env_reaches_the_server_or_kubectl(self):
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            kc = d / "kubeconfig"
+            kc.write_text("apiVersion: v1\nkind: Config\n")
+            dump, argv_dump = d / "env.txt", d / "argv.txt"
+            fake = d / "kubectl"
+            fake.write_text(f"#!/bin/sh\nenv > '{dump}'\nprintf '%s\\n' \"$@\" > '{argv_dump}'\necho 'NAME  READY'\n")
+            fake.chmod(0o755)
+            env = {"PATH": f"{d}{os.pathsep}{os.environ.get('PATH', '')}", "OMLX_API_KEY": "made-up-omlx-key",
+                   "JUDGE_API_KEY": "made-up-judge-key", "AWS_SECRET_ACCESS_KEY": "made-up-aws", "OMLX_URL": FAKE_URL}
+            with unittest.mock.patch.dict(os.environ, env):
+                from kafka_sre_rag.tools.cli import session_from
+                session = session_from(None, str(kc), "kind-x")
+                try:
+                    err, text = session.call("k8s_get", {"kind": "pods", "namespace": "kafka"})
+                    server_env = session.servers[0].proc.args  # the command line of the server
+                finally:
+                    session.close()
+            self.assertFalse(err, text)
+            seen = dump.read_text()
+            for secret in ("made-up-omlx-key", "made-up-judge-key", "made-up-aws", "made-up-host"):
+                self.assertNotIn(secret, seen)
+            self.assertIn(f"KUBECONFIG={kc}", seen)
+            argv = argv_dump.read_text().split("\n")
+            self.assertEqual(argv[:4], ["--kubeconfig", str(kc), "--context", "kind-x"])
+            self.assertIn("--kubeconfig", server_env)
+            self.assertEqual(set(srv.minimal_env("k")) - {"HOME"}, {"PATH", "KUBECONFIG"})
+
+    def test_n5_ask_and_verify_do_not_import_the_tools_package(self):
+        code = ("import sys; import kafka_sre_rag.__main__ as m; p = m.build_parser(); "
+                "p.parse_args(['ask', '--dry-run', 'q']); p.parse_args(['verify']); "
+                "print('kafka_sre_rag.tools' in sys.modules)")
+        p = subprocess.run([sys.executable, "-c", code], cwd=ROOT, capture_output=True, text=True, timeout=120)
+        self.assertEqual((p.returncode, p.stdout.strip()), (0, "False"), p.stderr[-500:])
+        p = subprocess.run([sys.executable, "-m", "kafka_sre_rag", "diagnose", "--help"], cwd=ROOT, capture_output=True,
+                           text=True, timeout=120)
+        self.assertEqual(p.returncode, 0)
+        self.assertIn("--kubeconfig", p.stdout)
+        p = subprocess.run([sys.executable, "-m", "kafka_sre_rag", "--help"], cwd=ROOT, capture_output=True, text=True, timeout=120)
+        self.assertIn("diagnose", p.stdout)
+
+
+class ReviewHarnessTest(unittest.TestCase):
+    """S1 in the harness: restore runs whatever happens, only the exception type is printed, and a trace without a
+    final event is moved aside so a rerun repeats the scenario; a "failed" scenario is final."""
+
+    def setUp(self):
+        self.h = load("harness")
+        self.calls = []
+        h = self.h
+        sc = {"id": "s1", "symptom": "why?", "verify_timeout": 1, "reference_evidence": []}
+        self.patch(h, "pick", lambda ids: [sc])
+        self.patch(h, "ensure_kubeconfig", lambda: None)
+        self.patch(h, "ensure_healthy", lambda: True)
+        self.patch(h, "inject_verified", lambda s: (True, 0.1))
+        self.patch(h, "restore", lambda s: self.calls.append("restore") or True)
+        self.patch(h, "cluster", lambda action, timeout=0: (0, '{"new_image_refs": 0, "pulling_events": 0}'))
+        self.patch(h, "make_session", lambda: Session(AllowList.load(), [FakeServer()]))
+        self.patch(h, "log", lambda msg: self.calls.append(msg))
+
+    def patch(self, obj, name, value):
+        p = unittest.mock.patch.object(obj, name, value)
+        p.start()
+        self.addCleanup(p.stop)
+
+    def args(self, out):
+        return type("A", (), dict(model="stub", ids=None, out=out, max_turns=12, max_seconds=600, text_protocol=False,
+                                  base_url=None, model_name=None, max_tokens=10, extra_body=None))()
+
+    def test_restore_runs_and_no_url_is_printed(self):
+        def boom(*a, **k):
+            raise RuntimeError(f"connection refused: {FAKE_URL}")
+        self.patch(self.h, "run_loop", boom)
+        with tempfile.TemporaryDirectory() as d, self.assertRaises(SystemExit) as cm:
+            self.h.cmd_run(self.args(d))
+        self.assertIn("restore", self.calls)
+        self.assertIn("RuntimeError", str(cm.exception.code))
+        self.assertNotIn("made-up-host", str(cm.exception.code) + " ".join(map(str, self.calls)))
+
+    def test_aborted_trace_is_moved_aside_and_failed_is_final(self):
+        with tempfile.TemporaryDirectory() as d:
+            traces = Path(d) / "traces"
+            traces.mkdir()
+            (traces / "s1.jsonl").write_text(json.dumps({"type": "start"}) + "\n" + json.dumps({"type": "aborted"}) + "\n")
+            self.patch(self.h, "stub_model", lambda sc: ScriptedModel([FakeHTTPError(500), FakeHTTPError(500)]))
+            real = self.h.run_loop
+            self.patch(self.h, "run_loop", lambda *a, **k: real(*a, **dict(k, on_event=None, retry_wait=0)))
+            self.h.cmd_run(self.args(d))
+            self.assertTrue((traces / "s1.jsonl.aborted-1").exists())
+            final = json.loads((traces / "s1.jsonl").read_text().splitlines()[-1])
+            self.assertEqual((final["type"], final["stop"]), ("final", "failed"))
+            row = json.loads((Path(d) / "runs.jsonl").read_text().splitlines()[-1])
+            self.assertEqual(row["diagnosis"]["stop"], "failed")
+            self.calls.clear()
+            self.h.cmd_run(self.args(d))  # a rerun: the failed scenario stays as it is
+            self.assertTrue(any("skipped" in str(c) for c in self.calls))
+            self.assertNotIn("restore", self.calls)
 
 
 if __name__ == "__main__":

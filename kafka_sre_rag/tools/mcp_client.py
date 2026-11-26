@@ -1,16 +1,16 @@
 """A minimal MCP client for local servers: JSON-RPC 2.0 over stdio (newline-delimited), standard library only.
 
 Only the stdio transport exists here: a server is a local command started as a child process. A remote
-server (an HTTP or SSE URL) is refused (W31: remote MCP servers are out of scope).
+server (an HTTP or SSE URL) is refused (W31: remote MCP servers are out of scope). A server gets a minimal
+environment (PATH, HOME and what its spec's "env" names), never the caller's API keys or other secrets.
 """
 import json
-import os
 import queue
 import subprocess
 import sys
 import threading
 
-from .k8s_server import PROTOCOL_VERSION
+from .k8s_server import PROTOCOL_VERSION, minimal_env
 
 CLIENT_INFO = {"name": "kafka-sre-rag", "version": "tools/1"}
 
@@ -33,7 +33,7 @@ class StdioServer:
     def __init__(self, name, spec, timeout=60):
         self.name, self.timeout, self._id = name, timeout, 0
         cmd = check_local(spec)
-        env = dict(os.environ, **{k: str(v) for k, v in (spec.get("env") or {}).items()})
+        env = dict(minimal_env(), **{k: str(v) for k, v in (spec.get("env") or {}).items()})
         self.proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                      text=True, bufsize=1, env=env, cwd=spec.get("cwd"))
         self._q = queue.Queue()

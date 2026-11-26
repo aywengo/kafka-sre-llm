@@ -1,24 +1,32 @@
-"""`python -m kafka_sre_rag diagnose --tools mcp ...`: diagnose a live problem with read-only tools.
+"""`python -m kafka_sre_rag diagnose --tools mcp --kubeconfig FILE --kube-context NAME ...`: diagnose a live
+problem with read-only tools.
 
 EXPERIMENTAL and UNMEASURED (M7, W30/W31). The session allow-list (default: allowlist_readonly.json) names the local
 MCP servers and the tools; the runtime enforces it. Every call is shown on stdout and written to the trace.
+The kubeconfig file and the context are required: the tools never use the user's default kubeconfig or its
+current context.
 """
 import copy
 import json
 import os
 import sys
+from pathlib import Path
 
 from .allowlist import AllowList
 from .loop import OpenAIChatModel, ScriptedModel, Session, run
 from .mcp_client import StdioServer
 
+ROOT = Path(__file__).resolve().parents[2]
 
-def add_parser(sub):
-    d = sub.add_parser("diagnose", help="EXPERIMENTAL: diagnose a live problem with read-only tools (local MCP servers)")
+
+def fill_parser(d):
+    """The arguments of `diagnose` (kafka_sre_rag/__main__.py builds this parser only for that command)."""
     d.add_argument("question")
     d.add_argument("--tools", choices=["mcp"], required=True, help="tool source: mcp (local MCP servers, stdio)")
     d.add_argument("--allowlist", help="session allow-list JSON (default: kafka_sre_rag/tools/allowlist_readonly.json)")
-    d.add_argument("--kube-context", help="kubeconfig context passed to the k8s server (default: the current one)")
+    d.add_argument("--kubeconfig", required=True,
+                   help="kubeconfig file for the k8s server (required; the default kubeconfig is never used)")
+    d.add_argument("--kube-context", required=True, help="context in that kubeconfig (required; no default)")
     d.add_argument("--base-url", help="OpenAI-compatible server URL (default: environment variable OMLX_URL)")
     d.add_argument("--model", help="model name sent to the server")
     d.add_argument("--max-turns", type=int, default=12)
@@ -32,15 +40,26 @@ def add_parser(sub):
     return d
 
 
-def session_from(allowlist_path=None, kube_context=None):
+def session_from(allowlist_path, kubeconfig, kube_context):
+    """The session's servers; the k8s server gets the explicit kubeconfig file and context (both required)."""
+    if not kubeconfig or not kube_context:
+        raise ValueError("a kubeconfig file and a kube context are both required")
+    kubeconfig = os.path.abspath(kubeconfig)
+    if not os.path.isfile(kubeconfig):
+        raise ValueError(f"kubeconfig {kubeconfig}: no such file")
     allow = AllowList.load(allowlist_path)
     servers = []
-    for name, spec in allow.servers.items():
-        spec = copy.deepcopy(spec)
-        if kube_context and name == "k8s":
-            spec["command"] = spec["command"] + ["--context", kube_context]
-        spec.setdefault("cwd", str(__import__("pathlib").Path(__file__).resolve().parents[2]))
-        servers.append(StdioServer(name, spec))
+    try:
+        for name, spec in allow.servers.items():
+            spec = copy.deepcopy(spec)
+            if name == "k8s":
+                spec["command"] = spec["command"] + ["--kubeconfig", kubeconfig, "--context", kube_context]
+            spec.setdefault("cwd", str(ROOT))
+            servers.append(StdioServer(name, spec))
+    except BaseException:
+        for s in servers:
+            s.close()
+        raise
     return Session(allow, servers)
 
 
@@ -54,7 +73,11 @@ def main(a):
             return 2
         model = OpenAIChatModel(url, a.model, os.environ.get("OMLX_API_KEY"), max_tokens=a.max_tokens,
                                 extra_body=a.extra_body)
-    session = session_from(a.allowlist, a.kube_context)
+    try:
+        session = session_from(a.allowlist, a.kubeconfig, a.kube_context)
+    except ValueError as e:
+        print(f"diagnose: {e}", file=sys.stderr)
+        return 2
     print("EXPERIMENTAL and UNMEASURED: diagnosis with read-only tools; every call is shown below.", file=sys.stderr)
     try:
         res = run(a.question, model, session, a.max_turns, a.max_seconds, a.trace, a.text_protocol)
@@ -63,5 +86,8 @@ def main(a):
     c = res["calls"]
     print(f"\n[{res['stop']}: {res['turns']} turns, {res['seconds']:.1f} s; calls run {c['ok']}, blocked "
           f"{c['violation']} (violations), rejected {c['invalid']} (invalid), tool errors {c['error']}]")
+    if res.get("error"):
+        print(f"[the model request failed twice: {res['error']['error']}"
+              f"{' HTTP ' + str(res['error']['http_status']) if res['error'].get('http_status') else ''}]")
     print(res["answer"] or "(no answer)")
-    return 0
+    return 0 if res["stop"] != "failed" else 1

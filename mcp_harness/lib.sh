@@ -10,7 +10,12 @@ if [ -z "${PY:-}" ]; then
   if [ -x "$ROOT/.venv/bin/python" ]; then PY="$ROOT/.venv/bin/python"
   else PY="$(cd "$ROOT" && git rev-parse --path-format=absolute --git-common-dir)/../.venv/bin/python"; fi
 fi
-K() { kubectl --context "$CTX" "$@"; }
+# The harness's own kubeconfig (written by `cluster.sh up` or `cluster.sh kubeconfig`, under the git-ignored work
+# area). Every kubectl call names it and the context; KUBECONFIG is exported too, so even a stray kubectl never
+# reads the user's default kubeconfig or its current context.
+KCFG="${MCP_HARNESS_KUBECONFIG:-$GEN/kubeconfig}"
+export KUBECONFIG="$KCFG"
+K() { kubectl --kubeconfig "$KCFG" --context "$CTX" "$@"; }
 log() { echo "[$(date +%H:%M:%S)] $*"; }
 
 # Images loaded into the kind node (the node image itself is not loaded).

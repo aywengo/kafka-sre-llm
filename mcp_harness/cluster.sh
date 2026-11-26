@@ -5,9 +5,20 @@
 #   cluster.sh reset     restore the healthy state (between scenarios), then wait until healthy
 #   cluster.sh health    one line per check; exit 0 when all pass
 #   cluster.sh pulls     image pulls since `up` (node image list against the baseline, and Pulling events); exit 1 if any
+#   cluster.sh kubeconfig  (re)write the harness's own kubeconfig file from kind (work/mcp_harness/kubeconfig)
 # Needs no network after fetch.sh: images are loaded into the node, every pull policy is IfNotPresent.
+# Never touches the user's default kubeconfig: kind writes the cluster's context into the harness's own file, and
+# every kubectl call names that file and the context (lib.sh).
 set -uo pipefail
 source "$(dirname "$0")/lib.sh"
+
+write_kubeconfig() {  # the cluster's kubeconfig into the harness's own file (mode 600), never the default one
+  mkdir -p "$(dirname "$KCFG")"
+  ( umask 077; kind get kubeconfig --name "$CLUSTER" > "$KCFG.tmp" ) && mv "$KCFG.tmp" "$KCFG" \
+    || { rm -f "$KCFG.tmp"; echo "cannot write $KCFG: is cluster $CLUSTER up?" >&2; return 1; }
+}
+
+need_kubeconfig() { [ -s "$KCFG" ] || write_kubeconfig; }
 
 have_images() {
   local i
@@ -58,8 +69,9 @@ healthy() {
 cmd_up() {
   have_images || exit 1
   "$PY" "$HARNESS/render.py" "$RAW" "$GEN" || exit 1
-  if kind get clusters 2>/dev/null | grep -qx "$CLUSTER"; then log "cluster $CLUSTER exists"
-  else kind create cluster --config "$HARNESS/manifests/kind-config.yaml" || exit 1; fi
+  mkdir -p "$GEN"
+  if kind get clusters 2>/dev/null | grep -qx "$CLUSTER"; then log "cluster $CLUSTER exists"; write_kubeconfig || exit 1
+  else ( umask 077; kind create cluster --config "$HARNESS/manifests/kind-config.yaml" --kubeconfig "$KCFG" ) || exit 1; fi
   # `kind load docker-image` imports all platforms and fails on Docker's containerd image store when only
   # linux/arm64 was pulled; a single-platform archive loads cleanly.
   mkdir -p "$GEN/images"
@@ -80,7 +92,7 @@ cmd_up() {
   gitops_configmap
   wait_until 300 "Argo CD repo server ready" deploy_ready argocd argocd-repo-server || exit 1
   K apply -f "$HARNESS/manifests/argocd.yaml" >/dev/null || exit 1
-  wait_until 900 "Kafka kafka Ready" sh -c "[ \"\$(kubectl --context $CTX -n kafka get kafka kafka -o jsonpath='{.status.conditions[?(@.type==\"Ready\")].status}')\" = True ]" || exit 1
+  wait_until 900 "Kafka kafka Ready" sh -c "[ \"\$(kubectl --kubeconfig '$KCFG' --context $CTX -n kafka get kafka kafka -o jsonpath='{.status.conditions[?(@.type==\"Ready\")].status}')\" = True ]" || exit 1
   wait_until 300 "secret app-consumer" K -n kafka get secret app-consumer || exit 1
   K apply -f "$HARNESS/manifests/clients.yaml" >/dev/null || exit 1
   wait_until 600 "healthy" healthy || { healthy; exit 1; }
@@ -127,9 +139,10 @@ cmd_pulls() {
 
 case "${1:-}" in
   up) cmd_up ;;
-  down) kind delete cluster --name "$CLUSTER" ;;
-  reset) cmd_reset ;;
-  health) healthy ;;
-  pulls) cmd_pulls ;;
-  *) echo "usage: $0 up|down|reset|health|pulls" >&2; exit 2 ;;
+  down) kind delete cluster --name "$CLUSTER" --kubeconfig "$KCFG" ;;
+  reset) need_kubeconfig && cmd_reset ;;
+  health) need_kubeconfig && healthy ;;
+  pulls) need_kubeconfig && cmd_pulls ;;
+  kubeconfig) write_kubeconfig ;;
+  *) echo "usage: $0 up|down|reset|health|pulls|kubeconfig" >&2; exit 2 ;;
 esac

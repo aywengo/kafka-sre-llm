@@ -32,6 +32,14 @@ No pip package: the MCP client and server use the standard library only.
     .venv/bin/python mcp_harness/harness.py run --model stub --ids ID ... --out work/mcp_harness/dry_run
     bash mcp_harness/cluster.sh down
 
+The harness never uses your default kubeconfig or its current context. `cluster.sh up` has kind write the
+cluster's context into the harness's own file `work/mcp_harness/kubeconfig` (git-ignored, mode 600; for a cluster
+created earlier, `cluster.sh kubeconfig` writes it), and every kubectl call names that file and the context
+`kind-kafka-sre-mcp`. `diagnose` and the MCP server refuse to start without an explicit `--kubeconfig` and context:
+
+    .venv/bin/python -m kafka_sre_rag diagnose --tools mcp --kubeconfig work/mcp_harness/kubeconfig \
+        --kube-context kind-kafka-sre-mcp --stub STUB.json "QUESTION"
+
 `scenarios.jsonl` (built by `scenarios.py`) has 30 scenarios of 13 fault kinds; each has inject, verify and
 revert commands (`faults/<kind>.sh`), the symptom the engineer reports, the reference cause, the reference
 evidence (which read-only calls on which objects reveal it) and a must-not list. `cluster.sh reset` restores

@@ -1,16 +1,21 @@
 """Local MCP server (stdio) with read-only tools for Kubernetes, Strimzi Kafka and Argo CD.
 
-    python -m kafka_sre_rag.tools.k8s_server [--context KUBE_CONTEXT] [--kafka-bootstrap localhost:9092]
+    python -m kafka_sre_rag.tools.k8s_server --kubeconfig FILE --context KUBE_CONTEXT [--kafka-bootstrap localhost:9092]
 
 Every tool runs one fixed, read-only command (kubectl get/describe/logs/events, or a Kafka CLI tool with
 --describe inside a broker pod), built as an argument list (no shell) from arguments checked against the
-tool's schema. Nothing that changes state is exposed. Secrets are refused (the Secret kind is not accepted)
-and values that look like passwords, tokens or private keys are redacted from every output. The runtime's
-session allow-list is checked before a call reaches this server; this server checks the schema again.
-It uses the caller's kubeconfig and credentials and makes no network call of its own beyond kubectl's.
+tool's schema. Nothing that changes state is exposed. Secrets are refused (the Secret kind is not accepted),
+the kubectl last-applied-configuration annotation is dropped, and values that look like passwords, tokens or
+private keys are redacted from every output. The runtime's session allow-list is checked before a call reaches
+this server; this server checks the schema again.
+The kubeconfig file and the context are required and passed to every kubectl call: the server never falls back
+to the user's current context. kubectl runs with a minimal environment (PATH, HOME for its cache, KUBECONFIG set
+to the given file), so no API key or other secret of the caller's environment reaches it. The server makes no
+network call of its own beyond kubectl's.
 """
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -24,8 +29,10 @@ TIMEOUT_S = 30
 
 NAME = r"[a-z0-9]([-a-z0-9.]{0,251}[a-z0-9])?"
 NAMESPACE = r"[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?"
-SELECTOR = r"[A-Za-z0-9._/=,!-]{1,200}"
-KAFKA_NAME = r"[A-Za-z0-9._-]{1,249}"
+# no value may start with "-" (it would reach kubectl or a Kafka tool as an option)
+SELECTOR = r"[A-Za-z0-9._/=,!][A-Za-z0-9._/=,!-]{0,199}"
+KAFKA_NAME = r"[A-Za-z0-9._][A-Za-z0-9._-]{0,248}"
+ENTITY_NAME = r"[A-Za-z0-9._=,][A-Za-z0-9._=,-]{0,248}"
 
 # Plural form -> accepted aliases. Secrets are not here, on purpose.
 KINDS = {
@@ -108,7 +115,7 @@ TOOLS = [
      "inputSchema": {"type": "object", "additionalProperties": False, "required": ["namespace", "entity_type"], "properties": {
          "namespace": S_NS, "cluster": S_CLUSTER,
          "entity_type": {"type": "string", "enum": ["topics", "brokers", "users", "clients"]},
-         "entity_name": {"type": "string", "pattern": r"[A-Za-z0-9._=,-]{1,249}",
+         "entity_name": {"type": "string", "pattern": ENTITY_NAME,
                          "description": "Name; for a TLS user the principal name, e.g. CN=app-consumer. Omit for all."}}}},
     {"name": "argocd_app_get",
      "description": "Argo CD Application status (through the Kubernetes API): source, sync and health status, conditions, "
@@ -126,35 +133,84 @@ _PEM = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE
 # name of a Secret, not its value, and is kept.
 # The key must start a word (automountServiceAccountToken: false is not a credential) and the value is on the
 # same line.
-_KV = re.compile(r"(?i)((?<![a-z])(?:password|passwd|token|api[_-]?key|private[_-]?key|client[_-]?secret|secret[_-]?key)"
-                 r"\"?[ \t]*[=:][ \t]*\"?)([^\s\"',}]+)")
-_ENV = re.compile(r"(?im)(name:\s*\S*(?:PASSWORD|PASSWD|SECRET|TOKEN|API_?KEY)\S*\s*\n\s*value:\s*)(\S.*)$")
+_KV = re.compile(r"(?i)((?<![a-z])(?:password|passwd|token|api[_-]?key|private[_-]?key|client[_-]?secret|secret[_-]?key"
+                 r"|secret[_-]?access[_-]?key)"
+                 r"\"?[ \t]*[=:][ \t]*\"?)((?!<set to )[^\s\"',}]+)")  # describe's "<set to the key ...>" names no value
+# An environment variable whose name says it holds a credential, in every form kubectl prints it: yaml
+# (name / value lines), json ("name": ..., "value": ..., also with escaped quotes inside a string) and the
+# NAME: value or NAME=value lines of describe and of logs (upper-case names, so automountServiceAccountToken
+# and the like are kept).
+_CRED = r"(?:PASS|SECRET|TOKEN|API_?KEY|ACCESS_?KEY|PRIVATE_?KEY|CREDENTIAL|JAAS)"
+_ENV = re.compile(r"(?im)(name:[ \t]*\S*" + _CRED + r"\S*[ \t]*\n\s*value:[ \t]*)(\S.*)$")
+_ENV_JSON = re.compile(r"(?i)(\\?\"name\\?\"\s*:\s*\\?\"[^\"\\]*" + _CRED + r"[^\"\\]*\\?\"\s*,\s*\\?\"value\\?\"\s*:\s*\\?\")"
+                       r"((?:[^\"\\]|\\[^\"])*)")
+_ENV_LINE = re.compile(r"(?m)(\b[A-Z0-9_]*(?:PASSWORD|PASSWD|PASSPHRASE|SECRET|TOKEN|API_?KEY|ACCESS_?KEY|PRIVATE_?KEY"
+                       r"|CREDENTIALS?|JAAS_CONFIG)[A-Z0-9_]*\"?[ \t]*[:=][ \t]*\"?)((?!<set to )[^\s\"',}]+)")
+_BEARER = re.compile(r"(?i)(\bbearer[ \t]+)([A-Za-z0-9._~+/=-]{8,})")
+_AUTHZ = re.compile(r"(?i)(\bauthorization[\"']?[ \t]*[:=][ \t]*[\"']?(?:basic|token|negotiate|digest)[ \t]+)([^\s\"',}]+)")
 _BLOB = re.compile(r"(?m)^(\s*(?:[a-z0-9_.-]+\.(?:key|p12|jks|password)|tls\.key|ca\.key)\s*:\s*)(\S{16,})$")
+_LAST_APPLIED = "kubectl.kubernetes.io/last-applied-configuration"
+_LAST_APPLIED_JSON = re.compile(r"(\"" + re.escape(_LAST_APPLIED) + r"\"\s*:\s*)\"(?:[^\"\\]|\\.)*\"")
+
+
+def drop_last_applied(text):
+    """Replace the value of the last-applied-configuration annotation (a copy of the whole object as applied,
+    env values included) by "[removed]": the one-line json form, and the yaml and describe forms, where the
+    value runs on over the following lines that are indented deeper than the annotation's key."""
+    text = _LAST_APPLIED_JSON.sub(lambda m: m.group(1) + '"[removed]"', text)
+    out, skip_col = [], None
+    for line in text.split("\n"):
+        if skip_col is not None:
+            if line.strip() and len(line) - len(line.lstrip(" ")) > skip_col:
+                continue
+            skip_col = None
+        col = line.find(_LAST_APPLIED + ":")
+        if col >= 0:
+            out.append(line[:col] + _LAST_APPLIED + ": [removed]")
+            skip_col = col
+            continue
+        out.append(line)
+    return "\n".join(out)
 
 
 def redact(text):
+    text = drop_last_applied(text)
     text = _PEM.sub("[REDACTED private key]", text)
-    text = _ENV.sub(lambda m: m.group(1) + "[REDACTED]", text)
-    text = _BLOB.sub(lambda m: m.group(1) + "[REDACTED]", text)
-    return _KV.sub(lambda m: m.group(1) + "[REDACTED]", text)
+    sub = lambda m: m.group(1) + "[REDACTED]"  # noqa: E731
+    for pattern in (_ENV, _ENV_JSON, _ENV_LINE, _BLOB, _BEARER, _AUTHZ):
+        text = pattern.sub(sub, text)
+    return _KV.sub(sub, text)
 
 
 class ToolError(Exception):
     pass
 
 
+def minimal_env(kubeconfig=None):
+    """The environment of a child process: PATH, HOME (kubectl keeps its discovery cache there) and, when given,
+    KUBECONFIG. Nothing else of the caller's environment (no API key, no cloud credential) is passed on."""
+    env = {"PATH": os.environ.get("PATH") or "/usr/bin:/bin"}
+    if os.environ.get("HOME"):
+        env["HOME"] = os.environ["HOME"]
+    if kubeconfig:
+        env["KUBECONFIG"] = kubeconfig
+    return env
+
+
 class Runner:
-    def __init__(self, context=None, kafka_bootstrap="localhost:9092", run=None):
-        self.context, self.bootstrap = context, kafka_bootstrap
+    def __init__(self, context, kubeconfig, kafka_bootstrap="localhost:9092", run=None):
+        if not context or not kubeconfig:
+            raise ValueError("a kubeconfig file and a context are both required (no fallback to the current context)")
+        self.context, self.kubeconfig, self.bootstrap = context, kubeconfig, kafka_bootstrap
         self._run = run or self._subprocess
 
-    @staticmethod
-    def _subprocess(argv):
-        p = subprocess.run(argv, capture_output=True, text=True, timeout=TIMEOUT_S)
+    def _subprocess(self, argv):
+        p = subprocess.run(argv, capture_output=True, text=True, timeout=TIMEOUT_S, env=minimal_env(self.kubeconfig),
+                           stdin=subprocess.DEVNULL)
         return p.returncode, p.stdout, p.stderr
 
     def kubectl(self, args):
-        argv = ["kubectl"] + (["--context", self.context] if self.context else []) + ["--request-timeout=20s"] + args
+        argv = ["kubectl", "--kubeconfig", self.kubeconfig, "--context", self.context, "--request-timeout=20s"] + args
         code, out, err = self._run(argv)
         text = out if code == 0 else (out + ("\n" if out else "") + err)
         return code, text
@@ -164,7 +220,11 @@ class Runner:
                                   f"strimzi.io/cluster={cluster},strimzi.io/broker-role=true", "-o", "json"])
         if code != 0:
             raise ToolError(out.strip())
-        for p in json.loads(out).get("items", []):
+        try:
+            items = json.loads(out).get("items", [])
+        except Exception:  # noqa: BLE001 - a reply that is not the JSON list the server expects
+            raise ToolError("could not read the broker pods (kubectl did not return a JSON list)") from None
+        for p in items:
             st = p.get("status", {})
             if st.get("phase") == "Running" and any(c.get("ready") for c in st.get("containerStatuses", [])):
                 return p["metadata"]["name"]
@@ -284,7 +344,10 @@ def t_argocd(r, a):
     code, out = r.kubectl(["get", "applications.argoproj.io", a["name"], "-n", ns, "-o", "json"])
     if code != 0:
         return code, out
-    return 0, json.dumps(_app_summary(json.loads(out)), indent=1)
+    try:
+        return 0, json.dumps(_app_summary(json.loads(out)), indent=1)
+    except Exception:  # noqa: BLE001 - a reply that is not the JSON object the server expects
+        return 1, "could not read the Application (kubectl did not return a JSON object)"
 
 
 HANDLERS = {"k8s_get": t_get, "k8s_describe": t_describe, "k8s_logs": t_logs, "k8s_events": t_events,
@@ -309,6 +372,8 @@ def call_tool(runner, name, args):
         return True, str(e)
     except subprocess.TimeoutExpired:
         return True, f"timed out after {TIMEOUT_S} s"
+    except Exception as e:  # noqa: BLE001 - the server survives any failure of one call
+        return True, f"tool failed: {type(e).__name__}"
     text = redact(text)
     if len(text) > MAX_OUTPUT:
         cut = len(text) - MAX_OUTPUT
@@ -343,10 +408,17 @@ def serve(runner, stdin=sys.stdin, stdout=sys.stdout):
             continue
         try:
             msg = json.loads(line)
-        except ValueError:
+        except Exception:  # noqa: BLE001
             resp = {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "parse error"}}
         else:
-            resp = handle(runner, msg)
+            if not isinstance(msg, dict):
+                resp = {"jsonrpc": "2.0", "id": None, "error": {"code": -32600, "message": "invalid request"}}
+            else:
+                try:
+                    resp = handle(runner, msg)
+                except Exception as e:  # noqa: BLE001 - the server survives a message it cannot handle
+                    resp = {"jsonrpc": "2.0", "id": msg.get("id"),
+                            "error": {"code": -32603, "message": f"internal error: {type(e).__name__}"}}
         if resp is not None:
             stdout.write(json.dumps(resp) + "\n")
             stdout.flush()
@@ -354,11 +426,15 @@ def serve(runner, stdin=sys.stdin, stdout=sys.stdout):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--context", help="kubeconfig context (default: the current one)")
+    ap.add_argument("--kubeconfig", required=True,
+                    help="kubeconfig file (required; the server never uses the default kubeconfig or its current context)")
+    ap.add_argument("--context", required=True, help="kubeconfig context (required)")
     ap.add_argument("--kafka-bootstrap", default="localhost:9092",
                     help="bootstrap address the Kafka tools use inside the broker pod (default localhost:9092)")
     a = ap.parse_args(argv)
-    serve(Runner(a.context, a.kafka_bootstrap))
+    if not os.path.isfile(a.kubeconfig):
+        ap.error(f"--kubeconfig {a.kubeconfig}: no such file")
+    serve(Runner(a.context, os.path.abspath(a.kubeconfig), a.kafka_bootstrap))
 
 
 if __name__ == "__main__":
