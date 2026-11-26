@@ -140,7 +140,7 @@ configuration give fewer answers with actionable harm and with material errors t
 coverage? Execution authority stays outside the model (the runtime suggests; it never runs a command); the model card says so.
 
 **Configurations.** R = the release candidate: Gemma 4 31B 4-bit (`mlx-community/gemma-4-31b-it-4bit`, revision pinned),
-frozen retrieval, the default prompt, lookup cards on (if the Owner keeps them on), fact entries on only if Z4 passes. C =
+frozen retrieval, the default prompt, lookup cards on (W33), fact entries on only if Z4 passes; the release configuration is fixed in the section below. C =
 the current release's default (Qwen3.8-27B 4-bit, v3.2.0 defaults). Both use the live retriever (no replayed packs), the
 same settings, temperature 0, one request at a time.
 
@@ -176,7 +176,7 @@ wrong per 10 answers, none that would do damage. That stays reported. The share 
 - If H, M or the coverage bar fails, there is no release on this configuration. The result is reported, and the Owner
   decides.
 
-**What the Owner names or decides.** The SRE (name and time: about 3 to 6 h, estimate); the bars B1 to B4 (as proposed or
+**What the Owner names or decides.** The SRE: the Owner (W34; a limit stated in the report: the adjudicator is the project's owner, not someone independent of the rubrics; about 3 to 6 h, estimate); the bars B1 to B4 (as proposed or
 changed); h6 read in full (and then retired) or totals only.
 
 ## The tool-use measurement T1 (MCP, W30 to W32; rule fixed 2026-11-26, before any model answer)
@@ -307,6 +307,8 @@ fixes it asks for, the merge after the KB chain, D7's answers and the release-te
 | 2026-11-26 | W30 | The Owner (through LLM PM): "Yes, go build the MCP harness", with its installs (a local kind cluster with Strimzi, 3 brokers, and Argo CD; a local MCP server for Kubernetes or our own). Conditions: it does not delay the release test; CPU and Docker only, no model server, until the release look and its reading are done (about 2 Dec); read-only tools only, destructive commands not exposed, the runtime enforces the allow-list; local only (no remote MCP server); attempted calls outside the allow-list count as violations until the Owner decides; images and charts downloaded once at install, no network at test time; the measures and the rule fixed in this file before any model answer. Fine-tuning is not started (its go about 5 Dec). Built on a branch in a worktree: the running KB chain pins `prompts.py`. |
 | 2026-11-26 | W31 | The Owner (through LLM PM) confirmed: an attempted call outside the allow-list counts as a violation, not only an executed one; remote MCP servers are out of scope (local only). These replace W30's stand-ins. |
 | 2026-11-26 | W32 | The Owner, on the three points of the built MCP harness (through LLM PM): (1) redis 8.10.1 (RSALv2 / SSPLv1 / AGPLv3, Argo CD's cache) accepted for local use only, not redistributed; (2) a malformed call inside the allow-list is counted apart as invalid, not as a violation (W31's wording as proposed); (3) the first measurement T1 runs with thinking off and no retrieval excerpts, tool use alone, after the release look and its reading (about 2 Dec). The fine-tuning go still waits until about 5 Dec. |
+| 2026-11-26 | W33 | The Owner, on the release choices (item 15, through LLM PM): the release model is Gemma 4 31B 4-bit; the version is v4.0.0, with Gemma as the default if the release test (B1 to B4, W29) passes and the Owner approves, and Qwen3.8-27B still selectable; the lookup cards are on by default in the Gemma build and off for Qwen (Z3 failed there). The number of hidden looks (one, or two with X1) is open: the Owner's two answers differ, and LLM PM is asking; X1 is held. Later rounds (the MCP tool-use measurements and similar) will also run with thinking on, accepting the doubled server time, after the T1 baseline and after the release; this changes neither T1, nor the release test, nor the release configuration (the thorough profile stays off on Gemma 31B, which failed its rule). |
+| 2026-11-26 | W34 | The Owner: "I will do by myself": the Owner is the Kafka SRE who adjudicates the release test's harm flags (W29: every harm flag, plus 20 random unflagged answers per set and configuration, on D7 and h6; about 3 to 6 h from about 29 Nov). The adjudication pack gives, per item, the quoted advice, the pinned source and the plausible consequence; the Owner's first verdict is blind to the configuration and to the readers' flags, and the reader's flag is shown after it. The report states as a limit that the adjudicator is the project's owner, not independent of the rubrics. |
 | 2026-11-26 | conductor | D7 step 4 (family checks) hit the stop rule "more than about 10 scenarios need replacing": the open check found 8 of the same family as a current open set (d7-02, 03, 50, 53 with B4 families; d7-08 with D5; d7-39 with B2; d7-43 with T; d7-46 with pilot2) and 5 as a legacy set (d7-04, 07, 21, 23, 51); the sealed check found 4 as the M4 hidden part (d7-11, 25, 34, 53) and 2 as h6 (d7-31, 41). Decided: replace 10 (the 8 open repeats and the 2 h6 ones, so D7 and h6, the two sets of the release test, share no family), keeping each replaced item's kind and slice tag; keep d7-11, 25, 34 and tag the M4 hidden items of their family in `eval/m4/HIDDEN_TAGS.json` by a sealed session (ids only, M6's S8 precedent; a later look on the M4 hidden part reports totals with and without them); keep the 5 legacy-only overlaps, tagged in D7, with D7's totals also given without them. The replacements get the same review, validation and both family checks. |
 | 2026-11-26 | conductor | A sealed family-check worker for D7 named one h6 item (h6-55) and its main fact in its reply to the conductor, against its brief. Not a look: the conductor did not open the item. Recorded in `runs/m4/HIDDEN_LEDGER.md` and tagged `conductor_exposed_h6` in `eval/m4/HIDDEN_TAGS.json`; the release look reports h6 totals with and without it. D7's d7-50 is near it and tagged `h6_near`. |
 | 2026-11-26 | conductor | D7 step 5: the first set count (291 of 295 points) was far above D5's 82 %, so a blind control re-rated 40 random sets: agreement 36 of 40, at the control line, with two clear misses. Decided: no acceptance of the first count; a full strict repair pass under a rule written before it (a set is recorded only if every strict reading is ok; one repair, no second). It also confirmed three wrong rubric items, fixed before the freeze: d7-02 m4 credited `kubectl get events --field-selector reportingController=`, which fails on core/v1 events (checked on the local kind cluster); d7-18 m5 named delegation instead of `supportsAdminApi` for Strimzi 1.3.1's custom authorization; d7-23's premise contradicted the 7-day `segment.ms` default and its own rate. Sets are kept as in D5 (one or two chunks). Result: 289 of 295 points covered (98.0 %, bar 95 %). |
@@ -314,10 +316,13 @@ fixes it asks for, the merge after the KB chain, D7's answers and the release-te
 
 ## Waiting for the Owner
 
+- **The hidden looks of M7** (W33): one look (the release look on h6) or two (the release look plus X1, below). The
+  Owner's answers differ (chat: "one hidden look"; the Orca item: "release look plus the grounded-mode look, uses two");
+  LLM PM is asking. Until then X1 is neither dropped nor planned, and no hidden look is spent.
 - **X1** (from M6's result): one hidden look on h6 for grounded-g3 on the r4g2 packs as
   the fast profile's default candidate, under the look's rule of `milestones/M6.md`.
-  Recommended by the M6 session: yes; it would be a second look in M7, leaving two.
-- Which model or models to publish (W10): open until the knowledge base is measured (W13).
+  Recommended by the M6 session: yes. If run, it runs before h6 is read in full (W29 retires h6 after the release look).
+- The release go for v4.0.0 (W33): after the release test passes (B1 to B4).
 - Whether the fact entries are published in the dataset (allowed by the licences; decided with W10).
 
 ## Rules that are shared between the two sessions
