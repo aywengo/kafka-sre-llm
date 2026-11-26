@@ -6,6 +6,8 @@ from . import config, profiles, prompts
 
 GROUNDED_MODES = tuple(prompts.GROUNDED)  # EXPERIMENTAL: grounded-g1, grounded-g2
 LOOKUP_REASON = "lookup cards (EXPERIMENTAL, unmeasured: reference cards of the question's names after the excerpts)"
+KB_ENTRIES_REASON = ("knowledge-base entries (EXPERIMENTAL, unmeasured: up to 4 fact entries follow the frozen excerpts; "
+                     "the entries layer has not passed its check)")
 
 
 @dataclass
@@ -22,6 +24,7 @@ class Answer:
     profile_fields: dict = field(default_factory=dict)  # {} for frozen; retrieval_profile, settings hash, measured False
     thorough: dict = None  # EXPERIMENTAL answer profile only: first_pass_text, record, draft_info, seconds; else None
     lookup: dict = None  # EXPERIMENTAL lookup cards only: cards_found, cards, chars, seconds, catalogue_sha256; else None
+    kb_entries: dict = None  # EXPERIMENTAL entries only: added ids, skipped counts, candidates, pack_chars, seconds; else None
 
 
 def is_reference(gen, cfg):
@@ -34,11 +37,14 @@ def is_reference(gen, cfg):
 
 
 def ask(question, gen, cfg=None, *, k="k6", mode="default", index_path=None, on_token=None, rerank=True,
-        max_tokens=None, profile="frozen", thorough=None, thorough_checker=None, kb=None, lookup_cards=False, lookup_kb=None):
+        max_tokens=None, profile="frozen", thorough=None, thorough_checker=None, kb=None, lookup_cards=False, lookup_kb=None,
+        kb_entries=None):
     """lookup_cards: EXPERIMENTAL (M7 KA1), off by default: the reference cards of the names in the question and the search
     terms follow the excerpts in the prompt (lookup_kb: a kb_lookup.KbLookup, or None for the shared one).
     thorough: a verify_pass.Profile (EXPERIMENTAL answer profile, off by default) with thorough_checker a
-    service.AnswerChecker; the answer is then not streamed (on_token must be None)."""
+    service.AnswerChecker; the answer is then not streamed (on_token must be None).
+    kb_entries: EXPERIMENTAL (M7 I4), off by default: a kb_entries.KbEntries; up to 4 fact entries follow the frozen pack (frozen
+    profile only). None: the pack and the prompt stay exactly as retrieval.select made them."""
     t_start = time.monotonic()
     if thorough is not None and (on_token is not None or thorough_checker is None):
         raise ValueError("the thorough answer profile needs an answer checker and is not streamed")
@@ -66,6 +72,10 @@ def ask(question, gen, cfg=None, *, k="k6", mode="default", index_path=None, on_
         reasons.append(thorough.unmeasured_reason())
     if lookup_cards:
         reasons.append(LOOKUP_REASON)
+    if kb_entries is not None:
+        if profile != "frozen":
+            raise ValueError("the entries option composes with the frozen profile only (not measured with a candidate profile)")
+        reasons.append(KB_ENTRIES_REASON)
     t0 = time.monotonic()
     if thorough is None:
         exp, _, _ = gen.chat(prompts.expand_messages(question), max_tokens or cfg["expansion"]["max_tokens"])
@@ -75,6 +85,9 @@ def ask(question, gen, cfg=None, *, k="k6", mode="default", index_path=None, on_
     t1 = time.monotonic()
     sel_kw = {} if profile == "frozen" else {"profile": profile}  # frozen call stays exactly as it was
     chunks = retrieval.select(question, exp, k=k, index_path=index_path, rerank=rerank, **sel_kw)
+    kb_info = None
+    if kb_entries is not None:  # off: the pack stays exactly as the retrieval made it
+        chunks, kb_info = kb_entries.merge(chunks, question, exp, rerank=rerank)
     t2 = time.monotonic()
     cards_text, lookup = None, None
     if lookup_cards:  # off: the prompt stays byte for byte as it was
@@ -102,4 +115,4 @@ def ask(question, gen, cfg=None, *, k="k6", mode="default", index_path=None, on_
         timings.update(draft_s=th["seconds"]["draft"], thinking_s=th["seconds"]["thinking"],
                        check_s=th["seconds"]["check"])
     return Answer(text, sources, exp, timings,
-                  not reasons, toks, trunc, reasons, msgs, profiles.manifest_fields(profile), th, lookup)
+                  not reasons, toks, trunc, reasons, msgs, profiles.manifest_fields(profile), th, lookup, kb_info)
