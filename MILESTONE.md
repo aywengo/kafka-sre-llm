@@ -144,6 +144,21 @@ frozen retrieval, the default prompt, lookup cards on (W33), fact entries on onl
 the current release's default (Qwen3.8-27B 4-bit, v3.2.0 defaults). Both use the live retriever (no replayed packs), the
 same settings, temperature 0, one request at a time.
 
+**The release configuration, fixed 2026-11-26 before any answer** (`eval/m7/release_test/configs.json`, sha256
+`a464bbf7ef5f9fff7d82c74c4d2309e3a25245f074e3fe9ffe70fafc740fd2b2`; report `runs/m7/reports/release_config.md`):
+- R: `gemma-4-31b-it-4bit` on oMLX (`mlx-community/gemma-4-31b-it-4bit` at commit `696d436c…`, every weight file hashed);
+- C: `Qwen3.8-27B-4bit` (commit `b935172e…`), whose dry-run prompts are byte-identical to a `git archive v3.2.0` tree;
+- both: the fast profile (`ask`, the thorough profile off), thinking off through the chat template, temperature 0,
+  2,048 answer tokens, the model's own query expansion (300 tokens), the frozen index, reranker and prompt constants
+  (`kafka_sre_rag verify`);
+- R adds `--lookup-cards`. Its cards come from the question's names **and** the live search terms, as
+  `agents/m7-plan.md` section 5 (a) designed them; Z3 measured the question's names only (W20), so R's cards are
+  not identical to what Z3 measured. Z3 also ran the thorough path with both switches off, while R runs the plain
+  `ask` path. The release test, not Z3, is the gate for R as configured.
+- Fact entries are pending Z4: added with their index hash when frozen, or left off.
+- The MCP branch is merged only after the release-test answers. An append-only change to `prompts.py` that keeps the
+  used constants (checked by `verify`) is not a configuration change.
+
 **Sets.** D7 (60 fresh scenarios, written for M7; open) and the release look on h6 (60 unused hidden scenarios). The look is
 written in `runs/m4/HIDDEN_LEDGER.md` with this rule before it runs.
 

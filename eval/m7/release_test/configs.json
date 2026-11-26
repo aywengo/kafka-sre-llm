@@ -1,0 +1,329 @@
+{
+ "schema": 1,
+ "fixed": "2026-11-26",
+ "R": {
+  "retrieval_profile": "frozen (the measured one; --profile frozen is the default)",
+  "k": "k6 (6 chunks, max 14000 characters)",
+  "index": {
+   "file": "work/v3/chunks_s1.jsonl",
+   "sha256": "233c23b0478006a8afae881b83836a226a6af89517256be4d9aac2cc7d500e92",
+   "chunks": 6444,
+   "record": "runs/v3/INDEX_FROZEN.json",
+   "record_sha256": "316a0f27efecf0757750920a8e6df669fdb62deb679f3972bd3d5933c413e08a"
+  },
+  "retrieval_settings": {
+   "pool": 40,
+   "chunk_chars": 1500,
+   "bm25": {
+    "K1": 1.2,
+    "B": 0.75,
+    "TITLE_W": 2
+   },
+   "rrf": true,
+   "rrf_constant": 60,
+   "k6": {
+    "k": 6,
+    "max_chars": 14000
+   },
+   "k3_not_used": {
+    "k": 3,
+    "max_chars": 6000
+   }
+  },
+  "reranker": {
+   "model": "BAAI/bge-reranker-v2-m3",
+   "revision": "953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e",
+   "device": "cpu",
+   "max_length": 512
+  },
+  "query_expansion": {
+   "done_by": "the answering model itself (the same server model id as the answer; frozen.json expansion.written_by); one extra call per question, before retrieval",
+   "max_tokens": 300,
+   "temperature": 0,
+   "thinking": false,
+   "prompt": "EXPAND_SYSTEM",
+   "prompt_sha256": "a1fb0eefabcd052fad39ac975e1b99ff3282285903af2410e1d9d3c4ce639de9"
+  },
+  "prompt_format": {
+   "mode": "default (--mode default; the measured prompt)",
+   "system_prompt_sha256": "766ff0b0e2c61316acc1239425c33f299c2f1136814e2ed6c7135f7dda20da15",
+   "instruction_sha256": "65fe40116e6723ecc5128222fbe5530e7009e79f1cb7a696b12a78138d7f9307",
+   "source": "kafka_sre_rag/prompts.py constants SYSTEM_PROMPT, INSTRUCTION, EXPAND_SYSTEM, checked against kafka_sre_rag/frozen.json prompts_sha256 by `python -m kafka_sre_rag verify` (all match on 2026-11-26)",
+   "version_names": "no version constant applies to the ask path: the prompt is the frozen one (golden hashes in tests/golden); PACK_PROMPT_VERSION pack/4 (scripts/generate_qa.py) belongs to generation packs, not to ask; KB_ENTRY_PROMPT_VERSION kbe/5 and KB_CHECK_PROMPT_VERSION kbc/4 belong to the entries (off in this release test until Z4)"
+  },
+  "answer": {
+   "max_tokens": 2048,
+   "temperature": 0,
+   "thinking": false,
+   "how_thinking_is_off": "request body chat_template_kwargs.enable_thinking=false, passed as --extra-body (applies to the expansion call and the answer call)"
+  },
+  "answer_profile": "fast (default: --answer-profile not given; the thorough profile stays off)",
+  "other_options_off": "--check, --revise, --mark-destructive, --mode other than default, --profile other than frozen, --max-tokens, --stream (not given)",
+  "extra_body": {
+   "chat_template_kwargs": {
+    "enable_thinking": false
+   }
+  },
+  "server": "the oMLX server, one request at a time; address from OMLX_URL (never recorded here)",
+  "git": {
+   "runtime_head": "b25ac62f27497100237ba95650aa6bace1f0758b",
+   "runtime_tree_clean_for": "kafka_sre_rag/ and scripts/retrieve.py (git status on 2026-11-26)"
+  },
+  "runtime_files_sha256": {
+   "kafka_sre_rag/frozen.json": "3031725d8844e2b64a7feae0047bfdf8de9c46facfdd2dfee58126a153cf0ecf",
+   "kafka_sre_rag/retrieval.py": "b18a44a9923c9da6a7df68ef6bb720aef8af51373adb75ac793de4ec96b3bcf3",
+   "kafka_sre_rag/config.py": "483aba784a927cc59f84461dea52baf6acc69cea544dd177e35c98a22cb5ce8b",
+   "kafka_sre_rag/generators.py": "48ce0bb8d05d240180ab62e13ca8bc44586abf4350e1293d1f7c80e236c9fbcc",
+   "kafka_sre_rag/pipeline.py": "79b230fc2a4e04f2e3fe32cf3ac9f0d7eee23396f4e3e536913c78fe5a67ff52",
+   "kafka_sre_rag/__main__.py": "a72f62a8054b372dbce88080d8ec3d81f6978e1ed818d56bc50d84198da74f3f",
+   "scripts/retrieve.py": "7981b711a2c74e6205580a96f521531fcc2f8c1cc2c26063eac97d974d7829e8",
+   "kafka_sre_rag/prompts.py": "1df5989e41a8bc67d578de1b5e7cf76df7078a46ae2c42551ab424c82434db7b"
+  },
+  "runtime_files_note": "prompts.py is pinned by a running job and may gain constants (kb entries); the frozen constants above are what count, and `kafka_sre_rag verify` must print match for all of them",
+  "name": "R",
+  "description": "release candidate v4.0.0: Gemma 4 31B 4-bit, frozen retrieval, default prompt, lookup cards on; fact entries on only if Z4 passes",
+  "model": {
+   "oMLX_model_id": "gemma-4-31b-it-4bit",
+   "folder": "mlx-community/gemma-4-31b-it-4bit (relative to the oMLX model directory)",
+   "hf_repo": "mlx-community/gemma-4-31b-it-4bit",
+   "hf_repo_revision": "696d436c404745a59f30e4939a658162b0a9e57f",
+   "hf_revision_source": "the folder's .cache/huggingface/download/*.metadata files (first line = commit hash; second line of a weight file's metadata = its sha256, equal to the sha256 computed here)",
+   "base_model": "google/gemma-4-31B-it",
+   "upstream_conversion": "converted with mlx-vlm from google/gemma-4-31B-it at upstream revision 3548789868c5356dbf307c98e6f609007b82b3eb (README of the folder)",
+   "licence": "apache-2.0 (README front matter)",
+   "sha256_weights": {
+    "model-00001-of-00004.safetensors": "988e2b1fd41d93b62b8c432f52f632c43b8cb7f86df4b957db36a3cc0dab40ca",
+    "model-00002-of-00004.safetensors": "a496a96fbd39cd11a9871f91d026013d91069dcac15f89ca861b93976f3857cf",
+    "model-00003-of-00004.safetensors": "afa555ff0e1bc458c5b08aeef1f4499dce63e2bfb5d3a2aac716e47c0a5672c1",
+    "model-00004-of-00004.safetensors": "b55567ae065357d047daca926e45619ec0edef994f165356111c95d4d1021587"
+   },
+   "sha256_weight_index": "a9ca8373aacc37ab9d7f16ff4bbb392c055e1b51b0fec6258cbfc578056c5fef",
+   "sha256_config_json": "a01be3d45e0eb70ae89cef6d3e823dd44de6ec4dfc41b91dc357f97e457915c0",
+   "sha256_generation_config_json": "d4226bbe3117d2d253ba4609720ba82c6c4ce4627a9a6ae05387c78983ac03de",
+   "sha256_tokenizer_files": {
+    "tokenizer.json": "cc8d3a0ce36466ccc1278bf987df5f71db1719b9ca6b4118264f45cb627bfe0f",
+    "tokenizer_config.json": "080d9e1aff284e2f6043889cd05367966f7c7b80e025fbc0b06745e218158656"
+   },
+   "sha256_chat_template": "36e3a42e5cf14cd0020e72d92e1fdd9970f59b82170e421f0cbe1bb42bead3f0",
+   "sha256_other_files": {
+    "processor_config.json": "de3e580aebdc98272d4c4547daffe6525fcbae18a83a0e0bcf0d7444d4ee6f37",
+    "README.md": "5d3bbf7f85bf064fa77c4d4ebec0b20875503569284663d5cfda5bbbd28aa6c3",
+    ".gitattributes": "34448b82c17d60fec9b65b1f093c115ddbaadc04beb1b0140b6bfed2e012a930"
+   },
+   "hash_check": "every file hashed in two separate passes; the two lists are identical",
+   "server_side_model_settings": {
+    "temperature_default": 1.0,
+    "top_p": 0.95,
+    "top_k": 64,
+    "force_sampling": false,
+    "note": "oMLX model_settings for this id; a request's temperature 0 is sent by the runtime, so decoding is greedy; no other server-side switch is on (mtp, dflash, specprefill, turboquant all false)"
+   }
+  },
+  "thinking_switch_note": "the Gemma 4 chat template turns thinking on only when enable_thinking is defined and true (an absent key already means off); the explicit false is sent anyway, as in Z3, so the request is the same on both models",
+  "lookup_cards": {
+   "on": true,
+   "switch": "--lookup-cards (kafka_sre_rag ask)",
+   "z3_switch": "scripts/m7_ka2.sh arm L = eval2.py answer ... --answer-profile thorough --no-thinking --no-verify --lookup-cards, extra-body enable_thinking=false, default prompt, temperature 0, 2,048 tokens; Z3 result gemma31 PASS (runs/m7/M7_KA2.md)",
+   "sources": [
+    "profiles"
+   ],
+   "max_chars": 4000,
+   "place": "after the excerpts, before the question",
+   "header_sha256": "bce6f54f796a04e95c8e77ee5f6eaa4fc35337ae2010dd1d6b53db55423b2014",
+   "terms": "the names in the question plus the search terms of the live expansion (ask --lookup-cards); Z3 used the question's names only (replayed packs, W20)",
+   "catalogue_dir": "work/m4/catalogues",
+   "catalogue_recorded_sha256": "e319653a543211a5366cd1a5734c83ee4d2683c2d41077058369116804a8447e",
+   "catalogue_files_sha256": "6c374c699932347ddbc16ade8dbea418058bfb7df1a2f11f30fc37def32b57ad",
+   "catalogues_json_sha256": "0b1ab833a573ffc9c935c5ad6aa9e3c282cbd91802b52181b69281ea8cdd6d77",
+   "catalogue_file_sha256": {
+    "argocd.json": "900e0f55fee5068dafe19f7632a6731440e752cb2870819d65ca5575114d3e79",
+    "connect_rest.json": "fa076e9391b4d8e67a4ea7782f9c8086e913955e955b788fd1839764cf9afc9b",
+    "kafka_cli.json": "9e688b762c6462d023958335a0421d7fdf6a70959c6882c8045697145f260b63",
+    "kafka_config.json": "436bd532f48ccd5f0c6a6e845746a2fdfdf6733ad11bdb1979835bcee228236d",
+    "kafka_config_history.json": "2f88ace30c40bdf44f0964fc87eecb3bcb5b2da14ab93f41abaa18ff23f3d8ed",
+    "kubernetes.json": "5984562fe61d3302ca511f14e09a20290947c6a7ca1506d5fe28dfeaa414f05d",
+    "protocol_errors.json": "8a05ad8e9afa7181fd822ea74aa527ce5b71c849a919ccfdb72f077f32c906df",
+    "strimzi_annotations.json": "9af6f085f8b1e6dc32a7cf116f65129f8b5cb4b2140d4a89bbb2d1225f761c12",
+    "strimzi_resources.json": "f5b6c3e00b06bfdcc7ef44b0c14a3d2efc3a397c4256c05dda39e5e085938090"
+   },
+   "module_sha256": {
+    "kafka_sre_rag/kb_lookup.py": "91e34f1c556f0fc626f63a55b7067e620d2e6bfa48930b0506d9afd904af0818",
+    "kafka_sre_rag/catalogue.py": "8c4262c5c4a6d3086f900d6f697645214e238e2da7cfc57f3094d4d9226dddf7",
+    "kafka_sre_rag/catalogue_a3.py": "bc6a9d22d66209cb6e0c2a8d7b8cf0066d7c88243a9c5ec4a6e9a4e6f76389b3"
+   }
+  },
+  "entries": {
+   "on": "only if Z4 passes",
+   "status": "pending",
+   "index": null,
+   "sha256": null
+  },
+  "ask_command": "OMLX_URL=<server url> .venv/bin/python -m kafka_sre_rag ask --backend openai --model gemma-4-31b-it-4bit --extra-body '{\"chat_template_kwargs\": {\"enable_thinking\": false}}' --lookup-cards --json \"<question>\"",
+  "ask_command_dry_run": ".venv/bin/python -m kafka_sre_rag ask --dry-run --backend openai --model gemma-4-31b-it-4bit --extra-body '{\"chat_template_kwargs\": {\"enable_thinking\": false}}' --lookup-cards \"<question>\""
+ },
+ "C": {
+  "retrieval_profile": "frozen (the measured one; --profile frozen is the default)",
+  "k": "k6 (6 chunks, max 14000 characters)",
+  "index": {
+   "file": "work/v3/chunks_s1.jsonl",
+   "sha256": "233c23b0478006a8afae881b83836a226a6af89517256be4d9aac2cc7d500e92",
+   "chunks": 6444,
+   "record": "runs/v3/INDEX_FROZEN.json",
+   "record_sha256": "316a0f27efecf0757750920a8e6df669fdb62deb679f3972bd3d5933c413e08a"
+  },
+  "retrieval_settings": {
+   "pool": 40,
+   "chunk_chars": 1500,
+   "bm25": {
+    "K1": 1.2,
+    "B": 0.75,
+    "TITLE_W": 2
+   },
+   "rrf": true,
+   "rrf_constant": 60,
+   "k6": {
+    "k": 6,
+    "max_chars": 14000
+   },
+   "k3_not_used": {
+    "k": 3,
+    "max_chars": 6000
+   }
+  },
+  "reranker": {
+   "model": "BAAI/bge-reranker-v2-m3",
+   "revision": "953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e",
+   "device": "cpu",
+   "max_length": 512
+  },
+  "query_expansion": {
+   "done_by": "the answering model itself (the same server model id as the answer; frozen.json expansion.written_by); one extra call per question, before retrieval",
+   "max_tokens": 300,
+   "temperature": 0,
+   "thinking": false,
+   "prompt": "EXPAND_SYSTEM",
+   "prompt_sha256": "a1fb0eefabcd052fad39ac975e1b99ff3282285903af2410e1d9d3c4ce639de9"
+  },
+  "prompt_format": {
+   "mode": "default (--mode default; the measured prompt)",
+   "system_prompt_sha256": "766ff0b0e2c61316acc1239425c33f299c2f1136814e2ed6c7135f7dda20da15",
+   "instruction_sha256": "65fe40116e6723ecc5128222fbe5530e7009e79f1cb7a696b12a78138d7f9307",
+   "source": "kafka_sre_rag/prompts.py constants SYSTEM_PROMPT, INSTRUCTION, EXPAND_SYSTEM, checked against kafka_sre_rag/frozen.json prompts_sha256 by `python -m kafka_sre_rag verify` (all match on 2026-11-26)",
+   "version_names": "no version constant applies to the ask path: the prompt is the frozen one (golden hashes in tests/golden); PACK_PROMPT_VERSION pack/4 (scripts/generate_qa.py) belongs to generation packs, not to ask; KB_ENTRY_PROMPT_VERSION kbe/5 and KB_CHECK_PROMPT_VERSION kbc/4 belong to the entries (off in this release test until Z4)"
+  },
+  "answer": {
+   "max_tokens": 2048,
+   "temperature": 0,
+   "thinking": false,
+   "how_thinking_is_off": "request body chat_template_kwargs.enable_thinking=false, passed as --extra-body (applies to the expansion call and the answer call)"
+  },
+  "answer_profile": "fast (default: --answer-profile not given; the thorough profile stays off)",
+  "other_options_off": "--check, --revise, --mark-destructive, --mode other than default, --profile other than frozen, --max-tokens, --stream (not given)",
+  "extra_body": {
+   "chat_template_kwargs": {
+    "enable_thinking": false
+   }
+  },
+  "server": "the oMLX server, one request at a time; address from OMLX_URL (never recorded here)",
+  "git": {
+   "runtime_head": "b25ac62f27497100237ba95650aa6bace1f0758b",
+   "runtime_tree_clean_for": "kafka_sre_rag/ and scripts/retrieve.py (git status on 2026-11-26)"
+  },
+  "runtime_files_sha256": {
+   "kafka_sre_rag/frozen.json": "3031725d8844e2b64a7feae0047bfdf8de9c46facfdd2dfee58126a153cf0ecf",
+   "kafka_sre_rag/retrieval.py": "b18a44a9923c9da6a7df68ef6bb720aef8af51373adb75ac793de4ec96b3bcf3",
+   "kafka_sre_rag/config.py": "483aba784a927cc59f84461dea52baf6acc69cea544dd177e35c98a22cb5ce8b",
+   "kafka_sre_rag/generators.py": "48ce0bb8d05d240180ab62e13ca8bc44586abf4350e1293d1f7c80e236c9fbcc",
+   "kafka_sre_rag/pipeline.py": "79b230fc2a4e04f2e3fe32cf3ac9f0d7eee23396f4e3e536913c78fe5a67ff52",
+   "kafka_sre_rag/__main__.py": "a72f62a8054b372dbce88080d8ec3d81f6978e1ed818d56bc50d84198da74f3f",
+   "scripts/retrieve.py": "7981b711a2c74e6205580a96f521531fcc2f8c1cc2c26063eac97d974d7829e8",
+   "kafka_sre_rag/prompts.py": "1df5989e41a8bc67d578de1b5e7cf76df7078a46ae2c42551ab424c82434db7b"
+  },
+  "runtime_files_note": "prompts.py is pinned by a running job and may gain constants (kb entries); the frozen constants above are what count, and `kafka_sre_rag verify` must print match for all of them",
+  "name": "C",
+  "description": "the current release's default (v3.2.0 defaults) on Qwen3.8-27B 4-bit; cards off, entries off",
+  "model": {
+   "oMLX_model_id": "Qwen3.8-27B-4bit",
+   "folder": "mlx-community/Qwen3.8-27B-4bit (relative to the oMLX model directory)",
+   "hf_repo": "mlx-community/Qwen3.8-27B-4bit",
+   "hf_repo_revision": "b935172e4bb5dcd0543774a34748fb92422e3027",
+   "hf_revision_source": "the folder's .cache/huggingface/download/*.metadata files (first line = commit hash; second line of a weight file's metadata = its sha256, equal to the sha256 computed here)",
+   "base_model": "Qwen/Qwen3.8-27B",
+   "upstream_conversion": "converted with mlx-vlm 0.6.8 from Qwen/Qwen3.8-27B (README of the folder; upstream revision not recorded)",
+   "licence": "apache-2.0 (README front matter)",
+   "sha256_weights": {
+    "model-00001-of-00003.safetensors": "6cc1508e96fb5d0865dfd5753a79f4ec60651bf3e2a82844a7e8ae9c60528c0d",
+    "model-00002-of-00003.safetensors": "83f2a20ca8058f486a3634a27faf99587f4cd3c156a83dee34fb99e6ac178670",
+    "model-00003-of-00003.safetensors": "31b8c91ef899f79efaaa69e3d2c096f6e2ebeb2ff20e29222abbd9ebc79e560a"
+   },
+   "sha256_weight_index": "13b840162b4cb35c66fef7df072f7dbb4717908204364f5e5d9f9655a2758fa8",
+   "sha256_config_json": "14b65a0ee06517060a6bbd979bb1a8ff54e7b304b1a1f01d54344b88b8285e85",
+   "sha256_generation_config_json": "e70c136c1b78ddc1fb0905bac8e733a4dc448d4f852a5dd75143fffc70be550e",
+   "sha256_tokenizer_files": {
+    "tokenizer.json": "0997f410c57a1f4e53b09e4be8f4a172d90edd9564368fb0847030937229b9f3",
+    "tokenizer_config.json": "792fa3f0cb88b111e54ef3134c873531008c4df471d108da17903426e308aa7b",
+    "vocab.json": "ce99b4cb2983d118806ce0a8b777a35b093e2000a503ebde25853284c9dfa003"
+   },
+   "sha256_chat_template": "c3cf9e34abf4f9e36c2d72165aa9c132d3e2a725b6c2586aaa3a8af9d7a81041",
+   "sha256_other_files": {
+    "preprocessor_config.json": "27225450ac9c6529872ee1924fcb0962ff5634834f817040f444118116f4e516",
+    "processor_config.json": "222e060084f093738ca7af4c89ef09d844e415876021325fdf7d5c6821b119d4",
+    "video_preprocessor_config.json": "7768af27c1fafa9cc9011c1dc20067e03f8915e03b63504550e11d5066986d13",
+    "README.md": "860ff845b4746d0b3e1d1afa4f13aac691ef49c7165054cedfb199371568c4c2",
+    ".gitattributes": "34448b82c17d60fec9b65b1f093c115ddbaadc04beb1b0140b6bfed2e012a930"
+   },
+   "hash_check": "every file hashed in two separate passes; the two lists are identical",
+   "server_side_model_settings": {
+    "temperature_default": 1.0,
+    "top_p": 0.95,
+    "top_k": 20,
+    "force_sampling": false,
+    "note": "as for Gemma; thinking_budget_enabled false"
+   }
+  },
+  "thinking_switch_note": "the Qwen3.8 chat template thinks by default; enable_thinking=false turns it off (this is why the switch is sent)",
+  "lookup_cards": {
+   "on": false,
+   "switch": "--lookup-cards not given"
+  },
+  "entries": {
+   "on": false
+  },
+  "v3_2_0_equality": {
+   "tag": "v3.2.0",
+   "tag_commit": "1e80837a51c916ff67270019c00a08e72f092fa5",
+   "unchanged_since_tag": [
+    "kafka_sre_rag/frozen.json",
+    "kafka_sre_rag/retrieval.py",
+    "kafka_sre_rag/config.py",
+    "kafka_sre_rag/profiles.py",
+    "scripts/retrieve.py",
+    "kafka_sre_rag/frozen.json carries the same index sha256 (runs/v3/INDEX_FROZEN.json is git-ignored and not in the tag)"
+   ],
+   "changed_since_tag_all_off_by_default": [
+    "kafka_sre_rag/__main__.py",
+    "pipeline.py",
+    "generators.py",
+    "prompts.py",
+    "evalhooks.py",
+    "revise.py",
+    "checker.py (options and code added: --lookup-cards, --answer-profile thorough, --mark-destructive; new modules kb_lookup.py, kb_entry.py, verify_pass.py)"
+   ],
+   "check": "the --dry-run output (every message of the expansion and answer requests) for the C command is byte-identical between the v3.2.0 tree (git archive) and today's tree; verify prints match for the frozen prompts; golden prompt tests are in tests/golden (tests/golden/prompts_verify.json is the only addition)"
+  },
+  "ask_command": "OMLX_URL=<server url> .venv/bin/python -m kafka_sre_rag ask --backend openai --model Qwen3.8-27B-4bit --extra-body '{\"chat_template_kwargs\": {\"enable_thinking\": false}}' --json \"<question>\"",
+  "ask_command_dry_run": ".venv/bin/python -m kafka_sre_rag ask --dry-run --backend openai --model Qwen3.8-27B-4bit --extra-body '{\"chat_template_kwargs\": {\"enable_thinking\": false}}' \"<question>\""
+ },
+ "pending": [
+  "entries (Z4): on only if Z4 passes; the entries index and its hash are added when the entries are frozen"
+ ],
+ "sources": [
+  "MILESTONE.md decisions W28, W29, W33 and section 'The release test'",
+  "scripts/m7_ka2.sh, runs/m7/M7_KA2.md, work/m7/ka2/ans_d5_L_gemma31.jsonl.manifest.json (Z3 call and pins)",
+  "work/m7/six_arm/MANIFEST.json (model ids)",
+  "kafka_sre_rag/frozen.json, runs/v3/INDEX_FROZEN.json, kafka_sre_rag/prompts.py, kafka_sre_rag/__main__.py, pipeline.py, generators.py, kb_lookup.py",
+  "work/m4/catalogues/CATALOGUES.json",
+  "oMLX settings and model folders (read-only): model directory setting, model_settings.json, the two folders' files and .cache/huggingface metadata",
+  "git tag v3.2.0"
+ ]
+}
