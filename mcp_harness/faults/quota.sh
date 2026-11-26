@@ -20,8 +20,10 @@ case "$action:$variant" in
   inject:producer_byte_rate)
     broker_exec "${KC[@]}" --alter --entity-type clients --entity-name "$CLIENT" --add-config producer_byte_rate=300 >/dev/null ;;
   verify:producer_byte_rate)
+    # throttled to under 10 records a second; once the backlog is older than delivery.timeout.ms (120 s) the producer
+    # logs about 1,200 "Expiring N record(s)" lines a minute and no rate line, so those count too (seen 2026-11-26)
     has_quota clients "$CLIENT" \
-      && pod_logs_match app=orders-producer " [0-9]\.[0-9] records/sec" ;;  # throttled to under 10 records a second
+      && pod_logs_match app=orders-producer " [0-9]\.[0-9] records/sec|Expiring [0-9]+ record\(s\) for orders" ;;
   revert:consumer_byte_rate) K -n kafka replace -f "$ROOT/mcp_harness/manifests/kafka.yaml" >/dev/null ;;
   revert:producer_byte_rate)  # also the user ANONYMOUS, where an earlier version of this fault put the quota
     if has_quota clients "$CLIENT"; then

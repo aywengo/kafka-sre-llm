@@ -853,6 +853,31 @@ class FaultCheckFixesTest(unittest.TestCase):
         self.assertEqual([(e["match"]["entity_type"], e["match"]["entity_name"]) for e in ev],
                          [("clients", "(perf-producer-client)?")])
 
+    def test_producer_quota_verify_counts_expiring_batches(self):
+        """Persistence check, 600 s: after about 4 min the producer logs only expiring batches (no rate line)."""
+        q = (ROOT / "mcp_harness/faults/quota.sh").read_text()
+        v = q[q.index("verify:producer_byte_rate)"):]
+        v = v[:v.index(";;")]
+        self.assertIn('has_quota clients "$CLIENT"', v)
+        rx = re.compile(re.search(r'pod_logs_match app=orders-producer "([^"]+)"', v).group(1))  # ERE = re here
+        for line in ("147 records sent, 3.3 records/sec (0.00 MB/sec), 101027.3 ms avg latency",
+                     "org.apache.kafka.common.errors.TimeoutException: Expiring 147 record(s) for orders-0:120001 ms"):
+            self.assertTrue(rx.search(line), line)
+        self.assertFalse(rx.search("101 records sent, 20.0 records/sec (0.00 MB/sec), 7.1 ms avg latency"))
+
+    def test_invalid_manifest_verify_needs_the_pending_topic_and_counts_a_retry(self):
+        """Persistence check, 600 s: Argo CD retries the failed sync and the message is briefly a retry message."""
+        s = (ROOT / "mcp_harness/faults/argocd.sh").read_text()
+        v = s[s.index("verify:invalid_manifest)"):]
+        v = v[:v.index(";;")]
+        self.assertIn("dlq_pending &&", v)
+        for word in ("invalid", "greater than or equal", "Retrying operation", "waiting for healthy state"):
+            self.assertIn(word, v)
+        d = s[s.index("dlq_pending() {"):]
+        d = d[:d.index("\n}")]
+        self.assertIn("OutOfSync", d)
+        self.assertIn("! K -n kafka get kafkatopic payments-dlq", d)
+
     def test_resize_revert_pauses_before_it_corrects_and_unpauses_last(self):
         s = (ROOT / "mcp_harness/faults/storage.sh").read_text()
         r = s[s.index("revert:resize_not_supported)"):]

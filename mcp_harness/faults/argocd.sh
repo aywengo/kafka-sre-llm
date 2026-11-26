@@ -20,6 +20,11 @@ sync_on_record() {
     [ -n "$(app_field '{.status.sync.revision}')" ] &&
     [ "$(app_field '{.status.operationState.syncResult.revision}')" = "$(app_field '{.status.sync.revision}')" ]
 }
+dlq_pending() {  # the commit with payments-dlq is in Argo CD's target state, and the topic was never created
+  [ "$(app_field '{.status.sync.status}')" = OutOfSync ] &&
+    app_field '{.status.resources[?(@.name=="payments-dlq")].status}' | grep -q OutOfSync &&
+    ! K -n kafka get kafkatopic payments-dlq >/dev/null 2>&1
+}
 case "$action:$variant" in
   inject:live_edit)
     if ! sync_on_record; then
@@ -66,7 +71,11 @@ spec:
 EOF
     commit payments-dlq.yaml "$GEN/fault-topic.yaml" "add topic payments-dlq" ;;
   verify:invalid_manifest)
-    { app_field '{.status.operationState.message}'; app_field '{.status.conditions[*].message}'; } | grep -qi "invalid\|greater than or equal" ;;
+    # Argo CD retries the failed automated sync (limit 5, with backoff); while an attempt runs the message is briefly
+    # "Retrying operation. Attempt #N" or "waiting for healthy state of ..." instead of the failure (seen 2026-11-26),
+    # so a retry counts too. payments-dlq pending in the target state keeps out a message from before the commit.
+    dlq_pending && { app_field '{.status.operationState.message}'; app_field '{.status.conditions[*].message}'; } \
+      | grep -qi "invalid\|greater than or equal\|Retrying operation\|waiting for healthy state" ;;
   revert:*)
     K replace -f "$ROOT/mcp_harness/manifests/argocd.yaml" >/dev/null
     gitserver_exec "git reset -q --hard base"
