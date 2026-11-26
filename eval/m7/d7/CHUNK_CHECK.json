@@ -1,0 +1,801 @@
+{
+ "date": "2026-11-26",
+ "conductor_decisions": [
+  {
+   "by": "conductor 2026-11-26",
+   "decision": "drop the redundant supersets: d7-02 m4 keeps [422ca815ed27a4f9]; d7-56 m4 keeps [8cba3569c5b8bb11]; a superset adds nothing to serving"
+  },
+  {
+   "by": "conductor 2026-11-26",
+   "decision": "drop the two 3-chunk sets (d7-39 m4b, d7-55 m3): d7_design.md section 3 says sets as in D5, which are of one or two chunks; both points become no_covering_set and leave the denominator"
+  }
+ ],
+ "rule": "a set is recorded only if an independent checker found that its chunks, as the model receives them (each with its title line and its text), together and nothing else state the point's whole fact; a point is served when one whole set is served. Strict-pass rule (runs/m7/reports/d7_steps0to2.md, Step 5): six fresh strict blind readers re-rate every set; stated means the chunks say it or it follows by plain logic, values given in the scenario count, general knowledge does not; one missing qualifier makes a set partial; for each partial or wrong set the reader looks for one or two more chunks that make a passing set; a set is recorded only if every strict reading of it is ok (the 40 sampled sets have two readings); found sets count only if they pass the same rule; point texts and weights are not changed by readers; a point with no recorded set becomes no_covering_set and leaves the denominator; bar: at least 95 % of the indexed points with a recorded set after one repair, before any answer.",
+ "first_independent_count": {
+  "checkers": 6,
+  "points_with_sets": 295,
+  "points_with_an_ok_set": 291,
+  "sets_rated": 307,
+  "sets_ok": 299,
+  "sets_partial": 8,
+  "sets_wrong": 0,
+  "found_lines": 6,
+  "found_passing": [
+   {
+    "id": "d7-28",
+    "point": "m4",
+    "set": [
+     "a4ea57bcbb583531",
+     "b950314f8f296788"
+    ]
+   }
+  ],
+  "found_partial_not_recorded": [
+   {
+    "id": "d7-04",
+    "point": "m6",
+    "set": [
+     "4fa279ac70ed1e63"
+    ],
+    "note": "states that the topic is not deleted; advice to remove it separately not stated"
+   }
+  ],
+  "points_without_any_set": [
+   {
+    "id": "d7-09",
+    "point": "m1",
+    "note": "no passing set found; reasoning point"
+   },
+   {
+    "id": "d7-09",
+    "point": "m3",
+    "note": "no passing set found; arithmetic point"
+   },
+   {
+    "id": "d7-10",
+    "point": "m1",
+    "note": "no passing set found; reasoning point"
+   },
+   {
+    "id": "d7-10",
+    "point": "m2",
+    "note": "no passing set found; arithmetic point"
+   }
+  ]
+ },
+ "control_sample": {
+  "rater": "one strict blind reader (complex-reviewer), without the first ratings or the rubric set_evidence",
+  "sample_sets": 40,
+  "seed": 20261126,
+  "drawn_from": "the 307 sets of the first count",
+  "first_ratings": {
+   "ok": 39,
+   "partial": 1
+  },
+  "strict_ratings": {
+   "ok": 35,
+   "partial": 5
+  },
+  "agreement": "36/40",
+  "agreement_rate": 0.9,
+  "line": 0.9,
+  "disagreements": [
+   {
+    "id": "d7-42",
+    "point": "m4",
+    "set": [
+     "2266ead854ec7f97"
+    ],
+    "first": "ok",
+    "strict": "partial",
+    "strict_reason": "skip rule only for example key zone and only for even-distribution; nothing says an unlabeled node cannot take or explain the Pending pod"
+   },
+   {
+    "id": "d7-55",
+    "point": "m3",
+    "set": [
+     "1b9329a2654db771"
+    ],
+    "first": "ok",
+    "strict": "partial",
+    "strict_reason": "only after.max.ms; nothing on before.max.ms or the CreateTime default of log.message.timestamp.type"
+   },
+   {
+    "id": "d7-51",
+    "point": "m5",
+    "set": [
+     "5b8967421aabb116"
+    ],
+    "first": "ok",
+    "strict": "partial",
+    "strict_reason": "borderline: read-only not stated"
+   },
+   {
+    "id": "d7-35",
+    "point": "m2",
+    "set": [
+     "54101b52fff253a3"
+    ],
+    "first": "ok",
+    "strict": "partial",
+    "strict_reason": "borderline: never names Streams replication.factor as controlling internal topics"
+   }
+  ],
+  "clear_disagreements": [
+   "d7-42/m4",
+   "d7-55/m3"
+  ],
+  "borderline_disagreements": [
+   "d7-51/m5",
+   "d7-35/m2"
+  ],
+  "decision": "first count not accepted as final; the repair pass is a full strict re-rating"
+ },
+ "second_pass": {
+  "readers": 6,
+  "blind": "input held only scenario id, point id, point text and the set; chunks read as the model receives them (title line and text)",
+  "sets_rated": 308,
+  "sets_ok": 281,
+  "sets_partial": 27,
+  "sets_wrong": 0,
+  "ok_rate": 0.912,
+  "sets_with_two_strict_readings": 40,
+  "two_reading_disagreements": [
+   {
+    "id": "d7-11",
+    "point": "m2",
+    "set": [
+     "2f20c0fc067e8f6b"
+    ],
+    "readings": [
+     "ok",
+     "partial"
+    ]
+   },
+   {
+    "id": "d7-35",
+    "point": "m2",
+    "set": [
+     "54101b52fff253a3"
+    ],
+    "readings": [
+     "ok",
+     "partial"
+    ]
+   },
+   {
+    "id": "d7-51",
+    "point": "m5",
+    "set": [
+     "5b8967421aabb116"
+    ],
+    "readings": [
+     "ok",
+     "partial"
+    ]
+   }
+  ],
+  "found_lines": 22,
+  "sets_recorded_that_were_not_in_the_rubrics_before_step_6": [
+   {
+    "id": "d7-12",
+    "point": "m2",
+    "set": [
+     "a811389e69be63ea",
+     "d67ebb610ab1c5fb"
+    ]
+   },
+   {
+    "id": "d7-16",
+    "point": "m1",
+    "set": [
+     "eab6afae44577ac9"
+    ]
+   },
+   {
+    "id": "d7-18",
+    "point": "m4",
+    "set": [
+     "8d51fbf940efacc6",
+     "9074672271fe2853"
+    ]
+   },
+   {
+    "id": "d7-22",
+    "point": "m3a",
+    "set": [
+     "607cf28b2822701e",
+     "6b7184331c136ded"
+    ]
+   },
+   {
+    "id": "d7-22",
+    "point": "m3b",
+    "set": [
+     "607cf28b2822701e",
+     "608edee4543fef64"
+    ]
+   },
+   {
+    "id": "d7-23",
+    "point": "m3b",
+    "set": [
+     "aee0a9cfccfba81b",
+     "b9857094363fefa9"
+    ]
+   },
+   {
+    "id": "d7-23",
+    "point": "m3c",
+    "set": [
+     "822fab3d5711a8ea",
+     "c237244225ea6272"
+    ]
+   },
+   {
+    "id": "d7-24",
+    "point": "m2a",
+    "set": [
+     "1e550e45b7ff5aae",
+     "bc67f8da7686c63f"
+    ]
+   },
+   {
+    "id": "d7-25",
+    "point": "m2",
+    "set": [
+     "6a90cb5174d16199",
+     "e3cf3462e0627634"
+    ]
+   },
+   {
+    "id": "d7-28",
+    "point": "m4",
+    "set": [
+     "a4ea57bcbb583531",
+     "b950314f8f296788"
+    ]
+   },
+   {
+    "id": "d7-31",
+    "point": "m5",
+    "set": [
+     "0b247c905039bba9",
+     "aa15059e6b768dde"
+    ]
+   },
+   {
+    "id": "d7-42",
+    "point": "m4",
+    "set": [
+     "b04eec17fa9af3a8"
+    ]
+   },
+   {
+    "id": "d7-44",
+    "point": "m2b",
+    "set": [
+     "a57ee6e8f6ecdc5c",
+     "c9ff129c9f54e9ba"
+    ]
+   },
+   {
+    "id": "d7-48",
+    "point": "m4",
+    "set": [
+     "109993cb65ee33f7",
+     "3e2a2a1b8e31cb7b"
+    ]
+   },
+   {
+    "id": "d7-53",
+    "point": "m1",
+    "set": [
+     "63a508a19355f1cf",
+     "9ccc0aa17db441c9"
+    ]
+   },
+   {
+    "id": "d7-53",
+    "point": "m2a",
+    "set": [
+     "1b0ad35cb7f6e063",
+     "63a508a19355f1cf"
+    ]
+   }
+  ],
+  "found_three_chunk_sets_not_recorded": [
+   {
+    "id": "d7-39",
+    "point": "m4b",
+    "set": [
+     "750c353561257d2a",
+     "93848bccd1141d34",
+     "9e4b0e684c3d6acc"
+    ]
+   },
+   {
+    "id": "d7-55",
+    "point": "m3",
+    "set": [
+     "1b9329a2654db771",
+     "9939397aa59c1361",
+     "67fb6ca8dc45c3c5"
+    ]
+   }
+  ],
+  "three_chunk_note": "The strict readers found these two passing sets of three chunks. They were not recorded for the size rule (sets of one or two chunks as in D5); both points became no_covering_set (conductor 2026-11-26).",
+  "note": "found sets: strict readers proposed them with quotes, 18 by the repair pass (the d7-23 m3c one by the re-rating), plus d7-28 m4 (first count, passing in the strict pass), plus the d7-02 m4 two-chunk set rated in the re-rating"
+ },
+ "rubric_fixes": {
+  "file": "eval/m7/d7/fix3_changes.jsonl",
+  "changes_rows": 30,
+  "fixes": [
+   {
+    "id": "d7-02",
+    "point": "m4",
+    "change": "the point text, source, reference, correct_alternative and note now credit events.events.k8s.io with reportingController or core events with reportingComponent; the bare core form is not credited (checked on a kind cluster, 2026-11-26)"
+   },
+   {
+    "id": "d7-18",
+    "point": "m5",
+    "change": "the point text now states supportsAdminApi (default false) for authorization type custom instead of a delegation setting; sets c358a5da64e58788 + 85cfc5205a0072e2"
+   },
+   {
+    "id": "d7-23",
+    "point": "m3c / question",
+    "change": "items.jsonl question: about 20 MB/day to each partition (about 240 MB/day across the topic); the m3c set was re-found"
+   }
+  ],
+  "rerating": {
+   "file": "scratchpad d7/fix3/out_R.jsonl (copied here)",
+   "readers": 1,
+   "sets_rated": 6,
+   "ok": 3,
+   "partial": 3,
+   "wrong": 0,
+   "found_sets": 1,
+   "supersedes_the_strict_pass_for": [
+    "d7-02 m4",
+    "d7-18 m5",
+    "d7-23 m3c"
+   ],
+   "rows": [
+    {
+     "id": "d7-02",
+     "point": "m4",
+     "set": [
+      "422ca815ed27a4f9"
+     ],
+     "rating": "ok",
+     "reason": ""
+    },
+    {
+     "id": "d7-02",
+     "point": "m4",
+     "set": [
+      "422ca815ed27a4f9",
+      "f4a0c09fdbed3a2f"
+     ],
+     "rating": "ok",
+     "reason": ""
+    },
+    {
+     "id": "d7-18",
+     "point": "m5",
+     "set": [
+      "c358a5da64e58788",
+      "85cfc5205a0072e2"
+     ],
+     "rating": "ok",
+     "reason": ""
+    },
+    {
+     "id": "d7-23",
+     "point": "m3c",
+     "set": [
+      "e3cf3462e0627634",
+      "aee0a9cfccfba81b"
+     ],
+     "rating": "partial",
+     "reason": "segment.bytes alternative only; segment.ms alternative and its 7-day default missing"
+    },
+    {
+     "id": "d7-23",
+     "point": "m3c",
+     "set": [
+      "c0e413932865a648",
+      "aee0a9cfccfba81b"
+     ],
+     "rating": "partial",
+     "reason": "segment.bytes only and weakly; segment.ms alternative missing"
+    },
+    {
+     "id": "d7-23",
+     "point": "m3c",
+     "set": [
+      "822fab3d5711a8ea",
+      "aee0a9cfccfba81b"
+     ],
+     "rating": "partial",
+     "reason": "segment.ms only; no chunk links segment.bytes to rolling"
+    },
+    {
+     "id": "d7-23",
+     "point": "m3c",
+     "found": [
+      "c237244225ea6272",
+      "822fab3d5711a8ea"
+     ],
+     "quote": [
+      "Configuration at the broker level determines the maximum size in bytes of a log segment and the time in milliseconds before an active segment is rolled ... These settings can be overridden at the topic level using `segment.bytes` and `segment.ms`. ... A larger size means the active segment contains more messages and is rolled less often.",
+      "This configuration controls the period of time after which Kafka will force the log to roll even if the segment file isn't full to ensure that retention can delete or compact old data. ... Default: 604800000 (7 days)"
+     ]
+    }
+   ]
+  }
+ },
+ "final_state": {
+  "scenarios": 60,
+  "must_points": 323,
+  "points_with_at_least_one_set": 289,
+  "points_served_only_through_sets_of_two_chunks": 42,
+  "only_two_chunk_points": [
+   [
+    "d7-01",
+    "m5"
+   ],
+   [
+    "d7-05",
+    "m4"
+   ],
+   [
+    "d7-08",
+    "m5"
+   ],
+   [
+    "d7-12",
+    "m2"
+   ],
+   [
+    "d7-13",
+    "m3a"
+   ],
+   [
+    "d7-14",
+    "m2"
+   ],
+   [
+    "d7-14",
+    "m4"
+   ],
+   [
+    "d7-15",
+    "m1"
+   ],
+   [
+    "d7-15",
+    "m3"
+   ],
+   [
+    "d7-18",
+    "m4"
+   ],
+   [
+    "d7-18",
+    "m5"
+   ],
+   [
+    "d7-20",
+    "m1"
+   ],
+   [
+    "d7-20",
+    "m2a"
+   ],
+   [
+    "d7-21",
+    "m4"
+   ],
+   [
+    "d7-22",
+    "m3a"
+   ],
+   [
+    "d7-22",
+    "m3b"
+   ],
+   [
+    "d7-23",
+    "m3b"
+   ],
+   [
+    "d7-23",
+    "m3c"
+   ],
+   [
+    "d7-24",
+    "m2a"
+   ],
+   [
+    "d7-25",
+    "m2"
+   ],
+   [
+    "d7-28",
+    "m4"
+   ],
+   [
+    "d7-31",
+    "m2"
+   ],
+   [
+    "d7-31",
+    "m3"
+   ],
+   [
+    "d7-31",
+    "m5"
+   ],
+   [
+    "d7-33",
+    "m2b"
+   ],
+   [
+    "d7-34",
+    "m5"
+   ],
+   [
+    "d7-35",
+    "m3"
+   ],
+   [
+    "d7-36",
+    "m2"
+   ],
+   [
+    "d7-39",
+    "m4a"
+   ],
+   [
+    "d7-41",
+    "m1"
+   ],
+   [
+    "d7-41",
+    "m4"
+   ],
+   [
+    "d7-41",
+    "m5b"
+   ],
+   [
+    "d7-42",
+    "m1"
+   ],
+   [
+    "d7-44",
+    "m2b"
+   ],
+   [
+    "d7-48",
+    "m4"
+   ],
+   [
+    "d7-50",
+    "m3a"
+   ],
+   [
+    "d7-53",
+    "m1"
+   ],
+   [
+    "d7-53",
+    "m2a"
+   ],
+   [
+    "d7-53",
+    "m2b"
+   ],
+   [
+    "d7-53",
+    "m2c"
+   ],
+   [
+    "d7-54",
+    "m5"
+   ],
+   [
+    "d7-59",
+    "m1"
+   ]
+  ],
+  "sets_by_size": {
+   "1": 251,
+   "2": 43
+  },
+  "sets_total": 294,
+  "sets_from_checkers": 16,
+  "points_no_covering_set": [
+   {
+    "id": "d7-04",
+    "point": "m6"
+   },
+   {
+    "id": "d7-09",
+    "point": "m1"
+   },
+   {
+    "id": "d7-09",
+    "point": "m3"
+   },
+   {
+    "id": "d7-10",
+    "point": "m1"
+   },
+   {
+    "id": "d7-10",
+    "point": "m2"
+   },
+   {
+    "id": "d7-13",
+    "point": "m3b"
+   },
+   {
+    "id": "d7-14",
+    "point": "m3"
+   },
+   {
+    "id": "d7-25",
+    "point": "m3"
+   },
+   {
+    "id": "d7-35",
+    "point": "m2"
+   },
+   {
+    "id": "d7-39",
+    "point": "m4b"
+   },
+   {
+    "id": "d7-51",
+    "point": "m5"
+   },
+   {
+    "id": "d7-55",
+    "point": "m3"
+   }
+  ],
+  "points_no_covering_set_new_in_step_5": [
+   {
+    "id": "d7-13",
+    "point": "m3b"
+   },
+   {
+    "id": "d7-25",
+    "point": "m3"
+   },
+   {
+    "id": "d7-35",
+    "point": "m2"
+   },
+   {
+    "id": "d7-51",
+    "point": "m5"
+   }
+  ],
+  "points_no_covering_set_by_conductor_size_rule": [
+   {
+    "id": "d7-39",
+    "point": "m4b"
+   },
+   {
+    "id": "d7-55",
+    "point": "m3"
+   }
+  ],
+  "points_not_indexed": 22,
+  "not_indexed_points": [
+   {
+    "id": "d7-11",
+    "point": "m5"
+   },
+   {
+    "id": "d7-19",
+    "point": "m4"
+   },
+   {
+    "id": "d7-20",
+    "point": "m4"
+   },
+   {
+    "id": "d7-20",
+    "point": "m5"
+   },
+   {
+    "id": "d7-29",
+    "point": "m6"
+   },
+   {
+    "id": "d7-30",
+    "point": "m5"
+   },
+   {
+    "id": "d7-30",
+    "point": "m6"
+   },
+   {
+    "id": "d7-37",
+    "point": "m4"
+   },
+   {
+    "id": "d7-39",
+    "point": "m3"
+   },
+   {
+    "id": "d7-39",
+    "point": "m6"
+   },
+   {
+    "id": "d7-40",
+    "point": "m1"
+   },
+   {
+    "id": "d7-40",
+    "point": "m3"
+   },
+   {
+    "id": "d7-44",
+    "point": "m2a"
+   },
+   {
+    "id": "d7-44",
+    "point": "m5"
+   },
+   {
+    "id": "d7-49",
+    "point": "m5"
+   },
+   {
+    "id": "d7-49",
+    "point": "m6"
+   },
+   {
+    "id": "d7-50",
+    "point": "m5"
+   },
+   {
+    "id": "d7-50",
+    "point": "m6"
+   },
+   {
+    "id": "d7-59",
+    "point": "m3"
+   },
+   {
+    "id": "d7-59",
+    "point": "m4"
+   },
+   {
+    "id": "d7-60",
+    "point": "m5"
+   },
+   {
+    "id": "d7-60",
+    "point": "m6"
+   }
+  ],
+  "indexed_points_per_item": {
+   "min": 3,
+   "median": 5.0,
+   "max": 9
+  },
+  "coverage_of_points_that_had_a_set_to_rate": 0.9797,
+  "coverage_of_all_indexed_points": 0.9601,
+  "coverage_note": "bar 95 % (design section 3, step 5 rule): 289 of the 295 points that had a set to rate (98.0 %), met; counted over all indexed points, including the 6 points flagged no_covering_set before step 5 (289 of 301), 96.0 %, also met"
+ },
+ "sha256": {
+  "rubrics.jsonl": "bfc1e48432ea284d81684fd9a86f95766f4bad0a21b1bed4f31e6188483aed76",
+  "items.jsonl": "e0c88fd9248310e117a910cc0efa147be006bf2ccc0e17e585914f143ff59e07"
+ }
+}
