@@ -712,15 +712,6 @@ class ReviewServerTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 session_from(None, kc, ctx)
 
-    def test_s7_diagnose_requires_kubeconfig_and_context(self):
-        from kafka_sre_rag import __main__ as cli_main
-        for argv in (["diagnose", "q", "--tools", "mcp", "--stub", "x.json"],
-                     ["diagnose", "q", "--tools", "mcp", "--stub", "x.json", "--kube-context", "kind-x"],
-                     ["diagnose", "q", "--tools", "mcp", "--stub", "x.json", "--kubeconfig", "kc"]):
-            with self.assertRaises(SystemExit) as cm, unittest.mock.patch("sys.stderr", io.StringIO()):
-                cli_main.main(argv)
-            self.assertEqual(cm.exception.code, 2, argv)
-
     def test_n4_no_secret_env_reaches_the_server_or_kubectl(self):
         with tempfile.TemporaryDirectory() as d:
             d = Path(d)
@@ -756,12 +747,9 @@ class ReviewServerTest(unittest.TestCase):
                 "print('kafka_sre_rag.tools' in sys.modules)")
         p = subprocess.run([sys.executable, "-c", code], cwd=ROOT, capture_output=True, text=True, timeout=120)
         self.assertEqual((p.returncode, p.stdout.strip()), (0, "False"), p.stderr[-500:])
-        p = subprocess.run([sys.executable, "-m", "kafka_sre_rag", "diagnose", "--help"], cwd=ROOT, capture_output=True,
-                           text=True, timeout=120)
-        self.assertEqual(p.returncode, 0)
-        self.assertIn("--kubeconfig", p.stdout)
+        # diagnose-out build: the runtime has no diagnose command (the tools package stays for mcp_harness only)
         p = subprocess.run([sys.executable, "-m", "kafka_sre_rag", "--help"], cwd=ROOT, capture_output=True, text=True, timeout=120)
-        self.assertIn("diagnose", p.stdout)
+        self.assertNotIn("diagnose", p.stdout)
 
 
 class ReviewHarnessTest(unittest.TestCase):

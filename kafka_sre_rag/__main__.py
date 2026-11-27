@@ -198,10 +198,6 @@ def build_parser():
     v = sub.add_parser("verify", help="check the index sha256 and the prompt hashes against frozen.json; "
                                       "reports the catalogue hash")
     v.add_argument("--catalogues", metavar="DIR", default=None, help="default: work/m4/catalogues")
-    # EXPERIMENTAL (M7, W30): diagnose with read-only tools. Listed here only; main() hands `diagnose ...` to
-    # kafka_sre_rag.tools.cli before this parser runs, so no other command imports the tools package.
-    sub.add_parser("diagnose", help="EXPERIMENTAL: diagnose a live problem with read-only tools (local MCP servers); "
-                                    "see python -m kafka_sre_rag diagnose --help")
     return ap
 
 
@@ -450,11 +446,6 @@ def run_one(question, gen, cfg, a, checker=None):
 
 
 def main(argv=None):
-    raw = sys.argv[1:] if argv is None else list(argv)
-    if raw[:1] == ["diagnose"]:  # EXPERIMENTAL (M7, W30): the tools package is imported for this command only
-        from .tools import cli as tools_cli
-        d = argparse.ArgumentParser(prog="python -m kafka_sre_rag diagnose", description=tools_cli.__doc__.splitlines()[0])
-        return tools_cli.main(tools_cli.fill_parser(d).parse_args(raw[1:]))
     a = build_parser().parse_args(argv)
     if a.cmd != "verify":
         why = answer_profile_error(a)
