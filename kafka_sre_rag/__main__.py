@@ -50,11 +50,14 @@ def mark_option(p):
 
 def lookup_option(p):
     p.add_argument("--lookup-cards", action="store_true",
-                   help="EXPERIMENTAL and UNMEASURED, off by default (M7 KA1): add reference cards to the prompt, one block "
+                   help="off by default (M7 KA1): add reference cards to the prompt, one block "
                         "after the excerpts: the exact facts of the pinned catalogues (type, default, valid values, "
                         "options, fields, errors) for the names in the question and in the search terms, with their pin. "
                         "No extra model call; the lookup takes milliseconds. Needs the catalogues (--catalogues DIR or "
-                        "work/m4/catalogues; python scripts/build_catalogues.py). Not available with --service-url or serve")
+                        "work/m4/catalogues; python scripts/build_catalogues.py). Measured in v4.0.0 only inside the release "
+                        "configuration RE (Gemma 4 31B 4-bit, --lookup-cards, --kb-entries; see the model card), where the cards' "
+                        "check Z3 passed on Gemma 4 31B (it failed on Qwen3.8-27B); every other combination is unmeasured. "
+                        "Not available with --service-url or serve")
 
 
 def kb_entries_option(p):
