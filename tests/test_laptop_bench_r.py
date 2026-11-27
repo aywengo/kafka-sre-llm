@@ -65,6 +65,18 @@ class ReleaseConfig(unittest.TestCase):
         self.assertEqual([t for t in dry[dry.index("kafka_sre_rag"):] if t != "--dry-run"][:-1],
                          [t for t in toks[toks.index("kafka_sre_rag"):] if t != "--json"][:-1])
 
+    def test_config_re_parses_and_its_command_has_the_entries_while_r_has_not(self):
+        out_re = self.t / "RE"
+        rc, text = bench("--config", "RE", "--stub", "--out", str(out_re), "preflight")
+        self.assertEqual(rc, 0, text)
+        cfg_re = json.loads((out_re / "config.json").read_text())
+        argv_re = lb.oneshot_argv(cfg_re, "q?", "default", False)
+        argv_r = lb.oneshot_argv(self.cfg(), "q?", "default", False)
+        self.assertIn("--kb-entries", argv_re)
+        self.assertIn("--lookup-cards", argv_re)
+        self.assertNotIn("--kb-entries", argv_r)
+        self.assertEqual([t for t in argv_re if t != "--kb-entries"], argv_r)
+
     def test_old_defaults_command_unchanged(self):
         rc, text = bench("--stub", "--out", str(self.t / "old"), "preflight")
         self.assertEqual(rc, 0, text)
