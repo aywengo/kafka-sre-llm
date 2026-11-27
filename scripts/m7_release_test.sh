@@ -88,7 +88,13 @@ set_files() { # SET: ITEMS RUBS EXT SW, and for d7 the harness-shaped items (a d
           $PY scripts/m5_g_rule.py harness-items --in $SW/d7_items_src.jsonl --out $ITEMS --domain d7 > /dev/null || refuse "the D7 items could not be put in the harness shape"
         fi
         if [ "$LIMIT" != 0 ]; then head -n $LIMIT "$D7R" > $SW/rubrics_d7_limited.jsonl; RUBS=$SW/rubrics_d7_limited.jsonl; fi;;
-    h6) ITEMS=$H6I; RUBS=$H6R; EXT=.enc;;
+    h6) ITEMS=$H6I; RUBS=$H6R; EXT=.enc   # the hidden rows lack tier, kind, family and domain: a harness copy (.enc, same key) is built once, as for d7; counts only are printed
+        if [ -f "$H6I" ]; then
+          ITEMS=$SW/items_h6_h.jsonl.enc
+          if [ ! -s $ITEMS ]; then
+            $PY scripts/m5_g_rule.py harness-items --in "$H6I" --out $ITEMS --domain h6 > /dev/null 2>&1 || { rm -f $ITEMS; refuse "the h6 items could not be put in the harness shape (the source and the key are checked, no item is printed)"; }
+          fi
+        fi;;
   esac; }
 for s in $(echo $SETS | tr ',' ' '); do
   set_files $s
@@ -121,6 +127,7 @@ mark() { st=$1; shift; $PY $KB2 mark --work $SW --stage $st --out "$@" > /dev/nu
 for s in $(echo $SETS | tr ',' ' '); do
   set_files $s
   PINS="--pin $([ $s = d7 ] && echo $D7I || echo $H6I) --pin $([ $s = d7 ] && echo $D7R || echo $H6R)"
+  [ $s = h6 ] && [ "$ITEMS" != "$H6I" ] && PINS="$PINS --pin $ITEMS"   # h6: the source and the harness copy both (the d7 pins stay as they were)
   LPINS="--log-pin scripts/m7_release_test.py --log-pin scripts/m7_release_test.sh --log-pin scripts/m7_adjudication_pack.py --log-pin $CHUNKS --log-pin kafka_sre_rag/frozen.json"
   $PY $H manifest --work $SW --set $s --configs "$CONFIGS" --arms "$ARMS" --candidate $CAND --control $CTRL --h6-mode $H6MODE --h6-chosen-by "$H6BY" $PINS $LPINS \
     --opt "second_fraction=$SECOND" --opt "h6_sessions=$H6S" --opt "judge_model=$DS" --opt "judge_concurrency=1" --opt "limit=$LIMIT" --opt "dry=$DRY" || refuse "the manifest check of $s failed (see above; nothing was moved or deleted)"

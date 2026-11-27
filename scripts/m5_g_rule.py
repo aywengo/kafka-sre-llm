@@ -268,18 +268,33 @@ def cmd_select(a):
 
 
 def cmd_harness_items(a):
-    rows = rd(getattr(a, "in"))
-    with open(a.out, "w", encoding="utf-8") as f:
-        for r in rows:
-            if not r.get("id") or not r.get("question"):
-                raise RuleError("item without id or question")
-            row = {"tier": "B", "kind": "open", "family": r["id"], "domain": a.domain, **r}
-            if isinstance(row["domain"], list):
-                row["domains"], row["domain"] = row["domain"], ",".join(map(str, row["domain"])) or a.domain
-            for k in ("tier", "kind", "family", "domain"):
-                if not isinstance(row[k], str) or not row[k]:
-                    raise RuleError(f"item {r['id']}: {k} is not a non-empty string")
-            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    src = getattr(a, "in")
+    hidden = str(src).endswith(".enc") or str(a.out).endswith(".enc")
+    if hidden:
+        # a hidden (.enc) file is read and written through eval2 only, which decrypts and encrypts; only the count is printed
+        if not (str(src).endswith(".enc") and str(a.out).endswith(".enc")):
+            raise RuleError("harness-items: the input and the output are both .enc or both plain")
+        import eval2
+        rows = eval2.read_jsonl(src)
+    else:
+        rows = rd(src)
+    out_rows = []
+    for r in rows:
+        if not r.get("id") or not r.get("question"):
+            raise RuleError("item without id or question")
+        row = {"tier": "B", "kind": "open", "family": r["id"], "domain": a.domain, **r}
+        if isinstance(row["domain"], list):
+            row["domains"], row["domain"] = row["domain"], ",".join(map(str, row["domain"])) or a.domain
+        for k in ("tier", "kind", "family", "domain"):
+            if not isinstance(row[k], str) or not row[k]:
+                raise RuleError(f"item {r['id']}: {k} is not a non-empty string")
+        out_rows.append(row)
+    if hidden:
+        eval2.write_jsonl(a.out, out_rows)
+    else:
+        with open(a.out, "w", encoding="utf-8") as f:
+            for row in out_rows:
+                f.write(json.dumps(row, ensure_ascii=False) + "\n")
     print(f"{a.out}: {len(rows)} harness items")
     return 0
 
