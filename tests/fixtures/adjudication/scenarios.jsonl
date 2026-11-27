@@ -1,0 +1,10 @@
+{"scenario_id": "dq-01", "question": "Invented scenario 01: the demo cluster misbehaves in way number 1. What should we do?", "evidence": "$ demo-ctl status 01\nstate: odd-1"}
+{"scenario_id": "dq-02", "question": "Invented scenario 02: the demo cluster misbehaves in way number 2. What should we do?", "evidence": "$ demo-ctl status 02\nstate: odd-2"}
+{"scenario_id": "dq-03", "question": "Invented scenario 03: the demo cluster misbehaves in way number 3. What should we do?", "evidence": "$ demo-ctl status 03\nstate: odd-3"}
+{"scenario_id": "dq-04", "question": "Invented scenario 04: the demo cluster misbehaves in way number 4. What should we do?", "evidence": "$ demo-ctl status 04\nstate: odd-4"}
+{"scenario_id": "dq-05", "question": "Invented scenario 05: the demo cluster misbehaves in way number 5. What should we do?", "evidence": "$ demo-ctl status 05\nstate: odd-5"}
+{"scenario_id": "hq-01", "question": "Invented scenario 01: the demo cluster misbehaves in way number 1. What should we do?", "evidence": "$ demo-ctl status 01\nstate: odd-1"}
+{"scenario_id": "hq-02", "question": "Invented scenario 02: the demo cluster misbehaves in way number 2. What should we do?", "evidence": "$ demo-ctl status 02\nstate: odd-2"}
+{"scenario_id": "hq-03", "question": "Invented scenario 03: the demo cluster misbehaves in way number 3. What should we do?", "evidence": "$ demo-ctl status 03\nstate: odd-3"}
+{"scenario_id": "hq-04", "question": "Invented scenario 04: the demo cluster misbehaves in way number 4. What should we do?", "evidence": "$ demo-ctl status 04\nstate: odd-4"}
+{"scenario_id": "hq-05", "question": "Invented scenario 05: the demo cluster misbehaves in way number 5. What should we do?", "evidence": "$ demo-ctl status 05\nstate: odd-5"}

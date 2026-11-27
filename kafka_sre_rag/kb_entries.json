@@ -1,0 +1,16 @@
+{
+ "checker": {
+  "model": "GLM-5.3-Flash-oQ8e-mtp",
+  "prompt_version": "kbc/4"
+ },
+ "created": "2026-11-27T08:56:09Z",
+ "entries": 7028,
+ "file": "work/m7/kb/entries_index.jsonl",
+ "schema": 1,
+ "sha256": "9722a8f3b323bccc4c89e7c38929236e57a13507965548754e2eef28ac266938",
+ "slice_sha256": "d7d1d352ab0e72a624e449154e9fcfdf7890115db48c8bcc6be6c0629efb824e",
+ "writer": {
+  "model": "DeepSeek-V4.1-Flash-1017-oQ4e-mtp",
+  "prompt_version": "kbe/5"
+ }
+}

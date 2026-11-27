@@ -1,0 +1,715 @@
+{
+ "rule": "slice = chunks of the frozen index (runs/v3/INDEX_FROZEN.json, sha256 233c23b0478006a8afae881b83836a226a6af89517256be4d9aac2cc7d500e92) with source strimzi or apache-kafka, except paths under raw/strimzi/documentation/contributing/; sorted chunk-id list sha256 3a958f486e9c1f076f7b66d2afdba4d93002d7e029d995b3081654fdb4fb7a2a (1487 chunks, equal to runs/m7/D7_LEDGER.md). A point is in the slice when at least one of its recorded sets lies wholly in slice chunks; a scenario is in the slice when at least half of its covered points are (none covered: outside).",
+ "intended_tag_source": "items.jsonl carries no tag (only domain). The writer assignment carries one per writer: writers A-D (d7-01..d7-40) were briefed 'in the slice', writers E-F (d7-41..d7-60) 'outside the slice' (scratchpad d7/manifest.json 'scope'; round-2 replacements with the same ids carry the same scope in tools/build_r2.py). The intended tag below is that writer scope, by id.",
+ "slice_chunks": 1487,
+ "slice_ids_sha256": "3a958f486e9c1f076f7b66d2afdba4d93002d7e029d995b3081654fdb4fb7a2a",
+ "scenarios_in_slice": 40,
+ "scenarios_outside": 20,
+ "bar": "40/20 within +-4",
+ "bar_met": true,
+ "code_tag_differs_from_intended": [],
+ "scenarios": [
+  {
+   "id": "d7-01",
+   "code_tag": "slice",
+   "covered_points": 5,
+   "in_slice_points": 5,
+   "intended_tag": "slice",
+   "in_slice_point_ids": [
+    "m1",
+    "m2",
+    "m3",
+    "m4",
+    "m5"
+   ]
+  },
+  {
+   "id": "d7-02",
+   "code_tag": "slice",
+   "covered_points": 4,
+   "in_slice_points": 3,
+   "intended_tag": "slice",
+   "in_slice_point_ids": [
+    "m1",
+    "m2",
+    "m3"
+   ]
+  },
+  {
+   "id": "d7-03",
+   "code_tag": "slice",
+   "covered_points": 6,
+   "in_slice_points": 6,
+   "intended_tag": "slice",
+   "in_slice_point_ids": [
+    "m1",
+    "m2",
+    "m3",
+    "m4",
+    "m5",
+    "m6"
+   ]
+  },
+  {
+   "id": "d7-04",
+   "code_tag": "slice",
+   "covered_points": 5,
+   "in_slice_points": 5,
+   "intended_tag": "slice",
+   "in_slice_point_ids": [
+    "m1",
+    "m2",
+    "m3",
+    "m4",
+    "m5"
+   ]
+  },
+  {
+   "id": "d7-05",
+   "code_tag": "slice",
+   "covered_points": 6,
+   "in_slice_points": 6,
+   "intended_tag": "slice",
+   "in_slice_point_ids": [
+    "m1",
+    "m2",
+    "m3",
+    "m4",
+    "m5",
+    "m6"
+   ]
+  },
+  {
+   "id": "d7-06",
+   "code_tag": "slice",
+   "covered_points": 4,
+   "in_slice_points": 4,
+   "intended_tag": "slice",
+   "in_slice_point_ids": [
+    "m1",
+    "m2",
+    "m3",
+    "m4"
+   ]
+  },
+  {
+   "id": "d7-07",
+   "code_tag": "slice",
+   "covered_points": 5,
+   "in_slice_points": 5,
+   "intended_tag": "slice",
+   "in_slice_point_ids": [
+    "m1",
+    "m2",
+    "m3",
+    "m4",
+    "m5"
+   ]
+  },
+  {
+   "id": "d7-08",
+   "code_tag": "slice",
+   "covered_points": 6,
+   "in_slice_points": 6,
+   "intended_tag": "slice",
+   "in_slice_point_ids": [
+    "m1",
+    "m2",
+    "m3",
+    "m4",
+    "m5",
+    "m6"
+   ]
+  },
+  {
+   "id": "d7-09",
+   "code_tag": "slice",
+   "covered_points": 3,
+   "in_slice_points": 3,
+   "intended_tag": "slice",
+   "in_slice_point_ids": [
+    "m2a",
+    "m2b",
+    "m4"
+   ]
+  },
+  {
+   "id": "d7-10",
+   "code_tag": "slice",
+   "covered_points": 5,
+   "in_slice_points": 5,
+   "intended_tag": "slice",
+   "in_slice_point_ids": [
+    "m3",
+    "m4a",
+    "m4b",
+    "m5",
+    "m6"
+   ]
+  },
+  {
+   "id": "d7-11",
+   "code_tag": "slice",
+   "covered_points": 4,
+   "in_slice_points": 4,
+   "intended_tag": "slice",
+   "in_slice_point_ids": [
+    "m1",
+    "m2",
+    "m3",
+    "m4"
+   ]
+  },
+  {
+   "id": "d7-12",
+   "code_tag": "slice",
+   "covered_points": 4,
+   "in_slice_points": 4,
+   "intended_tag": "slice",
+   "in_slice_point_ids": [
+    "m1",
+    "m2",
+    "m3",
+    "m4"
+   ]
+  },
+  {
+   "id": "d7-13",
+   "code_tag": "slice",
+   "covered_points": 5,
+   "in_slice_points": 5,
+   "intended_tag": "slice",
+   "in_slice_point_ids": [
+    "m1",
+    "m2",
+    "m3a",
+    "m4",
+    "m5"
+   ]
+  },
+  {
+   "id": "d7-14",
+   "code_tag": "slice",
+   "covered_points": 4,
+   "in_slice_points": 4,
+   "intended_tag": "slice",
+   "in_slice_point_ids": [
+    "m1",
+    "m2",
+    "m4",
+    "m5"
+   ]
+  },
+  {
+   "id": "d7-15",
+   "code_tag": "slice",
+   "covered_points": 4,
+   "in_slice_points": 4,
+   "intended_tag": "slice",
+   "in_slice_point_ids": [
+    "m1",
+    "m2",
+    "m3",
+    "m4"
+   ]
+  },
+  {
+   "id": "d7-16",
+   "code_tag": "slice",
+   "covered_points": 3,
+   "in_slice_points": 3,
+   "intended_tag": "slice",
+   "in_slice_point_ids": [
+    "m1",
+    "m2",
+    "m3"
+   ]
+  },
+  {
+   "id": "d7-17",
+   "code_tag": "slice",
+   "covered_points": 4,
+   "in_slice_points": 4,
+   "intended_tag": "slice",
+   "in_slice_point_ids": [
+    "m1",
+    "m2",
+    "m3",
+    "m4"
+   ]
+  },
+  {
+   "id": "d7-18",
+   "code_tag": "slice",
+   "covered_points": 5,
+   "in_slice_points": 5,
+   "intended_tag": "slice",
+   "in_slice_point_ids": [
+    "m1",
+    "m2",
+    "m3",
+    "m4",
+    "m5"
+   ]
+  },
+  {
+   "id": "d7-19",
+   "code_tag": "slice",
+   "covered_points": 6,
+   "in_slice_points": 6,
+   "intended_tag": "slice",
+   "in_slice_point_ids": [
+    "m1",
+    "m2",
+    "m3a",
+    "m3b",
+    "m3c",
+    "m5"
+   ]
+  },
+  {
+   "id": "d7-20",
+   "code_tag": "slice",
+   "covered_points": 5,
+   "in_slice_points": 5,
+   "intended_tag": "slice",
+   "in_slice_point_ids": [
+    "m1",
+    "m2a",
+    "m2b",
+    "m3",
+    "m6"
+   ]
+  },
+  {
+   "id": "d7-21",
+   "code_tag": "slice",
+   "covered_points": 5,
+   "in_slice_points": 5,
+   "intended_tag": "slice",
+   "in_slice_point_ids": [
+    "m1",
+    "m2",
+    "m3",
+    "m4",
+    "m5"
+   ]
+  },
+  {
+   "id": "d7-22",
+   "code_tag": "slice",
+   "covered_points": 5,
+   "in_slice_points": 5,
+   "intended_tag": "slice",
+   "in_slice_point_ids": [
+    "m1",
+    "m2",
+    "m3a",
+    "m3b",
+    "m4"
+   ]
+  },
+  {
+   "id": "d7-23",
+   "code_tag": "slice",
+   "covered_points": 6,
+   "in_slice_points": 5,
+   "intended_tag": "slice",
+   "in_slice_point_ids": [
+    "m1",
+    "m2",
+    "m3a",
+    "m3b",
+    "m4"
+   ]
+  },
+  {
+   "id": "d7-24",
+   "code_tag": "slice",
+   "covered_points": 5,
+   "in_slice_points": 4,
+   "intended_tag": "slice",
+   "in_slice_point_ids": [
+    "m1",
+    "m2b",
+    "m3",
+    "m4"
+   ]
+  },
+  {
+   "id": "d7-25",
+   "code_tag": "slice",
+   "covered_points": 4,
+   "in_slice_points": 4,
+   "intended_tag": "slice",
+   "in_slice_point_ids": [
+    "m1",
+    "m2",
+    "m4",
+    "m5"
+   ]
+  },
+  {
+   "id": "d7-26",
+   "code_tag": "slice",
+   "covered_points": 4,
+   "in_slice_points": 4,
+   "intended_tag": "slice",
+   "in_slice_point_ids": [
+    "m1",
+    "m2",
+    "m3",
+    "m4"
+   ]
+  },
+  {
+   "id": "d7-27",
+   "code_tag": "slice",
+   "covered_points": 6,
+   "in_slice_points": 6,
+   "intended_tag": "slice",
+   "in_slice_point_ids": [
+    "m1",
+    "m2",
+    "m3a",
+    "m3b",
+    "m4",
+    "m5"
+   ]
+  },
+  {
+   "id": "d7-28",
+   "code_tag": "slice",
+   "covered_points": 5,
+   "in_slice_points": 5,
+   "intended_tag": "slice",
+   "in_slice_point_ids": [
+    "m1",
+    "m2",
+    "m3",
+    "m4",
+    "m5"
+   ]
+  },
+  {
+   "id": "d7-29",
+   "code_tag": "slice",
+   "covered_points": 6,
+   "in_slice_points": 6,
+   "intended_tag": "slice",
+   "in_slice_point_ids": [
+    "m1",
+    "m2",
+    "m3a",
+    "m3b",
+    "m4",
+    "m5"
+   ]
+  },
+  {
+   "id": "d7-30",
+   "code_tag": "slice",
+   "covered_points": 5,
+   "in_slice_points": 5,
+   "intended_tag": "slice",
+   "in_slice_point_ids": [
+    "m1",
+    "m2a",
+    "m2b",
+    "m3",
+    "m4"
+   ]
+  },
+  {
+   "id": "d7-31",
+   "code_tag": "slice",
+   "covered_points": 5,
+   "in_slice_points": 5,
+   "intended_tag": "slice",
+   "in_slice_point_ids": [
+    "m1",
+    "m2",
+    "m3",
+    "m4",
+    "m5"
+   ]
+  },
+  {
+   "id": "d7-32",
+   "code_tag": "slice",
+   "covered_points": 4,
+   "in_slice_points": 4,
+   "intended_tag": "slice",
+   "in_slice_point_ids": [
+    "m1",
+    "m2",
+    "m3",
+    "m4"
+   ]
+  },
+  {
+   "id": "d7-33",
+   "code_tag": "slice",
+   "covered_points": 5,
+   "in_slice_points": 5,
+   "intended_tag": "slice",
+   "in_slice_point_ids": [
+    "m1",
+    "m2a",
+    "m2b",
+    "m3",
+    "m4"
+   ]
+  },
+  {
+   "id": "d7-34",
+   "code_tag": "slice",
+   "covered_points": 5,
+   "in_slice_points": 5,
+   "intended_tag": "slice",
+   "in_slice_point_ids": [
+    "m1",
+    "m2",
+    "m3",
+    "m4",
+    "m5"
+   ]
+  },
+  {
+   "id": "d7-35",
+   "code_tag": "slice",
+   "covered_points": 4,
+   "in_slice_points": 4,
+   "intended_tag": "slice",
+   "in_slice_point_ids": [
+    "m1",
+    "m3",
+    "m4",
+    "m5"
+   ]
+  },
+  {
+   "id": "d7-36",
+   "code_tag": "slice",
+   "covered_points": 5,
+   "in_slice_points": 5,
+   "intended_tag": "slice",
+   "in_slice_point_ids": [
+    "m1",
+    "m2",
+    "m2b",
+    "m3",
+    "m4"
+   ]
+  },
+  {
+   "id": "d7-37",
+   "code_tag": "slice",
+   "covered_points": 3,
+   "in_slice_points": 3,
+   "intended_tag": "slice",
+   "in_slice_point_ids": [
+    "m1",
+    "m2",
+    "m3"
+   ]
+  },
+  {
+   "id": "d7-38",
+   "code_tag": "slice",
+   "covered_points": 3,
+   "in_slice_points": 3,
+   "intended_tag": "slice",
+   "in_slice_point_ids": [
+    "m1",
+    "m2",
+    "m3"
+   ]
+  },
+  {
+   "id": "d7-39",
+   "code_tag": "slice",
+   "covered_points": 4,
+   "in_slice_points": 4,
+   "intended_tag": "slice",
+   "in_slice_point_ids": [
+    "m1",
+    "m2",
+    "m4a",
+    "m5"
+   ]
+  },
+  {
+   "id": "d7-40",
+   "code_tag": "slice",
+   "covered_points": 3,
+   "in_slice_points": 3,
+   "intended_tag": "slice",
+   "in_slice_point_ids": [
+    "m2a",
+    "m2b",
+    "m4"
+   ]
+  },
+  {
+   "id": "d7-41",
+   "code_tag": "outside",
+   "covered_points": 7,
+   "in_slice_points": 0,
+   "intended_tag": "outside",
+   "in_slice_point_ids": []
+  },
+  {
+   "id": "d7-42",
+   "code_tag": "outside",
+   "covered_points": 5,
+   "in_slice_points": 0,
+   "intended_tag": "outside",
+   "in_slice_point_ids": []
+  },
+  {
+   "id": "d7-43",
+   "code_tag": "outside",
+   "covered_points": 6,
+   "in_slice_points": 0,
+   "intended_tag": "outside",
+   "in_slice_point_ids": []
+  },
+  {
+   "id": "d7-44",
+   "code_tag": "outside",
+   "covered_points": 4,
+   "in_slice_points": 0,
+   "intended_tag": "outside",
+   "in_slice_point_ids": []
+  },
+  {
+   "id": "d7-45",
+   "code_tag": "outside",
+   "covered_points": 6,
+   "in_slice_points": 0,
+   "intended_tag": "outside",
+   "in_slice_point_ids": []
+  },
+  {
+   "id": "d7-46",
+   "code_tag": "outside",
+   "covered_points": 4,
+   "in_slice_points": 0,
+   "intended_tag": "outside",
+   "in_slice_point_ids": []
+  },
+  {
+   "id": "d7-47",
+   "code_tag": "outside",
+   "covered_points": 5,
+   "in_slice_points": 0,
+   "intended_tag": "outside",
+   "in_slice_point_ids": []
+  },
+  {
+   "id": "d7-48",
+   "code_tag": "outside",
+   "covered_points": 4,
+   "in_slice_points": 0,
+   "intended_tag": "outside",
+   "in_slice_point_ids": []
+  },
+  {
+   "id": "d7-49",
+   "code_tag": "outside",
+   "covered_points": 5,
+   "in_slice_points": 0,
+   "intended_tag": "outside",
+   "in_slice_point_ids": []
+  },
+  {
+   "id": "d7-50",
+   "code_tag": "outside",
+   "covered_points": 5,
+   "in_slice_points": 0,
+   "intended_tag": "outside",
+   "in_slice_point_ids": []
+  },
+  {
+   "id": "d7-51",
+   "code_tag": "outside",
+   "covered_points": 4,
+   "in_slice_points": 0,
+   "intended_tag": "outside",
+   "in_slice_point_ids": []
+  },
+  {
+   "id": "d7-52",
+   "code_tag": "outside",
+   "covered_points": 6,
+   "in_slice_points": 0,
+   "intended_tag": "outside",
+   "in_slice_point_ids": []
+  },
+  {
+   "id": "d7-53",
+   "code_tag": "outside",
+   "covered_points": 9,
+   "in_slice_points": 0,
+   "intended_tag": "outside",
+   "in_slice_point_ids": []
+  },
+  {
+   "id": "d7-54",
+   "code_tag": "outside",
+   "covered_points": 6,
+   "in_slice_points": 0,
+   "intended_tag": "outside",
+   "in_slice_point_ids": []
+  },
+  {
+   "id": "d7-55",
+   "code_tag": "outside",
+   "covered_points": 5,
+   "in_slice_points": 0,
+   "intended_tag": "outside",
+   "in_slice_point_ids": []
+  },
+  {
+   "id": "d7-56",
+   "code_tag": "outside",
+   "covered_points": 5,
+   "in_slice_points": 0,
+   "intended_tag": "outside",
+   "in_slice_point_ids": []
+  },
+  {
+   "id": "d7-57",
+   "code_tag": "outside",
+   "covered_points": 5,
+   "in_slice_points": 0,
+   "intended_tag": "outside",
+   "in_slice_point_ids": []
+  },
+  {
+   "id": "d7-58",
+   "code_tag": "outside",
+   "covered_points": 5,
+   "in_slice_points": 0,
+   "intended_tag": "outside",
+   "in_slice_point_ids": []
+  },
+  {
+   "id": "d7-59",
+   "code_tag": "outside",
+   "covered_points": 3,
+   "in_slice_points": 0,
+   "intended_tag": "outside",
+   "in_slice_point_ids": []
+  },
+  {
+   "id": "d7-60",
+   "code_tag": "outside",
+   "covered_points": 5,
+   "in_slice_points": 0,
+   "intended_tag": "outside",
+   "in_slice_point_ids": []
+  }
+ ]
+}

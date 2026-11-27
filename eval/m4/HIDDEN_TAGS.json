@@ -1,45 +1,67 @@
 {
- "schema": 1,
- "note": "Ids only. Hidden items that get a second set of totals in every hidden report (all items, and without the tagged ones).",
- "tags": {
-  "conductor_exposed": {
-   "ids": [
-    "oq-002",
-    "oq-010",
-    "oq-012",
-    "oq-018",
-    "oq-026",
-    "oq-032",
-    "oq-036",
-    "oq-041",
-    "oq-042",
-    "oq-047",
-    "oq-048"
-   ],
-   "since": "2026-11-20",
-   "reason": "the conductor saw the Owner's review notes on these hidden judged items; Owner's decision: keep them and report every hidden judged result with and without them"
-  },
-  "shares_family_with_b4": {
-   "ids": [
-    "b3-07",
-    "b3-17",
-    "b3-26"
-   ],
-   "since": "2026-11-22",
-   "reason": "a sealed session found these hidden judged items to be of the same family as a scenario of the open batch B4 (the B4 scenarios are not named); Owner's decision: keep them and report every hidden judged result with and without them; near and not tagged: b3-13, b3-18, b3-31, b3-36, oq-004, oq-050"
-  },
-  "shares_family_with_d5": {
-   "ids": [
-    "b3-02",
-    "b3-05",
-    "b3-13",
-    "b3-29",
-    "b3-30",
-    "b3-31",
-    "oq-005"
-   ],
-   "since": "2026-11-22",
-   "reason": "a sealed session found these hidden judged items to be of the same family as a scenario of the open development batch D5 (the D5 scenarios are not named); Owner's decision S8: keep them and report every hidden judged result with and without them; the hidden look of milestone M6 runs on a new hidden judged part; near and not tagged: b3-03, b3-15, b3-17, b3-18, b3-19, b3-20, b3-21, b3-33, oq-036"
+  "schema": 1,
+  "note": "Ids only. Hidden items that get a second set of totals in every hidden report (all items, and without the tagged ones).",
+  "tags": {
+    "conductor_exposed": {
+      "ids": [
+        "oq-002",
+        "oq-010",
+        "oq-012",
+        "oq-018",
+        "oq-026",
+        "oq-032",
+        "oq-036",
+        "oq-041",
+        "oq-042",
+        "oq-047",
+        "oq-048"
+      ],
+      "since": "2026-11-20",
+      "reason": "the conductor saw the Owner's review notes on these hidden judged items; Owner's decision: keep them and report every hidden judged result with and without them"
+    },
+    "shares_family_with_b4": {
+      "ids": [
+        "b3-07",
+        "b3-17",
+        "b3-26"
+      ],
+      "since": "2026-11-22",
+      "reason": "a sealed session found these hidden judged items to be of the same family as a scenario of the open batch B4 (the B4 scenarios are not named); Owner's decision: keep them and report every hidden judged result with and without them; near and not tagged: b3-13, b3-18, b3-31, b3-36, oq-004, oq-050"
+    },
+    "shares_family_with_d5": {
+      "ids": [
+        "b3-02",
+        "b3-05",
+        "b3-13",
+        "b3-29",
+        "b3-30",
+        "b3-31",
+        "oq-005"
+      ],
+      "since": "2026-11-22",
+      "reason": "a sealed session found these hidden judged items to be of the same family as a scenario of the open development batch D5 (the D5 scenarios are not named); Owner's decision S8: keep them and report every hidden judged result with and without them; the hidden look of milestone M6 runs on a new hidden judged part; near and not tagged: b3-03, b3-15, b3-17, b3-18, b3-19, b3-20, b3-21, b3-33, oq-036"
+    },
+    "shares_family_with_d7_11": {
+      "ids": [
+        "b3-23",
+        "b3-35"
+      ],
+      "since": "2026-11-26",
+      "reason": "a sealed session found these hidden judged items to be of the same family as an open D7 item (d7-11; the item's content is not named); keep them and report every hidden judged result with and without them"
+    },
+    "shares_family_with_d7_34": {
+      "ids": [
+        "b3-27"
+      ],
+      "since": "2026-11-26",
+      "reason": "a sealed session found these hidden judged items to be of the same family as an open D7 item (d7-34; the item's content is not named); keep them and report every hidden judged result with and without them"
+    },
+    "conductor_exposed_h6": {
+      "ids": [
+        "h6-55"
+      ],
+      "since": "2026-11-26",
+      "reason": "a sealed family-check worker for D7 named this h6 item and its main fact in its reply to the conductor (against its brief); the conductor did not open the item. The release look reports h6 totals with and without it; D7's d7-50 is near it (same main fact, different task)"
+    }
   }
- }
 }

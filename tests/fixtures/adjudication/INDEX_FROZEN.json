@@ -1,0 +1,9 @@
+{
+ "index_path": "chunks.jsonl",
+ "chunks": 4,
+ "source_commits": {
+  "strimzi": "aaaaaaaaaaaa1111",
+  "apache-kafka": "bbbbbbbbbbbb2222",
+  "kubernetes": "cccccccccccc3333"
+ }
+}

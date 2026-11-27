@@ -163,6 +163,21 @@ Commands: `.venv/bin/python -m unittest discover -s tests` (offline, seconds);
 - Keep `runs/v3/status.json` and `STATE.md` true at every milestone and whenever a job
   stops or waits for the Owner.
 
+## Kubernetes contexts (the Owner's standing rule, 2026-11-27)
+
+For every agent and worker, before any cluster command:
+- Before any `kubectl`, `helm`, `argocd` or `kind` command, run `kubectl config current-context`
+  and confirm that it is the intended cluster.
+- Pass `--context`, or a dedicated `--kubeconfig`, explicitly on every command. Never rely on the
+  current context.
+- Never switch the current context without telling the Owner and recording the previous one.
+  This covers `kubectl config use-context`, `kubectx`, and also `kind create cluster` and
+  `minikube start` or `update-context`, which switch it unless they are given their own
+  kubeconfig.
+- The MCP harness uses its own kubeconfig (`work/mcp_harness/kubeconfig`), and `diagnose` needs
+  an explicit `--kubeconfig` and `--kube-context`. The harness entry and its scripts check the
+  expected context name. If it differs, they stop with a clear error and run no command.
+
 ## Waiting
 
 One background terminal waiter per milestone, which exits on done, failed or stalled and

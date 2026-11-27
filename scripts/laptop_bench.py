@@ -16,6 +16,13 @@ One command per phase, all output under out/laptop/<date>/ (git-ignored), resuma
                    result of the Mac Studio (eval/m4/laptop/ids.json)
   bundle           SUMMARY.md and the scrubbed folder to send back (send_back/ and send_back.zip)
   make-ids         (reference machine only) writes eval/m4/laptop/ids.json from work/m4/s6/
+  make-reference   (reference machine only) answers and scores the same 60 ids with the run's configuration and writes
+                   the reference file `score` compares with (--ref-out PATH; never overwrites)
+
+--config R runs exactly the release configuration R of eval/m7/release_test/configs.json (Gemma 4 31B 4-bit, thinking
+off through the chat template, lookup cards on; the file's sha256 is checked): model, request body, model repository at
+its pinned commit and the --lookup-cards flag are read from that file and used by every phase. The service has no lookup
+cards, so with R the speed, sustained and memory phases run one-shot only. Without --config the old Qwen defaults apply.
 
 The runtime is not changed or imported by the phases: the service (`python -m kafka_sre_rag serve`) is used through
 HTTP, one-shot through `ask --json`. Only the retrieval probe imports kafka_sre_rag.retrieval, in its own process.
@@ -32,6 +39,7 @@ import json
 import os
 import random
 import re
+import shlex
 import shutil
 import socket
 import statistics
@@ -50,7 +58,12 @@ OFFLINE_ENV = {"HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1", "HF_DATASETS_
                "HF_HUB_DISABLE_TELEMETRY": "1", "DO_NOT_TRACK": "1"}
 DEFAULTS = {"backend": "openai", "model": None, "extra_body": '{"chat_template_kwargs": {"enable_thinking": false}}',
             "k": "k6", "max_tokens": None, "catalogues": "work/m4/catalogues", "weights_dir": None,
-            "model_repo": "mlx-community/Qwen3.8-27B-4bit", "port": 8765, "interval": 2.0}
+            "model_repo": "mlx-community/Qwen3.8-27B-4bit", "port": 8765, "interval": 2.0,
+            "config_name": None, "configs_sha256": None, "lookup_cards": False, "model_repo_revision": None, "reference": None}
+CONFIGS_FILE = "eval/m7/release_test/configs.json"
+CONFIGS_SHA256 = "2934888c01d1f97a2be6ba2d0caf1bbc871d2f851c6890f5a71f661ef7636ebc"   # as amended 2026-11-27 (MILESTONE.md conductor row)
+RELEASE_CONFIGS = ["R", "RE"]
+ASK_DEFAULTS = {"mode": "default", "k": "k6", "catalogues": "work/m4/catalogues"}   # what `ask` does when the option is absent
 BARS = {"install_s": 1800, "median_answer_s": 60, "memory_gb": 20, "weights_gb": (15, 17), "drift_ratio": 1.2,
         "score_margin_points": 5, "sustained_n": 30}
 CONDS = ["service-default", "service-strict", "service-default-check",
@@ -134,6 +147,65 @@ def child_env(extra=None):
     env.update(OFFLINE_ENV)
     env.update(extra or {})
     return env
+
+
+# ------------------------------------------------------------------ release configuration (--config R)
+
+def load_release_config(name, expect_sha=None, stored_sha=None):
+    """The fields of configuration `name` from eval/m7/release_test/configs.json, after the file's sha256 has been
+    checked: against `expect_sha` (--configs-sha256) or the pinned CONFIGS_SHA256, and against `stored_sha` (the hash
+    this output folder was started with). Exits with a message when it does not match, when the file's ask command
+    disagrees with its own fields, or when the lookup cards are not on."""
+    f = ROOT / CONFIGS_FILE
+    if not f.exists():
+        raise SystemExit(f"error: {CONFIGS_FILE} is missing")
+    actual = sha256_file(f)
+    want = expect_sha or CONFIGS_SHA256
+    if actual != want:
+        raise SystemExit(f"error: {CONFIGS_FILE} has sha256 {actual}, expected {want}; "
+                         "if the file was changed on purpose, pass its new hash with --configs-sha256")
+    if stored_sha and actual != stored_sha:
+        raise SystemExit(f"error: {CONFIGS_FILE} changed since this output folder was started (sha256 {actual}, stored {stored_sha})")
+    c = json.loads(f.read_text(encoding="utf-8"))
+    if name not in c:
+        raise SystemExit(f"error: no configuration {name} in {CONFIGS_FILE}")
+    r = c[name]
+    if not (r.get("lookup_cards") or {}).get("on"):
+        raise SystemExit(f"error: configuration {name} does not have the lookup cards on")
+    toks = shlex.split(r["ask_command"])
+    tail = toks[toks.index("kafka_sre_rag"):]     # drops the OMLX_URL=<...> prefix and the interpreter
+    mi, ei = tail.index("--model"), tail.index("--extra-body")
+    model, extra = tail[mi + 1], tail[ei + 1]
+    mod = r["model"]
+    ok = (model == mod["oMLX_model_id"] and json.loads(extra) == r["extra_body"] and "--lookup-cards" in tail
+          and "--json" in tail and tail[-1] == "<question>" and tail[:2] == ["kafka_sre_rag", "ask"])
+    if not ok:
+        raise SystemExit(f"error: the ask command of configuration {name} disagrees with its own fields")
+    return {"config_name": name, "configs_sha256": actual, "backend": "openai", "model": model,
+            "extra_body": extra, "lookup_cards": True, "model_repo": mod["hf_repo"], "model_repo_revision": mod["hf_repo_revision"],
+            "catalogues": r["lookup_cards"]["catalogue_dir"], "k": "k6", "max_tokens": None, "_ask_tail": tail}
+
+
+def oneshot_argv(cfg, question, mode, check):
+    """The command of one one-shot answer. Old defaults: as before. Configuration R: the ask command of configs.json
+    (ask --backend --model --extra-body --lookup-cards --json QUESTION), plus --catalogues only when the directory is not
+    the default one."""
+    if cfg.get("config_name"):
+        if mode != "default" or check:
+            raise ValueError("configuration R has no strict mode and no --check")
+        tail = list(load_release_config(cfg["config_name"], expect_sha=cfg.get("configs_sha256"))["_ask_tail"])
+        argv = [py(), "-m"] + tail[:-1] + [question]
+        if cfg["catalogues"] != ASK_DEFAULTS["catalogues"]:
+            i = argv.index("--json")
+            argv[i:i] = ["--catalogues", cfg["catalogues"]]
+        return argv
+    cmd = [py(), "-m", "kafka_sre_rag", "ask", "--json", "--mode", mode, "--catalogues", cfg["catalogues"]]
+    return cmd + (["--check"] if check else []) + RealRunner.model_args_of(cfg) + [question]
+
+
+def allowed_conds(cfg):
+    """The speed conditions this configuration can run: the service has no lookup cards, and R has no strict mode and no check."""
+    return ["oneshot-default"] if cfg.get("config_name") else list(CONDS)
 
 
 # ------------------------------------------------------------------ parsers of the macOS tools
@@ -424,7 +496,10 @@ class RealRunner(Runner):
         self.logf = None
 
     def model_args(self):
-        c = self.cfg
+        return self.model_args_of(self.cfg)
+
+    @staticmethod
+    def model_args_of(c):
         a = ["--backend", c["backend"]]
         if c.get("model"):
             a += ["--model", c["model"]]
@@ -446,6 +521,8 @@ class RealRunner(Runner):
         return d
 
     def start(self):
+        if self.kind == "service" and self.cfg.get("lookup_cards"):
+            raise RuntimeError("the service has no lookup cards; run one-shot for this configuration")
         if self.cfg["backend"] == "openai":
             self.omlx = omlx_pid(self.base)
         if self.kind != "service":
@@ -506,8 +583,7 @@ class RealRunner(Runner):
         return self._row(time.monotonic() - t0, ttft, extra, len(text), err)
 
     def _ask_oneshot(self, question, mode, check):
-        cmd = [py(), "-m", "kafka_sre_rag", "ask", "--json", "--mode", mode, "--catalogues", self.cfg["catalogues"]]
-        cmd += (["--check"] if check else []) + self.model_args() + [question]
+        cmd = oneshot_argv(self.cfg, question, mode, check)
         t0 = time.monotonic()
         p = subprocess.Popen(cmd, cwd=ROOT, env=child_env(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         self.child = p.pid
@@ -565,6 +641,41 @@ def full_question(item):
     return q + ("\n\nEvidence:\n" + item["evidence"] if item.get("evidence") else "")
 
 
+EMBEDDED_REF = "eval/m4/laptop/ids.json#score.reference"
+
+
+def reference_record(cfg, arg, stored):
+    """Which reference `score` compares with, as a dict {path, sha256, run, note}, or None when there is none yet. --reference
+    PATH names a file made by make-reference; without it the old defaults use the one stored in eval/m4/laptop/ids.json
+    (the Qwen run of the Mac Studio). A release configuration never falls back to that one, except in a --stub run (marked)."""
+    if arg:
+        p = Path(arg)
+        p = p if p.is_absolute() else ROOT / p
+        if not p.is_file():
+            raise SystemExit(f"error: reference file {arg} not found")
+        try:
+            rel = str(p.resolve().relative_to(ROOT))
+        except ValueError:
+            rel = str(arg)
+        return {"path": rel, "sha256": sha256_file(p), "run": (read_json(p, {}) or {}).get("run"), "note": None}
+    if stored:
+        if stored["path"] == EMBEDDED_REF:
+            cur = sha256_file(IDS_FILE)
+        else:
+            q = Path(stored["path"])
+            q = q if q.is_absolute() else ROOT / q
+            cur = sha256_file(q) if q.is_file() else None
+        if cur != stored["sha256"]:
+            raise SystemExit(f"error: the reference {stored['path']} changed or is missing since this output folder was started")
+        return stored
+    if not cfg.get("config_name") or cfg["stub"]:
+        ids = read_json(IDS_FILE, {}) or {}
+        return {"path": EMBEDDED_REF, "sha256": sha256_file(IDS_FILE) if IDS_FILE.exists() else None,
+                "run": (((ids.get("score") or {}).get("reference")) or {}).get("run"),
+                "note": "STUB: this is the Qwen reference, not the reference of the configuration" if cfg.get("config_name") else None}
+    return None
+
+
 def resolve(a):
     """Command line over the stored config.json over the defaults. Stores the result for the later phases."""
     out = Path(getattr(a, "out", None)) if getattr(a, "out", None) else ROOT / "out/laptop" / (getattr(a, "date", None) or datetime.date.today().isoformat())
@@ -573,16 +684,35 @@ def resolve(a):
     stored = read_json(out / "config.json", {})
     cfg = dict(DEFAULTS)
     cfg.update(stored)
-    for k in ("backend", "model", "extra_body", "k", "max_tokens", "catalogues", "weights_dir", "model_repo", "port", "interval"):
-        v = getattr(a, k, None)
+    keys = ("backend", "model", "extra_body", "k", "max_tokens", "catalogues", "weights_dir", "model_repo", "port", "interval")
+    cli = {k: getattr(a, k, None) for k in keys}
+    for k, v in cli.items():
         if v is not None:
             cfg[k] = v
+    name = getattr(a, "config", None)
+    if name and stored and stored.get("config_name") != name:
+        raise SystemExit(f"error: {out} was started with configuration {stored.get('config_name') or 'the old defaults'}; "
+                         f"rows of different configurations must not mix: use another --out for {name}")
+    name = name or stored.get("config_name")
+    if name:
+        rc = load_release_config(name, expect_sha=getattr(a, "configs_sha256", None), stored_sha=stored.get("configs_sha256"))
+        for k in ("backend", "model", "extra_body", "model_repo"):
+            if cli[k] is not None and cli[k] != rc[k]:
+                raise SystemExit(f"error: --{k.replace('_', '-')} differs from configuration {name}; the configuration is used exactly")
+        if cli["max_tokens"] is not None or cli["k"] not in (None, "k6"):
+            raise SystemExit(f"error: --max-tokens and --k other than k6 are not part of configuration {name}")
+        for k, v in rc.items():
+            if k.startswith("_") or (k == "catalogues" and cli["catalogues"] is not None):
+                continue
+            cfg[k] = v
+        cfg["configs_file"] = CONFIGS_FILE
     cfg["stub"] = bool(getattr(a, "stub", False) or stored.get("stub"))
     if cfg["stub"]:
         cfg["interval"] = min(float(cfg["interval"]), 0.05)
     if cfg["backend"] == "mlx":
         cfg["model"] = cfg.get("model") or os.environ.get("BASE_PATH")
         cfg["extra_body"] = None
+    cfg["reference"] = reference_record(cfg, getattr(a, "reference", None), stored.get("reference"))
     cfg["omlx_url_set"] = bool(os.environ.get("OMLX_URL"))
     cfg["omlx_url_local"] = bool(os.environ.get("OMLX_URL")) and urlsplit(os.environ["OMLX_URL"]).hostname in (
         "localhost", "127.0.0.1", "::1")
@@ -624,6 +754,11 @@ def cmd_preflight(a):
     add("reranker in the local cache at the frozen revision", rr.is_dir(), str(rev)[:12])
     cat = ROOT / cfg["catalogues"] / "CATALOGUES.json"
     add("catalogues (for --check and score)", cat.exists(), cfg["catalogues"], required=False)
+    if cfg.get("config_name"):
+        add(f"configuration {cfg['config_name']} of {CONFIGS_FILE} with the recorded sha256", True, cfg["configs_sha256"][:12])
+        add("catalogues present (lookup cards need them)", cat.exists(), cfg["catalogues"], required=not cfg["stub"])
+        add("score reference file given (--reference; make it with make-reference)", bool(cfg.get("reference")) and not (cfg["reference"].get("note")),
+            (cfg.get("reference") or {}).get("path") or "missing", required=not cfg["stub"])
     ids_ok = IDS_FILE.exists()
     add("id lists eval/m4/laptop/ids.json", ids_ok)
     if ids_ok:
@@ -660,7 +795,8 @@ def install_steps(cfg):
     """The documented sequence (agents/laptop-tests.md, step 3). kind 'download' is reported separately."""
     fr = read_json(ROOT / "kafka_sre_rag/frozen.json", {})
     rev = ((fr.get("retrieval") or {}).get("reranker") or {}).get("revision", "")
-    wd = cfg.get("weights_dir") or "models/Qwen3.8-27B-4bit"
+    wd = cfg.get("weights_dir") or "models/" + cfg["model_repo"].split("/")[-1]
+    rev_arg = ["--revision", cfg["model_repo_revision"]] if cfg.get("model_repo_revision") else []
     return [
         {"name": "venv", "kind": "install", "cmd": ["python3", "-m", "venv", ".venv"], "skip_if": VENV_PY.exists()},
         {"name": "pip", "kind": "install", "cmd": [".venv/bin/pip", "install", "-r", "requirements.txt"]},
@@ -668,7 +804,7 @@ def install_steps(cfg):
             ".venv/bin/hf download aywengo/kafka-sre-docs-index-v3 --repo-type dataset --local-dir idx && (cd idx && shasum -a 256 -c SHA256SUMS)"
             " && mkdir -p work/v3 && cp idx/chunks.jsonl work/v3/chunks_s1.jsonl"], "bytes_of": "idx"},
         {"name": "reranker", "kind": "download", "cmd": [".venv/bin/hf", "download", "BAAI/bge-reranker-v2-m3", "--revision", rev]},
-        {"name": "model", "kind": "download", "cmd": [".venv/bin/hf", "download", cfg["model_repo"], "--local-dir", wd], "bytes_of": wd},
+        {"name": "model", "kind": "download", "cmd": [".venv/bin/hf", "download", cfg["model_repo"]] + rev_arg + ["--local-dir", wd], "bytes_of": wd},
         {"name": "verify", "kind": "install", "cmd": [".venv/bin/python", "-m", "kafka_sre_rag", "verify"]},
     ]
 
@@ -767,10 +903,12 @@ def run_condition(out, cfg, phase, label, cond, qs, extra_row=None, power_every=
 def cmd_speed(a):
     out, cfg = resolve(a)
     label = a.label or "baseline"
-    conds = [c.strip() for c in a.conds.split(",")] if a.conds else list(CONDS)
-    bad = [c for c in conds if c not in CONDS]
+    allowed = allowed_conds(cfg)
+    conds = [c.strip() for c in a.conds.split(",")] if a.conds else list(allowed)
+    bad = [c for c in conds if c not in allowed]
     if bad:
-        log("speed", f"unknown condition {bad}; choose from {CONDS}")
+        log("speed", f"condition {bad} not available; choose from {allowed}"
+                     + (" (the service has no lookup cards, and this configuration has no strict mode and no --check)" if cfg.get("config_name") else ""))
         return 2
     extra = {}
     if a.apps:
@@ -835,8 +973,12 @@ def cmd_sustained(a):
     if not cfg["stub"] and detected and detected != label and not a.force:
         log("sustained", f"label {label} but the Mac is on {detected}; fix the power or pass --force")
         return 2
+    runtime = a.runtime or ("oneshot" if cfg.get("lookup_cards") else "service")
+    if runtime == "service" and cfg.get("lookup_cards"):
+        log("sustained", "the service has no lookup cards: this configuration runs one-shot only (--runtime oneshot)")
+        return 2
     qs = questions_for("speed", a.n)
-    cond = f"{a.runtime}-default"
+    cond = f"{runtime}-default"
     prior = read_jsonl(out / "sustained" / label / "rows.jsonl")
     session = 1 + max(r.get("session", 1) for r in prior) if prior and len(prior) < len(qs) else 1
     run_condition(out, cfg, "sustained", label, cond, qs, {"power_label": label}, power_every=5, session=session)
@@ -864,7 +1006,7 @@ def cmd_memory(a):
     base = s0.stop()
     log("memory", f"baseline {base['samples']} samples, used {fmt(base['peak_used_gb'], 1)} GB, oMLX rss peak {base['peak_rss_mb']}")
     qs = questions_for("speed", 3)
-    run_condition(out, cfg, "memory", "loaded", "service-default", qs)
+    run_condition(out, cfg, "memory", "loaded", "oneshot-default" if cfg.get("lookup_cards") else "service-default", qs)
     status = None
     if cfg["backend"] == "openai" and not cfg["stub"] and os.environ.get("OMLX_URL"):
         status = server_status(os.environ["OMLX_URL"])
@@ -888,9 +1030,72 @@ def server_status(base):
 
 # ------------------------------------------------------------------ score
 
+def eval2_answer_cmd(cfg, items_f, ans):
+    """The command that answers the score items (shared by `score` and `make-reference`: the same command on both machines)."""
+    cmd = [py(), "scripts/eval2.py", "answer", "--items", str(items_f), "--out", str(ans), "--config", "laptop",
+           "--backend", cfg["backend"], "--host-class", "laptop", "--k", cfg["k"]]
+    if cfg.get("model"):
+        cmd += ["--model", cfg["model"]]
+    if cfg.get("extra_body") and cfg["backend"] == "openai":
+        cmd += ["--extra-body", cfg["extra_body"]]
+    if cfg.get("lookup_cards"):
+        cmd += ["--lookup-cards", "--catalogue", cfg["catalogues"]]
+    return cmd
+
+
+def do_score_run(cfg, sel, items_f, ans, scores, summ, pids):
+    """Answer and score the items `sel`; resumable by the files. Returns 0 or 1."""
+    if cfg["stub"]:
+        have = {r["id"] for r in read_jsonl(ans)}
+        for i in sel:
+            if i in have:
+                log("score", f"{i} already done, skipped")
+                continue
+            h = int(hashlib.sha256(i.encode()).hexdigest()[:4], 16)
+            append_jsonl(ans, {"id": i, "text": "stub", "seconds": {"total": 30.0 + h % 10}, "tokens": 500, "error": None})
+            append_jsonl(scores, {"id": i, "all_pass": h % 4 != 0, "checks_passed": 1, "checks_total": 1})
+            log("score", f"{i} stub")
+        return 0
+    proc = subprocess.Popen(eval2_answer_cmd(cfg, items_f, ans), cwd=ROOT, env=child_env())  # one progress line per item goes to the terminal
+    pids["eval2"] = proc.pid
+    rc = proc.wait()
+    pids.pop("eval2", None)
+    if rc != 0:
+        log("score", f"answers stopped with code {rc}; run the command again to resume")
+        return 1
+    r = subprocess.run([py(), "scripts/eval2_score.py", "--items", str(items_f), "--answers", str(ans), "--scores", str(scores),
+                        "--summary", str(summ), "--catalogues", cfg["catalogues"]], cwd=ROOT, env=child_env())
+    if r.returncode != 0:
+        log("score", f"scorer stopped with code {r.returncode} (catalogues present at {cfg['catalogues']}?)")
+        return 1
+    return 0
+
+
+def load_reference(cfg, ids):
+    """The reference `score` compares with ({pass, answer_sha256, run, ...}), checked against the id list and the configuration."""
+    rec = cfg.get("reference")
+    if not rec:
+        raise SystemExit("error: no score reference: pass --reference PATH (a file made by `make-reference` on the Mac Studio "
+                         "with the same configuration); the Qwen reference of ids.json is not used for this configuration")
+    if rec["path"] == EMBEDDED_REF:
+        return ids["score"]["reference"]
+    p = Path(rec["path"])
+    ref = read_json(p if p.is_absolute() else ROOT / p, None)
+    if not ref or ref.get("kind") != "laptop-score-reference":
+        raise SystemExit(f"error: {rec['path']} is not a laptop score reference file")
+    if ref.get("ids") != ids["score"]["ids"] or ref.get("items_sha256") != ids["score"]["items_sha256"]:
+        raise SystemExit(f"error: {rec['path']} was made for other ids or other item text than eval/m4/laptop/ids.json")
+    if cfg.get("config_name") and (ref.get("config_name") != cfg["config_name"] or ref.get("configs_sha256") != cfg["configs_sha256"]):
+        raise SystemExit(f"error: {rec['path']} was made with another configuration than {cfg['config_name']} at {CONFIGS_FILE}'s recorded hash")
+    if ref.get("stub") and not cfg["stub"]:
+        raise SystemExit(f"error: {rec['path']} is a stub reference")
+    return ref
+
+
 def cmd_score(a):
     out, cfg = resolve(a)
     ids = load_ids()
+    ref = load_reference(cfg, ids)
     items = load_items(ids["score"]["file"])
     full_ids = ids["score"]["ids"]
     n = len(full_ids) if getattr(a, "n", None) is None else max(0, min(int(a.n), len(full_ids)))
@@ -907,48 +1112,68 @@ def cmd_score(a):
     sampler = Sampler(sub / "samples.jsonl", lambda: dict(pids), float(cfg["interval"]), "score")
     sampler.start()
     try:
-        if cfg["stub"]:
-            have = {r["id"] for r in read_jsonl(ans)}
-            for i in sel:
-                if i in have:
-                    log("score", f"{i} already done, skipped")
-                    continue
-                h = int(hashlib.sha256(i.encode()).hexdigest()[:4], 16)
-                append_jsonl(ans, {"id": i, "text": "stub", "seconds": {"total": 30.0 + h % 10}, "tokens": 500, "error": None})
-                append_jsonl(scores, {"id": i, "all_pass": h % 4 != 0, "checks_passed": 1, "checks_total": 1})
-                log("score", f"{i} stub")
-        else:
-            cmd = [py(), "scripts/eval2.py", "answer", "--items", str(items_f), "--out", str(ans), "--config", "laptop",
-                   "--backend", cfg["backend"], "--host-class", "laptop", "--k", cfg["k"]]
-            if cfg.get("model"):
-                cmd += ["--model", cfg["model"]]
-            if cfg.get("extra_body") and cfg["backend"] == "openai":
-                cmd += ["--extra-body", cfg["extra_body"]]
-            proc = subprocess.Popen(cmd, cwd=ROOT, env=child_env())  # one progress line per item goes to the terminal
-            pids["eval2"] = proc.pid
-            rc = proc.wait()
-            pids.pop("eval2", None)
-            if rc != 0:
-                log("score", f"answers stopped with code {rc}; run the command again to resume")
-                return 1
-            r = subprocess.run([py(), "scripts/eval2_score.py", "--items", str(items_f), "--answers", str(ans), "--scores", str(scores),
-                                "--summary", str(summ), "--catalogues", cfg["catalogues"]], cwd=ROOT, env=child_env())
-            if r.returncode != 0:
-                log("score", f"scorer stopped with code {r.returncode} (catalogues present at {cfg['catalogues']}?)")
-                return 1
+        rc = do_score_run(cfg, sel, items_f, ans, scores, summ, pids)
     finally:
         stats = sampler.stop()
+    if rc:
+        return rc
     write_json(sub / "memory_summary.json", stats)
-    cmp = compare_scores(ids, read_jsonl(scores), read_jsonl(ans), sel)
+    cmp = compare_scores(ids, read_jsonl(scores), read_jsonl(ans), sel, ref=ref)
     cmp["stub"] = cfg["stub"]
+    cmp["reference_file"] = cfg["reference"]
     write_json(sub / "compare.json", cmp)
-    log("score", f"laptop {cmp['laptop_pass']}/{cmp['n']} pass, reference {cmp['reference_pass']}/{cmp['n']}; "
-                 f"discordant {cmp['discordant']}; identical answers {cmp['identical_text']}/{cmp['n']}")
+    log("score", f"laptop {cmp['laptop_pass']}/{cmp['n']} pass, reference {cmp['reference_pass']}/{cmp['n']} "
+                 f"({cfg['reference']['path']}); discordant {cmp['discordant']}; identical answers {cmp['identical_text']}/{cmp['n']}")
     return 0
 
 
-def compare_scores(ids, score_rows, answer_rows, only=None):
-    ref = ids["score"]["reference"]
+def cmd_make_reference(a):
+    """Reference machine: answer and score the 60 score ids with this configuration, by the same command as `score`, and write
+    the reference file (never over an existing file)."""
+    out, cfg = resolve(a)
+    ref_out = Path(a.ref_out)
+    ref_out = ref_out if ref_out.is_absolute() else ROOT / ref_out
+    if ref_out.exists():
+        log("make-reference", f"{a.ref_out} exists; it is never overwritten")
+        return 2
+    ids = load_ids()
+    full_ids = ids["score"]["ids"]
+    items = load_items(ids["score"]["file"])
+    items_f_src = ROOT / ids["score"]["file"]
+    if sha256_file(items_f_src) != ids["score"]["items_sha256"]:
+        log("make-reference", f"{ids['score']['file']} differs from the text the id list was made for; stop")
+        return 2
+    sub = out / "reference"
+    sub.mkdir(parents=True, exist_ok=True)
+    items_f = sub / "items_subset.jsonl"
+    items_f.write_text("".join(json.dumps(items[i], ensure_ascii=False) + "\n" for i in full_ids), encoding="utf-8")
+    ans, scores, summ = sub / "answers.jsonl", sub / "scores.jsonl", sub / "summary.json"
+    rc = do_score_run(cfg, full_ids, items_f, ans, scores, summ, {})
+    if rc:
+        return rc
+    a_rows = {r["id"]: r for r in read_jsonl(ans) if not r.get("error")}
+    s_rows = {r["id"]: r for r in read_jsonl(scores)}
+    miss = [i for i in full_ids if i not in a_rows or i not in s_rows]
+    if miss:
+        log("make-reference", f"{len(miss)} of {len(full_ids)} ids have no good answer or score ({miss[:3]}...); run again to resume")
+        return 1
+    man = read_json(str(ans) + ".manifest.json", {}) or {}
+    ref = {"version": 1, "kind": "laptop-score-reference", "made": datetime.date.today().isoformat(), "stub": cfg["stub"],
+           "config_name": cfg.get("config_name"), "configs_sha256": cfg.get("configs_sha256"),
+           "ids_file": "eval/m4/laptop/ids.json", "ids": full_ids, "items_file": ids["score"]["file"],
+           "items_sha256": ids["score"]["items_sha256"], "run": man.get("run"), "model": man.get("model_requested") or cfg.get("model"),
+           "mode": man.get("mode") or "default", "lookup_cards": bool(cfg.get("lookup_cards")),
+           "command": eval2_answer_cmd(cfg, "<items_subset.jsonl>", "<answers.jsonl>"),
+           "pass": {i: bool(s_rows[i]["all_pass"]) for i in full_ids},
+           "answer_sha256": {i: hashlib.sha256((a_rows[i].get("text") or "").encode()).hexdigest() for i in full_ids}}
+    ref["all_pass_count"] = sum(ref["pass"].values())
+    write_json(ref_out, ref)
+    log("make-reference", f"{len(full_ids)} ids, all-pass {ref['all_pass_count']}/{len(full_ids)}; wrote {a.ref_out} sha256 {sha256_file(ref_out)}")
+    return 0
+
+
+def compare_scores(ids, score_rows, answer_rows, only=None, ref=None):
+    ref = ref or ids["score"]["reference"]
     got = {r["id"]: bool(r.get("all_pass")) for r in score_rows}
     txt = {r["id"]: hashlib.sha256((r.get("text") or "").encode()).hexdigest() for r in answer_rows if not r.get("error")}
     common = [i for i in (only if only is not None else ids["score"]["ids"]) if i in got]
@@ -1036,7 +1261,9 @@ def bars(d):
     else:
         B.append(("Memory held", "-", "-", "about 20 GB", "not run"))
     wb = (ins or {}).get("weights_bytes")
-    if wb:
+    if wb and (d["config"] or {}).get("config_name"):
+        B.append(("4-bit weights on disk", f"{wb / 1e9:.1f} GB", "1 model", "no estimate for this model (the 15 to 17 GB estimate was made for Qwen3.8-27B)", "reported"))
+    elif wb:
         g = wb / 1e9
         B.append(("4-bit weights on disk", f"{g:.1f} GB", "1 model", "15 to 17 GB (estimate to verify)",
                   "reported: inside the estimate" if BARS["weights_gb"][0] <= g <= BARS["weights_gb"][1] else "reported: outside the estimate"))
@@ -1079,7 +1306,11 @@ def bars(d):
         B.append(("Cold start against warm (service)", f"first question {fmt(sd[0]['wall_s'])} s, median of the others {fmt(med([r['wall_s'] for r in sd[1:]]))} s; service ready in {fmt(sd[0].get('startup_s'))} s",
                   f"{len(sd)} questions", "reported", "reported"))
     cold = [r for r in d.get("cold", []) if not r.get("error")]
-    if cold:
+    if cold and (d["config"] or {}).get("lookup_cards"):   # one-shot rows: no service, no first words
+        B.append(("First question of the memory phase (one-shot, includes the start of the process and the load of the index and the reranker)",
+                  f"{fmt(cold[0]['wall_s'])} s; later two questions {fmt(med([r['wall_s'] for r in cold[1:]]))} s",
+                  f"{len(cold)} questions", "reported", "reported"))
+    elif cold:
         B.append(("Cold start of the whole assistant (first question after the server was restarted, memory phase)",
                   f"{fmt(cold[0]['wall_s'])} s, first words {fmt(cold[0]['ttft_s'])} s; service ready in {fmt(cold[0].get('startup_s'))} s; later two questions {fmt(med([r['wall_s'] for r in cold[1:]]))} s",
                   f"{len(cold)} questions", "reported", "reported"))
@@ -1104,10 +1335,12 @@ def bars(d):
             B.append((f"Sustained use, {lab}", f"only {len(t)} of {BARS['sustained_n']} questions; drift not computed", f"{len(t)}", "30 questions", "not run in full"))
     if not d["sustained"]:
         B.append(("Sustained use", "-", "-", "30 in a row, on power and on battery", "not run"))
-    wl = [r for r in ok_rows if r.get("label") == "working-laptop" and r["cond"] == "service-default"]
-    if wl and sd:
-        B.append(("A working laptop (apps open), service default", f"median {fmt(med([r['wall_s'] for r in wl]))} s against {fmt(med([r['wall_s'] for r in sd]))} s with nothing else open",
-                  f"{len(wl)} and {len(sd)} questions", "median under 60 s", "pass" if med([r["wall_s"] for r in wl]) < BARS["median_answer_s"] else "FAIL"))
+    wl_cond = "oneshot-default" if (d["config"] or {}).get("lookup_cards") else "service-default"   # the service has no lookup cards
+    wl = [r for r in ok_rows if r.get("label") == "working-laptop" and r["cond"] == wl_cond]
+    base = sd if wl_cond == "service-default" else od
+    if wl and base:
+        B.append((f"A working laptop (apps open), {wl_cond.replace('-', ' ')}", f"median {fmt(med([r['wall_s'] for r in wl]))} s against {fmt(med([r['wall_s'] for r in base]))} s with nothing else open",
+                  f"{len(wl)} and {len(base)} questions", "median under 60 s", "pass" if med([r["wall_s"] for r in wl]) < BARS["median_answer_s"] else "FAIL"))
     else:
         B.append(("A working laptop (apps open)", "-", "-", "median under 60 s", "not run (speed --label working-laptop)"))
     c = d["compare"]
@@ -1142,8 +1375,20 @@ def summary_md(out):
           f"{mi.get('memory_gb')} GB memory, macOS {mi.get('macos')}, power {mi.get('power_source')}.",
           f"Runtime commit {mi.get('runtime_commit')} (tree changed: {mi.get('runtime_tree_dirty')}); mlx-lm {mi.get('mlx_lm')}, mlx {mi.get('mlx')}.",
           f"Serving: backend {(d['config'] or {}).get('backend')}, model {(d['config'] or {}).get('model')}.",
-          "The questions are open development items. These numbers are speed, memory and scorer-agreement measurements, not quality decisions.", "",
-          "| Bar | Measured | Size | Bar value | Result |", "|---|---|---|---|---|"]
+          "The questions are open development items. These numbers are speed, memory and scorer-agreement measurements, not quality decisions."]
+    c = d["config"] or {}
+    if c.get("config_name"):
+        L += ["", f"Configuration {c['config_name']} of {c.get('configs_file')} (sha256 {c.get('configs_sha256')}): model repository {c.get('model_repo')} "
+                  f"at commit {c.get('model_repo_revision')}, request body {c.get('extra_body')}, lookup cards on, frozen retrieval, default prompt.",
+              "The service has no lookup cards, so the speed, sustained and memory phases ran one-shot only for this configuration: "
+              "the conditions are oneshot-default (no service, no strict mode, no --check), and there are no service numbers "
+              "(first words, service cold start, idle service memory). One-shot times include the start of the process and the "
+              "load of the index and the reranker."]
+    ref = c.get("reference")
+    L += ["", "Score reference: " + (f"{ref['path']} (sha256 {ref['sha256']}, run {ref.get('run')})" + (f"; {ref['note']}" if ref.get("note") else "")
+                                        if ref else "none given (the score phase was not run)") + "."]
+    L += [""]
+    L += ["| Bar | Measured | Size | Bar value | Result |", "|---|---|---|---|---|"]
     for n, m, s, b, v in bars(d):
         L.append(f"| {n} | {m} | {s} | {b} | {v} |")
     L += ["", "Memory peaks are the largest of the samples taken every few seconds; RSS may miss GPU memory, which is why the system's used memory is shown beside it."]
@@ -1347,6 +1592,12 @@ def _common_args(ap, suppress):
     ap.add_argument("--model-repo", help="Hugging Face repository of the 4-bit model (install-check --run)", **kw)
     ap.add_argument("--port", type=int, help="port of the service the script starts (default 8765)", **kw)
     ap.add_argument("--interval", type=float, help="seconds between memory samples (default 2)", **kw)
+    ap.add_argument("--config", choices=RELEASE_CONFIGS,
+                    help=f"run exactly this configuration of {CONFIGS_FILE} (model, request body, model repository at its pinned commit, "
+                         "lookup cards); the file's sha256 is checked. Default: the old Qwen defaults", **kw)
+    ap.add_argument("--configs-sha256", help="the file's sha256 when it was changed on purpose (default: the recorded one)", **kw)
+    ap.add_argument("--reference", help="score: the reference file made by make-reference (needed for --config; default: the Qwen "
+                                        "reference stored in eval/m4/laptop/ids.json)", **kw)
 
 
 def build_parser():
@@ -1371,7 +1622,7 @@ def build_parser():
     p = add("sustained")
     p.add_argument("--label", choices=["ac", "battery"], required=True)
     p.add_argument("--n", type=int, default=30)
-    p.add_argument("--runtime", choices=["service", "oneshot"], default="service")
+    p.add_argument("--runtime", choices=["service", "oneshot"], default=None, help="default service; one-shot for a configuration with lookup cards")
     p.add_argument("--force", action="store_true")
     p = add("memory")
     p.add_argument("--baseline-s", type=int, default=20)
@@ -1383,6 +1634,8 @@ def build_parser():
     p = add("make-ids")
     p.add_argument("--seed", type=int, default=1)
     p.add_argument("--n-score", type=int, default=60)
+    p = add("make-reference")
+    p.add_argument("--ref-out", required=True, help="the reference file to write (new path; never overwritten)")
     sub.add_parser("_probe").add_argument("files", nargs=2)
     return ap
 
@@ -1393,7 +1646,8 @@ def main(argv=None):
         probe_main(*a.files)
         return 0
     fn = {"preflight": cmd_preflight, "install-check": cmd_install, "speed": cmd_speed, "sustained": cmd_sustained,
-          "memory": cmd_memory, "score": cmd_score, "bundle": cmd_bundle, "make-ids": cmd_make_ids}[a.cmd]
+          "memory": cmd_memory, "score": cmd_score, "bundle": cmd_bundle, "make-ids": cmd_make_ids,
+          "make-reference": cmd_make_reference}[a.cmd]
     return fn(a)
 
 

@@ -1,0 +1,4 @@
+{"id": "ck01", "source": "strimzi", "title": "Rolling updates of a demo cluster", "path": "raw/strimzi/demo/rolling.adoc", "text": "The demo operator rolls a pod only when its settings digest changes. Invented text for tests."}
+{"id": "ck02", "source": "apache-kafka", "title": "", "path": "raw/apache-kafka/demo/retention.md", "text": "A demo topic keeps segments until the invented retention window passes."}
+{"id": "ck03", "source": "kubernetes", "title": "Demo volumes", "path": "raw/kubernetes/demo/volumes.md", "text": "Deleting a demo claim releases its invented volume."}
+{"id": "ck04", "source": "strimzi", "title": "Demo listeners", "path": "raw/strimzi/demo/listeners.adoc", "text": "A demo listener can require invented client authentication."}
