@@ -36,7 +36,7 @@ def rule_sha(mode="full"):
 class Env:
     """A temp world: key, home, fixtures (open D7 stand-in, hidden h6 stand-in, chunks, ledger). Work folders: w/d7 and w/h6."""
 
-    def __init__(self, n_d7=4, n_h6=4):
+    def __init__(self, n_d7=4, n_h6=4, raw_h6=False):
         self.d = Path(tempfile.mkdtemp())
         self.key = self.d / "key"
         eval2.keygen(self.key)
@@ -53,6 +53,8 @@ class Env:
         (self.d / "d7_rubrics.jsonl").write_text(jl(self.rub(self.d7)))
         self.h6 = [{"id": f"h6-{i:02d}", "tier": "B", "kind": "diagnostics", "family": f"g{i}", "domain": "kafka", "question": f"{CANARY} question {i}", "evidence": f"{CANARY} evidence"}
                    for i in range(1, n_h6 + 1)]
+        if raw_h6:   # the frozen rows lack tier, kind, family and domain (the harness adds them)
+            self.h6 = [{k: v for k, v in r.items() if k not in ("tier", "kind", "family", "domain")} for r in self.h6]
         self._enc("h6_items.jsonl.enc", self.h6)
         self._enc("h6_rubrics.jsonl.enc", [dict(r, must=[dict(m, text=f"{CANARY} {m['text']}") for m in r["must"]]) for r in self.rub(self.h6)])
         self.sha = T.sha256_file(CONFIGS)
@@ -426,6 +428,71 @@ class Adjudication(unittest.TestCase):
 
 
 @NEEDS
+class HarnessItemsH6(unittest.TestCase):
+    """G3: the h6 rows lack tier, kind, family and domain; harness-items handles .enc (counts only) and plain files stay byte-identical."""
+
+    def _run(self, *a, key):
+        return subprocess.run([PYBIN, str(ROOT / "scripts/m5_g_rule.py"), "harness-items", *a], capture_output=True, text=True, env={"PATH": os.environ["PATH"], "EVAL_HIDDEN_KEY": str(key)})
+
+    def test_enc_round_trip_adds_domain_keeps_the_rest_and_prints_the_count_only(self):
+        e = Env(raw_h6=True)
+        self.addCleanup(e.cleanup)
+        out = e.d / "h.jsonl.enc"
+        p = self._run("--in", str(e.d / "h6_items.jsonl.enc"), "--out", str(out), "--domain", "h6", key=e.key)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertNotIn(CANARY, p.stdout + p.stderr)
+        self.assertRegex(p.stdout, r"4 harness items")
+        self.assertNotIn(CANARY.encode(), out.read_bytes())
+        rows = eval2.read_jsonl(out)
+        self.assertEqual(len(rows), 4)
+        for r, src in zip(rows, e.h6):
+            self.assertEqual((r["tier"], r["kind"], r["domain"], r["family"]), ("B", "open", "h6", src["id"]))
+            self.assertTrue(all(r[k] == v for k, v in src.items()))
+        self.assertEqual(len(eval2.read_items(out)), 4)
+        p = self._run("--in", str(e.d / "h6_items.jsonl.enc"), "--out", str(e.d / "plain.jsonl"), "--domain", "h6", key=e.key)   # a mix is refused, nothing written
+        self.assertNotEqual(p.returncode, 0)
+        self.assertFalse((e.d / "plain.jsonl").exists())
+
+    def test_d7_plain_output_is_byte_identical_to_the_old_code(self):
+        e = Env()
+        self.addCleanup(e.cleanup)
+        old = e.d / "old_rule.py"
+        old.write_text(subprocess.run(["git", "show", "bf42ec6:scripts/m5_g_rule.py"], capture_output=True, text=True, cwd=ROOT, check=True).stdout)
+        shutil.copy(ROOT / "scripts/m5_g_rule.py", e.d / "new_rule.py")
+        outs = {}
+        for name in ("old", "new"):
+            o = e.d / f"{name}.jsonl"
+            p = subprocess.run([PYBIN, str(e.d / f"{name}_rule.py"), "harness-items", "--in", str(e.d / "d7_items.jsonl"), "--out", str(o), "--domain", "d7"], capture_output=True, text=True,
+                               env={"PATH": os.environ["PATH"], "PYTHONPATH": str(ROOT / "scripts")})
+            self.assertEqual(p.returncode, 0, p.stderr)
+            outs[name] = (o.read_bytes(), p.stdout.replace(str(o), "X"))
+        self.assertEqual(outs["old"], outs["new"])
+
+    def test_h6_dry_run_with_raw_rows_reaches_answers_judge_and_bundles_and_pins_both_files(self):
+        e = Env(raw_h6=True)
+        self.addCleanup(e.cleanup)
+        p = e.run(*e.args(sets="h6"))
+        out = p.stdout + p.stderr
+        self.assertEqual(p.returncode, 0, out)
+        w = e.w / "h6"
+        self.assertTrue((w / "items_h6_h.jsonl.enc").exists())
+        for n in ("ans_h6_R.jsonl.enc", "ans_h6_C.jsonl.enc", "judge_h6.jsonl.enc"):
+            self.assertTrue((w / n).exists(), n)
+        self.assertTrue(list(w.glob("stage_judge_*.done")))
+        self.assertTrue((w / "reading").is_dir() and any((w / "reading").iterdir()))
+        man = json.loads((w / "MANIFEST.json").read_text())
+        pins = man["strict"]["set_pins"] if "strict" in man else man["set_pins"]
+        self.assertEqual(sorted(Path(k).name for k in pins), ["h6_items.jsonl.enc", "h6_rubrics.jsonl.enc", "items_h6_h.jsonl.enc"])
+        self.assertNotIn(CANARY, out)
+        self.assertNotIn("h6-0", out)
+        for f in e.plain_files():
+            self.assertNotIn(CANARY, f.read_text(errors="replace"), f.name)
+        before = (w / "items_h6_h.jsonl.enc").read_bytes()      # a second start keeps the harness copy (the manifest pins it)
+        p = e.run(*e.args(sets="h6"))
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertEqual((w / "items_h6_h.jsonl.enc").read_bytes(), before)
+
+
 class Chain(unittest.TestCase):
     def read_h6(self, e, hdir):
         hk = json.loads(eval2.decrypt_bytes((hdir / "blind_key.json.enc").read_bytes()))
