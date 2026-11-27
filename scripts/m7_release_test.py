@@ -13,6 +13,10 @@
   pack-input    the adjudication pack's input files (scripts/m7_adjudication_pack.py build)
   measures      per-answer records of a set: judge, flags and adjudication in one file (h6: encrypted)
   stub-ask      the stand-in for `python -m kafka_sre_rag ask ... --json` in a dry run
+  entries-arms  the arms whose configuration has the fact entries on (W43: the arm RE)
+  chunks-plus   the chunk file plus every fact entry as a chunk-shaped row (id `kbe:<entry id>`), for the readers' excerpts, the judge and the adjudication pack of an entries arm
+  judge-plan    which judge stages of a work folder are done and which arms still need one (an arm added later gets its own stage, file and cache; finished ones are never rewritten)
+  descriptive   a paired line candidate - reference (RE - R: entries on against off), marked descriptive, no bar
 
 Hidden handling (h6): items, rubrics, answers, judge outputs, findings and measures are .enc files (eval2.py's format and key); plain text lives in memory only; every
 printed line holds counts, never an id or a text; the ask call's output is captured and never printed. Exit codes: 0 done, 1 failed, 2 refused.
@@ -42,6 +46,9 @@ D7_ITEMS, D7_RUBRICS = "eval/m7/d7/items.jsonl", "eval/m7/d7/rubrics.jsonl"
 H6_ITEMS, H6_RUBRICS = "eval/hidden/tier_b_h6_items_final.jsonl.enc", "eval/hidden/tier_b_h6_rubrics_final.jsonl.enc"
 SET_COUNT = {"d7": 60, "h6": 60}
 ASK_TIMEOUT = 1800
+ENTRIES_RECORD = "kafka_sre_rag/kb_entries.json"
+ENTRIES_PREFIX = "kbe:"     # kafka_sre_rag.kb_entries.PACK_PREFIX: an entry in a stored pack
+ENTRY_MODULES = ("kafka_sre_rag/kb_entries.py", "kafka_sre_rag/kb_entry.py", ENTRIES_RECORD)
 
 
 class Refused(Exception):
@@ -104,7 +111,14 @@ def arm_info(cfgs, arm):
         mid = flags[flags.index("--model") + 1]
     if not mid:
         raise Refused(f"arm {arm}: no model id")
-    return {"arm": arm, "flags": flags, "model": mid, "ask_sha256": sha256_text(json.dumps(flags))}
+    on = bool((c.get("entries") or {}).get("on"))
+    ent = "--kb-entries" in flags
+    if ent != on:
+        raise Refused(f"arm {arm}: the ask_command {'has' if ent else 'lacks'} --kb-entries but the entries block says on={on}")
+    rec = flags[flags.index("--kb-entries-record") + 1] if "--kb-entries-record" in flags else ENTRIES_RECORD
+    if ent and rec != c["entries"].get("record"):
+        raise Refused(f"arm {arm}: the entries record of the ask_command ({rec}) is not the one the entries block names")
+    return {"arm": arm, "flags": flags, "model": mid, "ask_sha256": sha256_text(json.dumps(flags)), "entries": ent, "entries_record": rec if ent else None}
 
 
 def ask_argv(info, question, python=None, stub=False):
@@ -119,7 +133,12 @@ def cmd_arms(a):
     want = [x for x in a.arms.split(",") if x] or arm_names(cfgs)
     for arm in want:
         i = arm_info(cfgs, arm)
-        print(f"{arm}: model {i['model']}, {len(i['flags'])} ask flags, ask_sha256 {i['ask_sha256'][:16]}")
+        if i["entries"]:
+            bad = entries_pin_problems(cfgs[arm])
+            if bad:
+                raise Refused(f"arm {arm}: the fact entries differ from what configs.json fixed: {'; '.join(bad)}; nothing was started")
+        print(f"{arm}: model {i['model']}, {len(i['flags'])} ask flags, ask_sha256 {i['ask_sha256'][:16]}"
+              + (", fact entries on (record, index and modules equal to configs.json)" if i["entries"] else ""))
     print("MODELS " + " ".join(dict.fromkeys(arm_info(cfgs, x)["model"] for x in want)))
     return 0
 
@@ -140,6 +159,29 @@ def cmd_arm_order(a):
 
 # ---------------------------------------------------------------- runtime files (before each arm)
 
+def entries_pin_problems(c):
+    """The fact entries of an arm (W43) against the files in this tree: the entries record, the index file the record names, the count, and the two entries modules.
+    -> what differs (empty when all is as fixed)."""
+    e = c.get("entries") or {}
+    if not e.get("on"):
+        return []
+    rec_path = ROOT / (e.get("record") or ENTRIES_RECORD)
+    if not rec_path.is_file() or sha256_file(rec_path) != e.get("record_sha256"):
+        return [f"the entries record {e.get('record')}"]
+    bad = []
+    rec = json.loads(rec_path.read_text(encoding="utf-8"))
+    if rec.get("file") != e.get("index") or rec.get("sha256") != e.get("sha256") or rec.get("entries") != e.get("entries"):
+        bad.append("the entries record names another index, hash or count than the entries block")
+    idx = ROOT / (rec.get("file") or "")
+    if not idx.is_file() or sha256_file(idx) != e.get("sha256"):
+        bad.append(f"the entries index {e.get('index')}")
+    for rel in ENTRY_MODULES:
+        h = (c.get("runtime_files_sha256") or {}).get(rel)
+        if not h or not (ROOT / rel).is_file() or sha256_file(ROOT / rel) != h:
+            bad.append(rel)
+    return bad
+
+
 def cmd_runtime_check(a):
     """The runtime files and the lookup modules the configuration was fixed with are the files in this tree now (prompts.py is left to `kafka_sre_rag verify`)."""
     c = load_configs(a.configs)[a.arm]
@@ -153,6 +195,7 @@ def cmd_runtime_check(a):
         for rel, h in sorted(((c.get("lookup_cards") or {}).get("module_sha256") or {}).items()):
             if not (ROOT / rel).is_file() or sha256_file(ROOT / rel) != h:
                 bad.append(rel)
+    bad += [b for b in entries_pin_problems(c) if b not in bad]
     if bad:
         raise Refused(f"arm {a.arm}: these files differ from the hashes recorded in configs.json: {', '.join(bad)}; the configuration is not the one that was fixed; nothing was started")
     print(f"arm {a.arm}: runtime files and modules equal to configs.json")
@@ -164,6 +207,9 @@ def cmd_runtime_check(a):
 def config_sha(cfgs, arm):
     """The hash of one configuration's entry (canonical JSON): the unit by which an amended configs.json is judged."""
     return sha256_text(json.dumps(cfgs[arm], sort_keys=True))
+
+
+VARIANT_KEYS = ("candidate", "control", "rule_text_sha256")
 
 
 def strict_state(a):
@@ -191,19 +237,38 @@ def cmd_manifest(a):
     strict, logged = strict_state(a), logged_state(a)
     if m.exists():
         old = json.loads(m.read_text(encoding="utf-8"))
-        d = [k for k in strict if old.get(k) != strict[k]]
+        events = []
+        # candidate, control and the rule text name the arms; they may change only by the explicit, logged "late arm" path (W43: the candidate RE is added to a folder that was fixed with R)
+        d = [k for k in strict if k not in VARIANT_KEYS and k != "options" and old.get(k) != strict[k]]
+        oo, no = dict(old.get("options") or {}), dict(strict["options"])
+        if no.get("dry") == "yes" and oo.get("dry") == "no":      # a dry run on a scratch copy of a real folder (the chain refuses a dry run in the real folder itself)
+            oo["dry"] = no["dry"]
+        if oo != no:
+            d.append("options")
         if d:
             raise Refused("the stored manifest differs from the state now in: " + ", ".join(d) + "; nothing was moved or deleted")
-        events = []
+        variant = {k: strict[k] for k in VARIANT_KEYS}
+        known = [{k: old.get(k) for k in VARIANT_KEYS}] + list(old.get("rule_variants") or [])
+        if variant not in [{k: v.get(k) for k in VARIANT_KEYS} for v in known]:
+            if not a.allow_late_arms:
+                raise Refused("the candidate, the control or the rule text differ from the stored manifest in: " + ", ".join(k for k in VARIANT_KEYS if old.get(k) != strict[k])
+                              + "; a candidate that is a new arm needs --allow-late-arms (logged); nothing was moved or deleted")
+            if strict["control"] != old.get("control") or strict["candidate"] not in new_arms or (strict["candidate"] in old["arms"] and strict["candidate"] not in (old.get("late_arms") or {})):
+                raise Refused("--allow-late-arms: the control must be the stored one and the candidate an arm that is new to this folder; nothing was moved or deleted")
+            old.setdefault("rule_variants", []).append(dict(variant, at=time.strftime("%Y-%m-%dT%H:%M:%S%z")))
+            events.append(f"rule text for the candidate {variant['candidate']} (control {variant['control']}) added, sha256 {variant['rule_text_sha256'][:16]}; the stored rule text for {old['candidate']} is unchanged")
         for x, v in new_arms.items():
             if x in old["arms"]:
                 if old["arms"][x]["config_sha256"] != v["config_sha256"]:
                     raise Refused(f"the configuration {x} was already answered in this work folder and its entry in configs.json is no longer byte-identical: an amended configuration means a new work folder; nothing was changed")
             else:
-                if (wd / "stage_bundle.done").exists():
-                    raise Refused(f"arm {x} cannot be added: this set's reading bundles were already made")
+                late = (wd / "stage_bundle.done").exists()
+                if late and not a.allow_late_arms:
+                    raise Refused(f"arm {x} cannot be added: this set's reading bundles were already made (an explicit --allow-late-arms adds it, logged, for a new reading folder)")
                 old["arms"][x] = v
-                events.append(f"arm {x} added (config sha256 {v['config_sha256'][:16]})")
+                if late:
+                    old.setdefault("late_arms", {})[x] = {"after": "the reading bundles of the first reading were made", "at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
+                events.append(f"arm {x} added{' after the reading bundles were made (--allow-late-arms; the first reading folder is not touched)' if late else ''} (config sha256 {v['config_sha256'][:16]})")
         if old["logged"] != logged:
             events.append("logged state changed: " + ", ".join(sorted(k for k in ("configs_sha256",) if old["logged"].get(k) != logged[k]) + sorted(p for p in logged["other"] if old["logged"]["other"].get(p) != logged["other"][p])))
             old["logged"] = logged
@@ -323,6 +388,14 @@ def run_ask(info, question, python, stub, env):
     sec["total"] = sum(sec.values())
     row = {"text": d["text"], "tokens": d.get("tokens"), "truncated": bool(d.get("truncated")), "seconds": sec, "wall_s": wall, "search_terms": d.get("expansion"),
            "sources": d.get("sources"), "measured": d.get("measured"), "unmeasured_reasons": d.get("unmeasured_reasons")}
+    kbe = d.get("kb_entries")
+    if info.get("entries"):       # the entries arm: the runtime must say which entries it added (the ids, the skipped counts, the candidates, the pack size)
+        if not isinstance(kbe, dict) or not isinstance(kbe.get("added"), list):
+            return None, "no kb_entries"
+        row["kb_entries"] = {k: kbe.get(k) for k in ("added", "skipped", "candidates", "pack_chars", "seconds")}
+        row["kb_entries"]["n_added"] = len(kbe["added"])
+    elif kbe is not None:
+        return None, "kb_entries from an arm without entries"
     if d.get("lookup_cards") is not None:
         lc = d["lookup_cards"]
         if isinstance(lc, dict):
@@ -397,37 +470,71 @@ def chunk_key(c):
     return (c.get("source"), c.get("title"), c.get("path"))
 
 
-def keys_resolver(chunks_path):
-    """Dry runs only: a source maps to a chunk by (source, title, path); an ambiguous key takes its first chunk."""
+def entry_tail(kb, kb_info, tail):
+    """The fact entries of a pack (W43): the ids the runtime says it added, each checked against the entries index and against its source line in the answer (source, title, path of the
+    rendered item); -> their ids as a stored pack lists them (`kbe:<id>`). A row of an arm without entries has none."""
+    added = (kb_info or {}).get("added") or []
+    if len(added) != len(tail):
+        raise Refused("the added entries are not the tail of the answer's sources")
+    for eid, s in zip(added, tail):
+        if eid not in kb.byid or chunk_key(kb.item(eid)) != chunk_key(s):
+            raise Refused("an added entry is not in the entries index or is not the answer's source")
+    return [ENTRIES_PREFIX + e for e in added]
+
+
+def keys_resolver(chunks_path, kb=None):
+    """Dry runs only: a source maps to a chunk by (source, title, path); an ambiguous key takes its first chunk. The entries are checked against the index."""
     by = {}
     for c in (json.loads(l) for l in Path(chunks_path).read_text(encoding="utf-8").splitlines() if l.strip()):
         by.setdefault(chunk_key(c), []).append(c["id"])
 
-    def resolve(question, expansion, sources):
+    def resolve(question, expansion, sources, kb_info=None):
+        if (kb is None) != (kb_info is None):
+            raise Refused("the answer's kb_entries and the arm's entries setting disagree")
+        n_ent = len((kb_info or {}).get("added") or [])
         ids = []
-        for s in sources:
+        for s in sources[:len(sources) - n_ent]:
             c = by.get(chunk_key(s)) or []
             if not c:
                 raise Refused("a source maps to no chunk (keys resolver)")
             ids.append(c[0])     # an ambiguous key takes its first chunk: a stub run only; the real resolver recomputes the pack
-        return ids
+        return ids + (entry_tail(kb, kb_info, sources[len(sources) - n_ent:]) if kb else [])
     return resolve
 
 
-def retrieval_resolver(chunks_path):
-    """The real pack: the frozen retrieval on the question and the returned expansion, as `ask` does it (CPU, the reranker). Must equal the sources position by position."""
+def retrieval_resolver(chunks_path, kb=None):
+    """The real pack: the frozen retrieval on the question and the returned expansion, as `ask` does it (CPU, the reranker), then for an entries arm the entries merge with the frozen
+    reranker (KbEntries.merge, as the runtime does it). Must equal the sources position by position, and the added entries, the skipped counts, the candidates and the pack size
+    must equal what the answer recorded."""
     from kafka_sre_rag import retrieval
 
-    def resolve(question, expansion, sources):
-        got = retrieval.select(question, expansion, k="k6", index_path=chunks_path) if chunks_path else retrieval.select(question, expansion, k="k6")
-        if len(got) != len(sources):
-            raise Refused("the recomputed pack has another size than the answer's sources")
-        for g, s in zip(got, sources):
+    def same(got, srcs):
+        for g, s in zip(got, srcs):
             if chunk_key(g) != chunk_key(s):
                 raise Refused("the recomputed pack differs from the answer's sources")
             if g.get("ce_score") is not None and s.get("ce_score") is not None and abs(float(g["ce_score"]) - float(s["ce_score"])) > 1e-3:
                 raise Refused("the recomputed pack's scores differ from the answer's")
-        return [g["id"] for g in got]
+
+    def resolve(question, expansion, sources, kb_info=None):
+        if (kb is None) != (kb_info is None):
+            raise Refused("the answer's kb_entries and the arm's entries setting disagree")
+        n_ent = len((kb_info or {}).get("added") or [])
+        nf = len(sources) - n_ent
+        got = retrieval.select(question, expansion, k="k6", index_path=chunks_path) if chunks_path else retrieval.select(question, expansion, k="k6")
+        if len(got) != nf:
+            raise Refused("the recomputed pack has another size than the answer's sources")
+        same(got, sources[:nf])
+        if kb is None:
+            return [g["id"] for g in got]
+        items, info = kb.merge(got, question, expansion, rerank=True)
+        if info["added"] != list((kb_info or {}).get("added") or []):
+            raise Refused("the recomputed entries differ from the entries the answer recorded")
+        for k in ("skipped", "candidates", "pack_chars"):
+            if info.get(k) != kb_info.get(k):
+                raise Refused(f"the recomputed entries merge differs from the recorded one ({k})")
+        same(items[nf:], sources[nf:])
+        entry_tail(kb, kb_info, sources[nf:])
+        return [g["id"] for g in got] + [it["id"] for it in items[nf:]]
     return resolve
 
 
@@ -444,14 +551,23 @@ def cmd_packs(a):
         raise Refused(f"{len(earlier)} pack(s) of this answer file failed earlier (the answers are kept); find the cause, then run with --retry-failed; nothing was done")
     for r in earlier:
         r["pack_failed"] = None
-    resolve = keys_resolver(a.chunks) if a.resolver == "keys" else retrieval_resolver(a.chunks if a.chunks_override else None)
+    kb = None
+    if a.configs:
+        info = arm_info(load_configs(a.configs), a.arm)
+        if info["entries"]:
+            from kafka_sre_rag.kb_entries import KbEntries, KbEntriesError
+            try:
+                kb = KbEntries.load(str(ROOT / info["entries_record"]))
+            except KbEntriesError as e:
+                raise Refused(f"the entries of {a.arm} cannot be loaded: {e}") from None
+    resolve = keys_resolver(a.chunks, kb) if a.resolver == "keys" else retrieval_resolver(a.chunks if a.chunks_override else None, kb)
     tag = f"[packs {a.arm} {a.set}]"
     todo = [r for r in rows if not r.get("error") and not r.get("pack")]
     print(f"{tag} {len(rows)} rows, {len(todo)} to resolve", flush=True)
     bad = 0
     for i, r in enumerate(todo, 1):
         try:
-            r["pack"] = resolve(E.full_question(items[r["id"]]), r.get("search_terms") or "", r.get("sources") or [])
+            r["pack"] = resolve(E.full_question(items[r["id"]]), r.get("search_terms") or "", r.get("sources") or [], r.get("kb_entries"))
             r["pack_check"] = "exact"
         except Refused as e:
             r["pack_failed"] = "pack not reproduced"
@@ -772,7 +888,7 @@ def cmd_pack_input(a):
     if hid:
         print("h6: the files are encrypted; the sealed pack is built with `--sealed` (counts only; the key is written as key.json.enc; the HTML is the Owner's reading copy, written to --html-out):")
     print(f"build: scripts/m7_adjudication_pack.py build --answers {outd}/answers.jsonl{ext_of(hid)} --scenarios {outd}/scenarios.jsonl{ext_of(hid)} --flags {outd}/flags.jsonl{ext_of(hid)} "
-          f"--out DIR --configs {a.configs} --shuffle-seed {SEEDS['pack_shuffle']} --sample-seed {SEEDS['pack_sample']}{full}" + (" --sealed --html-out PATH" if hid else ""))
+          f"--out DIR --configs {a.configs} --shuffle-seed {SEEDS['pack_shuffle']} --sample-seed {SEEDS['pack_sample']}{full}" + (f" --chunks {a.chunks}" if a.chunks else "") + (" --sealed --html-out PATH" if hid else ""))
     return 0
 
 
@@ -839,10 +955,10 @@ def cmd_measures(a):
     items = E.read_items(a.items)
     ids = [it["id"] for it in items]
     rub = {r["id"]: r for r in E.read_jsonl(a.rubrics)}
-    judge = [r for r in E.read_jsonl(a.judge) if r.get("valid_reply")] if a.judge and Path(a.judge).exists() else []
+    judge = [r for j in a.judge if Path(j).exists() for r in E.read_jsonl(j) if r.get("valid_reply")]
     findings = E.read_jsonl(a.findings) if a.findings and Path(a.findings).exists() else None
     if a.set == "h6":
-        for pth in (a.judge, a.findings, a.out):
+        for pth in (*a.judge, a.findings, a.out):
             if pth and not str(pth).endswith(".enc"):
                 raise Refused("h6: the judge output, the findings and the measures are .enc files only")
     adj, _ = adjudication_of(a.verdicts, a.pack_key, a.set)
@@ -904,7 +1020,7 @@ def cmd_stub_ask(a, rest):
     bad = os.environ.get("M7_STUB_BAD_SOURCE")
     chunks_path = os.environ.get("M7_STUB_CHUNKS") or str(ROOT / "work/v3/chunks_s1.jsonl")
     chunks = [json.loads(l) for l in Path(chunks_path).read_text(encoding="utf-8").splitlines() if l.strip()]
-    seen, srcs = set(), []
+    seen, srcs, pack = set(), [], []
     h = int(hashlib.sha256((model + q).encode()).hexdigest(), 16)
     start = int(hashlib.sha256(q.encode()).hexdigest(), 16) % len(chunks)
     for j in range(min(6, len(chunks))):
@@ -912,7 +1028,17 @@ def cmd_stub_ask(a, rest):
         if chunk_key(c) in seen:
             continue
         seen.add(chunk_key(c))
+        pack.append(c)
         srcs.append({"source": c["source"], "title": c["title"], "path": c["path"], "bm25_rank": j + 1, "ce_score": round(1.0 - j * 0.1, 3)})
+    kb_info = None
+    if "--kb-entries" in flags:       # the runtime's own merge (KbEntries.merge), BM25 order only (no reranker is loaded in a stub run)
+        from kafka_sre_rag.kb_entries import KbEntries
+        kb = KbEntries.load(str(ROOT / flags[flags.index("--kb-entries-record") + 1]) if "--kb-entries-record" in flags else None)
+        pack, kb_info = kb.merge(pack, q, "stub terms", rerank=False)
+        srcs += [{"source": c["source"], "title": c["title"], "path": c["path"], "bm25_rank": c.get("bm25_rank"), "ce_score": c.get("ce_score")} for c in pack[len(srcs):]]
+    if os.environ.get("M7_STUB_RECEIVED"):      # tests: the pack text the stub model "received", by question hash
+        from kafka_sre_rag import prompts
+        Path(os.environ["M7_STUB_RECEIVED"], hashlib.sha256((q + ("|kbe" if kb_info is not None else "")).encode()).hexdigest()[:16] + ".txt").write_text(prompts.pack_text(pack), encoding="utf-8")
     if bad and bad in q and srcs:      # a source that is in no chunk: the pack cannot be recovered
         srcs[0] = dict(srcs[0], path="raw/does-not-exist.md")
     text = f"Stub answer {h % 1000} to: {q[:40]}. " + " ".join(f"word{k}" for k in range(20 + h % 50))
@@ -920,7 +1046,101 @@ def cmd_stub_ask(a, rest):
            "measured": False, "tokens": 40 + h % 30, "truncated": False, "unmeasured_reasons": ["stub"]}
     if "--lookup-cards" in flags:
         out["lookup_cards"] = {"cards_found": 1, "chars": 100, "seconds": 0.1, "catalogue_sha256": "stub"}
+    if kb_info is not None:
+        out["kb_entries"] = kb_info
     print(json.dumps(out, ensure_ascii=False))
+    return 0
+
+
+# ---------------------------------------------------------------- the fact entries (W43), the judge stages of a folder that grows, the descriptive line
+
+def cmd_entries_arms(a):
+    cfgs = load_configs(a.configs)
+    print(" ".join(x for x in a.arms.split(",") if x and arm_info(cfgs, x)["entries"]))
+    return 0
+
+
+def cmd_chunks_plus(a):
+    """The chunk file as it is, then every entry of the entries index as a chunk-shaped row: id `kbe:<entry id>`, and source, title, path and text exactly as the runtime puts the entry in the
+    prompt (kb_entry.render: the title line and the text), so that the judge, the readers' excerpts and the adjudication pack show an RE answer's whole pack. The rows do not depend on any
+    answer (h6 included). An existing file is kept when it is the same, refused when it differs."""
+    from kafka_sre_rag.kb_entries import KbEntries, KbEntriesError
+    info = arm_info(load_configs(a.configs), a.arm)
+    if not info["entries"]:
+        raise Refused(f"arm {a.arm} has no fact entries")
+    try:
+        kb = KbEntries.load(str(ROOT / info["entries_record"]))
+    except KbEntriesError as e:
+        raise Refused(f"the entries cannot be loaded: {e}") from None
+    lines = [l for l in Path(a.chunks).read_text(encoding="utf-8").splitlines() if l.strip()]
+    for eid in sorted(kb.byid):
+        it = kb.item(eid)
+        lines.append(json.dumps({"id": it["id"], "source": it["source"], "title": it["title"], "path": it["path"], "text": it["text"], "entry_id": eid, "entry": True}, ensure_ascii=False))
+    blob = ("\n".join(lines) + "\n").encode("utf-8")
+    out = Path(a.out)
+    if out.exists():
+        if out.read_bytes() != blob:
+            raise Refused(f"{out} exists and differs from the chunk file plus the entries now (the chunk file or the entries changed); nothing was overwritten")
+        print(f"chunks plus entries: {out.name} unchanged ({len(kb.byid)} entries, sha256 {hashlib.sha256(blob).hexdigest()[:16]})")
+        return 0
+    out.parent.mkdir(parents=True, exist_ok=True)
+    tmp = out.with_name(out.name + ".tmp")
+    tmp.write_bytes(blob)
+    tmp.replace(out)
+    print(f"chunks plus entries: {out.name} written ({len(lines) - len(kb.byid)} chunks, {len(kb.byid)} entries, sha256 {hashlib.sha256(blob).hexdigest()[:16]})")
+    return 0
+
+
+def judge_plan(work):
+    """-> (groups, complete). A judge stage is done by its marker stage_judge_<arms joined by _>.done (the first group of a folder: every arm it had then) or stage_judge_add_<arm>.done (an arm
+    added later: its own stage, files judge_<set>_add_<arm>.jsonl and cache, so that the finished judge rows are never rewritten). groups: [(stage, [arms], file suffix)] still to run."""
+    wd = Path(work)
+    marms = list(json.loads((wd / "MANIFEST.json").read_text(encoding="utf-8"))["arms"])
+    if any("_" in x for x in marms):
+        raise Refused("an arm name with an underscore cannot be tracked by the judge stage markers")
+    covered, first = set(), False
+    for f in sorted(wd.glob("stage_judge_*.done")):
+        name = f.name[len("stage_judge_"):-len(".done")]
+        if name.startswith("add_"):
+            covered.add(name[4:])
+        else:
+            covered |= set(name.split("_"))
+            first = True
+    pending = [x for x in marms if x not in covered]
+    if not pending:
+        return [], True
+    if not first:
+        return [("judge_" + "_".join(pending), pending, "")], False
+    return [(f"judge_add_{x}", [x], f"_add_{x}") for x in pending], False
+
+
+def cmd_judge_plan(a):
+    groups, complete = judge_plan(a.work)
+    for stage, arms, suffix in groups:
+        print(f"GROUP {stage} {','.join(arms)} {suffix or '-'}")
+    print("COMPLETE " + ("yes" if complete else "no"))
+    return 0
+
+
+def cmd_descriptive(a):
+    """Descriptive paired lines candidate - reference per set (RE - R: the entries on against off): coverage, essential points missed, seconds. No bar reads them."""
+    L = []
+    for spec in a.measures:
+        name, _, path = spec.partition("=")
+        m = RR.load_measures(path)
+        rows = {x: v["records"] for x, v in m["arms"].items()}
+        if a.candidate not in rows or a.reference not in rows:
+            continue
+        for key, label in (("P", "judged coverage"), ("essential_missed", "essential points missed per answer"), ("seconds", "seconds")):
+            d, nsc, miss = RR.paired(rows[a.candidate], rows[a.reference], key)
+            if d and len(miss) <= RR.MAX_MISSING:
+                mean, lo, hi = RR.bootstrap_ci(d, RR.RESAMPLES)
+                L.append(f"- Set {name}, paired {a.candidate} - {a.reference}, {label}: {RR.f3(mean)}, 90 % interval [{RR.f3(lo)}, {RR.f3(hi)}] over {len(d)} scenarios (descriptive).")
+            else:
+                L.append(f"- Set {name}, paired {a.candidate} - {a.reference}, {label}: not measured ({len(miss)} of {nsc} scenarios incomplete).")
+    out = ["### Descriptive: " + f"{a.candidate} - {a.reference} (the fact entries on against off; descriptive only, no bar reads it)", ""] + (L or ["- not measured: both arms are not in this reading."]) + [""]
+    Path(a.out).write_text("\n".join(out), encoding="utf-8")
+    print(f"descriptive {a.candidate} - {a.reference}: {len(L)} line(s)")
     return 0
 
 
@@ -947,6 +1167,18 @@ def main(argv=None):
     p.add_argument("--candidate", default="R")
     p = sub.add_parser("runtime-check"); configs(p)
     p.add_argument("--arm", required=True)
+    p = sub.add_parser("entries-arms"); configs(p)
+    p = sub.add_parser("chunks-plus"); configs(p)
+    p.add_argument("--arm", required=True)
+    p.add_argument("--chunks", required=True)
+    p.add_argument("--out", required=True)
+    p = sub.add_parser("judge-plan")
+    p.add_argument("--work", required=True)
+    p = sub.add_parser("descriptive")
+    p.add_argument("--measures", nargs="+", required=True, metavar="SET=PATH")
+    p.add_argument("--candidate", default="RE")
+    p.add_argument("--reference", default="R")
+    p.add_argument("--out", required=True)
     p = sub.add_parser("manifest-arms")
     p.add_argument("--work", required=True)
     p = sub.add_parser("manifest"); configs(p)
@@ -956,6 +1188,7 @@ def main(argv=None):
     p.add_argument("--control", default="C")
     p.add_argument("--h6-mode", default="full", choices=list(RR.H6_MODES))
     p.add_argument("--h6-chosen-by", default="")
+    p.add_argument("--allow-late-arms", action="store_true", help="W43: an arm may be added after the reading bundles were made, and its candidate rule text recorded (logged in the manifest)")
     p.add_argument("--pin", action="append", default=[], help="strict: a set's items and rubrics")
     p.add_argument("--log-pin", action="append", default=[], help="logged, not compared: helper scripts, the chunk file")
     p.add_argument("--opt", action="append", default=[])
@@ -987,6 +1220,7 @@ def main(argv=None):
     p.add_argument("--chunks", default="work/v3/chunks_s1.jsonl")
     p.add_argument("--chunks-override", action="store_true")
     p.add_argument("--resolver", choices=["retrieval", "keys"], default="retrieval")
+    p.add_argument("--configs", default=None, help="configs.json: an arm with the fact entries on has its entries merged in the recovery")
     p.add_argument("--retry-failed", action="store_true")
     p.add_argument("--stub", action="store_true")
     p = sub.add_parser("judge-check")
@@ -1027,13 +1261,14 @@ def main(argv=None):
     p.add_argument("--findings", required=True)
     p.add_argument("--out-dir", required=True)
     p.add_argument("--full-sets", default="")
+    p.add_argument("--chunks", default="", help="the chunk file for the pack build (an entries arm: the chunk file plus the entries, so the pinned source can show every item of the pack)")
     p = sub.add_parser("measures")
     p.add_argument("--set", required=True, choices=sorted(SET_COUNT))
     p.add_argument("--arms", default="R,C")
     p.add_argument("--items", required=True)
     p.add_argument("--rubrics", required=True)
     p.add_argument("--answers", nargs="+", required=True, metavar="ARM=PATH")
-    p.add_argument("--judge")
+    p.add_argument("--judge", nargs="*", default=[], help="the judge files of the set (the first group's and any added arm's)")
     p.add_argument("--findings")
     p.add_argument("--first-reader", default="claude")
     p.add_argument("--verdicts")
@@ -1044,7 +1279,8 @@ def main(argv=None):
     hidden = getattr(a, "set", None) == "h6" or any(str(x).endswith(".enc") for x in argv)
     try:
         return {"arms": cmd_arms, "manifest": cmd_manifest, "ledger-check": cmd_ledger_check, "answer": cmd_answer, "packs": cmd_packs, "judge-run": cmd_judge_run,
-                "arm-order": cmd_arm_order, "runtime-check": cmd_runtime_check, "manifest-arms": cmd_manifest_arms, "server": cmd_server, "bundle": cmd_bundle, "unblind": cmd_unblind, "pack-input": cmd_pack_input, "measures": cmd_measures, "check-inputs": cmd_check_inputs, "judge-check": cmd_judge_check}[a.cmd](a)
+                "arm-order": cmd_arm_order, "runtime-check": cmd_runtime_check, "manifest-arms": cmd_manifest_arms, "server": cmd_server, "bundle": cmd_bundle, "unblind": cmd_unblind, "pack-input": cmd_pack_input, "measures": cmd_measures, "check-inputs": cmd_check_inputs, "judge-check": cmd_judge_check,
+                "entries-arms": cmd_entries_arms, "chunks-plus": cmd_chunks_plus, "judge-plan": cmd_judge_plan, "descriptive": cmd_descriptive}[a.cmd](a)
     except Refused as e:
         print(f"REFUSED: {e}", file=sys.stderr)
         return 2
