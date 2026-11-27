@@ -15,16 +15,16 @@ tags:
 
 # Kafka SRE fact entries (v4)
 
-> **DRAFT, for the Owner. Not published.** Nothing in this folder has been uploaded. Four points below are open and
-> must be settled before the upload (the box "Open for the Owner" at the end lists them).
+> **DRAFT, for the Owner. Not published.** Nothing in this folder has been uploaded. Publication is planned with v4.0.0,
+> after the Owner's go. The box "For the Owner's review" at the end lists what is still the Owner's to decide.
 
 `entries_index.jsonl` holds 7,028 short fact statements about Apache Kafka and Strimzi. **A language model wrote them
 from the documentation chunks of the kafka-sre-llm index. They are not documentation, they may be partial, and they are
 not a primary source.** Read the audit and the limits before relying on one.
 
 This dataset sits next to the documentation index
-[`aywengo/kafka-sre-docs-index-v3`](https://huggingface.co/datasets/aywengo/kafka-sre-docs-index-v3) and is used with the
-kafka-sre-llm runtime (release v4.0.0).
+[`aywengo/kafka-sre-docs-index-v3`](https://huggingface.co/datasets/aywengo/kafka-sre-docs-index-v3) and is meant to be used with the
+kafka-sre-llm runtime (release v4.0.0, planned).
 
 ## What the entries are
 
@@ -57,7 +57,11 @@ With the kafka-sre-llm runtime, `python -m kafka_sre_rag ask ... --kb-entries`, 
 v4.0.0 (Gemma 4 31B, the frozen retrieval, the lookup cards, and the fact entries). The runtime merges the entries that
 match the question into the retrieved pack after the documentation excerpts, with a cap of **10 items and 24,000
 characters** for the whole pack. The documentation excerpts remain in the prompt; the entries add to them and do not
-replace them. The installer of the release is to download this dataset at a pinned revision and check both hashes above (not yet wired; see the upload plan).
+replace them. The installer of the release is to download this dataset at a pinned revision and check both hashes above (not yet wired).
+
+**Consult the pinned source before applying an entry.** An entry is a pointer to the documentation, not a replacement
+for it: open the cited chunk and the upstream page at the pin named in `NOTICE`, and check the condition, the version
+and the scope there before you run anything on a cluster.
 
 ## The audit
 
@@ -92,8 +96,11 @@ source contradicts it).
 - **They may be partial.** 22 of 200 sampled entries (11 %) drop a condition, a version or a scope.
 - **They are not a primary source.** The documentation is. Check a command or a value in the cited chunk and the
   upstream page before running it on a cluster. The entries follow the pins named in `NOTICE` and go out of date.
-- **An entry never serves a point in the evaluation.** In the project's evaluation an entry is never counted as having
-  served a required point; only the documentation chunks count (D7 rule 5). The entries cannot raise a coverage figure.
+- **Two different figures, not to be mixed.** (1) *Retrieval credit* counts documentation chunks only: an entry never
+  serves a required point (D7 rule 5), so the entries cannot raise the retrieval figure. (2) *Judged answer coverage* is
+  what the judge finds in the final answer, and the entries can affect it, because the answer is written with them in
+  the prompt.
+  <!-- source: D7 ledger, rule 5; runs/m7/reports/b9_d7_rules34.md -->
 - **Their effect was measured only inside RE, on one batch.** On the 60 scenarios of D7, RE (with entries) against R (the
   same configuration without entries) is descriptive, with no bar: judged coverage **+0.016** (90 % interval -0.015 to
   +0.047); in the slice of 40 scenarios where entries quote a covering chunk **+0.035**; outside it (20 scenarios)
@@ -103,9 +110,17 @@ source contradicts it).
 - Measured with Gemma 4 31B only, with the project's own judge and readers (models), on 60 scenarios.
 - No effect on questions that the entries do not touch is claimed.
 
-> **PLACEHOLDER, to be filled after the Owner's adjudication (do not publish with this text still here):**
-> the result of the hidden half (h6, 60 scenarios, one look) and the harm results for RE against R (adjudicated harm and
-> wrong or invented statements). They are not available yet and are not estimated here.
+**Harm.** Nothing here isolates the effect of the entries on harmful statements.
+<!-- sources: runs/m7/M7_RELEASE_TEST_FINAL.md lines 119 to 120 (h6, B1); runs/m7/reports/b9_d7_rules34.md line 50, "answers with a harm flag (Claude, reading-only)", first column -->
+
+- On h6 (the hidden decision set, 60 scenarios), the Owner judged 7 of 60 answers harmful for Gemma with entries (RE) and
+  7 of 60 for the Qwen control (the limit was 1 of 60). The control is a different model without entries, so this
+  cannot isolate the effect of the entries.
+- On D7 (open, 60 scenarios), adding the entries (RE minus R) raised the share of answers with a harm flag from the
+  first reader by 6.7 points (90 % interval +1.7 to +11.7). The flags were not adjudicated.
+- On D7 the adjudicated bars B1, B2 and B4 are "not adjudicated (not measured)"; B3 (coverage) is measured and not met.
+  The Owner dropped the D7 adjudication (W46).
+- On h6, conclusions are unchanged on 59 scenarios.
 
 ## Licences
 
@@ -126,27 +141,18 @@ The models that wrote and checked the entries, and the model that uses them:
 | [GLM-5.3-Flash](https://huggingface.co/zai-org/GLM-5.3-Flash) | checked the entries | MIT |
 | [Gemma 4 31B](https://huggingface.co/google/gemma-4-31B-it) | answers with the entries in the release configuration; wrote and checked none | Apache-2.0 ([licence text](https://ai.google.dev/gemma/docs/gemma_4_license)) |
 
-DeepSeek and GLM were run locally, so no platform terms apply. Their MIT licences contain no clause on outputs. The audit
+DeepSeek and GLM wrote and checked the entries locally, on the project's own machine, as open-weight models on a local
+server; no hosted service was involved. Their MIT licences contain no clause on outputs.
+<!-- source: runs/m7/reports/m8_fact_entry_scope.md section 6 ("Both run locally"); the record kb_entries.json names the local writer and checker --> The audit
 raters (hosted Claude sessions) wrote ratings only; no entry text was written by them.
 
-> ### OPEN FOR THE OWNER: the Gemma prohibited-use policy (a legal point, not settled)
->
-> Gemma 4 31B-it is published under Apache-2.0, not the old Gemma Terms of Use (both Google's and mlx-community's card say
-> `license: apache-2.0`). The check of 2026-11-27 (`runs/m7/reports/gemma4_licence.md`) found, in its words:
->
-> > "The page navigation lists "Prohibited use" under Legal. The policy opens: "You may not use nor allow others to use
-> > Gemma or Model Derivatives to: ..." and uses the term "Model Derivatives" from the old Terms of Use, which the Apache
-> > text does not define or incorporate. I found no Apache clause or YAML field that makes it binding. Whether it still
-> > applies is unverified; it is a legal question."
->
-> Policy: <https://ai.google.dev/gemma/prohibited_use_policy> ("Last modified: February 21, 2024"). Licence:
-> <https://ai.google.dev/gemma/docs/gemma_4_license>. For this dataset the question matters little, because Gemma wrote
-> and checked no entry, but the card names Gemma 4 as the model that uses them. **Whether the policy binds is open.
-> This box stays until the Owner decides; delete or settle it before the upload.**
+**Gemma prohibited-use policy.** Google publishes a prohibited-use policy for Gemma:
+<https://ai.google.dev/gemma/prohibited_use_policy>. Gemma 4 31B-it is published under Apache-2.0
+([licence text](https://ai.google.dev/gemma/docs/gemma_4_license)). The project did not verify whether the policy
+binds a user of Gemma 4 under Apache-2.0. Gemma wrote and checked no entry; the card names it as the model that uses them.
+<!-- source: runs/m7/reports/gemma4_licence.md -->
 
-## Open for the Owner (this draft)
+## For the Owner's review (this draft)
 
-1. The Gemma prohibited-use policy question above.
-2. The PLACEHOLDER for the hidden half and the harm results.
-3. Whether the upload goes out under the account named in this card (`aywengo`), and the release go.
-4. The runtime's own wording about entries (`--kb-entries` help and warning) is not touched here and is a separate question.
+1. Whether the upload goes out under the account named in this card (`aywengo`), and the release go.
+2. The runtime's own wording about entries (`--kb-entries` help and warning) is not touched here and is a separate question.

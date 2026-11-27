@@ -1,6 +1,6 @@
 NOTICE: attribution for the kafka-sre-fact-entries-v4 dataset
 
-DRAFT, for the Owner. Not published.
+DRAFT, for the Owner. Not published. Publication is planned with v4.0.0, after the Owner's go.
 
 This dataset holds entries_index.jsonl (7,028 fact entries) and kb_entries.json (the record of that file).
 
@@ -23,10 +23,10 @@ Models and their licences:
 - Gemma 4 31B answers with the entries in the release configuration of the runtime; it wrote and checked no entry.
   Licence: Apache License 2.0. https://huggingface.co/google/gemma-4-31B-it
   The licence text is at https://ai.google.dev/gemma/docs/gemma_4_license. Not endorsed by Google.
-  [Open point for the Owner, remove when settled: whether the Gemma prohibited use policy,
-  https://ai.google.dev/gemma/prohibited_use_policy, binds a user of Gemma 4 under Apache-2.0 is unverified and a legal
-  question.]
-DeepSeek and GLM were run locally; no platform terms apply. Hosted model sessions wrote ratings of entries only, no entry.
+  Google publishes a prohibited-use policy for Gemma, https://ai.google.dev/gemma/prohibited_use_policy. The project
+  did not verify whether it binds a user of Gemma 4 under Apache-2.0.
+DeepSeek and GLM wrote and checked the entries locally, on the project's own machine, as open-weight models on a local
+server. Hosted model sessions wrote ratings of entries only, no entry.
 
 Documentation the entries restate. Each source was read at the pin given. The text was converted to plain text and split
 into chunks (the documentation index published as aywengo/kafka-sre-docs-index-v3); a model wrote an entry from a window of
