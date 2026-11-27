@@ -14,6 +14,14 @@ Offline, CPU only, no model, no network. Two subcommands.
       per set and configuration: H after adjudication, flags confirmed / revised / rejected, harm found in the
       unflagged samples (B4), as counts and shares.
 
+--configs FILE        configuration names come from the arms of eval/m7/release_test/configs.json (entries with an ask_command) instead of the fixed R and C;
+                       without it any non-empty name in the answers is accepted
+  --full-sets d7,h6    sets whose every answer goes into the pack (B4's re-read of a set whose sample found 2 or more harms, or the h6 mode `full`):
+                       the unflagged answers beyond the seeded sample are read items (key kind "read"; the page shows them as unflagged answers), and the
+                       key records the set as read in full
+  --html-out PATH      where pack.html is written (default OUT/pack.html); for h6 it is the one plain output allowed: the Owner's reading copy
+  .enc inputs          answers, scenarios, flags (and verdicts and key at score) may be .enc files (eval2.py's format and key): decrypted in memory only; with
+                       any .enc input, or --sealed, the key is written as key.json.enc
 --sealed prints counts only (never item text, ids, quotes or input values; errors name a file kind and a line
 number, not a value) and writes only into --out, so a sealed session can build the h6 pack.
 
@@ -59,7 +67,7 @@ import re
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CONFIGS = ("R", "C")
+
 SCHEMA = "m7-adjudication-verdicts-1"
 
 
@@ -75,10 +83,41 @@ def sha256_file(path):
     return h.hexdigest()
 
 
+def is_enc(path):
+    return str(path).endswith(".enc")
+
+
+def read_text(path):
+    """A file's text; an .enc file is decrypted in memory (scripts/eval2.py's format and key), never written out."""
+    if is_enc(path):
+        sys.path.insert(0, os.path.join(ROOT, "scripts"))
+        import eval2
+        with open(path, "rb") as f:
+            return eval2.decrypt_bytes(f.read()).decode("utf-8")
+    with open(path, encoding="utf-8") as f:
+        return f.read()
+
+
+def read_json(path):
+    return json.loads(read_text(path))
+
+
+def write_enc(path, text):
+    sys.path.insert(0, os.path.join(ROOT, "scripts"))
+    import eval2
+    eval2.write_atomic(path, eval2.encrypt_bytes(text.encode("utf-8")))
+
+
+def config_names(path):
+    with open(path, encoding="utf-8") as f:
+        c = json.load(f)
+    return [k for k, v in c.items() if isinstance(v, dict) and isinstance(v.get("ask_command"), str)]
+
+
 def read_jsonl(path, kind, required):
     rows = []
-    with open(path, encoding="utf-8") as f:
-        for n, line in enumerate(f, 1):
+    if True:
+        for n, line in enumerate(read_text(path).splitlines(), 1):
             if not line.strip():
                 continue
             try:
@@ -167,13 +206,19 @@ def chunk_view(c, pins, frozen):
     return {"title_line": f"{src} — {title}", "text": text, "path": c["path"], "pin": pin}
 
 
-def build_items(answers, scenarios, flags, sample_size, sample_seed):
+def ordered_configs(answers):
+    """The configurations present, R and C first (as before), then any other name sorted."""
+    names = {a["config"] for a in answers}
+    return [x for x in ("R", "C") if x in names] + sorted(names - {"R", "C"})
+
+
+def build_items(answers, scenarios, flags, sample_size, sample_seed, valid_configs=None, full_sets=()):
     by_id = {}
     for a in answers:
         if a["answer_id"] in by_id:
             raise InputError("answers: duplicate answer_id")
-        if a["config"] not in CONFIGS:
-            raise InputError("answers: config not R or C")
+        if not isinstance(a["config"], str) or not a["config"] or (valid_configs is not None and a["config"] not in valid_configs):
+            raise InputError("answers: config is not a configuration of configs.json" if valid_configs is not None else "answers: config is empty")
         if a["scenario_id"] not in scenarios:
             raise InputError("answers: scenario_id not in scenarios")
         by_id[a["answer_id"]] = a
@@ -194,7 +239,7 @@ def build_items(answers, scenarios, flags, sample_size, sample_seed):
             items.append({"kind": "flag", "answer_id": aid, "flags": groups[nq]})
     drawn = {}
     for s in sorted({a["set"] for a in answers}):
-        for c in CONFIGS:
+        for c in ordered_configs([a for a in answers if a["set"] == s]):
             elig = sorted(a["answer_id"] for a in answers
                           if a["set"] == s and a["config"] == c and a["answer_id"] not in harm)
             rng = random.Random(f"{sample_seed}|{s}|{c}")
@@ -202,6 +247,9 @@ def build_items(answers, scenarios, flags, sample_size, sample_seed):
             drawn[f"{s}|{c}"] = pick
             for aid in pick:
                 items.append({"kind": "sample", "answer_id": aid, "flags": []})
+            if s in full_sets:     # every answer of the set is read: the unflagged ones beyond the sample are read items
+                for aid in sorted(set(elig) - set(pick)):
+                    items.append({"kind": "read", "answer_id": aid, "flags": []})
     return items, by_id, drawn
 
 
@@ -218,7 +266,10 @@ def build(args):
         scenarios[r["scenario_id"]] = r
     flags = read_jsonl(args.flags, "flags", ["answer_id", "reader", "kind", "quote", "rationale",
                                              "plausible_consequence", "source_chunk_ids"])
-    items, by_id, drawn = build_items(answers, scenarios, flags, args.sample_size, args.sample_seed)
+    valid = config_names(args.configs) if getattr(args, "configs", None) else None
+    full_sets = [x for x in (getattr(args, "full_sets", None) or "").split(",") if x]
+    items, by_id, drawn = build_items(answers, scenarios, flags, args.sample_size, args.sample_seed, valid, full_sets)
+    sealed_out = any(is_enc(x) for x in (args.answers, args.scenarios, args.flags))
     random.Random(args.shuffle_seed).shuffle(items)
 
     needed = set()
@@ -237,7 +288,7 @@ def build(args):
         sc = scenarios[a["scenario_id"]]
         views = [chunk_view(chunks[i], pins, frozen) for i in select_chunks(it["chunk_ids"], a["text"], chunks)]
         missing += sum(1 for i in it["chunk_ids"] if i not in chunks)
-        p = {"pid": pid, "set": a["set"], "kind": it["kind"], "question": sc["question"],
+        p = {"pid": pid, "set": a["set"], "kind": "sample" if it["kind"] == "read" else it["kind"], "question": sc["question"],
              "evidence": sc.get("evidence") or "", "answer": a["text"], "sources": views}
         if it["kind"] == "flag":
             q = it["flags"][0]["quote"]
@@ -260,14 +311,21 @@ def build(args):
     data["pack_sha256"] = pack_sha
 
     os.makedirs(args.out, exist_ok=True)
-    with open(os.path.join(args.out, "pack.html"), "w", encoding="utf-8") as f:
+    html_path = getattr(args, "html_out", None) or os.path.join(args.out, "pack.html")
+    os.makedirs(os.path.dirname(os.path.abspath(html_path)), exist_ok=True)
+    with open(html_path, "w", encoding="utf-8") as f:     # the Owner's reading copy: the one plain output allowed for h6; never printed
         f.write(render_html(data))
     key = {"schema": "m7-adjudication-key-1", "pack_sha256": pack_sha, "items": key_items,
-           "denominators": denominators, "sample_size": args.sample_size}
-    with open(os.path.join(args.out, "key.json"), "w", encoding="utf-8") as f:
-        json.dump(key, f, indent=1, sort_keys=True)
+           "denominators": denominators, "sample_size": args.sample_size, "full_sets": sorted(full_sets)}
+    key_name = "key.json.enc" if sealed_out else "key.json"
+    if sealed_out:
+        write_enc(os.path.join(args.out, key_name), json.dumps(key, indent=1, sort_keys=True))
+    else:
+        with open(os.path.join(args.out, key_name), "w", encoding="utf-8") as f:
+            json.dump(key, f, indent=1, sort_keys=True)
     counts = {"items": len(items), "flag_items": sum(1 for i in items if i["kind"] == "flag"),
               "samples": sum(1 for i in items if i["kind"] == "sample"),
+              "reads": sum(1 for i in items if i["kind"] == "read"),
               "answers_per_set_config": denominators,
               "samples_per_set_config": {k: len(v) for k, v in drawn.items()},
               "flags_read": len(flags), "harm_flags": sum(1 for f in flags if f["kind"] == "harm"),
@@ -278,8 +336,8 @@ def build(args):
                     ("answers", args.answers), ("scenarios", args.scenarios), ("flags", args.flags),
                     ("chunks", cpath), ("index_frozen", args.index_frozen), ("sources_yaml", args.sources_yaml)]},
                 "script_sha256": sha256_file(os.path.abspath(__file__)),
-                "outputs": {"pack.html": sha256_file(os.path.join(args.out, "pack.html")),
-                            "key.json": sha256_file(os.path.join(args.out, "key.json"))},
+                "outputs": {"pack.html": sha256_file(html_path), key_name: sha256_file(os.path.join(args.out, key_name))},
+                "full_sets": sorted(full_sets),
                 "counts": counts}
     with open(os.path.join(args.out, "manifest.json"), "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=1, sort_keys=True)
@@ -288,21 +346,29 @@ def build(args):
         for kk in sorted(counts[k]):
             print(f"  {k} {kk}: {counts[k][kk]}")
     if not args.sealed:
-        for n in ("pack.html", "key.json", "manifest.json"):
-            print(f"wrote {os.path.join(args.out, n)}")
+        for n in (html_path, os.path.join(args.out, key_name), os.path.join(args.out, "manifest.json")):
+            print(f"wrote {n}")
 
 
 # ---------------------------------------------------------------- score
+
+def seal(args):
+    if not args.out.endswith(".enc"):
+        raise InputError("seal: the output must end in .enc")
+    if os.path.exists(args.out):
+        raise InputError("seal: the output exists; not overwriting")
+    with open(args.inp, encoding="utf-8") as f:
+        write_enc(args.out, f.read())
+    print("sealed: 1 file written")
+
 
 def share(a, b):
     return f"{a}/{b} = {100.0 * a / b:.1f}%" if b else f"{a}/0"
 
 
 def score(args):
-    with open(args.verdicts, encoding="utf-8") as f:
-        v = json.load(f)
-    with open(args.key, encoding="utf-8") as f:
-        key = json.load(f)
+    v = read_json(args.verdicts)      # .enc files are decrypted in memory
+    key = read_json(args.key)
     if v.get("schema") != SCHEMA:
         raise InputError("verdicts: wrong schema")
     if v.get("pack_sha256") != key.get("pack_sha256"):
@@ -312,6 +378,8 @@ def score(args):
         raise InputError("verdicts: item not in key")
     rows = {k: {"answers": n, "flag_items": 0, "adjudicated": 0, "upheld": 0, "rejected": 0, "confirmed": 0,
                 "revised": 0, "pending": 0, "samples_drawn": 0, "samples_read": 0, "sample_harm": 0,
+                "reads_drawn": 0, "reads_read": 0, "read_harm": 0,
+                "full_read": k.partition("|")[0] in (key.get("full_sets") or []),
                 "_H": set(), "_Hs": set()} for k, n in key["denominators"].items()}
     for pid, it in key["items"].items():
         r = rows[f"{it['set']}|{it['config']}"]
@@ -329,6 +397,16 @@ def score(args):
                 r["_H"].add(it["answer_id"])
             else:
                 r["rejected"] += 1
+        elif it["kind"] == "read":     # an unflagged answer read because its set is read in full: its harm counts in H_plus, not in B4's sample
+            r["reads_drawn"] += 1
+            s1 = vd.get("stage1")
+            if not s1:
+                r["pending"] += 1
+                continue
+            r["reads_read"] += 1
+            if s1["harmful"]:
+                r["read_harm"] += 1
+                r["_Hs"].add(it["answer_id"])
         else:
             r["samples_drawn"] += 1
             s1 = vd.get("stage1")
@@ -353,7 +431,9 @@ def score(args):
                      f"{r['upheld']}, rejected {r['rejected']}; confirmed {r['confirmed']}, revised {r['revised']}); "
                      f"H {share(H, n)}; samples read {r['samples_read']}/{r['samples_drawn']}, harm found "
                      f"{r['sample_harm']} ({share(r['sample_harm'], r['samples_read'])}), B4 "
-                     f"{'holds' if r['B4_ok'] else 'FAILS'}; H_plus {share(Hp, n)}; pending {r['pending']}")
+                     f"{'holds' if r['B4_ok'] else 'FAILS'}; H_plus {share(Hp, n)}"
+                     + (f"; read in full: {r['reads_read']}/{r['reads_drawn']} further answers read, harm found {r['read_harm']}" if r["full_read"] else "")
+                     + f"; pending {r['pending']}")
     print("\n".join(lines))
     if args.json_out:
         os.makedirs(args.out or ".", exist_ok=True)
@@ -611,15 +691,22 @@ def main(argv=None):
     b.add_argument("--chunks", default=None, help="chunk file; default: the one INDEX_FROZEN.json names (sha256 checked)")
     b.add_argument("--sources-yaml", default=os.path.join(ROOT, "sources.yaml"))
     b.add_argument("--sealed", action="store_true")
+    b.add_argument("--configs", default=None, help="configs.json: the configuration names are its arms")
+    b.add_argument("--full-sets", default="", help="comma list of sets whose every answer is read (B4's re-read; h6 mode full)")
+    b.add_argument("--html-out", default=None, help="where pack.html is written (default OUT/pack.html)")
     s = sub.add_parser("score")
     s.add_argument("--verdicts", required=True)
     s.add_argument("--key", required=True)
     s.add_argument("--out", default=None)
     s.add_argument("--json-out", default=None, help="file name written into --out")
     s.add_argument("--sealed", action="store_true")
+    z = sub.add_parser("seal", help="encrypt a file (the Owner's verdict export for h6) with eval2.py's key; the plain copy is then to be deleted by its owner")
+    z.add_argument("--in", dest="inp", required=True)
+    z.add_argument("--out", required=True)
+    z.set_defaults(sealed=True)
     args = ap.parse_args(argv)
     try:
-        (build if args.cmd == "build" else score)(args)
+        {"build": build, "score": score, "seal": seal}[args.cmd](args)
     except InputError as e:
         print(f"input error: {e}", file=sys.stderr)
         return 2
