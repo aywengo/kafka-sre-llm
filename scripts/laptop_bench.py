@@ -61,7 +61,7 @@ DEFAULTS = {"backend": "openai", "model": None, "extra_body": '{"chat_template_k
             "model_repo": "mlx-community/Qwen3.8-27B-4bit", "port": 8765, "interval": 2.0,
             "config_name": None, "configs_sha256": None, "lookup_cards": False, "model_repo_revision": None, "reference": None}
 CONFIGS_FILE = "eval/m7/release_test/configs.json"
-CONFIGS_SHA256 = "7eaac08a6d4bdf6e3a82a36d759534d33bbca27c4106eee4f9c1e811f7f82bac"   # as amended 2026-11-27 (MILESTONE.md conductor row)
+CONFIGS_SHA256 = "2934888c01d1f97a2be6ba2d0caf1bbc871d2f851c6890f5a71f661ef7636ebc"   # as amended 2026-11-27 (MILESTONE.md conductor row)
 RELEASE_CONFIGS = ["R", "RE"]
 ASK_DEFAULTS = {"mode": "default", "k": "k6", "catalogues": "work/m4/catalogues"}   # what `ask` does when the option is absent
 BARS = {"install_s": 1800, "median_answer_s": 60, "memory_gb": 20, "weights_gb": (15, 17), "drift_ratio": 1.2,

@@ -492,10 +492,11 @@
     "MAX_ITEMS": 10,
     "MAX_CHARS": 24000,
     "POOL": 24,
-    "max_entries_added": 4
+    "description": "the whole pack (frozen excerpts, then entries) at most 10 items and 24,000 characters (kb_entries.MAX_ITEMS, MAX_CHARS); so at most 4 entries after a full frozen six, more when the frozen pack is shorter"
    },
    "place": "after the frozen excerpts, in the same pack; each entry is an item with the title line of KB_ENTRY_RENDER; no prompt text is added; no extra model call",
-   "reason": "W43: the Owner admitted the entries for the M7 release at 80 % ok; RE is the release configuration, R (entries off) is kept as a descriptive arm"
+   "reason": "W43: the Owner admitted the entries for the M7 release at 80 % ok; RE is the release configuration, R (entries off) is kept as a descriptive arm",
+   "help_text_note": "the --kb-entries help text and pipeline.KB_ENTRIES_REASON say 'up to 4 entries'; that is the case after a full frozen six only. They are pinned runtime files and are not changed; the cap above is what the code does"
   },
   "ask_command": "OMLX_URL=<server url> .venv/bin/python -m kafka_sre_rag ask --backend openai --model gemma-4-31b-it-4bit --extra-body '{\"chat_template_kwargs\": {\"enable_thinking\": false}}' --lookup-cards --kb-entries --json \"<question>\"",
   "ask_command_dry_run": ".venv/bin/python -m kafka_sre_rag ask --dry-run --backend openai --model gemma-4-31b-it-4bit --extra-body '{\"chat_template_kwargs\": {\"enable_thinking\": false}}' --lookup-cards --kb-entries \"<question>\""

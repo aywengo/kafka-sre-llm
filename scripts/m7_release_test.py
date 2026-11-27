@@ -255,6 +255,9 @@ def cmd_manifest(a):
                               + "; a candidate that is a new arm needs --allow-late-arms (logged); nothing was moved or deleted")
             if strict["control"] != old.get("control") or strict["candidate"] not in new_arms or (strict["candidate"] in old["arms"] and strict["candidate"] not in (old.get("late_arms") or {})):
                 raise Refused("--allow-late-arms: the control must be the stored one and the candidate an arm that is new to this folder; nothing was moved or deleted")
+            if (wd / f"stage_ans_{strict['candidate']}.done").exists():     # the rule for a candidate is fixed before its answers; a different text after them is refused
+                raise Refused(f"--allow-late-arms: the answers of {strict['candidate']} exist in this folder and the recorded rule text for it differs from the one now; "
+                              "a rule text is not changed after the answers; nothing was moved or deleted")
             old.setdefault("rule_variants", []).append(dict(variant, at=time.strftime("%Y-%m-%dT%H:%M:%S%z")))
             events.append(f"rule text for the candidate {variant['candidate']} (control {variant['control']}) added, sha256 {variant['rule_text_sha256'][:16]}; the stored rule text for {old['candidate']} is unchanged")
         for x, v in new_arms.items():

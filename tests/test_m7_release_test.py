@@ -1057,6 +1057,12 @@ class EntriesArm(unittest.TestCase):
         self.assertIn("added after the reading bundles", p.stdout)
         self.assertEqual(run("--arms", "RE,R,C", "--candidate", "RE", "--control", "C").returncode, 0)   # recorded: no option needed
         self.assertEqual(run("--arms", "R,C", "--candidate", "R", "--control", "C").returncode, 0)      # the old candidate still fits
+        # a different rule text for the late candidate is refused once its answers exist; the recorded one still fits
+        (wd / "stage_ans_RE.done").write_text("{}")
+        p = run("--arms", "RE,R,C", "--candidate", "RE", "--control", "C", "--h6-mode", "sample", "--allow-late-arms")
+        self.assertEqual(p.returncode, 2, p.stdout + p.stderr)
+        self.assertIn("answers of RE exist", p.stderr)
+        self.assertEqual(run("--arms", "RE,R,C", "--candidate", "RE", "--control", "C", "--allow-late-arms").returncode, 0)
         # a dry run on a copy of a real folder is accepted; a real run on a dry folder is not
         base2 = [a if a != "dry=no" else "dry=yes" for a in base]
         p = e.run(*base2, "--arms", "R,C", "--candidate", "R", "--control", "C", cmd="scripts/m7_release_test.py")
