@@ -228,5 +228,100 @@ class PackTests(unittest.TestCase):
         self.assertIsNone(P.find_span(t, "absent text"))
 
 
+class EntriesPanelTests(unittest.TestCase):
+    """An RE pack holds `kbe:` entries. The Owner's panel must not tell the configuration (W34): no entry id, no entry title line, the same kind of panel as for C. The chunks an entry quotes may be shown, as ordinary chunks."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        d = self.tmp.name
+        chunks = [{"id": f"cx{i}", "source": "strimzi", "title": f"Invented title {i}", "path": f"raw/strimzi/demo/f{i}.adoc", "text": f"Invented chunk text number {i}."} for i in range(1, 7)]
+        # the chunk file "plus entries" as the release chain's judge uses it: the entry rows must never reach a panel
+        plus = chunks + [{"id": "kbe:kbe-aa01", "source": "strimzi", "title": "Fact entry: invented marker (Strimzi 9.9.9; raw/strimzi/demo/f5.adoc)", "path": "raw/strimzi/demo/f5.adoc", "text": "Fact entry text.", "entry": True}]
+        self.write("chunks.jsonl", chunks)
+        self.write("chunks_plus.jsonl", plus)
+        self.write("entries_index.jsonl", [
+            {"id": "kbe-aa01", "title": "Fact entry: invented marker", "quotes": [{"chunk": "cx5", "text": "Invented chunk text number 5."}], "sources": [{"id": "cx5", "path": "raw/strimzi/demo/f5.adoc", "source": "strimzi"}]},
+            {"id": "kbe-aa02", "title": "Fact entry: another marker", "quotes": [{"chunk": "cx1", "text": "x"}], "sources": [{"id": "cx1", "path": "raw/strimzi/demo/f1.adoc", "source": "strimzi"}]}])
+        txt = "Invented answer: restart the demo thing."
+        self.write("answers.jsonl", [
+            {"answer_id": "d7-RE-q1", "set": "d7", "scenario_id": "q1", "config": "RE", "text": txt, "pack_chunk_ids": ["cx1", "cx2", "cx3", "kbe:kbe-aa01", "kbe:kbe-aa02"]},
+            {"answer_id": "d7-C-q1", "set": "d7", "scenario_id": "q1", "config": "C", "text": txt, "pack_chunk_ids": ["cx1", "cx2", "cx3", "cx4"]},
+            {"answer_id": "d7-RE-q2", "set": "d7", "scenario_id": "q2", "config": "RE", "text": txt, "pack_chunk_ids": ["cx1", "kbe:kbe-aa01"]},
+            {"answer_id": "d7-C-q2", "set": "d7", "scenario_id": "q2", "config": "C", "text": txt, "pack_chunk_ids": ["cx1", "cx5"]}])
+        self.write("scenarios.jsonl", [{"scenario_id": "q1", "question": "Invented question 1?", "evidence": ""}, {"scenario_id": "q2", "question": "Invented question 2?", "evidence": ""}])
+        self.write("flags.jsonl", [])
+
+    def write(self, name, rows):
+        with open(os.path.join(self.tmp.name, name), "w", encoding="utf-8") as f:
+            f.write("".join(json.dumps(r) + "\n" for r in rows))
+
+    def args(self, out, chunks="chunks.jsonl", entries=True, extra=()):
+        d = self.tmp.name
+        a = ["build", "--answers", f"{d}/answers.jsonl", "--scenarios", f"{d}/scenarios.jsonl", "--flags", f"{d}/flags.jsonl", "--index-frozen", f"{FX}/INDEX_FROZEN.json",
+             "--sources-yaml", f"{FX}/sources.yaml", "--chunks", f"{d}/{chunks}", "--out", os.path.join(d, out), "--shuffle-seed", "1", "--sample-seed", "2", "--sample-size", "5"]
+        if entries:
+            a += ["--entries-index", f"{d}/entries_index.jsonl"]
+        return a + list(extra)
+
+    def data_of(self, out):
+        html = open(os.path.join(self.tmp.name, out, "pack.html"), encoding="utf-8").read()
+        return html, json.loads(html.split("const DATA = ", 1)[1].split(";\nconst STORE", 1)[0])
+
+    def test_the_panels_of_an_re_answer_and_a_c_answer_look_alike_and_no_entry_marker_is_in_the_html(self):
+        for chunks in ("chunks.jsonl", "chunks_plus.jsonl"):       # also when the chunk file holds the entries as rows
+            out = "o_" + chunks
+            self.assertEqual(run_main(self.args(out, chunks))[0], 0)
+            html, data = self.data_of(out)
+            for bad in ("kbe", "Fact entry", "fact entry", "invented marker", "another marker", "entry"):
+                self.assertNotIn(bad, html)
+            key = load(os.path.join(self.tmp.name, out), "key.json")["items"]
+            by = {(key[it["pid"]]["config"], key[it["pid"]]["scenario_id"]): it for it in data["items"]}
+            self.assertEqual(len(by), 4)
+            for it in by.values():
+                self.assertEqual(sorted(it), sorted(by[("C", "q1")]))                      # the same fields
+                for src in it["sources"]:
+                    self.assertEqual(sorted(src), ["path", "pin", "text", "title_line"])
+                    self.assertRegex(src["title_line"], r"^strimzi \u2014 Invented title \d$")   # an ordinary chunk's title line
+                    self.assertTrue(src["path"].startswith("raw/strimzi/demo/f") and src["pin"].startswith("strimzi 9.9.9"))
+            self.assertEqual([s["title_line"] for s in by[("RE", "q1")]["sources"]], [f"strimzi \u2014 Invented title {i}" for i in (1, 2, 3)])   # three, as for C: the pack's own chunks first
+            self.assertEqual(len(by[("C", "q1")]["sources"]), 3)
+            # RE's entry quotes cx5 and cx1: cx1 is already in the pack (shown once), cx5 follows as an ordinary chunk
+            self.assertEqual([s["title_line"] for s in by[("RE", "q2")]["sources"]], ["strimzi \u2014 Invented title 1", "strimzi \u2014 Invented title 5"])
+            self.assertEqual([s["title_line"] for s in by[("C", "q2")]["sources"]], ["strimzi \u2014 Invented title 1", "strimzi \u2014 Invented title 5"])
+            self.assertEqual(by[("RE", "q2")]["sources"], by[("C", "q2")]["sources"])
+            self.assertEqual(by[("RE", "q2")]["kind"], by[("C", "q2")]["kind"])
+
+    def test_the_key_records_what_the_model_received_and_the_manifest_the_entries_index(self):
+        out = os.path.join(self.tmp.name, "o")
+        self.assertEqual(run_main(self.args("o"))[0], 0)
+        key = load(out, "key.json")["items"]
+        re_q1 = next(v for v in key.values() if v["config"] == "RE" and v["scenario_id"] == "q1")
+        self.assertEqual(re_q1["pack_ids"], ["cx1", "cx2", "cx3", "kbe:kbe-aa01", "kbe:kbe-aa02"])        # the received items, entries included
+        self.assertEqual(next(v for v in key.values() if v["config"] == "C" and v["scenario_id"] == "q1")["pack_ids"], ["cx1", "cx2", "cx3", "cx4"])
+        self.assertIn("entries_index", load(out, "manifest.json")["inputs"])
+        self.assertNotIn("pack_ids", open(os.path.join(out, "pack.html"), encoding="utf-8").read())    # the key is not in the HTML
+
+    def test_a_pack_with_entries_and_no_entries_index_is_refused_and_an_unknown_entry_too(self):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            rc, _ = run_main(self.args("o1", entries=False))
+        self.assertEqual(rc, 2)
+        self.assertIn("--entries-index", err.getvalue())
+        self.assertFalse(os.path.exists(os.path.join(self.tmp.name, "o1", "pack.html")))
+        self.write("entries_index.jsonl", [{"id": "kbe-other", "quotes": [], "sources": []}])
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(run_main(self.args("o2"))[0], 2)
+
+    def test_sealed_prints_counts_only_and_still_hides_the_entries(self):
+        rc, out = run_main(self.args("os", extra=("--sealed",)))
+        self.assertEqual(rc, 0)
+        self.assertEqual([l for l in out.splitlines() if "kbe" in l or "Fact entry" in l or "cx" in l], [])      # counts only: no id, title or path
+        self.assertNotIn(self.tmp.name, out)
+        html, _ = self.data_of("os")
+        self.assertNotIn("kbe", html)
+        self.assertNotIn("Fact entry", html)
+
+
 if __name__ == "__main__":
     unittest.main()

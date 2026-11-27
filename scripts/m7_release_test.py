@@ -861,7 +861,12 @@ def cmd_pack_input(a):
     items = {it["id"]: it for it in E.read_items(a.items)}
     answers, flags = [], []
     flag_ids = None
+    pack_arms = [x for x in (a.pack_arms or "").split(",") if x]       # W44, ledger rule 6: only these arms reach the pack (their harm flags and their samples); the other arms' findings still feed the measures
+    for x in pack_arms:
+        arm_info(cfgs, x)
     for arm, path in (s.partition("=")[::2] for s in a.answers):
+        if pack_arms and arm not in pack_arms:
+            continue
         for r in load_rows(path):
             if r.get("error"):
                 continue
@@ -888,10 +893,16 @@ def cmd_pack_input(a):
     n_h = sum(1 for f in flags if f["kind"] == "harm")
     print(f"pack input for {a.set}: {len(answers)} answers, {len(scen)} scenarios, {n_h} harm flags, {len(flags) - n_h} material-error flags; seeds shuffle {SEEDS['pack_shuffle']} sample {SEEDS['pack_sample']}")
     full = f" --full-sets {a.full_sets}" if a.full_sets else ""
+    # fact entries: the panel never shows an entry (no `kbe:` id, no entry title line, W34); the builder shows the documentation chunks an entry quotes, as ordinary chunks, and needs the entries index for that
+    has_entries = any(str(i).startswith("kbe:") for x in answers for i in x["pack_chunk_ids"])
+    eidx = ""
+    if has_entries:
+        names = [x for x in a.arms.split(",") if x and arm_info(cfgs, x)["entries"]]
+        eidx = f" --entries-index {cfgs[names[0]]['entries']['index']}"
     if hid:
         print("h6: the files are encrypted; the sealed pack is built with `--sealed` (counts only; the key is written as key.json.enc; the HTML is the Owner's reading copy, written to --html-out):")
     print(f"build: scripts/m7_adjudication_pack.py build --answers {outd}/answers.jsonl{ext_of(hid)} --scenarios {outd}/scenarios.jsonl{ext_of(hid)} --flags {outd}/flags.jsonl{ext_of(hid)} "
-          f"--out DIR --configs {a.configs} --shuffle-seed {SEEDS['pack_shuffle']} --sample-seed {SEEDS['pack_sample']}{full}" + (f" --chunks {a.chunks}" if a.chunks else "") + (" --sealed --html-out PATH" if hid else ""))
+          f"--out DIR --configs {a.configs} --shuffle-seed {SEEDS['pack_shuffle']} --sample-seed {SEEDS['pack_sample']}{full}" + (f" --chunks {a.chunks}" if a.chunks else "") + eidx + (" --sealed --html-out PATH" if hid else ""))
     return 0
 
 
@@ -1264,7 +1275,8 @@ def main(argv=None):
     p.add_argument("--findings", required=True)
     p.add_argument("--out-dir", required=True)
     p.add_argument("--full-sets", default="")
-    p.add_argument("--chunks", default="", help="the chunk file for the pack build (an entries arm: the chunk file plus the entries, so the pinned source can show every item of the pack)")
+    p.add_argument("--pack-arms", default="", help="only these arms go into the pack input (answers, flags, samples); default every arm of --answers")
+    p.add_argument("--chunks", default="", help="the chunk file for the pack build: the plain chunk file (an entries arm: the builder gets --entries-index and shows the chunks an entry quotes; it never shows an entry)")
     p = sub.add_parser("measures")
     p.add_argument("--set", required=True, choices=sorted(SET_COUNT))
     p.add_argument("--arms", default="R,C")

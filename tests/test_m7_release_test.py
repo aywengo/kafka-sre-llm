@@ -2,6 +2,7 @@
 Offline: a stub ask, a stub judge, a stub server file; a test key in a temp dir; synthetic fixtures (a canary string stands for item text); no real hidden file, no server."""
 import copy
 import json
+import re
 import os
 import shutil
 import subprocess
@@ -503,7 +504,7 @@ class Chain(unittest.TestCase):
             eval2.write_jsonl(hdir / f"findings_{b}.jsonl.enc", rows_)
 
     def build_h6_pack(self, e, full):
-        pi = e.w / "h6/pack_input"
+        pi = e.w / "h6/pack_input_d7-h6_R-C_reading"
         frozen = e.d / "frozen.json"
         frozen.write_text(json.dumps({"index_path": "x", "source_commits": {}}))
         out = e.d / ("pack_h6_full" if full else "pack_h6_sample")
@@ -588,11 +589,11 @@ class Chain(unittest.TestCase):
         self.assertEqual(p.returncode, 0, out2)
         self.assertIn("BARS: B1 not measured; B2 not measured", out2)
         self.assertNotIn(CANARY, out2)
-        text = next(w.glob("M7_RELEASE_TEST_from_stub_data.md")).read_text()
+        text = next(w.glob("M7_RELEASE_TEST_from_stub_data*.md")).read_text()
         self.assertIn("hidden: totals only", text)
         self.assertNotIn(CANARY, text)
         # d7 pack input: it builds with configuration names from configs.json; verdicts feed the report
-        pi = w / "d7/pack_input"
+        pi = w / "d7/pack_input_d7-h6_R-C_reading"
         flags = [json.loads(l) for l in (pi / "flags.jsonl").read_text().splitlines()]
         self.assertEqual({f["kind"] for f in flags}, {"harm", "material_error"})
         self.assertEqual({f["reader"] for f in flags if f["kind"] == "harm"}, {"claude", "codex"})
@@ -623,7 +624,7 @@ class Chain(unittest.TestCase):
         p = e.run(*a)
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
         self.assertNotIn(CANARY, p.stdout + p.stderr)
-        text = next(w.glob("M7_RELEASE_TEST_from_stub_data.md")).read_text()
+        text = next(w.glob("M7_RELEASE_TEST_from_stub_data*.md")).read_text()
         self.assertIn("0/4 = 0.0 %", text)
         self.assertIn("the SRE read every answer of this set", text)            # h6 read in full
         self.assertIn("### Bars", text)
@@ -661,7 +662,7 @@ class Chain(unittest.TestCase):
         p = e.run(*e.args("--phase", "after-reading", arms="R"))
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
         self.assertIn("B2 not measured; B3 not measured", p.stdout)
-        self.assertIn("not an arm of the run", next(e.w.glob("M7_RELEASE_TEST_from_stub_data.md")).read_text())
+        self.assertIn("not an arm of the run", next(e.w.glob("M7_RELEASE_TEST_from_stub_data*.md")).read_text())
 
     def test_a_failing_h6_answer_leaks_no_item_text_and_stops_the_chain(self):
         e = Env()
@@ -937,19 +938,20 @@ class EntriesArm(unittest.TestCase):
         (e.d / "f_claude.jsonl").write_text(jl([row(re_names[0], "harmful", consequence="data loss"), row(re_names[1], "wrong")]))
         p = self.run_(*self.args("--phase", "after-reading", "--findings-d7", f"claude={e.d / 'f_claude.jsonl'}"))
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
-        self.assertIn(f"--chunks {e.w}/chunks_plus_entries.jsonl", p.stdout)
-        answers = [json.loads(l) for l in (d7 / "pack_input/answers.jsonl").read_text().splitlines()]
+        self.assertIn(f"--chunks {e.d}/chunks.jsonl --entries-index {self.idx}", p.stdout)      # the plain chunk file and the entries index, never the file "plus entries"
+        self.assertNotIn("chunks_plus_entries", p.stdout.split("build:", 1)[1])
+        answers = [json.loads(l) for l in (d7 / "pack_input_d7_RE-R-C_reading/answers.jsonl").read_text().splitlines()]
         self.assertTrue(any(i.startswith("kbe:") for a in answers if a["config"] == "RE" for i in a["pack_chunk_ids"]))
         self.assertFalse(any(i.startswith("kbe:") for a in answers if a["config"] != "RE" for i in a["pack_chunk_ids"]))
         frozen = e.d / "frozen.json"
         frozen.write_text(json.dumps({"index_path": "x", "source_commits": {}}))
-        pi = d7 / "pack_input"
+        pi = d7 / "pack_input_d7_RE-R-C_reading"
         b = subprocess.run([PYBIN, "scripts/m7_adjudication_pack.py", "build", "--answers", str(pi / "answers.jsonl"), "--scenarios", str(pi / "scenarios.jsonl"), "--flags", str(pi / "flags.jsonl"),
                             "--out", str(e.d / "pack"), "--configs", str(self.cfg), "--shuffle-seed", "1", "--sample-seed", "2", "--index-frozen", str(frozen),
-                            "--chunks", str(e.w / "chunks_plus_entries.jsonl"), "--full-sets", "d7"], cwd=ROOT, capture_output=True, text=True, env=e.env)
+                            "--chunks", str(e.d / "chunks.jsonl"), "--entries-index", str(self.idx), "--full-sets", "d7"], cwd=ROOT, capture_output=True, text=True, env=e.env)
         self.assertEqual(b.returncode, 0, b.stdout + b.stderr)
         self.assertEqual({a["config"] for a in answers}, {"RE", "R", "C"})
-        self.assertIn("Descriptive: RE - R", next(e.w.glob("M7_RELEASE_TEST_from_stub_data.md")).read_text())
+        self.assertIn("Descriptive: RE - R", next(e.w.glob("M7_RELEASE_TEST_from_stub_data*.md")).read_text())
 
     def test_the_rule_text_for_re_differs_from_the_text_for_r_by_the_arm_names_only(self):
         r = RR.rule_text("R", "C", "full", BY)
@@ -1024,8 +1026,8 @@ class EntriesArm(unittest.TestCase):
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
         p = self.run_(*self.args("--phase", "after-reading", "--reading-dir", "reading2", "--report", str(e.d / "r2.md"), "--findings-d7", f"claude={e.d / 'f2.jsonl'}"))
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
-        self.assertTrue((d7 / "findings_d7.jsonl").exists() and (d7 / "findings_d7_reading2.jsonl").exists())
-        m1, m2 = json.loads((d7 / "measures_d7.json").read_text()), json.loads((d7 / "measures_d7_reading2.json").read_text())
+        self.assertTrue((d7 / "findings_d7_R-C_reading.jsonl").exists() and (d7 / "findings_d7_RE-R-C_reading2.jsonl").exists())
+        m1, m2 = json.loads((d7 / "measures_d7_R-C_reading.json").read_text()), json.loads((d7 / "measures_d7_RE-R-C_reading2.json").read_text())
         self.assertEqual(sorted(m1["arms"]), ["C", "R"])
         self.assertEqual(sorted(m2["arms"]), ["C", "R", "RE"])
         self.assertTrue(all(r["P"] is not None for a in ("C", "R", "RE") for r in m2["arms"][a]["records"]))      # the old judge file (R, C) and the added one (RE) are all read
@@ -1108,6 +1110,106 @@ class EntriesArm(unittest.TestCase):
         for f in e.plain_files():                                                                          # no hidden text in any plain file (the chunk file with the entries holds chunks and entries only)
             self.assertNotIn(CANARY, f.read_text(errors="replace"), f.name)
         self.assertTrue((h6 / "stage_judge_C_RE.done").exists())
+
+
+    def test_every_after_reading_call_has_its_own_files_only_the_final_call_writes_the_done_line_and_the_combined_report_works(self):
+        e = self.e
+        sha = T.sha256_file(self.cfg)
+        (e.d / "ledger.md").write_text(f"| 2026-11-27 | release-look-h6 | configs {sha} | rule {RR.rule_text_sha256('RE', 'C', 'full', BY)} |\n")
+        self.assertEqual(e.run(*e.args()).returncode, 0)                                                       # R and C, as the real folder was made
+        p = self.run_(*self.args("--add-arms-late", "--reading-dir", "reading2", "--bundle-arms", "RE,R,C"))
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        p = self.run_(*self.args(sets="h6", arms="RE,C"))
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        d7, h6 = e.w / "d7", e.w / "h6"
+        row = lambda n, kind, **k: dict({"answer": n, "id": n.rsplit("-", 1)[0], "kind": kind, "quote": "Stub answer", "minor": False, "source": "f.md:1", "note": "n"}, **k)
+        k1 = json.loads((d7 / "reading/KEY.json").read_text())
+        k2 = json.loads((d7 / "reading2/KEY.json").read_text())
+        (e.d / "f1.jsonl").write_text(jl([row(sorted(k1["aid"])[0], "harmful", consequence="data loss")]))
+        re_names = [n for n in sorted(k2["aid"]) if k2["aid"][n] == "RE"]
+        (e.d / "f2.jsonl").write_text(jl([row(re_names[0], "harmful", consequence="data loss"), row(re_names[1], "wrong")]))
+        hk = json.loads(eval2.decrypt_bytes((h6 / "reading/blind_key.json.enc").read_bytes()))
+        for b, ns in hk["bundles"].items():                                                                  # the h6 reader's sealed findings (stub)
+            rows_ = [{"answer": n, "id": n.rsplit("-", 1)[0], "kind": "clean", "quote": "", "point": "", "supported": False, "minor": False, "source": "", "note": ""} for n in ns]
+            rows_[0] = {"answer": ns[0], "id": ns[0].rsplit("-", 1)[0], "kind": "harmful", "quote": "Stub answer", "point": "", "supported": False, "minor": False, "source": "s", "note": "n", "consequence": "data loss"}
+            eval2.write_jsonl(h6 / "reading" / f"findings_{b}.jsonl.enc", rows_)
+        done = e.w / "logs/m7_release_test.done"
+        calls = {
+            "old": self.args("--phase", "after-reading", "--candidate", "R", "--control", "C", "--report", str(e.d / "r_old.md"), "--findings-d7", f"claude={e.d / 'f1.jsonl'}", arms="R,C"),
+            "re": self.args("--phase", "after-reading", "--pack-arms", "RE,C", "--reading-dir", "reading2", "--report", str(e.d / "r_re.md"), "--findings-d7", f"claude={e.d / 'f2.jsonl'}"),
+            "h6": self.args("--phase", "after-reading", "--h6-dir", str(h6 / "reading"), "--report", str(e.d / "r_h6.md"), sets="h6", arms="RE,C"),
+            "final": self.args("--phase", "after-reading", "--pack-arms", "RE,C", "--reading-dir", "reading2", "--h6-dir", str(h6 / "reading"), "--report", str(e.d / "r_final.md"), "--findings-d7", f"claude={e.d / 'f2.jsonl'}",
+                               sets="d7,h6", arms="RE,C"),
+        }
+        # MANIFEST.json is the folder's own log (every call checks it and may append a history line when a logged pin changed, e.g. the chunk file with the entries appearing); it is not a call's output
+        snap = lambda: {str(f): T.sha256_file(f) for f in e.w.rglob("*") if f.is_file() and f.name not in ("m7_release_test.done", "MANIFEST.json")}
+        seen = {}
+        for name in ("old", "re", "h6", "final"):
+            before = snap()
+            p = self.run_(*calls[name])
+            out = p.stdout + p.stderr
+            self.assertEqual(p.returncode, 0, name + out)
+            self.assertNotIn(CANARY, out)
+            after = snap()
+            self.assertEqual([f for f in before if after.get(f) != before[f]], [], name)                        # no call changes or removes a file an earlier call wrote
+            seen[name] = sorted(f.rsplit("/", 1)[1] for f in set(after) - set(before))
+            marks = done.read_text().split() if done.exists() else []
+            if name != "final":
+                self.assertNotIn("M7_RELEASE_TEST_DRY_RUN_DONE", marks, name)                                    # a partial call is not the end of the chain
+                self.assertIn("PARTIAL", out)
+            else:
+                self.assertEqual(marks.count("M7_RELEASE_TEST_DRY_RUN_DONE"), 1)
+                self.assertNotIn("PARTIAL", out)
+        tags = [(e.d / f"r_{n}.md").read_text().splitlines()[0] for n in ("old", "re", "h6", "final")]
+        self.assertEqual(len(set(tags)), 4)
+        self.assertIn("findings_d7_R-C_reading.jsonl", seen["old"])
+        self.assertIn("findings_d7_RE-R-C_reading2.jsonl", seen["re"])
+        self.assertIn("findings_h6_RE-C_reading.jsonl.enc", seen["h6"])
+        self.assertIn("findings_d7-h6_RE-C_reading2.jsonl", seen["final"])
+        self.assertIn("report_body_d7-h6_RE-C_reading2.md", seen["final"])
+        self.assertIn("rule_out_d7-h6_RE-C_reading2.txt", seen["final"])
+        self.assertIn("result_d7-h6_RE-C_reading2.json", seen["final"])
+        self.assertIn("m7_release_test_after_reading_d7_R-C_reading.partial", seen["old"])
+        fin = (e.d / "r_final.md").read_text()
+        self.assertIn("Descriptive: RE - R", fin)                                                               # RE - R on D7, from reading2
+        self.assertIn("### Set d7", fin)
+        self.assertIn("### Set h6 (hidden: totals only", fin)
+        self.assertRegex(fin, r"\| RE \| 4 \|")
+        self.assertNotIn("not run", fin)                                                                       # h6 has RE and C only: no R row in its table
+        self.assertEqual(len(re.findall(r"^\| R \| ", fin, re.M)), 1)                                          # R only in D7's table
+        desc = (e.w / "descriptive_d7-h6_RE-C_reading2.md").read_text()
+        self.assertIn("Set d7", desc)
+        self.assertNotIn("Set h6", desc)
+        for call in ("d7_RE-R-C_reading2", "d7-h6_RE-C_reading2"):                                            # W44: no R answer reaches the pack input
+            pa = [json.loads(l) for l in (d7 / f"pack_input_{call}/answers.jsonl").read_text().splitlines()]
+            self.assertEqual({x["config"] for x in pa}, {"RE", "C"})
+            self.assertEqual(len(pa), 8)
+            fl = [json.loads(l) for l in (d7 / f"pack_input_{call}/flags.jsonl").read_text().splitlines()]
+            self.assertTrue(all(x["answer_id"].split("-")[1] in ("RE", "C") for x in fl))
+        pa_old = [json.loads(l) for l in (d7 / "pack_input_d7_R-C_reading/answers.jsonl").read_text().splitlines()]
+        self.assertEqual({x["config"] for x in pa_old}, {"R", "C"})                                           # the old reading keeps its arms
+        m2 = json.loads((d7 / "measures_d7_RE-R-C_reading2.json").read_text())
+        self.assertIn("R", m2["arms"])                                                                        # R's findings still feed RE - R
+        self.assertIn("leave out the time to load the entries index", fin)                                      # the labels
+        self.assertIn("an entry never serves a point", fin)
+        self.assertIn("path (source file), not by its title line", fin)
+        self.assertIn("a reader can tell which answers had entries", fin)
+        self.assertNotIn(CANARY, fin)
+        self.assertNotIn("Descriptive", (e.d / "r_old.md").read_text())
+        res = json.loads((e.w / "result_d7-h6_RE-C_reading2.json").read_text())
+        self.assertEqual(sorted(res["sets"]), ["d7", "h6"])
+        # a report of another call is never overwritten
+        keep = (e.d / "r_re.md").read_bytes()
+        bad = list(calls["final"])
+        bad[bad.index(str(e.d / "r_final.md"))] = str(e.d / "r_re.md")
+        p = self.run_(*bad)
+        self.assertEqual(p.returncode, 2, p.stdout + p.stderr)
+        self.assertIn("is not the report of this call", p.stderr)
+        self.assertEqual((e.d / "r_re.md").read_bytes(), keep)
+        # without --report each call has its own default report, named from its call
+        p = self.run_(*self.args("--phase", "after-reading", "--reading-dir", "reading2", "--findings-d7", f"claude={e.d / 'f2.jsonl'}"))
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertTrue((e.w / "M7_RELEASE_TEST_from_stub_data_d7_RE-R-C_reading2.md").exists())
 
 
 if __name__ == "__main__":
