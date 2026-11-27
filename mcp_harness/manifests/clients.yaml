@@ -1,0 +1,124 @@
+# Producer (plain listener, ANONYMOUS) and consumer (TLS listener, KafkaUser app-consumer) of topic orders.
+# Faults change the environment or the mounted secrets of these Deployments; `reset` re-applies this file.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: client-scripts
+  namespace: kafka
+data:
+  client.sh: |
+    #!/bin/bash
+    set -u
+    P=/tmp/client.properties
+    echo "security.protocol=${SECURITY_PROTOCOL:-PLAINTEXT}" > "$P"
+    if [ "${SECURITY_PROTOCOL:-PLAINTEXT}" = "SSL" ]; then
+      {
+        echo "ssl.truststore.type=PKCS12"
+        echo "ssl.truststore.location=/certs/ca/ca.p12"
+        echo "ssl.truststore.password=$(cat /certs/ca/ca.password)"
+      } >> "$P"
+      if [ "${KEYSTORE_MODE:-user}" = "selfsigned" ]; then
+        keytool -genkeypair -alias self -keyalg RSA -keysize 2048 -dname "CN=app-consumer" -validity 30 \
+          -keystore /tmp/self.p12 -storetype PKCS12 -storepass changeit -keypass changeit >/dev/null 2>&1
+        KS=/tmp/self.p12; KP=changeit
+      else
+        KS=/certs/user/user.p12; KP="$(cat /certs/user/user.password)"
+      fi
+      {
+        echo "ssl.keystore.type=PKCS12"
+        echo "ssl.keystore.location=$KS"
+        echo "ssl.keystore.password=$KP"
+      } >> "$P"
+    fi
+    echo "client role=$ROLE bootstrap=$BOOTSTRAP topic=$TOPIC security.protocol=${SECURITY_PROTOCOL:-PLAINTEXT}"
+    if [ "$ROLE" = "producer" ]; then
+      exec /opt/kafka/bin/kafka-producer-perf-test.sh --topic "$TOPIC" --num-records 1000000000 \
+        --throughput "${RATE:-20}" --record-size 100 --producer.config "$P" \
+        --producer-props bootstrap.servers="$BOOTSTRAP" acks=all
+    elif [ -n "${PROCESS_DELAY:-}" ]; then
+      # a slow consumer: each record takes PROCESS_DELAY seconds to "process"
+      /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server "$BOOTSTRAP" --topic "$TOPIC" \
+        --group "$GROUP" --consumer.config "$P" | while read -r _; do sleep "$PROCESS_DELAY"; done
+    else
+      exec /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server "$BOOTSTRAP" --topic "$TOPIC" \
+        --group "$GROUP" --consumer.config "$P" > /dev/null
+    fi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orders-producer
+  namespace: kafka
+  labels: {app: orders-producer}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app: orders-producer}
+  template:
+    metadata:
+      labels: {app: orders-producer}
+    spec:
+      containers:
+        - name: producer
+          image: quay.io/strimzi/kafka:1.3.1-kafka-4.3.2
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/bash", "/scripts/client.sh"]
+          env:
+            - {name: ROLE, value: producer}
+            - {name: BOOTSTRAP, value: "kafka-kafka-bootstrap:9092"}
+            - {name: TOPIC, value: orders}
+            - {name: SECURITY_PROTOCOL, value: PLAINTEXT}
+            - {name: RATE, value: "20"}
+            - {name: KAFKA_HEAP_OPTS, value: "-Xms64m -Xmx128m"}
+          resources:
+            requests: {cpu: 50m, memory: 192Mi}
+            limits: {memory: 384Mi}
+          volumeMounts:
+            - {name: scripts, mountPath: /scripts}
+      volumes:
+        - name: scripts
+          configMap: {name: client-scripts}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orders-consumer
+  namespace: kafka
+  labels: {app: orders-consumer}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app: orders-consumer}
+  template:
+    metadata:
+      labels: {app: orders-consumer}
+    spec:
+      containers:
+        - name: consumer
+          image: quay.io/strimzi/kafka:1.3.1-kafka-4.3.2
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/bash", "/scripts/client.sh"]
+          env:
+            - {name: ROLE, value: consumer}
+            - {name: BOOTSTRAP, value: "kafka-kafka-bootstrap:9093"}
+            - {name: TOPIC, value: orders}
+            - {name: GROUP, value: orders-consumer}
+            - {name: SECURITY_PROTOCOL, value: SSL}
+            - {name: KEYSTORE_MODE, value: user}
+            - {name: KAFKA_HEAP_OPTS, value: "-Xms64m -Xmx128m"}
+          resources:
+            requests: {cpu: 50m, memory: 192Mi}
+            limits: {memory: 384Mi}
+          volumeMounts:
+            - {name: scripts, mountPath: /scripts}
+            - {name: ca, mountPath: /certs/ca, readOnly: true}
+            - {name: user, mountPath: /certs/user, readOnly: true}
+      volumes:
+        - name: scripts
+          configMap: {name: client-scripts}
+        - name: ca
+          secret: {secretName: kafka-cluster-ca-cert}
+        - name: user
+          secret: {secretName: app-consumer}

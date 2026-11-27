@@ -1,0 +1,7 @@
+# One-node kind cluster for the MCP harness. The node image is pinned by digest (downloads.lock.json).
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: kafka-sre-mcp
+nodes:
+  - role: control-plane
+    image: kindest/node:v1.32.2@sha256:142f543559cc55d64e1ab9341df08e5ced84bd2e893736da8f51320f26f5950b

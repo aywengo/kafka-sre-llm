@@ -344,3 +344,51 @@ def kb_check_messages(window, entries):
     fill = {"WINDOW": window, "ENTRIES": entries}
     user = re.sub(r"<<(WINDOW|ENTRIES)>>", lambda m: fill[m.group(1)], KB_CHECK_USER)
     return [{"role": "system", "content": KB_CHECK_SYSTEM}, {"role": "user", "content": user}]
+
+
+# EXPERIMENTAL and UNMEASURED (M7, W30/W31): diagnosis with read-only tools (kafka_sre_rag/tools). A new prompt family
+# with its own version; none of the constants above changed. <<NAMESPACES>>, <<MAX_TURNS>>, <<TOOLS>>, <<NAME>>,
+# <<TEXT>>, <<REASON>> and <<N>> are filled with one re.sub (tools_fill); a change of any text below means a new
+# TOOLS_PROMPT_VERSION.
+TOOLS_PROMPT_VERSION = "tools/1"
+
+TOOLS_SYSTEM = (
+    "You are an SRE assistant for Apache Kafka 4.3 on Kubernetes with Strimzi 1.3 and Argo CD 3.6. An on-call engineer "
+    "describes a problem in a live cluster. Find its cause with the tools you are given, then answer.\n\n"
+    "Rules:\n"
+    "- The tools only read the cluster; none of them changes anything. Use only the tools offered, with the "
+    "arguments their schemas define.\n"
+    "- This session may read the namespaces <<NAMESPACES>> and cluster-scoped objects such as nodes. Secrets are "
+    "not available. A call outside these limits is blocked and counted against the session.\n"
+    "- Call one or a few tools at a time, read what they return, then decide the next call. Stop calling tools when "
+    "the evidence is enough; you can call tools in at most <<MAX_TURNS>> replies.\n"
+    "- Then answer without tool calls: the cause in one or two sentences; the tool outputs it rests on (which tool, "
+    "which object, what it showed); the fix as steps for the engineer to carry out, with a check that it worked. "
+    "Mark any disruptive or destructive step (a deletion, an offset reset, a forced operation). Do not claim to "
+    "have changed anything.")
+
+TOOLS_TEXT_PROTOCOL = (
+    "\n\nTools are called in text. To call a tool, write one line per call, exactly in this form, and nothing else "
+    "in that reply:\n"
+    "<tool_call>{\"name\": \"TOOL_NAME\", \"arguments\": {...}}</tool_call>\n"
+    "The results come back in the next message, one <tool_response> block per call. The tools, as JSON:\n<<TOOLS>>")
+
+TOOLS_RESULT_TEXT = "<tool_response name=\"<<NAME>>\">\n<<TEXT>>\n</tool_response>"
+TOOLS_BLOCKED = "BLOCKED by the session allow-list; nothing was run: <<REASON>>"
+TOOLS_INVALID = "REJECTED; nothing was run: invalid arguments: <<REASON>>"
+TOOLS_SKIPPED = "SKIPPED; nothing was run: more than <<N>> tool calls in one reply"
+TOOLS_FINAL = ("The tool budget of this session is used up. Answer now from the tool outputs above, without any "
+               "further tool call.")
+
+
+def tools_fill(template, **values):
+    import re
+    return re.sub(r"<<([A-Z_]+)>>", lambda m: str(values[m.group(1)]), template)
+
+
+def tools_messages(question, namespaces, max_turns, text_protocol=False, tools=None):
+    import json
+    system = tools_fill(TOOLS_SYSTEM, NAMESPACES=", ".join(namespaces), MAX_TURNS=max_turns)
+    if text_protocol:
+        system += tools_fill(TOOLS_TEXT_PROTOCOL, TOOLS=json.dumps(tools or [], indent=1))
+    return [{"role": "system", "content": system}, {"role": "user", "content": question}]
