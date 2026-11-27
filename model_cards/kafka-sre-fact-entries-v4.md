@@ -57,7 +57,7 @@ With the kafka-sre-llm runtime, `python -m kafka_sre_rag ask ... --kb-entries`, 
 v4.0.0 (Gemma 4 31B, the frozen retrieval, the lookup cards, and the fact entries). The runtime merges the entries that
 match the question into the retrieved pack after the documentation excerpts, with a cap of **10 items and 24,000
 characters** for the whole pack. The documentation excerpts remain in the prompt; the entries add to them and do not
-replace them. The installer of the release is to download this dataset at a pinned revision and check both hashes above (not yet wired).
+replace them. The installer is not part of v4.0.0; it moves to v4.0.1, and that installer will pin this dataset's revision and check both hashes above.
 
 **Consult the pinned source before applying an entry.** An entry is a pointer to the documentation, not a replacement
 for it: open the cited chunk and the upstream page at the pin named in `NOTICE`, and check the condition, the version
@@ -155,4 +155,4 @@ binds a user of Gemma 4 under Apache-2.0. Gemma wrote and checked no entry; the 
 ## For the Owner's review (this draft)
 
 1. Whether the upload goes out under the account named in this card (`aywengo`), and the release go.
-2. The runtime's own wording about entries (`--kb-entries` help and warning) is not touched here and is a separate question.
+2. The runtime's own wording about entries (`--kb-entries` help and warning) is decided (W46): it changes in v4.0.0 together with the MCP merge, after a byte check of the measured prompts of RE. This dataset does not change it.
