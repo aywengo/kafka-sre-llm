@@ -39,12 +39,13 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 sys.path.insert(0, str(ROOT))
 
+from kafka_sre_rag.tools import kubectx  # noqa: E402
 from kafka_sre_rag.tools.cli import session_from  # noqa: E402
 from kafka_sre_rag.tools.loop import OpenAIChatModel, ScriptedModel, run as run_loop  # noqa: E402
 
 import score  # noqa: E402
 
-CONTEXT = "kind-kafka-sre-mcp"
+CONTEXT = os.environ.get("MCP_HARNESS_EXPECT_CONTEXT") or kubectx.EXPECTED_CONTEXT  # constant: kafka_sre_rag/tools/kubectx.py
 KUBECONFIG = Path(os.environ.get("MCP_HARNESS_KUBECONFIG") or ROOT / "work" / "mcp_harness" / "kubeconfig")
 STUB_ANSWER = "[dry run: scripted stub model; no model was called]"
 
@@ -183,6 +184,16 @@ def ensure_kubeconfig():
         if code:
             sys.exit(f"no harness kubeconfig at {KUBECONFIG} and none could be written: {out.strip()[-300:]}")
         log(f"wrote the harness kubeconfig {KUBECONFIG}")
+    check_context()
+
+
+def check_context():
+    """The harness kubeconfig has the expected context and it is the current one; else exit 2 (reads the file only)."""
+    try:
+        kubectx.check_harness_context(KUBECONFIG, CONTEXT)
+    except kubectx.ContextError as e:
+        print(f"harness: {e}", file=sys.stderr)
+        sys.exit(2)
 
 
 def ensure_healthy():
@@ -320,7 +331,8 @@ def cmd_check_persistence(a):
 
 
 def make_session():
-    return session_from(None, str(KUBECONFIG), CONTEXT)
+    check_context()
+    return session_from(None, str(KUBECONFIG), CONTEXT, CONTEXT)
 
 
 def move_aside(trace):

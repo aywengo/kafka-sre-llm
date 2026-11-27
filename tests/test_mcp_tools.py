@@ -31,6 +31,36 @@ def load(name):
     return mod
 
 
+# A fake kubectl for the context checks: `config ...` is answered from a simple fake kubeconfig (lines `- name: X` and
+# `current-context: X`); every call is recorded in ../calls.log next to the fake, one line each (the environment of the
+# checks is minimal, so no variable can carry the path).
+CONFIG_FAKE = (
+    'echo "$*" >> "$(dirname "$0")/../calls.log"\n'
+    'if [ "$1" = config ]; then\n'
+    '  case "$4" in\n'
+    '    get-contexts) sed -n "s/^- name: //p" "$3" ;;\n'
+    '    current-context) sed -n "s/^current-context: //p" "$3" ;;\n'
+    '  esac\n'
+    '  exit 0\n'
+    'fi'
+)
+EXPECTED = "kind-kafka-sre-mcp"
+
+
+def fake_cluster_dir(d, contexts=(EXPECTED,), current=EXPECTED, write_config=True):
+    """A folder with a fake kubectl on its own and a fake kubeconfig; returns (bin dir, kubeconfig path, call log)."""
+    d = Path(d)
+    (d / "bin").mkdir()
+    fake = d / "bin" / "kubectl"
+    fake.write_text(f"#!/bin/sh\n{CONFIG_FAKE}\necho non-config call >> \"$(dirname \"$0\")/../calls.log.other\"\nexit 0\n")
+    fake.chmod(0o755)
+    kc = d / "kubeconfig"
+    if write_config:
+        kc.write_text("apiVersion: v1\nkind: Config\ncontexts:\n" + "".join(f"- name: {c}\n" for c in contexts)
+                      + (f"current-context: {current}\n" if current else ""))
+    return d / "bin", kc, d / "calls.log"
+
+
 SCHEMAS = {t["name"]: t["inputSchema"] for t in srv.TOOLS}
 
 
@@ -216,11 +246,14 @@ class ServerTest(unittest.TestCase):
         self.assertIn("error", resp[3])
 
     def test_real_subprocess_server(self):
-        kc = tempfile.NamedTemporaryFile("w", suffix=".kubeconfig", delete=False)
-        kc.close()
-        self.addCleanup(Path(kc.name).unlink)
-        s = StdioServer("k8s", {"command": ["{python}", "-m", "kafka_sre_rag.tools.k8s_server", "--kubeconfig", kc.name,
-                                            "--context", "none"], "cwd": str(ROOT)})
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        b, kc, _ = fake_cluster_dir(tmp.name, contexts=("none",), current="none")  # the server checks the context first
+        s = None
+        with unittest.mock.patch.dict(os.environ, {"PATH": f"{b}{os.pathsep}{os.environ.get('PATH', '')}"}):
+            s = StdioServer("k8s", {"command": ["{python}", "-m", "kafka_sre_rag.tools.k8s_server", "--kubeconfig",
+                                                str(kc), "--context", "none", "--expect-context", "none"],
+                                    "cwd": str(ROOT)})
         try:
             self.assertEqual(s.server_info["name"], srv.SERVER_INFO["name"])
             self.assertEqual({t["name"] for t in s.tools}, set(SCHEMAS))
@@ -692,10 +725,10 @@ class ReviewServerTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             d = Path(d)
             kc = d / "kubeconfig"
-            kc.write_text("apiVersion: v1\nkind: Config\n")
+            kc.write_text("apiVersion: v1\nkind: Config\ncontexts:\n- name: kind-x\ncurrent-context: kind-x\n")
             dump, argv_dump = d / "env.txt", d / "argv.txt"
             fake = d / "kubectl"
-            fake.write_text(f"#!/bin/sh\nenv > '{dump}'\nprintf '%s\\n' \"$@\" > '{argv_dump}'\necho 'NAME  READY'\n")
+            fake.write_text(f"#!/bin/sh\n{CONFIG_FAKE}\nenv > '{dump}'\nprintf '%s\\n' \"$@\" > '{argv_dump}'\necho 'NAME  READY'\n")
             fake.chmod(0o755)
             env = {"PATH": f"{d}{os.pathsep}{os.environ.get('PATH', '')}", "OMLX_API_KEY": "made-up-omlx-key",
                    "JUDGE_API_KEY": "made-up-judge-key", "AWS_SECRET_ACCESS_KEY": "made-up-aws", "OMLX_URL": FAKE_URL}
@@ -887,6 +920,172 @@ class FaultCheckFixesTest(unittest.TestCase):
         order = [r.index(x) for x in ("pause-reconciliation=true", "wait_until", "strimzipodset kafka-broker",
                                       "replace -f")]
         self.assertEqual(order, sorted(order))
+
+
+class ContextCheckTest(unittest.TestCase):
+    """K1: the expected Kubernetes context is checked before any kubectl call (AGENTS.md, "Kubernetes contexts")."""
+    BAD = {"wrong current-context": dict(contexts=(EXPECTED, "other"), current="other"),
+           "no current-context": dict(contexts=(EXPECTED,), current=None),
+           "missing context": dict(contexts=("other",), current="other"),
+           "missing file": dict(write_config=False)}
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+
+    def make(self, **kw):
+        d = Path(tempfile.mkdtemp(dir=self._tmp.name))
+        b, kc, log = fake_cluster_dir(d, **kw)
+        env = dict(os.environ, PATH=f"{b}{os.pathsep}{os.environ.get('PATH', '')}",
+                   MCP_HARNESS_KUBECONFIG=str(kc))
+        env.pop("MCP_HARNESS_EXPECT_CONTEXT", None)
+        return b, kc, log, env
+
+    def calls(self, log):
+        return log.read_text().splitlines() if log.exists() else []
+
+    def assert_only_config_calls(self, log):
+        self.assertFalse(Path(str(log) + ".other").exists(), "a non-config kubectl call was made")
+        for c in self.calls(log):
+            self.assertTrue(c.startswith("config --kubeconfig "), c)
+
+    def test_constant_is_the_same_in_python_and_shell(self):
+        from kafka_sre_rag.tools import kubectx
+        self.assertEqual(kubectx.EXPECTED_CONTEXT, EXPECTED)
+        self.assertIn(f'CTX="${{MCP_HARNESS_EXPECT_CONTEXT:-{EXPECTED}}}"', (ROOT / "mcp_harness/lib.sh").read_text())
+
+    def test_python_check_passes_with_the_right_context(self):
+        from kafka_sre_rag.tools import kubectx
+        b, kc, log, env = self.make()
+        with unittest.mock.patch.dict(os.environ, env):
+            kubectx.check_harness_context(kc)
+        self.assert_only_config_calls(log)
+        self.assertEqual(len(self.calls(log)), 2)
+
+    def test_python_check_refuses_each_bad_kubeconfig(self):
+        from kafka_sre_rag.tools import kubectx
+        for name, kw in self.BAD.items():
+            with self.subTest(name):
+                b, kc, log, env = self.make(**kw)
+                with unittest.mock.patch.dict(os.environ, env):
+                    with self.assertRaises(kubectx.ContextError) as cm:
+                        kubectx.check_harness_context(kc)
+                self.assertIn(EXPECTED, str(cm.exception))
+                self.assert_only_config_calls(log)
+
+    def test_shell_lib_passes_and_refuses_with_exit_2_before_any_other_command(self):
+        lib = ROOT / "mcp_harness" / "lib.sh"
+        b, kc, log, env = self.make()
+        p = subprocess.run(["bash", "-c", f'source "{lib}"; echo sourced'], env=env, capture_output=True, text=True)
+        self.assertEqual((p.returncode, p.stdout.strip()), (0, "sourced"), p.stderr)
+        self.assert_only_config_calls(log)
+        for name, kw in self.BAD.items():
+            with self.subTest(name):
+                b, kc, log, env = self.make(**kw)
+                p = subprocess.run(["bash", "-c", f'source "{lib}"; echo sourced; kubectl get pods'], env=env,
+                                   capture_output=True, text=True)
+                self.assertEqual(p.returncode, 2, p.stderr)
+                self.assertNotIn("sourced", p.stdout)
+                self.assertIn(EXPECTED, p.stderr)
+                self.assert_only_config_calls(log)
+
+    def test_a_fault_script_refuses_before_it_runs_anything(self):
+        b, kc, log, env = self.make(contexts=(EXPECTED, "other"), current="other")
+        p = subprocess.run(["bash", str(ROOT / "mcp_harness/faults/acl.sh"), "inject:x"], env=env,
+                           capture_output=True, text=True)
+        self.assertEqual(p.returncode, 2, p.stderr)
+        self.assertIn("current-context is other", p.stderr)
+        self.assert_only_config_calls(log)
+
+    def test_explicit_variable_overrides_the_expected_name(self):
+        b, kc, log, env = self.make(contexts=("kind-alt",), current="kind-alt")
+        env["MCP_HARNESS_EXPECT_CONTEXT"] = "kind-alt"
+        p = subprocess.run(["bash", "-c", f'source "{ROOT}/mcp_harness/lib.sh"; echo "$CTX"'], env=env,
+                           capture_output=True, text=True)
+        self.assertEqual((p.returncode, p.stdout.strip()), (0, "kind-alt"), p.stderr)
+
+    def test_harness_py_refuses_with_exit_2_and_runs_no_cluster_script(self):
+        h = load("harness")
+        b, kc, log, env = self.make()
+        with unittest.mock.patch.dict(os.environ, env), unittest.mock.patch.object(h, "KUBECONFIG", kc):
+            h.check_context()
+        for name, kw in self.BAD.items():
+            with self.subTest(name):
+                b, kc, log, env = self.make(**kw)
+                with unittest.mock.patch.dict(os.environ, env), unittest.mock.patch.object(h, "KUBECONFIG", kc), \
+                        unittest.mock.patch.object(h, "cluster", side_effect=AssertionError("cluster call")) as cl, \
+                        unittest.mock.patch.object(h, "sh", side_effect=AssertionError("shell call")), \
+                        unittest.mock.patch("sys.stderr", io.StringIO()) as err:
+                    with self.assertRaises(SystemExit) as cm:
+                        h.make_session()
+                if name == "missing file":
+                    pass
+                self.assertEqual(cm.exception.code, 2)
+                self.assertIn(EXPECTED, err.getvalue())
+                cl.assert_not_called()
+                self.assert_only_config_calls(log)
+
+    def test_k8s_server_refuses_with_exit_2_before_serving(self):
+        for name, kw in self.BAD.items():
+            with self.subTest(name):
+                b, kc, log, env = self.make(**kw)
+                with unittest.mock.patch.dict(os.environ, env), unittest.mock.patch.object(srv, "serve") as serve, \
+                        unittest.mock.patch("sys.stderr", io.StringIO()) as err:
+                    with self.assertRaises(SystemExit) as cm:
+                        srv.main(["--kubeconfig", str(kc), "--context", EXPECTED])
+                self.assertEqual(cm.exception.code, 2)
+                serve.assert_not_called()
+                if name != "missing file":  # argparse's own refusal of a missing file names no context
+                    self.assertIn(EXPECTED, err.getvalue())
+                self.assert_only_config_calls(log)
+        b, kc, log, env = self.make()
+        with unittest.mock.patch.dict(os.environ, env), unittest.mock.patch.object(srv, "serve") as serve:
+            srv.main(["--kubeconfig", str(kc), "--context", EXPECTED])
+        serve.assert_called_once()
+        with unittest.mock.patch.dict(os.environ, env), unittest.mock.patch.object(srv, "serve") as serve, \
+                unittest.mock.patch("sys.stderr", io.StringIO()):
+            with self.assertRaises(SystemExit) as cm:  # --context differs from the expected name
+                srv.main(["--kubeconfig", str(kc), "--context", "other"])
+        self.assertEqual(cm.exception.code, 2)
+        serve.assert_not_called()
+
+    def test_diagnose_refuses_a_missing_context_or_an_expect_mismatch_before_any_server_starts(self):
+        from kafka_sre_rag.tools import cli
+        for name, kw, kube_ctx, expect in (
+                ("right context", {}, EXPECTED, EXPECTED),
+                ("missing context", dict(contexts=("other",), current="other"), EXPECTED, None),
+                ("missing file", dict(write_config=False), EXPECTED, None),
+                ("expect mismatch", dict(contexts=(EXPECTED, "other"), current=EXPECTED), "other", EXPECTED)):
+            with self.subTest(name):
+                b, kc, log, env = self.make(**kw)
+                with unittest.mock.patch.dict(os.environ, env), \
+                        unittest.mock.patch.object(cli, "StdioServer") as started:
+                    if name == "right context":
+                        session = cli.session_from(None, str(kc), kube_ctx, expect)
+                        session.close()
+                        self.assertTrue(started.called)
+                    else:
+                        with self.assertRaises(ValueError) as cm:
+                            cli.session_from(None, str(kc), kube_ctx, expect)
+                        started.assert_not_called()
+                        self.assertIn("expected" if name == "expect mismatch" else "no ", str(cm.exception))
+                self.assert_only_config_calls(log)
+
+    def test_diagnose_main_returns_2_on_an_expect_mismatch(self):
+        from kafka_sre_rag.tools import cli
+        b, kc, log, env = self.make(contexts=(EXPECTED, "other"), current=EXPECTED)
+        stub = Path(self._tmp.name) / "stub.json"
+        stub.write_text("[]")
+        import argparse
+        d = cli.fill_parser(argparse.ArgumentParser())
+        a = d.parse_args(["q", "--tools", "mcp", "--stub", str(stub), "--kubeconfig", str(kc), "--kube-context", "other",
+                          "--expect-context", EXPECTED])
+        with unittest.mock.patch.dict(os.environ, env), unittest.mock.patch.object(cli, "StdioServer") as started, \
+                unittest.mock.patch("sys.stderr", io.StringIO()) as err:
+            self.assertEqual(cli.main(a), 2)
+        started.assert_not_called()
+        self.assertIn(f"expected {EXPECTED}", err.getvalue())
+        self.assert_only_config_calls(log)
 
 
 if __name__ == "__main__":

@@ -20,6 +20,7 @@ import re
 import subprocess
 import sys
 
+from . import kubectx
 from .schema import validate
 
 PROTOCOL_VERSION = "2025-06-18"
@@ -429,11 +430,21 @@ def main(argv=None):
     ap.add_argument("--kubeconfig", required=True,
                     help="kubeconfig file (required; the server never uses the default kubeconfig or its current context)")
     ap.add_argument("--context", required=True, help="kubeconfig context (required)")
+    ap.add_argument("--expect-context", help="the context name this server must be given and the kubeconfig's "
+                    f"current-context must equal (default {kubectx.EXPECTED_CONTEXT})")
     ap.add_argument("--kafka-bootstrap", default="localhost:9092",
                     help="bootstrap address the Kafka tools use inside the broker pod (default localhost:9092)")
     a = ap.parse_args(argv)
     if not os.path.isfile(a.kubeconfig):
         ap.error(f"--kubeconfig {a.kubeconfig}: no such file")
+    expected = a.expect_context or kubectx.EXPECTED_CONTEXT
+    try:
+        if a.context != expected:
+            raise kubectx.ContextError(f"--context is {a.context}, expected {expected}")
+        kubectx.check_harness_context(a.kubeconfig, expected)
+    except kubectx.ContextError as e:
+        print(f"k8s_server: {e}", file=sys.stderr)
+        sys.exit(2)
     serve(Runner(a.context, os.path.abspath(a.kubeconfig), a.kafka_bootstrap))
 
 

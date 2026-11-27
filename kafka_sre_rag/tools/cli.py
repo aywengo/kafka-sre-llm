@@ -12,6 +12,7 @@ import os
 import sys
 from pathlib import Path
 
+from . import kubectx
 from .allowlist import AllowList
 from .loop import OpenAIChatModel, ScriptedModel, Session, run
 from .mcp_client import StdioServer
@@ -27,6 +28,8 @@ def fill_parser(d):
     d.add_argument("--kubeconfig", required=True,
                    help="kubeconfig file for the k8s server (required; the default kubeconfig is never used)")
     d.add_argument("--kube-context", required=True, help="context in that kubeconfig (required; no default)")
+    d.add_argument("--expect-context", metavar="NAME",
+                   help="refuse unless --kube-context equals NAME (the harness passes kind-kafka-sre-mcp)")
     d.add_argument("--base-url", help="OpenAI-compatible server URL (default: environment variable OMLX_URL)")
     d.add_argument("--model", help="model name sent to the server")
     d.add_argument("--max-turns", type=int, default=12)
@@ -40,20 +43,28 @@ def fill_parser(d):
     return d
 
 
-def session_from(allowlist_path, kubeconfig, kube_context):
-    """The session's servers; the k8s server gets the explicit kubeconfig file and context (both required)."""
+def session_from(allowlist_path, kubeconfig, kube_context, expect_context=None):
+    """The session's servers; the k8s server gets the explicit kubeconfig file and context (both required).
+    Refuses (ValueError) before any server starts when the context differs from `expect_context` or is not in the file."""
     if not kubeconfig or not kube_context:
         raise ValueError("a kubeconfig file and a kube context are both required")
     kubeconfig = os.path.abspath(kubeconfig)
     if not os.path.isfile(kubeconfig):
         raise ValueError(f"kubeconfig {kubeconfig}: no such file")
+    if expect_context and kube_context != expect_context:
+        raise ValueError(f"--kube-context is {kube_context}, expected {expect_context}")
+    try:
+        kubectx.check_context_exists(kubeconfig, kube_context)
+    except kubectx.ContextError as e:
+        raise ValueError(str(e))
     allow = AllowList.load(allowlist_path)
     servers = []
     try:
         for name, spec in allow.servers.items():
             spec = copy.deepcopy(spec)
             if name == "k8s":
-                spec["command"] = spec["command"] + ["--kubeconfig", kubeconfig, "--context", kube_context]
+                spec["command"] = spec["command"] + ["--kubeconfig", kubeconfig, "--context", kube_context,
+                                                       "--expect-context", kube_context]
             spec.setdefault("cwd", str(ROOT))
             servers.append(StdioServer(name, spec))
     except BaseException:
@@ -74,7 +85,7 @@ def main(a):
         model = OpenAIChatModel(url, a.model, os.environ.get("OMLX_API_KEY"), max_tokens=a.max_tokens,
                                 extra_body=a.extra_body)
     try:
-        session = session_from(a.allowlist, a.kubeconfig, a.kube_context)
+        session = session_from(a.allowlist, a.kubeconfig, a.kube_context, a.expect_context)
     except ValueError as e:
         print(f"diagnose: {e}", file=sys.stderr)
         return 2

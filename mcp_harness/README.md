@@ -47,3 +47,8 @@ the healthy state between scenarios.
 
 The runtime side lives in `kafka_sre_rag/tools/` (`python -m kafka_sre_rag diagnose --tools mcp ...`); the tool
 prompt is `TOOLS_SYSTEM` in `kafka_sre_rag/prompts.py`, version `TOOLS_PROMPT_VERSION`.
+
+Context check: `lib.sh` (so every script), `harness.py` and `k8s_server.py` check, before any kubectl call, that the
+harness kubeconfig exists, holds context `kind-kafka-sre-mcp` and has it as current-context (read from the file only);
+otherwise they print the expected and found names and exit 2. `diagnose` checks that `--kube-context` is in the file
+and takes `--expect-context NAME`. Override the name only with `MCP_HARNESS_EXPECT_CONTEXT` or `--expect-context`.

@@ -10,6 +10,7 @@
 # Never touches the user's default kubeconfig: kind writes the cluster's context into the harness's own file, and
 # every kubectl call names that file and the context (lib.sh).
 set -uo pipefail
+HARNESS_CTX_CHECK=defer  # the file may not exist yet (up, kubeconfig); check_context runs before the first kubectl call
 source "$(dirname "$0")/lib.sh"
 
 write_kubeconfig() {  # the cluster's kubeconfig into the harness's own file (mode 600), never the default one
@@ -18,7 +19,7 @@ write_kubeconfig() {  # the cluster's kubeconfig into the harness's own file (mo
     || { rm -f "$KCFG.tmp"; echo "cannot write $KCFG: is cluster $CLUSTER up?" >&2; return 1; }
 }
 
-need_kubeconfig() { [ -s "$KCFG" ] || write_kubeconfig; }
+need_kubeconfig() { { [ -s "$KCFG" ] || write_kubeconfig; } && check_context; }
 
 have_images() {
   local i
@@ -72,6 +73,7 @@ cmd_up() {
   mkdir -p "$GEN"
   if kind get clusters 2>/dev/null | grep -qx "$CLUSTER"; then log "cluster $CLUSTER exists"; write_kubeconfig || exit 1
   else ( umask 077; kind create cluster --config "$HARNESS/manifests/kind-config.yaml" --kubeconfig "$KCFG" ) || exit 1; fi
+  check_context  # before the first kubectl call
   # `kind load docker-image` imports all platforms and fails on Docker's containerd image store when only
   # linux/arm64 was pulled; a single-platform archive loads cleanly.
   mkdir -p "$GEN/images"
@@ -143,6 +145,6 @@ case "${1:-}" in
   reset) need_kubeconfig && cmd_reset ;;
   health) need_kubeconfig && healthy ;;
   pulls) need_kubeconfig && cmd_pulls ;;
-  kubeconfig) write_kubeconfig ;;
+  kubeconfig) write_kubeconfig && check_context ;;
   *) echo "usage: $0 up|down|reset|health|pulls|kubeconfig" >&2; exit 2 ;;
 esac

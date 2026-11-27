@@ -2,6 +2,7 @@
 # The one download of the MCP harness: the two pinned manifests and the five pinned images in downloads.lock.json.
 # Skips what is already present and checks every sha256 and image digest against the lock. Nothing else downloads.
 set -euo pipefail
+HARNESS_CTX_CHECK=defer  # fetch.sh calls no kubectl
 source "$(dirname "$0")/lib.sh"
 LOCK="$HARNESS/downloads.lock.json"
 mkdir -p "$RAW"

@@ -2,7 +2,9 @@
 HARNESS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HARNESS/.." && pwd)"
 CLUSTER=kafka-sre-mcp
-CTX="kind-$CLUSTER"
+# The expected context name (the Python side holds the same constant in kafka_sre_rag/tools/kubectx.py; a test keeps
+# them equal). Only MCP_HARNESS_EXPECT_CONTEXT overrides it.
+CTX="${MCP_HARNESS_EXPECT_CONTEXT:-kind-kafka-sre-mcp}"
 NODE="$CLUSTER-control-plane"
 RAW="${MCP_HARNESS_RAW:-$ROOT/raw/mcp_harness}"
 GEN="${MCP_HARNESS_GEN:-$ROOT/work/mcp_harness}"
@@ -15,6 +17,27 @@ fi
 # reads the user's default kubeconfig or its current context.
 KCFG="${MCP_HARNESS_KUBECONFIG:-$GEN/kubeconfig}"
 export KUBECONFIG="$KCFG"
+# check_context: the Owner's standing rule (AGENTS.md, "Kubernetes contexts"). The harness kubeconfig must exist, hold
+# context $CTX, and have it as current-context; else print the expected and found names (never the server address or
+# credentials) and exit 2 before any other command. `kubectl config` reads the file only. Run when lib.sh is sourced,
+# so before any kubectl call of any script; a script that writes the file first (cluster.sh up, kubeconfig) sets
+# HARNESS_CTX_CHECK=defer before sourcing and calls check_context itself.
+check_context() {
+  local found cur
+  if [ ! -f "$KCFG" ]; then
+    echo "harness: kubeconfig $KCFG: no such file (expected context $CTX)" >&2; exit 2
+  fi
+  found=$(kubectl config --kubeconfig "$KCFG" get-contexts -o name 2>/dev/null | tr '\n' ' ')
+  case " $found " in
+    *" $CTX "*) ;;
+    *) echo "harness: kubeconfig $KCFG: no context $CTX; found: ${found:-(none)}" >&2; exit 2 ;;
+  esac
+  cur=$(kubectl config --kubeconfig "$KCFG" current-context 2>/dev/null)
+  if [ "$cur" != "$CTX" ]; then
+    echo "harness: kubeconfig $KCFG: current-context is ${cur:-(none)}, expected $CTX" >&2; exit 2
+  fi
+}
+[ "${HARNESS_CTX_CHECK:-}" = defer ] || check_context
 K() { kubectl --kubeconfig "$KCFG" --context "$CTX" "$@"; }
 log() { echo "[$(date +%H:%M:%S)] $*"; }
 
