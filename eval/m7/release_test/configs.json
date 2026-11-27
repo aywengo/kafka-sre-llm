@@ -74,8 +74,8 @@
    "kafka_sre_rag/retrieval.py": "b18a44a9923c9da6a7df68ef6bb720aef8af51373adb75ac793de4ec96b3bcf3",
    "kafka_sre_rag/config.py": "483aba784a927cc59f84461dea52baf6acc69cea544dd177e35c98a22cb5ce8b",
    "kafka_sre_rag/generators.py": "48ce0bb8d05d240180ab62e13ca8bc44586abf4350e1293d1f7c80e236c9fbcc",
-   "kafka_sre_rag/pipeline.py": "79b230fc2a4e04f2e3fe32cf3ac9f0d7eee23396f4e3e536913c78fe5a67ff52",
-   "kafka_sre_rag/__main__.py": "a72f62a8054b372dbce88080d8ec3d81f6978e1ed818d56bc50d84198da74f3f",
+   "kafka_sre_rag/pipeline.py": "435a01dea942c362a22cc52950df65572e204f56d915f3ee642e4264a5a519b7",
+   "kafka_sre_rag/__main__.py": "b53ff5992d1d8ded18ddf52ebca6772b2ecdc2399d7bbfeda41767fc9c87bb58",
    "scripts/retrieve.py": "7981b711a2c74e6205580a96f521531fcc2f8c1cc2c26063eac97d974d7829e8",
    "kafka_sre_rag/prompts.py": "1df5989e41a8bc67d578de1b5e7cf76df7078a46ae2c42551ab424c82434db7b"
   },
@@ -153,8 +153,8 @@
    }
   },
   "entries": {
-   "on": "only if Z4 passes",
-   "status": "pending",
+   "on": false,
+   "status": "off: Z4 stopped at part 1, the audit found 178 of 200 ok, bar 190 (2026-11-27)",
    "index": null,
    "sha256": null
   },
@@ -234,8 +234,8 @@
    "kafka_sre_rag/retrieval.py": "b18a44a9923c9da6a7df68ef6bb720aef8af51373adb75ac793de4ec96b3bcf3",
    "kafka_sre_rag/config.py": "483aba784a927cc59f84461dea52baf6acc69cea544dd177e35c98a22cb5ce8b",
    "kafka_sre_rag/generators.py": "48ce0bb8d05d240180ab62e13ca8bc44586abf4350e1293d1f7c80e236c9fbcc",
-   "kafka_sre_rag/pipeline.py": "79b230fc2a4e04f2e3fe32cf3ac9f0d7eee23396f4e3e536913c78fe5a67ff52",
-   "kafka_sre_rag/__main__.py": "a72f62a8054b372dbce88080d8ec3d81f6978e1ed818d56bc50d84198da74f3f",
+   "kafka_sre_rag/pipeline.py": "435a01dea942c362a22cc52950df65572e204f56d915f3ee642e4264a5a519b7",
+   "kafka_sre_rag/__main__.py": "b53ff5992d1d8ded18ddf52ebca6772b2ecdc2399d7bbfeda41767fc9c87bb58",
    "scripts/retrieve.py": "7981b711a2c74e6205580a96f521531fcc2f8c1cc2c26063eac97d974d7829e8",
    "kafka_sre_rag/prompts.py": "1df5989e41a8bc67d578de1b5e7cf76df7078a46ae2c42551ab424c82434db7b"
   },
@@ -325,5 +325,28 @@
   "work/m4/catalogues/CATALOGUES.json",
   "oMLX settings and model folders (read-only): model directory setting, model_settings.json, the two folders' files and .cache/huggingface metadata",
   "git tag v3.2.0"
+ ],
+ "amendments": [
+  {
+   "date": "2026-11-27",
+   "when": "before any release-test answer exists",
+   "reason": "the night merge (aa68e36, the --kb-entries option, off by default; the ask call is unchanged when it is off) changed two runtime files that this file pins; the fact-entries audit failed, so the entries are off in R",
+   "files": {
+    "kafka_sre_rag/pipeline.py": {
+     "old": "79b230fc2a4e04f2e3fe32cf3ac9f0d7eee23396f4e3e536913c78fe5a67ff52",
+     "new": "435a01dea942c362a22cc52950df65572e204f56d915f3ee642e4264a5a519b7"
+    },
+    "kafka_sre_rag/__main__.py": {
+     "old": "a72f62a8054b372dbce88080d8ec3d81f6978e1ed818d56bc50d84198da74f3f",
+     "new": "b53ff5992d1d8ded18ddf52ebca6772b2ecdc2399d7bbfeda41767fc9c87bb58"
+    }
+   },
+   "applies_to": [
+    "R",
+    "C"
+   ],
+   "entries_R": "changed from on-if-Z4-passes/pending to off (runs/m7/reports/kb_audit.md)",
+   "report": "runs/m7/reports/release_config.md"
+  }
  ]
 }
