@@ -332,7 +332,7 @@ def cmd_check_persistence(a):
 
 def make_session():
     check_context()
-    return session_from(None, str(KUBECONFIG), CONTEXT, CONTEXT)
+    return session_from(None, str(KUBECONFIG), CONTEXT, CONTEXT, check_current=True)
 
 
 def move_aside(trace):

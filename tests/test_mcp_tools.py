@@ -1071,6 +1071,31 @@ class ContextCheckTest(unittest.TestCase):
                         self.assertIn("expected" if name == "expect mismatch" else "no ", str(cm.exception))
                 self.assert_only_config_calls(log)
 
+    def test_diagnose_accepts_a_kubeconfig_whose_current_context_differs(self):
+        from kafka_sre_rag.tools import cli
+        b, kc, log, env = self.make(contexts=(EXPECTED, "mine"), current="mine")
+        with unittest.mock.patch.dict(os.environ, env), unittest.mock.patch.object(cli, "StdioServer") as started:
+            session = cli.session_from(None, str(kc), EXPECTED, EXPECTED)
+            session.close()
+            self.assertTrue(started.called)
+            self.assertIn("--no-current-check", started.call_args[0][1]["command"])
+            started.reset_mock()
+            cli.session_from(None, str(kc), EXPECTED, EXPECTED, check_current=True).close()  # the harness's call
+            self.assertNotIn("--no-current-check", started.call_args[0][1]["command"])
+        # the server started by diagnose accepts it; the harness's server refuses it
+        for flags, code in ((["--no-current-check"], None), ([], 2)):
+            with unittest.mock.patch.dict(os.environ, env), unittest.mock.patch.object(srv, "serve") as serve, \
+                    unittest.mock.patch("sys.stderr", io.StringIO()):
+                args = ["--kubeconfig", str(kc), "--context", EXPECTED, *flags]
+                if code:
+                    with self.assertRaises(SystemExit) as cm:
+                        srv.main(args)
+                    self.assertEqual(cm.exception.code, code)
+                else:
+                    srv.main(args)
+                    serve.assert_called_once()
+        self.assert_only_config_calls(log)
+
     def test_diagnose_main_returns_2_on_an_expect_mismatch(self):
         from kafka_sre_rag.tools import cli
         b, kc, log, env = self.make(contexts=(EXPECTED, "other"), current=EXPECTED)

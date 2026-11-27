@@ -43,7 +43,7 @@ def fill_parser(d):
     return d
 
 
-def session_from(allowlist_path, kubeconfig, kube_context, expect_context=None):
+def session_from(allowlist_path, kubeconfig, kube_context, expect_context=None, check_current=False):
     """The session's servers; the k8s server gets the explicit kubeconfig file and context (both required).
     Refuses (ValueError) before any server starts when the context differs from `expect_context` or is not in the file."""
     if not kubeconfig or not kube_context:
@@ -65,6 +65,8 @@ def session_from(allowlist_path, kubeconfig, kube_context, expect_context=None):
             if name == "k8s":
                 spec["command"] = spec["command"] + ["--kubeconfig", kubeconfig, "--context", kube_context,
                                                        "--expect-context", kube_context]
+                if not check_current:  # a user's own kubeconfig: its current-context is not ours to require
+                    spec["command"].append("--no-current-check")
             spec.setdefault("cwd", str(ROOT))
             servers.append(StdioServer(name, spec))
     except BaseException:

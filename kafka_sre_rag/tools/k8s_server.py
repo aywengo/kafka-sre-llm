@@ -434,6 +434,9 @@ def main(argv=None):
                     f"current-context must equal (default {kubectx.EXPECTED_CONTEXT})")
     ap.add_argument("--kafka-bootstrap", default="localhost:9092",
                     help="bootstrap address the Kafka tools use inside the broker pod (default localhost:9092)")
+    ap.add_argument("--no-current-check", action="store_true",
+                    help="do not require the kubeconfig's current-context to equal --context (diagnose on a user's "
+                    "own kubeconfig; the context must still exist). The harness's own file keeps the check.")
     a = ap.parse_args(argv)
     if not os.path.isfile(a.kubeconfig):
         ap.error(f"--kubeconfig {a.kubeconfig}: no such file")
@@ -441,7 +444,10 @@ def main(argv=None):
     try:
         if a.context != expected:
             raise kubectx.ContextError(f"--context is {a.context}, expected {expected}")
-        kubectx.check_harness_context(a.kubeconfig, expected)
+        if a.no_current_check:
+            kubectx.check_context_exists(a.kubeconfig, a.context)
+        else:
+            kubectx.check_harness_context(a.kubeconfig, expected)
     except kubectx.ContextError as e:
         print(f"k8s_server: {e}", file=sys.stderr)
         sys.exit(2)
