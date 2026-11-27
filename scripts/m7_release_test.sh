@@ -24,12 +24,21 @@
 #     7. measures per set (h6: encrypted) and the report (H = harm the SRE found, M, coverage, omissions, wrong per 10 answers and per 1,000 words, seconds, cut share, paired R - C on complete
 #        pairs, bars B1 to B4 as met / not met / not measured, W37; h6 totals only, also without the tagged item).
 #
+# Fact entries (W43): an arm whose configs.json entry has `entries.on` (the arm RE = R + the fact entries) is answered with `--kb-entries`; the answer row records `kb_entries` (the ids added and the
+#   counts); the pack is recovered on the CPU by the frozen retrieval and then the entries merge (KbEntries.merge with the frozen reranker), and must equal the answer's recorded sources, the entries
+#   added and the counts; a pack is `[chunk ids..., kbe:<entry id>...]`. The judge, the readers' excerpts and the adjudication pack read a chunk file plus the entries
+#   ($W/chunks_plus_entries.jsonl, made by `m7_release_test.py chunks-plus`), so they show the whole pack the model received. The dry-run stub makes entries itself (BM25 order, no reranker).
+#   Adding RE to a finished folder (R and C stay as they are): --arms RE,R,C --candidate RE --control C --add-arms-late --reading-dir reading2 --bundle-arms RE,R,C. The manifest records the arm and the candidate's rule
+#   text as logged late additions (--add-arms-late); the judge runs for RE only (its own stage, file and cache; the judge rows of R and C are not rewritten); the bundle stage makes a NEW reading folder
+#   (--reading-dir; a three-arm blind bundle, and the second family's export in it) and never writes the first one; `--phase after-reading --reading-dir NAME` unblinds a reading with its own key
+#   (files of a reading other than `reading` carry its name: findings_d7_NAME.jsonl, pack_input_NAME, measures_d7_NAME.json), and the report adds a descriptive paired line candidate - reference (RE - R, no bar).
+#
 #   scripts/m7_release_test.sh --set d7,h6 --h6-mode full --h6-chosen-by "the Owner" > runs/m7/logs/m7_release_test.out 2>&1 &        (real; the conductor has written the ledger row)
 #   scripts/m7_release_test.sh --dry-run --work DIR [--set d7] [--arms R] [--limit N]            (stub model, stub judge, stub server; nothing is written outside DIR)
 # Options: --dry-run, --work DIR, --report FILE, --arms R,C, --candidate R, --control C, --set d7,h6, --phase before-reading|after-reading, --configs FILE, --ledger FILE, --chunks FILE,
 #   --d7-items F --d7-rubrics F --h6-items F --h6-rubrics F, --h6-mode full|sample (default full) --h6-chosen-by TEXT, --second-fraction X (default 1), --h6-sessions N (default 6),
 #   --judge-model ID, --bundle-arms R,C, --retry-failed-packs, --full-sets d7,h6 (B4's re-read: the pack input asks for every answer of those sets), --findings-d7 READER=PATH ..., --scope-d7 ...,
-#   --h6-dir DIR, --first-reader NAME, --verdicts-d7 F --pack-key-d7 F --verdicts-h6 F.enc --pack-key-h6 F.enc, and for dry runs only: --limit N (the first N D7 items), --stub-loaded IDS, --stub-no-load-times (the stub server reports last access times only, as the real server does).
+#   --h6-dir DIR, --first-reader NAME, --reading-dir NAME (default reading), --add-arms-late, --descriptive-reference ARM (default R), --verdicts-d7 F --pack-key-d7 F --verdicts-h6 F.enc --pack-key-h6 F.enc, and for dry runs only: --limit N (the first N D7 items), --stub-loaded IDS, --stub-no-load-times (the stub server reports last access times only, as the real server does).
 # The server address and key come from OMLX_URL and OMLX_API_KEY or ~/.config/kafka-sre-llm/ (never passed on a command line). Markers: runs/m7/logs/m7_release_test.done or .failed.
 set -e
 PY=${PY:-.venv/bin/python}
@@ -37,13 +46,14 @@ DRY=no; W=work/m7/release_test; REPORT=runs/m7/M7_RELEASE_TEST.md; ARMS=R,C; CAN
 CONFIGS=eval/m7/release_test/configs.json; LEDGER=runs/m4/HIDDEN_LEDGER.md; CHUNKS=work/v3/chunks_s1.jsonl
 D7I=eval/m7/d7/items.jsonl; D7R=eval/m7/d7/rubrics.jsonl; H6I=eval/hidden/tier_b_h6_items_final.jsonl.enc; H6R=eval/hidden/tier_b_h6_rubrics_final.jsonl.enc
 SECOND=1; H6S=6; DS=DeepSeek-V4.1-Flash-1017-oQ4e-mtp; FINDD7=; H6DIR=; FREADER=claude; VD7=; PKD7=; VH6=; PKH6=; SCOPED7=; LIMIT=0; STUBLOADED=; WSET=no; RSET=no
-H6MODE=full; H6BY="the conductor (the default; the Owner has not chosen)"; BARMS=; RETRYPACKS=no; FULLSETS=
+H6MODE=full; H6BY="the conductor (the default; the Owner has not chosen)"; BARMS=; RETRYPACKS=no; FULLSETS=; RD=reading; ADDLATE=no; DREF=R
 while [ $# -gt 0 ]; do case $1 in
   --dry-run) DRY=yes;; --work) W=${2:?}; WSET=yes; shift;; --report) REPORT=${2:?}; RSET=yes; shift;; --arms) ARMS=${2:?}; shift;; --candidate) CAND=${2:?}; shift;; --control) CTRL=${2:?}; shift;;
   --set) SETS=${2:?}; shift;; --phase) PHASE=${2:?}; shift;; --configs) CONFIGS=${2:?}; shift;; --ledger) LEDGER=${2:?}; shift;; --chunks) CHUNKS=${2:?}; shift;;
   --d7-items) D7I=${2:?}; shift;; --d7-rubrics) D7R=${2:?}; shift;; --h6-items) H6I=${2:?}; shift;; --h6-rubrics) H6R=${2:?}; shift;;
   --second-fraction) SECOND=${2:?}; shift;; --h6-sessions) H6S=${2:?}; shift;; --judge-model) DS=${2:?}; shift;; --first-reader) FREADER=${2:?}; shift;;
   --h6-mode) H6MODE=${2:?}; shift;; --h6-chosen-by) H6BY=${2:?}; shift;; --bundle-arms) BARMS=${2:?}; shift;; --retry-failed-packs) RETRYPACKS=yes;; --full-sets) FULLSETS=${2:?}; shift;;
+  --reading-dir) RD=${2:?}; shift;; --add-arms-late) ADDLATE=yes;; --descriptive-reference) DREF=${2:?}; shift;;
   --findings-d7) shift; while [ $# -gt 0 ] && case $1 in --*) false;; *) true;; esac; do FINDD7="$FINDD7 $1"; shift; done; continue;;
   --scope-d7) shift; SCOPED7="$*"; break;;
   --h6-dir) H6DIR=${2:?}; shift;; --verdicts-d7) VD7=${2:?}; shift;; --pack-key-d7) PKD7=${2:?}; shift;; --verdicts-h6) VH6=${2:?}; shift;; --pack-key-h6) PKH6=${2:?}; shift;;
@@ -53,6 +63,8 @@ while [ $# -gt 0 ]; do case $1 in
 N=m7_release_test; L=runs/m7/logs; H=scripts/m7_release_test.py; RULE=scripts/m7_release_rule.py; KB2=scripts/m7_kb2_rule.py
 refuse() { echo "REFUSED: $1; nothing started" >&2; exit 2; }
 case $PHASE in before-reading|after-reading) ;; *) refuse "--phase is before-reading or after-reading";; esac
+case $RD in ''|*[!A-Za-z0-9_-]*|-*) refuse "--reading-dir is a plain folder name (letters, digits, _ and -)";; esac
+if [ $RD = reading ]; then BMARK=bundle; BAF=bundle_arms.txt; SUF=; else BMARK=bundle_$RD; BAF=bundle_arms_$RD.txt; SUF=_$RD; fi
 case $H6MODE in full|sample) ;; *) refuse "--h6-mode is full or sample";; esac
 case $LIMIT in ''|*[!0-9]*) refuse "--limit is a whole number";; esac
 [ $DRY = yes ] || [ "$LIMIT" = 0 ] || refuse "--limit is for dry runs only"
@@ -67,6 +79,7 @@ echo "$ARMOUT" | grep -v '^MODELS'
 MODELS=$(echo "$ARMOUT" | sed -n 's/^MODELS //p')
 case ",$ARMS," in *",$CAND,"*) ;; *) refuse "the candidate $CAND is not an arm";; esac
 ORDARMS=$($PY $H arm-order --configs "$CONFIGS" --arms "$ARMS" --candidate $CAND) || refuse "the arms could not be ordered"
+CHUNKPLUS=$W/chunks_plus_entries.jsonl
 RSHA=$($PY $RULE rule-text --sha256 --candidate $CAND --control $CTRL --h6-mode $H6MODE --h6-chosen-by "$H6BY") || refuse "the rule text could not be made"
 if [ $DRY = yes ]; then
   [ $WSET = yes ] || W=$(mktemp -d "${TMPDIR:-/tmp}/m7_release_test.XXXXXX")
@@ -76,6 +89,11 @@ if [ $DRY = yes ]; then
 else
   G="$PY scripts/run_guarded.py --heartbeat runs/v3/HEARTBEAT.md --other-retries 2"; G0="$PY scripts/run_guarded.py --heartbeat runs/v3/HEARTBEAT.md --other-retries 0"; STUBF=""; STUBFILE=
 fi
+chunks_for() { # ARMS (comma list): the chunk file for their excerpts and the judge: plus the fact entries when one of them has them on (made once, never overwritten: a differing file is refused)
+  e=$($PY $H entries-arms --configs "$CONFIGS" --arms "$1") || refuse "the entries of the arms could not be read"
+  if [ -z "$e" ]; then echo "$CHUNKS"; return 0; fi
+  $PY $H chunks-plus --configs "$CONFIGS" --arm "${e%% *}" --chunks "$CHUNKS" --out "$CHUNKPLUS" >&2 || refuse "the chunk file with the entries could not be made (see above)"
+  echo "$CHUNKPLUS"; }
 ANS_STALL=70      # minutes: above two ask timeouts (1,800 s each)
 # ---- the sets' inputs (CPU; refuses before anything is written, except the work folders)
 mkdir -p $W $L
@@ -128,8 +146,9 @@ for s in $(echo $SETS | tr ',' ' '); do
   set_files $s
   PINS="--pin $([ $s = d7 ] && echo $D7I || echo $H6I) --pin $([ $s = d7 ] && echo $D7R || echo $H6R)"
   [ $s = h6 ] && [ "$ITEMS" != "$H6I" ] && PINS="$PINS --pin $ITEMS"   # h6: the source and the harness copy both (the d7 pins stay as they were)
-  LPINS="--log-pin scripts/m7_release_test.py --log-pin scripts/m7_release_test.sh --log-pin scripts/m7_adjudication_pack.py --log-pin $CHUNKS --log-pin kafka_sre_rag/frozen.json"
-  $PY $H manifest --work $SW --set $s --configs "$CONFIGS" --arms "$ARMS" --candidate $CAND --control $CTRL --h6-mode $H6MODE --h6-chosen-by "$H6BY" $PINS $LPINS \
+  LPINS="--log-pin scripts/m7_release_test.py --log-pin scripts/m7_release_test.sh --log-pin scripts/m7_adjudication_pack.py --log-pin $CHUNKS --log-pin kafka_sre_rag/frozen.json --log-pin $CHUNKPLUS"
+  LATE=; [ $ADDLATE = no ] || LATE=--allow-late-arms
+  $PY $H manifest --work $SW --set $s --configs "$CONFIGS" --arms "$ARMS" --candidate $CAND --control $CTRL --h6-mode $H6MODE --h6-chosen-by "$H6BY" $LATE $PINS $LPINS \
     --opt "second_fraction=$SECOND" --opt "h6_sessions=$H6S" --opt "judge_model=$DS" --opt "judge_concurrency=1" --opt "limit=$LIMIT" --opt "dry=$DRY" || refuse "the manifest check of $s failed (see above; nothing was moved or deleted)"
   MH=$($PY -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest()[:16])' $SW/MANIFEST.json)
   if [ $PHASE = before-reading ] && ! stage_done header; then
@@ -148,8 +167,16 @@ for s in $(echo $SETS | tr ',' ' '); do
     mark header $SW/report_header.md
     hb "$N: header of $s with the rule text written; no answer exists yet"
   elif [ $PHASE = before-reading ]; then
+    OLDC=$($PY -c 'import json,sys; print(json.load(open(sys.argv[1]))["candidate"])' $SW/MANIFEST.json)
     for arm in $(echo $ARMS | tr ',' ' '); do
-      grep -qx "$arm" $SW/header_arms.txt 2>/dev/null || { echo "$(date +%Y-%m-%d): arm $arm added to this set's folder before its answers (configuration entry hash in the manifest); the rule text is unchanged" >> $SW/header_log.md; echo "$arm" >> $SW/header_arms.txt; }
+      grep -qx "$arm" $SW/header_arms.txt 2>/dev/null && continue
+      if [ "$OLDC" = "$CAND" ]; then
+        echo "$(date +%Y-%m-%d): arm $arm added to this set's folder before its answers (configuration entry hash in the manifest); the rule text is unchanged" >> $SW/header_log.md
+      else
+        { echo "$(date +%Y-%m-%d): arm $arm added to this set's folder$([ $ADDLATE = no ] || echo ' after the first reading bundles were made (--add-arms-late, W43)') (configuration entry hash in the manifest), before any answer of $arm and before the h6 look. The candidate is now \`$CAND\` (control \`$CTRL\`); the rule text for it is the header's text with the arm names changed (sha256 \`$RSHA\`):"
+          echo; $PY $RULE rule-text --candidate $CAND --control $CTRL --h6-mode $H6MODE --h6-chosen-by "$H6BY"; echo; } >> $SW/header_log.md
+      fi
+      echo "$arm" >> $SW/header_arms.txt
     done
   fi
 done
@@ -206,59 +233,69 @@ for arm in $ORDARMS; do
     if ! stage_done packs_$arm; then
       RES=retrieval; [ $DRY = no ] || RES=keys
       RF=; [ $RETRYPACKS = no ] || RF=--retry-failed
-      $G0 --stall-min 30 --log $L/$N.packs_${s}_$arm.log -- $PY $H packs --set $s --arm $arm --items "$ITEMS" --answers "$OUT" --chunks "$CHUNKS" --chunks-override --resolver $RES $STUBF $RF \
+      $G0 --stall-min 30 --log $L/$N.packs_${s}_$arm.log -- $PY $H packs --set $s --arm $arm --items "$ITEMS" --answers "$OUT" --chunks "$CHUNKS" --chunks-override --resolver $RES --configs "$CONFIGS" $STUBF $RF \
         || fail "the packs of $arm on $s could not be recovered exactly (see $L/$N.packs_${s}_$arm.log); the answers are kept"
       mark packs_$arm $OUT
     fi
   done
 done
-# ---- judge: the gate unloads the answer models (ours) and loads the judge (W2, W16); two rounds, the second with --retry-invalid
+# ---- judge: the gate unloads the answer models (ours) and loads the judge (W2, W16); two rounds, the second with --retry-invalid. An arm added to a folder whose judge stage is done gets its own stage, files
+# and cache (judge-plan): the finished judge rows are never rewritten. A group with a fact-entries arm reads the chunk file plus the entries.
 JEB='{"chat_template_kwargs": {"thinking_mode": "chat"}, "max_tokens": 4096}'
 for s in $(echo $SETS | tr ',' ' '); do
   set_files $s; HID=; [ $s != h6 ] || HID=--hidden
   MARMS=$($PY $H manifest-arms --work $SW)
   PENDING=; for arm in $MARMS; do { stage_done ans_$arm && stage_done packs_$arm; } || PENDING="$PENDING $arm"; done
   if [ -n "$PENDING" ]; then echo "set $s: arms still to answer in this folder:$PENDING; its judge and bundles wait"; continue; fi
-  JSTAGE=judge_$(echo $MARMS | tr ' ' '_')
-  if ! stage_done $JSTAGE; then
+  PLAN=$($PY $H judge-plan --work $SW) || refuse_late "the judge stages of $s cannot be planned (see above)"
+  JGROUPS=$(echo "$PLAN" | sed -n 's/^GROUP //p')
+  while read JSTAGE GARMS GSUF; do
+    [ -n "$JSTAGE" ] || continue
+    stage_done $JSTAGE && continue
+    SUFX=; [ "$GSUF" = - ] || SUFX=$GSUF
+    JCH=$(chunks_for "$GARMS")
     gate_for "$DS"
-    SETARGS=; for arm in $MARMS; do SETARGS="$SETARGS $arm=$SW/ans_${s}_$arm.jsonl$EXT"; done
-    JOUT=$SW/judge_$s.jsonl$EXT; JCACHE=$SW/judge_cache_$s.jsonl$EXT
+    SETARGS=; for arm in $(echo $GARMS | tr ',' ' '); do SETARGS="$SETARGS $arm=$SW/ans_${s}_$arm.jsonl$EXT"; done
+    JOUT=$SW/judge_${s}${SUFX}.jsonl$EXT; JCACHE=$SW/judge_cache_${s}${SUFX}.jsonl$EXT
     JMODE=; [ $DRY = no ] || JMODE="--stub"          # the judge reads OMLX_URL and JUDGE_API_KEY from the environment: no address on a command line or in a log
     NIT=$($PY $H check-inputs --set $s --items "$ITEMS" --rubrics "$RUBS" $STUBF | sed -n 's/^[a-z0-9]*: \([0-9]*\) items.*/\1/p')
-    NARM=$(echo $MARMS | wc -w | tr -d ' ')
-    hb "$N: judging $s started (two passes, $DS, concurrency 1)"
+    NARM=$(echo $GARMS | tr ',' ' ' | wc -w | tr -d ' ')
+    hb "$N: judging $s ($GARMS) started (two passes, $DS, concurrency 1)"
     for round in 1 2; do
       EXTRA=; [ $round = 1 ] || EXTRA="--retry-invalid"
-      $G --stall-min 60 --log $L/$N.judge_${s}_round$round.log -- $PY $H judge-run $HID --python "$PY" -- --rubrics "$RUBS" --items "$ITEMS" --chunks "$CHUNKS" --source-chars 12000 --instruction v2 --coverage \
+      $G --stall-min 60 --log $L/$N.judge_${s}${SUFX}_round$round.log -- $PY $H judge-run $HID --python "$PY" -- --rubrics "$RUBS" --items "$ITEMS" --chunks "$JCH" --source-chars 12000 --instruction v2 --coverage \
         --answers $SETARGS --judge-model $DS --judge-extra-body "$JEB" --settings-name deepseek-nothink-12k --concurrency 1 $JMODE --passes 1 2 --cache $JCACHE --out $JOUT $EXTRA \
-        || fail "judging $s round $round failed (see $L/$N.judge_${s}_round$round.log)"
+        || fail "judging $s round $round failed (see $L/$N.judge_${s}${SUFX}_round$round.log)"
       after_job "$DS"
       if $PY $H judge-check --out $JOUT --expect $((NIT * NARM * 2)); then break; fi
       echo "judging $s round $round: unscored rows remain"
       [ $round = 1 ] || fail "the judge rows of $s are not whole after the second round"
     done
     mark $JSTAGE $JOUT
-    hb "$N: judging $s done"
-  fi
+    hb "$N: judging $s ($GARMS) done"
+  done <<EOF_JG
+$JGROUPS
+EOF_JG
 done
 release_all
 # ---- the reading bundles (no reading is done here)
 for s in $(echo $SETS | tr ',' ' '); do
   set_files $s
   MARMS=$($PY $H manifest-arms --work $SW)
-  JSTAGE=judge_$(echo $MARMS | tr ' ' '_'); stage_done $JSTAGE || continue
+  PLAN=$($PY $H judge-plan --work $SW) || refuse_late "the judge stages of $s cannot be planned (see above)"
+  case "$PLAN" in *"COMPLETE yes"*) ;; *) continue;; esac
   BA=${BARMS:-$(echo $MARMS | tr ' ' ',')}
-  if ! stage_done bundle; then
+  if ! stage_done $BMARK; then      # a reading folder is written once; the first one (reading) is never written again once its stage is done
+    BCH=$(chunks_for "$BA")
     SETARGS=; for arm in $(echo $BA | tr ',' ' '); do SETARGS="$SETARGS $arm=$SW/ans_${s}_$arm.jsonl$EXT"; done
     if [ $s = d7 ]; then
-      $PY $H bundle --configs "$CONFIGS" --arms "$BA" --set d7 --items "$ITEMS" --rubrics "$RUBS" --answers $SETARGS --chunks "$CHUNKS" --out $SW/reading --second-fraction $SECOND || fail "the d7 bundles could not be made"
-      if [ -f $SW/reading/KEY.json ]; then mark bundle $SW/reading/KEY.json; else mark bundle $SW/reading/NO_BUNDLE_single_arm.txt; fi
+      $PY $H bundle --configs "$CONFIGS" --arms "$BA" --set d7 --items "$ITEMS" --rubrics "$RUBS" --answers $SETARGS --chunks "$BCH" --out $SW/$RD --second-fraction $SECOND || fail "the d7 bundles could not be made"
+      if [ -f $SW/$RD/KEY.json ]; then mark $BMARK $SW/$RD/KEY.json; else mark $BMARK $SW/$RD/NO_BUNDLE_single_arm.txt; fi
     else
-      $PY $H bundle --configs "$CONFIGS" --arms "$BA" --set h6 --items "$ITEMS" --rubrics "$RUBS" --answers $SETARGS --chunks "$CHUNKS" --out $SW/reading --sessions $H6S || fail "the h6 sealed bundles could not be made"
-      mark bundle $SW/reading/blind_key.json.enc
+      $PY $H bundle --configs "$CONFIGS" --arms "$BA" --set h6 --items "$ITEMS" --rubrics "$RUBS" --answers $SETARGS --chunks "$BCH" --out $SW/$RD --sessions $H6S || fail "the h6 sealed bundles could not be made"
+      mark $BMARK $SW/$RD/blind_key.json.enc
     fi
-    echo "$BA" > $SW/bundle_arms.txt
+    echo "$BA" > $SW/$BAF
   fi
 done
 echo "before-reading done: the readers read the bundles; then run this script with --phase after-reading"
@@ -272,40 +309,46 @@ MEAS=
 FS=$FULLSETS; [ $HAS_H6 = no ] || [ $H6MODE != full ] || FS="${FS:+$FS,}h6"
 for s in $(echo $SETS | tr ',' ' '); do
   set_files $s
-  stage_done bundle || refuse "the before-reading phase is not done for $s (no bundle stage marker in $SW)"
-  BA=$(cat $SW/bundle_arms.txt)
+  stage_done $BMARK || refuse "the before-reading phase is not done for $s (no bundle stage marker $BMARK in $SW)"
+  BA=$(cat $SW/$BAF)
+  RCH=$(chunks_for "$BA")
   SETARGS=; for arm in $(echo $BA | tr ',' ' '); do SETARGS="$SETARGS $arm=$SW/ans_${s}_$arm.jsonl$EXT"; done
+  JF=$(ls $SW/judge_${s}.jsonl$EXT $SW/judge_${s}_add_*.jsonl$EXT 2>/dev/null | tr '\n' ' ')
   FIND=; VERD=; PK=
   if [ $s = d7 ]; then
     if [ -n "$FINDD7" ]; then
-      $PY $H unblind --set d7 --key $SW/reading/KEY.json --rubrics "$RUBS" --answers $SETARGS --findings $FINDD7 --out $SW/findings_d7.jsonl --reads-out $SW/reads_d7.jsonl \
+      $PY $H unblind --set d7 --key $SW/$RD/KEY.json --rubrics "$RUBS" --answers $SETARGS --findings $FINDD7 --out $SW/findings_d7$SUF.jsonl --reads-out $SW/reads_d7$SUF.jsonl \
         $([ -z "$SCOPED7" ] || echo "--scope $SCOPED7") || fail "the d7 findings could not be unblinded (see above)"
-      FIND="--findings $SW/findings_d7.jsonl"
-      $PY $H pack-input --configs "$CONFIGS" --arms "$BA" --set d7 --items "$ITEMS" --answers $SETARGS --findings $SW/findings_d7.jsonl --out-dir $SW/pack_input --full-sets "$FS" || fail "the d7 pack input could not be made"
+      FIND="--findings $SW/findings_d7$SUF.jsonl"
+      $PY $H pack-input --configs "$CONFIGS" --arms "$BA" --set d7 --items "$ITEMS" --answers $SETARGS --findings $SW/findings_d7$SUF.jsonl --out-dir $SW/pack_input$SUF --full-sets "$FS" --chunks "$RCH" || fail "the d7 pack input could not be made"
     fi
-    [ -z "$VD7" ] || VERD="--verdicts $VD7"; [ -z "$PKD7" ] || PK="--pack-key $PKD7"; OUTM=$SW/measures_d7.json
+    [ -z "$VD7" ] || VERD="--verdicts $VD7"; [ -z "$PKD7" ] || PK="--pack-key $PKD7"; OUTM=$SW/measures_d7$SUF.json
   else
     if [ -n "$H6DIR" ]; then
-      $PY $H unblind --set h6 --dir "$H6DIR" --out $SW/findings_h6.jsonl.enc --reader $FREADER || fail "the h6 findings could not be unblinded"
-      FIND="--findings $SW/findings_h6.jsonl.enc"
-      $PY $H pack-input --configs "$CONFIGS" --arms "$BA" --set h6 --items "$ITEMS" --answers $SETARGS --findings $SW/findings_h6.jsonl.enc --out-dir $SW/pack_input --full-sets "$FS" || fail "the h6 pack input could not be made"
+      $PY $H unblind --set h6 --dir "$H6DIR" --out $SW/findings_h6$SUF.jsonl.enc --reader $FREADER || fail "the h6 findings could not be unblinded"
+      FIND="--findings $SW/findings_h6$SUF.jsonl.enc"
+      $PY $H pack-input --configs "$CONFIGS" --arms "$BA" --set h6 --items "$ITEMS" --answers $SETARGS --findings $SW/findings_h6$SUF.jsonl.enc --out-dir $SW/pack_input$SUF --full-sets "$FS" --chunks "$RCH" || fail "the h6 pack input could not be made"
     fi
-    [ -z "$VH6" ] || VERD="--verdicts $VH6"; [ -z "$PKH6" ] || PK="--pack-key $PKH6"; OUTM=$SW/measures_h6.json.enc
+    [ -z "$VH6" ] || VERD="--verdicts $VH6"; [ -z "$PKH6" ] || PK="--pack-key $PKH6"; OUTM=$SW/measures_h6$SUF.json.enc
   fi
-  $PY $H measures --set $s --arms "$BA" --items "$ITEMS" --rubrics "$RUBS" --answers $SETARGS --judge $SW/judge_$s.jsonl$EXT $FIND --first-reader $FREADER $VERD $PK --out $OUTM || fail "the measures of $s could not be made"
+  $PY $H measures --set $s --arms "$BA" --items "$ITEMS" --rubrics "$RUBS" --answers $SETARGS --judge $JF $FIND --first-reader $FREADER $VERD $PK --out $OUTM || fail "the measures of $s could not be made"
   MEAS="$MEAS $s=$OUTM"
 done
-ALLARMS=$(echo $SETS | tr ',' ' ' | { read f rest; cat $W/$f/bundle_arms.txt; })
-$PY $RULE report --measures $MEAS --arms "$ALLARMS" --candidate $CAND --control $CTRL --out $W/report_body.md --json-out $W/result.json > $W/rule_out.txt || fail "the report could not be made"
-FINAL=$(tail -n 1 $W/rule_out.txt)
+ALLARMS=$(echo $SETS | tr ',' ' ' | { read f rest; cat $W/$f/$BAF; })
+$PY $RULE report --measures $MEAS --arms "$ALLARMS" --candidate $CAND --control $CTRL --out $W/report_body$SUF.md --json-out $W/result$SUF.json > $W/rule_out$SUF.txt || fail "the report could not be made"
+DESC=
+case ",$ALLARMS," in *",$DREF,"*) if [ "$CAND" != "$DREF" ] && [ -n "$($PY $H entries-arms --configs "$CONFIGS" --arms "$CAND")" ]; then
+  $PY $H descriptive --measures $MEAS --candidate $CAND --reference $DREF --out $W/descriptive$SUF.md || fail "the descriptive line could not be made"; DESC=$W/descriptive$SUF.md; fi;; esac
+FINAL=$(tail -n 1 $W/rule_out$SUF.txt)
 {
   echo "# M7 release test: the release configuration against the current release$([ $DRY = yes ] && echo ' (DRY RUN: stub data)')"
   echo
   for s in $(echo $SETS | tr ',' ' '); do cat $W/$s/report_header.md; [ ! -f $W/$s/header_log.md ] || { echo; cat $W/$s/header_log.md; }; echo; done
   echo "## Result$([ $DRY = yes ] && echo ' (from stub data: not a measurement)')"
   echo
-  cat $W/report_body.md
+  cat $W/report_body$SUF.md
   echo
+  [ -z "$DESC" ] || { cat $DESC; echo; }
   echo "### What this report does not show"
   echo
   echo "The readers' findings, the SRE's verdicts and the hidden items are not in this report: h6 shows totals only. Bars read \`not measured\` until the SRE's verdicts are complete. The adjudicator is the project's owner, not independent of the rubrics (W34)."

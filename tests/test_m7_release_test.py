@@ -88,10 +88,10 @@ class Env:
     def plain_files(self):
         return [f for f in self.d.rglob("*") if f.is_file() and not f.name.endswith(".enc") and f.name not in ("key",)]
 
-    def amended_configs(self, mutate):
+    def amended_configs(self, mutate, name="configs2.json"):
         c = json.loads(CONFIGS.read_text())
         mutate(c)
-        p = self.d / "configs2.json"
+        p = self.d / name
         p.write_text(json.dumps(c))
         return p
 
@@ -100,7 +100,7 @@ class Env:
 class Arms(unittest.TestCase):
     def test_arms_come_from_configs_and_a_variant_entry_needs_no_code_change(self):
         cfgs = T.load_configs(CONFIGS)
-        self.assertEqual(T.arm_names(cfgs), ["R", "C"])
+        self.assertEqual(T.arm_names(cfgs), ["R", "C", "RE"])
         r = T.arm_info(cfgs, "R")
         self.assertIn("--lookup-cards", r["flags"])
         self.assertEqual(r["model"], "gemma-4-31b-it-4bit")
@@ -112,7 +112,7 @@ class Arms(unittest.TestCase):
         v = copy.deepcopy(cfgs)
         v["R2"] = copy.deepcopy(v["R"])
         v["R2"]["ask_command"] = v["R2"]["ask_command"].replace("--lookup-cards", "--lookup-cards --lookup-kb entries.json")
-        self.assertEqual(T.arm_names(v), ["R", "C", "R2"])
+        self.assertEqual(T.arm_names(v), ["R", "C", "RE", "R2"])
         self.assertIn("--lookup-kb", T.arm_info(v, "R2")["flags"])
         self.assertEqual(T.order_arms(v, ["C", "R2", "R"], "R"), ["R2", "R", "C"])  # all R arms before C
         with self.assertRaises(T.Refused):
@@ -681,6 +681,433 @@ class Chain(unittest.TestCase):
         a = ["--dry-run", "--work", str(e.w), "--set", "d7", "--limit", "3", "--chunks", "work/v3/chunks_s1.jsonl"]
         p = e.run(*a, extra_env={"M7_STUB_CHUNKS": str(ROOT / "work/v3/chunks_s1.jsonl")})
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+
+
+# ---------------------------------------------------------------- W43: the arm RE (R + the fact entries)
+
+R_SHA = "6ebd600bc5f5596cd8d89c74305fd98a4d4e9613ed8e1d69cb0b0f1c7d3ba182"     # json.dumps(configs["R"], sort_keys=True), as the manifest of the finished D7 folder holds it
+C_SHA = "29909e66bcf1403665c8e932c6226448191d58d51532b15d9180dfe73fcbcd97"
+
+
+def entries_fixture(env, n=8):
+    """A small entries index and its record (a synthetic world: the chunks c00..c11 of the Env), and a configs file whose RE points at them."""
+    from kafka_sre_rag import kb_entry
+    rows = []
+    for j in range(n):
+        srcs = [{"id": f"c{(j * 5) % 12:02d}", "source": "docs", "path": f"raw/f{(j * 5) % 12}.md"}]
+        if j % 3 == 0:
+            srcs.append({"id": f"c{(j * 5 + 1) % 12:02d}", "source": "docs", "path": f"raw/f{(j * 5 + 1) % 12}.md"})
+        e = {"id": f"kbe-{j:04d}", "kind": "fact", "title": f"Entry {j} about open question", "statement": f"The open question {j} has the answer {j}.", "scope": {"product": "Strimzi", "version": "1.3.1"},
+             "sources": srcs, "quotes": [{"text": f"quoted line {j} of the open question"}], "applies_when": "", "prompt_version": "kbe/5", "writer": "w"}
+        e["rendered"] = kb_entry.render_text(e)
+        rows.append(e)
+    idx = env.d / "entries_index.jsonl"
+    idx.write_text("".join(json.dumps(r, sort_keys=True) + "\n" for r in rows))
+    rec = env.d / "kb_entries_rec.json"
+    rec.write_text(json.dumps({"schema": 1, "file": str(idx), "sha256": T.sha256_file(idx), "entries": n, "slice_sha256": "0" * 64, "writer": {"model": "w", "prompt_version": "kbe/5"},
+                               "checker": {"model": "c", "prompt_version": "kbc/4"}, "created": "2026-11-27T00:00:00Z"}))
+
+    def mutate(c):
+        re_ = c["RE"]
+        re_["ask_command"] = re_["ask_command"].replace("--kb-entries ", f"--kb-entries --kb-entries-record {rec} ")
+        re_["entries"].update(index=str(idx), sha256=T.sha256_file(idx), record=str(rec), record_sha256=T.sha256_file(rec), entries=n)
+    return env.amended_configs(mutate, "configs_re.json"), idx, rec, rows
+
+
+@NEEDS
+class EntriesArm(unittest.TestCase):
+    def setUp(self):
+        self.e = Env()
+        self.addCleanup(self.e.cleanup)
+        self.cfg, self.idx, self.rec, self.rows = entries_fixture(self.e)
+        self.recv = self.e.d / "received"
+        self.recv.mkdir()
+
+    def args(self, *extra, **kw):
+        kw.setdefault("arms", "RE,R,C")
+        kw.setdefault("configs", self.cfg)
+        return self.e.args("--candidate", "RE", *extra, **kw)
+
+    def run_(self, *a, **kw):
+        return self.e.run(*a, extra_env={"M7_STUB_RECEIVED": str(self.recv)}, **kw)
+
+    def snapshot(self, d):
+        return {str(f.relative_to(d)): T.sha256_file(f) for f in sorted(Path(d).rglob("*")) if f.is_file()}
+
+    # -- the configuration
+    def test_r_and_c_are_byte_identical_and_re_is_r_with_the_entries_on(self):
+        c = T.load_configs(CONFIGS)
+        self.assertEqual(T.sha256_text(json.dumps(c["R"], sort_keys=True)), R_SHA)       # the hash the manifest of the finished D7 folder holds
+        self.assertEqual(T.sha256_text(json.dumps(c["C"], sort_keys=True)), C_SHA)
+        self.assertEqual(T.config_sha(c, "R"), R_SHA)
+        self.assertEqual(T.arm_names(c), ["R", "C", "RE"])
+        r, re_ = c["R"], c["RE"]
+        changed = sorted(k for k in set(r) | set(re_) if r.get(k) != re_.get(k))
+        self.assertEqual(changed, ["ask_command", "ask_command_dry_run", "description", "entries", "name", "prompt_format", "runtime_files_note", "runtime_files_sha256"])
+        self.assertEqual(re_["ask_command"].replace(" --kb-entries", ""), r["ask_command"])
+        self.assertEqual({k for k in re_["runtime_files_sha256"] if k not in r["runtime_files_sha256"]},
+                         {"kafka_sre_rag/kb_entries.py", "kafka_sre_rag/kb_entry.py", "kafka_sre_rag/kb_entries.json"})
+        self.assertTrue(re_["entries"]["on"])
+        self.assertFalse(r["entries"]["on"])
+        self.assertEqual(re_["entries"]["cap"]["MAX_ITEMS"], 10)
+        self.assertEqual(re_["entries"]["cap"]["MAX_CHARS"], 24000)
+        self.assertEqual((re_["entries"]["entry_prompt_version"], re_["entries"]["check_prompt_version"]), ("kbe/5", "kbc/4"))
+        self.assertIn("W43", c["amendments"][-1]["decision"])
+        self.assertEqual(c["amendments"][-1]["unchanged"], {"R": R_SHA, "C": C_SHA})
+        info = T.arm_info(c, "RE")
+        self.assertTrue(info["entries"] and info["entries_record"] == "kafka_sre_rag/kb_entries.json")
+        self.assertEqual(info["model"], T.arm_info(c, "R")["model"])
+        self.assertEqual(info["flags"], T.arm_info(c, "R")["flags"][:-1] + ["--kb-entries", "--json"])
+        self.assertFalse(T.arm_info(c, "R")["entries"])
+        self.assertEqual(T.order_arms(c, ["C", "RE", "R"], "RE"), ["RE", "R", "C"])
+
+    def test_the_ask_command_and_the_entries_block_must_agree(self):
+        c = T.load_configs(self.cfg)
+        bad = copy.deepcopy(c)
+        bad["RE"]["entries"]["on"] = False
+        with self.assertRaises(T.Refused):
+            T.arm_info(bad, "RE")
+        bad = copy.deepcopy(c)
+        bad["R"]["entries"] = {"on": True}
+        with self.assertRaises(T.Refused):
+            T.arm_info(bad, "R")
+        bad = copy.deepcopy(c)
+        bad["RE"]["entries"]["record"] = "elsewhere.json"
+        with self.assertRaises(T.Refused):
+            T.arm_info(bad, "RE")
+
+    @unittest.skipUnless((ROOT / "work/m7/kb/entries_index.jsonl").exists(), "the entries index is not in this tree (git-ignored)")
+    def test_the_real_re_pins_hold_in_this_tree(self):
+        p = self.e.run("runtime-check", "--arm", "RE", cmd="scripts/m7_release_test.py")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        p = self.e.run("arms", "--arms", "RE,R,C", cmd="scripts/m7_release_test.py")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertIn("fact entries on", p.stdout)
+        from kafka_sre_rag.kb_entries import KbEntries
+        self.assertEqual(len(KbEntries.load().rows), 7028)
+
+    def test_a_changed_record_index_or_entries_module_is_refused_by_arms_and_runtime_check(self):
+        e = self.e
+        checks = (("runtime-check", ["--arm", "RE"]), ("arms", ["--arms", "RE"]))
+        for cmd, extra in checks:
+            p = e.run(cmd, *extra, "--configs", str(self.cfg), cmd="scripts/m7_release_test.py")
+            self.assertEqual(p.returncode, 0, (cmd, p.stdout, p.stderr))
+        cases = {
+            "the entries record": lambda r: r["entries"].update(record_sha256="0" * 64),
+            "the entries index": lambda r: r["entries"].update(sha256="0" * 64),
+            "kb_entries.py": lambda r: r["runtime_files_sha256"].update({"kafka_sre_rag/kb_entries.py": "0" * 64}),
+            "kb_entry.py": lambda r: r["runtime_files_sha256"].update({"kafka_sre_rag/kb_entry.py": "0" * 64}),
+            "kb_entries.json": lambda r: r["runtime_files_sha256"].update({"kafka_sre_rag/kb_entries.json": "0" * 64}),
+        }
+        for what, mutate in cases.items():
+            cfg = e.amended_configs(lambda c, m=mutate: m(c["RE"]))
+            for cmd, extra in checks:
+                p = e.run(cmd, *extra, "--configs", str(cfg), cmd="scripts/m7_release_test.py")
+                self.assertEqual(p.returncode, 2, (what, cmd, p.stdout, p.stderr))
+                self.assertIn(what, p.stderr)
+        # the index file itself changes
+        self.idx.write_text(self.idx.read_text() + "\n")
+        for cmd, extra in checks:
+            p = e.run(cmd, *extra, "--configs", str(self.cfg), cmd="scripts/m7_release_test.py")
+            self.assertEqual(p.returncode, 2, (cmd, p.stdout, p.stderr))
+            self.assertIn("entries index", p.stderr)
+        # and the chain refuses before anything is answered
+        p = self.run_(*self.args())
+        self.assertEqual(p.returncode, 2, p.stdout + p.stderr)
+        self.assertFalse(list(e.w.glob("d7/ans_*")))
+
+    # -- the pack recovery
+    def kb(self, reranker=None):
+        from kafka_sre_rag.kb_entries import KbEntries
+        return KbEntries.load(str(self.rec), reranker=reranker)
+
+    def test_the_keys_resolver_checks_the_added_entries_against_the_index_and_the_sources(self):
+        kb = self.kb()
+        chunks = [json.loads(l) for l in (self.e.d / "chunks.jsonl").read_text().splitlines()]
+        pack = chunks[:3]
+        items, info = kb.merge(pack, "open question 1", "stub terms", rerank=False)
+        self.assertTrue(info["added"])
+        srcs = [{"source": c["source"], "title": c["title"], "path": c["path"]} for c in items]
+        res = T.keys_resolver(str(self.e.d / "chunks.jsonl"), kb)
+        got = res("q", "t", srcs, info)
+        self.assertEqual(got[:3], [c["id"] for c in pack])
+        self.assertEqual(got[3:], ["kbe:" + i for i in info["added"]])
+        for bad_info in (dict(info, added=info["added"][:-1]), dict(info, added=["kbe-nope"] + info["added"][1:]), None):
+            with self.assertRaises(T.Refused):
+                res("q", "t", srcs, bad_info)
+        with self.assertRaises(T.Refused):                       # an entry source that is not the added entry
+            res("q", "t", srcs[:-1] + [dict(srcs[-1], title="Fact entry: another")], info)
+        with self.assertRaises(T.Refused):                       # entries recorded for an arm without them
+            T.keys_resolver(str(self.e.d / "chunks.jsonl"), None)("q", "t", srcs, info)
+
+    def test_the_retrieval_resolver_recomputes_the_entries_merge_and_refuses_any_difference(self):
+        import kafka_sre_rag.retrieval as retrieval
+        chunks = [dict(json.loads(l), ce_score=1.0 - i / 10, bm25_rank=i + 1) for i, l in enumerate((self.e.d / "chunks.jsonl").read_text().splitlines())][:4]
+
+        class Fake:
+            def predict(self, pairs, batch_size=8):
+                return [float(len(p[1]) % 7) + i / 100 for i, p in enumerate(pairs)]
+        kb = self.kb(Fake())
+        orig = retrieval.select
+        retrieval.select = lambda q, exp, k="k6", index_path=None, **kw: [dict(c) for c in chunks]
+        self.addCleanup(lambda: setattr(retrieval, "select", orig))
+        items, info = kb.merge([dict(c) for c in chunks], "open question 2", "terms", rerank=True)       # what the runtime did
+        self.assertTrue(info["added"])
+        srcs = [{"source": c["source"], "title": c["title"], "path": c["path"], "bm25_rank": c.get("bm25_rank"), "ce_score": c.get("ce_score")} for c in items]
+        res = T.retrieval_resolver(None, kb)
+        k = {k: v for k, v in info.items() if k != "seconds"}
+        ids = res("open question 2", "terms", srcs, k)
+        self.assertEqual(ids, [c["id"] for c in items])
+        self.assertEqual([i for i in ids if i.startswith("kbe:")], ["kbe:" + i for i in info["added"]])
+        for bad in (dict(k, added=list(reversed(k["added"])) if len(k["added"]) > 1 else []), dict(k, candidates=k["candidates"] + 1), dict(k, pack_chars=k["pack_chars"] + 1),
+                    dict(k, skipped=dict(k["skipped"], no_room=k["skipped"]["no_room"] + 1))):
+            with self.assertRaises(T.Refused):
+                res("open question 2", "terms", srcs, bad)
+        with self.assertRaises(T.Refused):                       # another score on an entry
+            res("open question 2", "terms", srcs[:-1] + [dict(srcs[-1], ce_score=(srcs[-1]["ce_score"] or 0) + 1)], k)
+        with self.assertRaises(T.Refused):                       # a frozen source that differs
+            res("open question 2", "terms", [dict(srcs[0], path="raw/x.md")] + srcs[1:], k)
+        with self.assertRaises(T.Refused):                       # entries recorded but the arm has none
+            T.retrieval_resolver(None, None)("open question 2", "terms", srcs, k)
+
+    # -- the chain
+    def test_re_rows_record_the_entries_the_pack_is_frozen_plus_entries_and_the_excerpts_equal_what_the_model_received(self):
+        import hashlib
+        from kafka_sre_rag import prompts
+        e = self.e
+        p = self.run_(*self.args())
+        out = p.stdout + p.stderr
+        self.assertEqual(p.returncode, 0, out)
+        self.assertIn("before-reading done", out)
+        for bad in ("REFUSED", "STOPPED"):
+            self.assertNotIn(bad, out)
+        d7 = e.w / "d7"
+        re_rows = [json.loads(l) for l in (d7 / "ans_d7_RE.jsonl").read_text().splitlines()]
+        self.assertEqual(len(re_rows), 4)
+        self.assertTrue(all(r["kb_entries"] is not None for r in re_rows))
+        self.assertTrue(all(r["kb_entries"]["n_added"] == len(r["kb_entries"]["added"]) for r in re_rows))
+        self.assertGreaterEqual(len([r for r in re_rows if r["kb_entries"]["added"]]), 1)
+        for r in re_rows:
+            self.assertEqual(r["pack_check"], "exact")
+            self.assertEqual([i for i in r["pack"] if i.startswith("kbe:")], ["kbe:" + i for i in r["kb_entries"]["added"]])
+            self.assertEqual(len(r["pack"]), len(r["sources"]))
+        for arm in ("R", "C"):                                  # the other arms are as they were: no entries key, chunk ids only
+            for l in (d7 / f"ans_d7_{arm}.jsonl").read_text().splitlines():
+                r = json.loads(l)
+                self.assertNotIn("kb_entries", r)
+                self.assertFalse(any(i.startswith("kbe:") for i in r["pack"]))
+        # the first reader's excerpts of an RE answer are the pack the model received: every item, the entries included, as pack_text renders them
+        plus = {c["id"]: c for c in (json.loads(l) for l in (e.w / "chunks_plus_entries.jsonl").read_text().splitlines())}
+        key = json.loads((d7 / "reading/KEY.json").read_text())
+        items = {it["id"]: it for it in e.d7}
+        n_entry_blocks = 0
+        for name, arm in key["aid"].items():
+            iid = name.rsplit("-", 1)[0]
+            row = next(r for r in (re_rows if arm == "RE" else []) if r["id"] == iid) if arm == "RE" else None
+            if row is None:
+                continue
+            q = eval2.full_question(items[iid])
+            received = (self.recv / (hashlib.sha256((q + "|kbe").encode()).hexdigest()[:16] + ".txt")).read_text(encoding="utf-8")    # written by the stub model's call
+            text = (d7 / "reading/first/excerpts" / f"{name}.md").read_text()
+            blocks = text.split("----- chunk ")[1:]
+            self.assertEqual(len(blocks), len(row["pack"]))
+            rebuilt = []
+            for b, cid in zip(blocks, row["pack"]):
+                head, _, body = b.partition(" -----\n")
+                self.assertTrue(head.startswith(cid + " | "), (head, cid))
+                rebuilt.append({"source": plus[cid]["source"], "title": head.split(" | ", 2)[2], "path": plus[cid]["path"], "text": body.rstrip("\n")})
+                n_entry_blocks += cid.startswith("kbe:")
+            self.assertEqual(prompts.pack_text(rebuilt), received)
+        self.assertGreaterEqual(n_entry_blocks, 1)
+        # the judge read the same items: the RE rows carry the pack with the entry ids (the chunk file plus the entries was its input; without it the judge cannot resolve them)
+        jre = [r for r in (json.loads(l) for l in (d7 / "judge_d7.jsonl").read_text().splitlines()) if r["set"] == "RE"]
+        self.assertEqual(len(jre), 8)
+        self.assertTrue(any(i.startswith("kbe:") for r in jre for i in r["pack"]))
+        self.assertEqual([r["pack"] for r in jre if r["id"] == re_rows[0]["id"]][0], re_rows[0]["pack"])
+        self.assertTrue((d7 / "stage_judge_C_R_RE.done").exists())
+
+    def test_the_entries_reach_the_adjudication_pack_and_the_report_has_the_descriptive_line(self):
+        e = self.e
+        p = self.run_(*self.args())
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        d7 = e.w / "d7"
+        key = json.loads((d7 / "reading/KEY.json").read_text())
+        row = lambda n, kind, **k: dict({"answer": n, "id": n.rsplit("-", 1)[0], "kind": kind, "quote": "Stub answer", "minor": False, "source": "f.md:1", "note": "n"}, **k)
+        re_names = [n for n in sorted(key["aid"]) if key["aid"][n] == "RE"]
+        (e.d / "f_claude.jsonl").write_text(jl([row(re_names[0], "harmful", consequence="data loss"), row(re_names[1], "wrong")]))
+        p = self.run_(*self.args("--phase", "after-reading", "--findings-d7", f"claude={e.d / 'f_claude.jsonl'}"))
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertIn(f"--chunks {e.w}/chunks_plus_entries.jsonl", p.stdout)
+        answers = [json.loads(l) for l in (d7 / "pack_input/answers.jsonl").read_text().splitlines()]
+        self.assertTrue(any(i.startswith("kbe:") for a in answers if a["config"] == "RE" for i in a["pack_chunk_ids"]))
+        self.assertFalse(any(i.startswith("kbe:") for a in answers if a["config"] != "RE" for i in a["pack_chunk_ids"]))
+        frozen = e.d / "frozen.json"
+        frozen.write_text(json.dumps({"index_path": "x", "source_commits": {}}))
+        pi = d7 / "pack_input"
+        b = subprocess.run([PYBIN, "scripts/m7_adjudication_pack.py", "build", "--answers", str(pi / "answers.jsonl"), "--scenarios", str(pi / "scenarios.jsonl"), "--flags", str(pi / "flags.jsonl"),
+                            "--out", str(e.d / "pack"), "--configs", str(self.cfg), "--shuffle-seed", "1", "--sample-seed", "2", "--index-frozen", str(frozen),
+                            "--chunks", str(e.w / "chunks_plus_entries.jsonl"), "--full-sets", "d7"], cwd=ROOT, capture_output=True, text=True, env=e.env)
+        self.assertEqual(b.returncode, 0, b.stdout + b.stderr)
+        self.assertEqual({a["config"] for a in answers}, {"RE", "R", "C"})
+        self.assertIn("Descriptive: RE - R", next(e.w.glob("M7_RELEASE_TEST_from_stub_data.md")).read_text())
+
+    def test_the_rule_text_for_re_differs_from_the_text_for_r_by_the_arm_names_only(self):
+        r = RR.rule_text("R", "C", "full", BY)
+        re_ = RR.rule_text("RE", "C", "full", BY)
+        self.assertNotEqual(r, re_)
+        ta, tb = r.split(), re_.split()
+        self.assertEqual(len(ta), len(tb))
+        diff = [(x, y) for x, y in zip(ta, tb) if x != y]
+        self.assertGreater(len(diff), 3)
+        for x, y in diff:                                          # only the candidate's name differs: R becomes RE
+            self.assertEqual(y.replace("RE", "R"), x)
+            self.assertIn("RE", y)
+        self.assertNotEqual(RR.rule_text_sha256("RE", "C", "full", BY), RR.rule_text_sha256("R", "C", "full", BY))
+
+    # -- adding RE to a finished folder
+    def test_re_is_added_to_a_finished_d7_folder_without_touching_r_c_their_judge_rows_or_the_first_reading(self):
+        e = self.e
+        p = e.run(*e.args())                                         # R and C, as the real folder was made
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        d7 = e.w / "d7"
+        before = self.snapshot(d7)
+        self.assertTrue((d7 / "stage_bundle.done").exists() and (d7 / "reading/KEY.json").exists())
+        # without the explicit option the arm is refused (the bundles were made), and nothing changes
+        p = self.run_(*self.args("--reading-dir", "reading2", "--bundle-arms", "RE,R,C"))
+        self.assertEqual(p.returncode, 2, p.stdout + p.stderr)
+        self.assertEqual(self.snapshot(d7), before)
+        p = self.run_(*self.args("--add-arms-late", "--reading-dir", "reading2", "--bundle-arms", "RE,R,C"))
+        out = p.stdout + p.stderr
+        self.assertEqual(p.returncode, 0, out)
+        self.assertIn("before-reading done", out)
+        for bad in ("REFUSED", "STOPPED"):
+            self.assertNotIn(bad, out)
+        after = self.snapshot(d7)
+        self.assertEqual(sorted(k for k in before if after.get(k) != before[k]), ["MANIFEST.json", "header_arms.txt"])   # everything else of the old folder, reading/ included, is byte-identical
+        man = json.loads((d7 / "MANIFEST.json").read_text())
+        self.assertEqual(man["candidate"], "R")
+        self.assertEqual(man["rule_variants"][0]["candidate"], "RE")
+        self.assertEqual(man["rule_variants"][0]["rule_text_sha256"], RR.rule_text_sha256("RE", "C", "full", BY))
+        self.assertIn("RE", man["late_arms"])
+        self.assertTrue(any("added after the reading bundles" in h["event"] for h in man["history"]))
+        self.assertEqual(man["arms"]["R"]["config_sha256"], T.config_sha(T.load_configs(CONFIGS), "R"))
+        log = (d7 / "header_log.md").read_text()
+        self.assertIn("arm RE added", log)
+        self.assertIn("`RE`", log)
+        # the judge ran for RE only, in its own file; the old judge file is the old one
+        jr = [json.loads(l) for l in (d7 / "judge_d7_add_RE.jsonl").read_text().splitlines()]
+        self.assertEqual({r["set"] for r in jr}, {"RE"})
+        self.assertEqual(len(jr), 8)
+        self.assertTrue((d7 / "stage_judge_add_RE.done").exists())
+        # reading2: three answers per scenario, a key of its own, the second family's export
+        r2 = d7 / "reading2"
+        key2 = json.loads((r2 / "KEY.json").read_text())
+        self.assertEqual(sorted(set(key2["aid"].values())), ["C", "R", "RE"])
+        self.assertEqual(len(key2["aid"]), 12)
+        for iid in key2["items"]:
+            self.assertEqual(len([n for n in key2["aid"] if n.rsplit("-", 1)[0] == iid]), 3)
+            self.assertEqual((r2 / "first" / f"{iid}.md").read_text().count(" BEGIN ====="), 3)
+        self.assertTrue(len(list((r2 / "export_second_reader").glob("*.md"))) >= 4)
+        self.assertFalse((r2 / "export_second_reader/KEY.json").exists())
+        self.assertEqual((d7 / "bundle_arms_reading2.txt").read_text().strip(), "RE,R,C")
+        self.assertEqual((d7 / "bundle_arms.txt").read_text().strip(), "C,R")
+        # the later invocation needs no flag for what is recorded
+        p = self.run_(*self.args("--reading-dir", "reading2", "--bundle-arms", "RE,R,C"))
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        # each reading is unblinded with its own key, into files of its own
+        row = lambda n, kind, **k: dict({"answer": n, "id": n.rsplit("-", 1)[0], "kind": kind, "quote": "Stub answer", "minor": False, "source": "f.md:1", "note": "n"}, **k)
+        k1 = json.loads((d7 / "reading/KEY.json").read_text())
+        (e.d / "f1.jsonl").write_text(jl([row(sorted(k1["aid"])[0], "harmful", consequence="data loss")]))
+        (e.d / "f2.jsonl").write_text(jl([row(sorted(key2["aid"])[0], "harmful", consequence="data loss")]))
+        reading_before = {k: v for k, v in self.snapshot(d7).items() if k.startswith("reading/")}
+        p = e.run(*e.args("--phase", "after-reading", "--candidate", "R", "--control", "C", "--report", str(e.d / "r1.md"), "--findings-d7", f"claude={e.d / 'f1.jsonl'}", arms="R,C", configs=self.cfg))
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        p = self.run_(*self.args("--phase", "after-reading", "--reading-dir", "reading2", "--report", str(e.d / "r2.md"), "--findings-d7", f"claude={e.d / 'f2.jsonl'}"))
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertTrue((d7 / "findings_d7.jsonl").exists() and (d7 / "findings_d7_reading2.jsonl").exists())
+        m1, m2 = json.loads((d7 / "measures_d7.json").read_text()), json.loads((d7 / "measures_d7_reading2.json").read_text())
+        self.assertEqual(sorted(m1["arms"]), ["C", "R"])
+        self.assertEqual(sorted(m2["arms"]), ["C", "R", "RE"])
+        self.assertTrue(all(r["P"] is not None for a in ("C", "R", "RE") for r in m2["arms"][a]["records"]))      # the old judge file (R, C) and the added one (RE) are all read
+        self.assertNotIn("Descriptive", (e.d / "r1.md").read_text())
+        self.assertIn("Descriptive: RE - R", (e.d / "r2.md").read_text())
+        self.assertIn("(descriptive)", (e.d / "r2.md").read_text())
+        self.assertEqual({k: v for k, v in self.snapshot(d7).items() if k.startswith("reading/")}, reading_before)   # the old reading is read, never written
+        for f in [x for x in ("ans_d7_R.jsonl", "ans_d7_C.jsonl", "judge_d7.jsonl", "judge_cache_d7.jsonl") if x in before]:
+            self.assertEqual(self.snapshot(d7)[f], before[f], f)
+
+    def test_the_manifest_rules_for_a_late_arm_a_new_candidate_and_a_dry_run_on_a_copy_of_a_real_folder(self):
+        e = self.e
+        wd = e.d / "mf"
+        base = ["manifest", "--work", str(wd), "--set", "d7", "--pin", str(e.d / "d7_items.jsonl"), "--configs", str(self.cfg), "--opt", "dry=no"]
+        run = lambda *a: e.run(*base, *a, cmd="scripts/m7_release_test.py")
+        self.assertEqual(run("--arms", "R,C", "--candidate", "R", "--control", "C").returncode, 0)
+        (wd / "stage_bundle.done").write_text("{}")
+        p = run("--arms", "R,C,RE", "--candidate", "R", "--control", "C")                       # the arm, without the option
+        self.assertEqual(p.returncode, 2)
+        self.assertIn("--allow-late-arms", p.stderr)
+        p = run("--arms", "R,C,RE", "--candidate", "RE", "--control", "C")                      # the candidate, without the option
+        self.assertEqual(p.returncode, 2)
+        self.assertIn("candidate", p.stderr)
+        p = run("--arms", "R,C,RE", "--candidate", "RE", "--control", "R", "--allow-late-arms")   # another control is not a late arm
+        self.assertEqual(p.returncode, 2, p.stdout + p.stderr)
+        self.assertEqual(sorted(json.loads((wd / "MANIFEST.json").read_text())["arms"]), ["C", "R"])      # nothing was changed by the refusals
+        p = run("--arms", "R,C,RE", "--candidate", "RE", "--control", "C", "--allow-late-arms")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertIn("added after the reading bundles", p.stdout)
+        self.assertEqual(run("--arms", "RE,R,C", "--candidate", "RE", "--control", "C").returncode, 0)   # recorded: no option needed
+        self.assertEqual(run("--arms", "R,C", "--candidate", "R", "--control", "C").returncode, 0)      # the old candidate still fits
+        # a different rule text for the late candidate is refused once its answers exist; the recorded one still fits
+        (wd / "stage_ans_RE.done").write_text("{}")
+        p = run("--arms", "RE,R,C", "--candidate", "RE", "--control", "C", "--h6-mode", "sample", "--allow-late-arms")
+        self.assertEqual(p.returncode, 2, p.stdout + p.stderr)
+        self.assertIn("answers of RE exist", p.stderr)
+        self.assertEqual(run("--arms", "RE,R,C", "--candidate", "RE", "--control", "C", "--allow-late-arms").returncode, 0)
+        # a dry run on a copy of a real folder is accepted; a real run on a dry folder is not
+        base2 = [a if a != "dry=no" else "dry=yes" for a in base]
+        p = e.run(*base2, "--arms", "R,C", "--candidate", "R", "--control", "C", cmd="scripts/m7_release_test.py")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        other = ["manifest", "--work", str(e.d / "mf2"), "--set", "d7", "--pin", str(e.d / "d7_items.jsonl"), "--configs", str(self.cfg), "--arms", "R,C", "--candidate", "R", "--control", "C"]
+        self.assertEqual(e.run(*other, "--opt", "dry=yes", cmd="scripts/m7_release_test.py").returncode, 0)
+        p = e.run(*other, "--opt", "dry=no", cmd="scripts/m7_release_test.py")
+        self.assertEqual(p.returncode, 2, p.stdout + p.stderr)
+        self.assertIn("options", p.stderr)
+
+    def test_judge_plan_gives_an_added_arm_its_own_stage_and_never_asks_again_for_a_finished_one(self):
+        wd = self.e.d / "jp"
+        wd.mkdir()
+        (wd / "MANIFEST.json").write_text(json.dumps({"arms": {"C": {}, "R": {}}}))
+        self.assertEqual(T.judge_plan(wd), ([("judge_C_R", ["C", "R"], "")], False))
+        (wd / "stage_judge_C_R.done").write_text("{}")
+        self.assertEqual(T.judge_plan(wd), ([], True))
+        (wd / "MANIFEST.json").write_text(json.dumps({"arms": {"C": {}, "R": {}, "RE": {}}}))
+        self.assertEqual(T.judge_plan(wd), ([("judge_add_RE", ["RE"], "_add_RE")], False))
+        (wd / "stage_judge_add_RE.done").write_text("{}")
+        self.assertEqual(T.judge_plan(wd), ([], True))
+        (wd / "MANIFEST.json").write_text(json.dumps({"arms": {"C": {}, "R": {}, "RE": {}, "RE2": {}}}))
+        self.assertEqual(T.judge_plan(wd)[0], [("judge_add_RE2", ["RE2"], "_add_RE2")])
+
+    def test_h6_with_re_and_c_reaches_the_sealed_bundles_and_the_sealed_excerpts_include_the_entries(self):
+        e = self.e
+        sha = T.sha256_file(self.cfg)
+        (e.d / "ledger.md").write_text(f"| 2026-11-27 | release-look-h6 | configs {sha} | rule {RR.rule_text_sha256('RE', 'C', 'full', BY)} |\n")
+        p = self.run_(*self.args(sets="h6", arms="RE,C"))
+        out = p.stdout + p.stderr
+        self.assertEqual(p.returncode, 0, out)
+        self.assertIn("before-reading done", out)
+        self.assertNotIn(CANARY, out)
+        h6 = e.w / "h6"
+        rows = eval2.read_jsonl(h6 / "ans_h6_RE.jsonl.enc")
+        self.assertTrue(all(r["kb_entries"] is not None and r["pack_check"] == "exact" for r in rows))
+        self.assertTrue(any(r["kb_entries"]["added"] for r in rows))
+        self.assertFalse((h6 / "ans_h6_RE.jsonl").exists())
+        import eval2_sealed_reading as SR
+        ex = [r["excerpts"] for f in sorted((h6 / "reading").glob("first_*.jsonl.enc")) for r in SR.read_rows(f)]
+        self.assertEqual(len(ex), 8)                                                                       # RE and C, four answers each
+        self.assertTrue(any("Fact entry: " in x and "quoted line" in x for x in ex))                       # the entries are in the sealed excerpts
+        for f in e.plain_files():                                                                          # no hidden text in any plain file (the chunk file with the entries holds chunks and entries only)
+            self.assertNotIn(CANARY, f.read_text(errors="replace"), f.name)
+        self.assertTrue((h6 / "stage_judge_C_RE.done").exists())
 
 
 if __name__ == "__main__":

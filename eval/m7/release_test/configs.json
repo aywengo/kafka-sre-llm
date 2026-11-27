@@ -314,6 +314,193 @@
   "ask_command": "OMLX_URL=<server url> .venv/bin/python -m kafka_sre_rag ask --backend openai --model Qwen3.8-27B-4bit --extra-body '{\"chat_template_kwargs\": {\"enable_thinking\": false}}' --json \"<question>\"",
   "ask_command_dry_run": ".venv/bin/python -m kafka_sre_rag ask --dry-run --backend openai --model Qwen3.8-27B-4bit --extra-body '{\"chat_template_kwargs\": {\"enable_thinking\": false}}' \"<question>\""
  },
+ "RE": {
+  "retrieval_profile": "frozen (the measured one; --profile frozen is the default)",
+  "k": "k6 (6 chunks, max 14000 characters)",
+  "index": {
+   "file": "work/v3/chunks_s1.jsonl",
+   "sha256": "233c23b0478006a8afae881b83836a226a6af89517256be4d9aac2cc7d500e92",
+   "chunks": 6444,
+   "record": "runs/v3/INDEX_FROZEN.json",
+   "record_sha256": "316a0f27efecf0757750920a8e6df669fdb62deb679f3972bd3d5933c413e08a"
+  },
+  "retrieval_settings": {
+   "pool": 40,
+   "chunk_chars": 1500,
+   "bm25": {
+    "K1": 1.2,
+    "B": 0.75,
+    "TITLE_W": 2
+   },
+   "rrf": true,
+   "rrf_constant": 60,
+   "k6": {
+    "k": 6,
+    "max_chars": 14000
+   },
+   "k3_not_used": {
+    "k": 3,
+    "max_chars": 6000
+   }
+  },
+  "reranker": {
+   "model": "BAAI/bge-reranker-v2-m3",
+   "revision": "953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e",
+   "device": "cpu",
+   "max_length": 512
+  },
+  "query_expansion": {
+   "done_by": "the answering model itself (the same server model id as the answer; frozen.json expansion.written_by); one extra call per question, before retrieval",
+   "max_tokens": 300,
+   "temperature": 0,
+   "thinking": false,
+   "prompt": "EXPAND_SYSTEM",
+   "prompt_sha256": "a1fb0eefabcd052fad39ac975e1b99ff3282285903af2410e1d9d3c4ce639de9"
+  },
+  "prompt_format": {
+   "mode": "default (--mode default; the measured prompt)",
+   "system_prompt_sha256": "766ff0b0e2c61316acc1239425c33f299c2f1136814e2ed6c7135f7dda20da15",
+   "instruction_sha256": "65fe40116e6723ecc5128222fbe5530e7009e79f1cb7a696b12a78138d7f9307",
+   "source": "kafka_sre_rag/prompts.py constants SYSTEM_PROMPT, INSTRUCTION, EXPAND_SYSTEM, checked against kafka_sre_rag/frozen.json prompts_sha256 by `python -m kafka_sre_rag verify` (all match on 2026-11-26)",
+   "version_names": "no version constant applies to the ask path: the prompt is the frozen one (golden hashes in tests/golden); PACK_PROMPT_VERSION pack/4 (scripts/generate_qa.py) belongs to generation packs, not to ask; KB_ENTRY_PROMPT_VERSION kbe/5 and KB_CHECK_PROMPT_VERSION kbc/4 belong to the entries (on in RE)"
+  },
+  "answer": {
+   "max_tokens": 2048,
+   "temperature": 0,
+   "thinking": false,
+   "how_thinking_is_off": "request body chat_template_kwargs.enable_thinking=false, passed as --extra-body (applies to the expansion call and the answer call)"
+  },
+  "answer_profile": "fast (default: --answer-profile not given; the thorough profile stays off)",
+  "other_options_off": "--check, --revise, --mark-destructive, --mode other than default, --profile other than frozen, --max-tokens, --stream (not given)",
+  "extra_body": {
+   "chat_template_kwargs": {
+    "enable_thinking": false
+   }
+  },
+  "server": "the oMLX server, one request at a time; address from OMLX_URL (never recorded here)",
+  "git": {
+   "runtime_head": "b25ac62f27497100237ba95650aa6bace1f0758b",
+   "runtime_tree_clean_for": "kafka_sre_rag/ and scripts/retrieve.py (git status on 2026-11-26)"
+  },
+  "runtime_files_sha256": {
+   "kafka_sre_rag/frozen.json": "3031725d8844e2b64a7feae0047bfdf8de9c46facfdd2dfee58126a153cf0ecf",
+   "kafka_sre_rag/retrieval.py": "b18a44a9923c9da6a7df68ef6bb720aef8af51373adb75ac793de4ec96b3bcf3",
+   "kafka_sre_rag/config.py": "483aba784a927cc59f84461dea52baf6acc69cea544dd177e35c98a22cb5ce8b",
+   "kafka_sre_rag/generators.py": "48ce0bb8d05d240180ab62e13ca8bc44586abf4350e1293d1f7c80e236c9fbcc",
+   "kafka_sre_rag/pipeline.py": "435a01dea942c362a22cc52950df65572e204f56d915f3ee642e4264a5a519b7",
+   "kafka_sre_rag/__main__.py": "b53ff5992d1d8ded18ddf52ebca6772b2ecdc2399d7bbfeda41767fc9c87bb58",
+   "scripts/retrieve.py": "7981b711a2c74e6205580a96f521531fcc2f8c1cc2c26063eac97d974d7829e8",
+   "kafka_sre_rag/prompts.py": "1df5989e41a8bc67d578de1b5e7cf76df7078a46ae2c42551ab424c82434db7b",
+   "kafka_sre_rag/kb_entries.py": "5c0f18700849044b70502456f1382e668f9a750ac699faac4c6e6f87b67e8aed",
+   "kafka_sre_rag/kb_entry.py": "89221b38cc444e28ff2d58b7566dbd57326aa9e68ec80556c9a3b06d5587c994",
+   "kafka_sre_rag/kb_entries.json": "c71d74afa91f62232b439682f56b8b0ae1a2c98c074dd4047868dfc04d587577"
+  },
+  "runtime_files_note": "prompts.py is pinned by a running job and may gain constants (kb entries); the frozen constants above are what count, and `kafka_sre_rag verify` must print match for all of them; for RE the entries module, the entry renderer and the entries record are pinned too, and the index file by its sha256 in `entries`",
+  "name": "RE",
+  "description": "release configuration v4.0.0 (W43): Gemma 4 31B 4-bit, frozen retrieval, default prompt, lookup cards on and the fact entries on (up to 4 entries after the frozen excerpts, within 10 items and 24,000 characters); R is the same configuration without the entries",
+  "model": {
+   "oMLX_model_id": "gemma-4-31b-it-4bit",
+   "folder": "mlx-community/gemma-4-31b-it-4bit (relative to the oMLX model directory)",
+   "hf_repo": "mlx-community/gemma-4-31b-it-4bit",
+   "hf_repo_revision": "696d436c404745a59f30e4939a658162b0a9e57f",
+   "hf_revision_source": "the folder's .cache/huggingface/download/*.metadata files (first line = commit hash; second line of a weight file's metadata = its sha256, equal to the sha256 computed here)",
+   "base_model": "google/gemma-4-31B-it",
+   "upstream_conversion": "converted with mlx-vlm from google/gemma-4-31B-it at upstream revision 3548789868c5356dbf307c98e6f609007b82b3eb (README of the folder)",
+   "licence": "apache-2.0 (README front matter)",
+   "sha256_weights": {
+    "model-00001-of-00004.safetensors": "988e2b1fd41d93b62b8c432f52f632c43b8cb7f86df4b957db36a3cc0dab40ca",
+    "model-00002-of-00004.safetensors": "a496a96fbd39cd11a9871f91d026013d91069dcac15f89ca861b93976f3857cf",
+    "model-00003-of-00004.safetensors": "afa555ff0e1bc458c5b08aeef1f4499dce63e2bfb5d3a2aac716e47c0a5672c1",
+    "model-00004-of-00004.safetensors": "b55567ae065357d047daca926e45619ec0edef994f165356111c95d4d1021587"
+   },
+   "sha256_weight_index": "a9ca8373aacc37ab9d7f16ff4bbb392c055e1b51b0fec6258cbfc578056c5fef",
+   "sha256_config_json": "a01be3d45e0eb70ae89cef6d3e823dd44de6ec4dfc41b91dc357f97e457915c0",
+   "sha256_generation_config_json": "d4226bbe3117d2d253ba4609720ba82c6c4ce4627a9a6ae05387c78983ac03de",
+   "sha256_tokenizer_files": {
+    "tokenizer.json": "cc8d3a0ce36466ccc1278bf987df5f71db1719b9ca6b4118264f45cb627bfe0f",
+    "tokenizer_config.json": "080d9e1aff284e2f6043889cd05367966f7c7b80e025fbc0b06745e218158656"
+   },
+   "sha256_chat_template": "36e3a42e5cf14cd0020e72d92e1fdd9970f59b82170e421f0cbe1bb42bead3f0",
+   "sha256_other_files": {
+    "processor_config.json": "de3e580aebdc98272d4c4547daffe6525fcbae18a83a0e0bcf0d7444d4ee6f37",
+    "README.md": "5d3bbf7f85bf064fa77c4d4ebec0b20875503569284663d5cfda5bbbd28aa6c3",
+    ".gitattributes": "34448b82c17d60fec9b65b1f093c115ddbaadc04beb1b0140b6bfed2e012a930"
+   },
+   "hash_check": "every file hashed in two separate passes; the two lists are identical",
+   "server_side_model_settings": {
+    "temperature_default": 1.0,
+    "top_p": 0.95,
+    "top_k": 64,
+    "force_sampling": false,
+    "note": "oMLX model_settings for this id; a request's temperature 0 is sent by the runtime, so decoding is greedy; no other server-side switch is on (mtp, dflash, specprefill, turboquant all false)"
+   }
+  },
+  "thinking_switch_note": "the Gemma 4 chat template turns thinking on only when enable_thinking is defined and true (an absent key already means off); the explicit false is sent anyway, as in Z3, so the request is the same on both models",
+  "lookup_cards": {
+   "on": true,
+   "switch": "--lookup-cards (kafka_sre_rag ask)",
+   "z3_switch": "scripts/m7_ka2.sh arm L = eval2.py answer ... --answer-profile thorough --no-thinking --no-verify --lookup-cards, extra-body enable_thinking=false, default prompt, temperature 0, 2,048 tokens; Z3 result gemma31 PASS (runs/m7/M7_KA2.md)",
+   "sources": [
+    "profiles"
+   ],
+   "max_chars": 4000,
+   "place": "after the excerpts, before the question",
+   "header_sha256": "bce6f54f796a04e95c8e77ee5f6eaa4fc35337ae2010dd1d6b53db55423b2014",
+   "terms": "the names in the question plus the search terms of the live expansion (ask --lookup-cards); Z3 used the question's names only (replayed packs, W20)",
+   "catalogue_dir": "work/m4/catalogues",
+   "catalogue_recorded_sha256": "e319653a543211a5366cd1a5734c83ee4d2683c2d41077058369116804a8447e",
+   "catalogue_files_sha256": "6c374c699932347ddbc16ade8dbea418058bfb7df1a2f11f30fc37def32b57ad",
+   "catalogues_json_sha256": "0b1ab833a573ffc9c935c5ad6aa9e3c282cbd91802b52181b69281ea8cdd6d77",
+   "catalogue_file_sha256": {
+    "argocd.json": "900e0f55fee5068dafe19f7632a6731440e752cb2870819d65ca5575114d3e79",
+    "connect_rest.json": "fa076e9391b4d8e67a4ea7782f9c8086e913955e955b788fd1839764cf9afc9b",
+    "kafka_cli.json": "9e688b762c6462d023958335a0421d7fdf6a70959c6882c8045697145f260b63",
+    "kafka_config.json": "436bd532f48ccd5f0c6a6e845746a2fdfdf6733ad11bdb1979835bcee228236d",
+    "kafka_config_history.json": "2f88ace30c40bdf44f0964fc87eecb3bcb5b2da14ab93f41abaa18ff23f3d8ed",
+    "kubernetes.json": "5984562fe61d3302ca511f14e09a20290947c6a7ca1506d5fe28dfeaa414f05d",
+    "protocol_errors.json": "8a05ad8e9afa7181fd822ea74aa527ce5b71c849a919ccfdb72f077f32c906df",
+    "strimzi_annotations.json": "9af6f085f8b1e6dc32a7cf116f65129f8b5cb4b2140d4a89bbb2d1225f761c12",
+    "strimzi_resources.json": "f5b6c3e00b06bfdcc7ef44b0c14a3d2efc3a397c4256c05dda39e5e085938090"
+   },
+   "module_sha256": {
+    "kafka_sre_rag/kb_lookup.py": "91e34f1c556f0fc626f63a55b7067e620d2e6bfa48930b0506d9afd904af0818",
+    "kafka_sre_rag/catalogue.py": "8c4262c5c4a6d3086f900d6f697645214e238e2da7cfc57f3094d4d9226dddf7",
+    "kafka_sre_rag/catalogue_a3.py": "bc6a9d22d66209cb6e0c2a8d7b8cf0066d7c88243a9c5ec4a6e9a4e6f76389b3"
+   }
+  },
+  "entries": {
+   "on": true,
+   "status": "on in the release configuration (W43, 2026-11-27): the audit found 178 of 200 ok (89.0 %), below the bar fixed beforehand (190 of 200); the Owner set the bar for the M7 release at 80 % after the result",
+   "switch": "--kb-entries (kafka_sre_rag ask); the record is the default kafka_sre_rag/kb_entries.json",
+   "index": "work/m7/kb/entries_index.jsonl",
+   "sha256": "9722a8f3b323bccc4c89e7c38929236e57a13507965548754e2eef28ac266938",
+   "record": "kafka_sre_rag/kb_entries.json",
+   "record_sha256": "c71d74afa91f62232b439682f56b8b0ae1a2c98c074dd4047868dfc04d587577",
+   "entries": 7028,
+   "slice_sha256": "d7d1d352ab0e72a624e449154e9fcfdf7890115db48c8bcc6be6c0629efb824e",
+   "writer": {
+    "model": "DeepSeek-V4.1-Flash-1017-oQ4e-mtp",
+    "prompt_version": "kbe/5"
+   },
+   "checker": {
+    "model": "GLM-5.3-Flash-oQ8e-mtp",
+    "prompt_version": "kbc/4"
+   },
+   "entry_prompt_version": "kbe/5",
+   "check_prompt_version": "kbc/4",
+   "cap": {
+    "MAX_ITEMS": 10,
+    "MAX_CHARS": 24000,
+    "POOL": 24,
+    "description": "the whole pack (frozen excerpts, then entries) at most 10 items and 24,000 characters (kb_entries.MAX_ITEMS, MAX_CHARS); so at most 4 entries after a full frozen six, more when the frozen pack is shorter"
+   },
+   "place": "after the frozen excerpts, in the same pack; each entry is an item with the title line of KB_ENTRY_RENDER; no prompt text is added; no extra model call",
+   "reason": "W43: the Owner admitted the entries for the M7 release at 80 % ok; RE is the release configuration, R (entries off) is kept as a descriptive arm",
+   "help_text_note": "the --kb-entries help text and pipeline.KB_ENTRIES_REASON say 'up to 4 entries'; that is the case after a full frozen six only. They are pinned runtime files and are not changed; the cap above is what the code does"
+  },
+  "ask_command": "OMLX_URL=<server url> .venv/bin/python -m kafka_sre_rag ask --backend openai --model gemma-4-31b-it-4bit --extra-body '{\"chat_template_kwargs\": {\"enable_thinking\": false}}' --lookup-cards --kb-entries --json \"<question>\"",
+  "ask_command_dry_run": ".venv/bin/python -m kafka_sre_rag ask --dry-run --backend openai --model gemma-4-31b-it-4bit --extra-body '{\"chat_template_kwargs\": {\"enable_thinking\": false}}' --lookup-cards --kb-entries \"<question>\""
+ },
  "pending": [
   "entries (Z4): on only if Z4 passes; the entries index and its hash are added when the entries are frozen"
  ],
@@ -347,6 +534,36 @@
    ],
    "entries_R": "changed from on-if-Z4-passes/pending to off (runs/m7/reports/kb_audit.md)",
    "report": "runs/m7/reports/release_config.md"
+  },
+  {
+   "date": "2026-11-27",
+   "decision": "W43",
+   "when": "before any RE answer exists and before the h6 look",
+   "reason": "the Owner admitted the fact entries into the M7 release at 80 % ok (W43); RE = R with the entries on is added as a new entry. The entries R and C are not changed: they are byte-identical when serialised as the manifest hashes them (json.dumps with sorted keys), so the finished D7 answers of R and C stay valid",
+   "added": {
+    "RE": {
+     "ask_command": "R plus --kb-entries",
+     "entries": {
+      "index": "work/m7/kb/entries_index.jsonl",
+      "sha256": "9722a8f3b323bccc4c89e7c38929236e57a13507965548754e2eef28ac266938",
+      "record_sha256": "c71d74afa91f62232b439682f56b8b0ae1a2c98c074dd4047868dfc04d587577",
+      "entries": 7028
+     },
+     "runtime_files_added": {
+      "kafka_sre_rag/kb_entries.py": "5c0f18700849044b70502456f1382e668f9a750ac699faac4c6e6f87b67e8aed",
+      "kafka_sre_rag/kb_entry.py": "89221b38cc444e28ff2d58b7566dbd57326aa9e68ec80556c9a3b06d5587c994",
+      "kafka_sre_rag/kb_entries.json": "c71d74afa91f62232b439682f56b8b0ae1a2c98c074dd4047868dfc04d587577"
+     }
+    }
+   },
+   "applies_to": [
+    "RE"
+   ],
+   "unchanged": {
+    "R": "6ebd600bc5f5596cd8d89c74305fd98a4d4e9613ed8e1d69cb0b0f1c7d3ba182",
+    "C": "29909e66bcf1403665c8e932c6226448191d58d51532b15d9180dfe73fcbcd97"
+   },
+   "report": "runs/m7/reports/e1_entries_arm.md"
   }
  ]
 }
