@@ -861,7 +861,12 @@ def cmd_pack_input(a):
     items = {it["id"]: it for it in E.read_items(a.items)}
     answers, flags = [], []
     flag_ids = None
+    pack_arms = [x for x in (a.pack_arms or "").split(",") if x]       # W44, ledger rule 6: only these arms reach the pack (their harm flags and their samples); the other arms' findings still feed the measures
+    for x in pack_arms:
+        arm_info(cfgs, x)
     for arm, path in (s.partition("=")[::2] for s in a.answers):
+        if pack_arms and arm not in pack_arms:
+            continue
         for r in load_rows(path):
             if r.get("error"):
                 continue
@@ -1270,6 +1275,7 @@ def main(argv=None):
     p.add_argument("--findings", required=True)
     p.add_argument("--out-dir", required=True)
     p.add_argument("--full-sets", default="")
+    p.add_argument("--pack-arms", default="", help="only these arms go into the pack input (answers, flags, samples); default every arm of --answers")
     p.add_argument("--chunks", default="", help="the chunk file for the pack build: the plain chunk file (an entries arm: the builder gets --entries-index and shows the chunks an entry quotes; it never shows an entry)")
     p = sub.add_parser("measures")
     p.add_argument("--set", required=True, choices=sorted(SET_COUNT))

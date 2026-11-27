@@ -48,14 +48,14 @@ DRY=no; W=work/m7/release_test; REPORT=runs/m7/M7_RELEASE_TEST.md; ARMS=R,C; CAN
 CONFIGS=eval/m7/release_test/configs.json; LEDGER=runs/m4/HIDDEN_LEDGER.md; CHUNKS=work/v3/chunks_s1.jsonl
 D7I=eval/m7/d7/items.jsonl; D7R=eval/m7/d7/rubrics.jsonl; H6I=eval/hidden/tier_b_h6_items_final.jsonl.enc; H6R=eval/hidden/tier_b_h6_rubrics_final.jsonl.enc
 SECOND=1; H6S=6; DS=DeepSeek-V4.1-Flash-1017-oQ4e-mtp; FINDD7=; H6DIR=; FREADER=claude; VD7=; PKD7=; VH6=; PKH6=; SCOPED7=; LIMIT=0; STUBLOADED=; WSET=no; RSET=no
-H6MODE=full; H6BY="the conductor (the default; the Owner has not chosen)"; BARMS=; RETRYPACKS=no; FULLSETS=; RD=reading; ADDLATE=no; DREF=R
+H6MODE=full; H6BY="the conductor (the default; the Owner has not chosen)"; BARMS=; RETRYPACKS=no; FULLSETS=; RD=reading; ADDLATE=no; DREF=R; PACKARMS=
 while [ $# -gt 0 ]; do case $1 in
   --dry-run) DRY=yes;; --work) W=${2:?}; WSET=yes; shift;; --report) REPORT=${2:?}; RSET=yes; shift;; --arms) ARMS=${2:?}; shift;; --candidate) CAND=${2:?}; shift;; --control) CTRL=${2:?}; shift;;
   --set) SETS=${2:?}; shift;; --phase) PHASE=${2:?}; shift;; --configs) CONFIGS=${2:?}; shift;; --ledger) LEDGER=${2:?}; shift;; --chunks) CHUNKS=${2:?}; shift;;
   --d7-items) D7I=${2:?}; shift;; --d7-rubrics) D7R=${2:?}; shift;; --h6-items) H6I=${2:?}; shift;; --h6-rubrics) H6R=${2:?}; shift;;
   --second-fraction) SECOND=${2:?}; shift;; --h6-sessions) H6S=${2:?}; shift;; --judge-model) DS=${2:?}; shift;; --first-reader) FREADER=${2:?}; shift;;
   --h6-mode) H6MODE=${2:?}; shift;; --h6-chosen-by) H6BY=${2:?}; shift;; --bundle-arms) BARMS=${2:?}; shift;; --retry-failed-packs) RETRYPACKS=yes;; --full-sets) FULLSETS=${2:?}; shift;;
-  --reading-dir) RD=${2:?}; shift;; --add-arms-late) ADDLATE=yes;; --descriptive-reference) DREF=${2:?}; shift;;
+  --pack-arms) PACKARMS=${2:?}; shift;; --reading-dir) RD=${2:?}; shift;; --add-arms-late) ADDLATE=yes;; --descriptive-reference) DREF=${2:?}; shift;;
   --findings-d7) shift; while [ $# -gt 0 ] && case $1 in --*) false;; *) true;; esac; do FINDD7="$FINDD7 $1"; shift; done; continue;;
   --scope-d7) shift; SCOPED7="$*"; break;;
   --h6-dir) H6DIR=${2:?}; shift;; --verdicts-d7) VD7=${2:?}; shift;; --pack-key-d7) PKD7=${2:?}; shift;; --verdicts-h6) VH6=${2:?}; shift;; --pack-key-h6) PKH6=${2:?}; shift;;
@@ -337,14 +337,14 @@ for s in $(echo $SETS | tr ',' ' '); do
       $PY $H unblind --set d7 --key $SW/$RD/KEY.json --rubrics "$RUBS" --answers $SETARGS --findings $FINDD7 --out $SW/findings_$CALLTAG.jsonl --reads-out $SW/reads_$CALLTAG.jsonl \
         $([ -z "$SCOPED7" ] || echo "--scope $SCOPED7") || fail "the d7 findings could not be unblinded (see above)"
       FIND="--findings $SW/findings_$CALLTAG.jsonl"
-      $PY $H pack-input --configs "$CONFIGS" --arms "$BA" --set d7 --items "$ITEMS" --answers $SETARGS --findings $SW/findings_$CALLTAG.jsonl --out-dir $SW/pack_input_$CALLTAG --full-sets "$FS" --chunks "$CHUNKS" || fail "the d7 pack input could not be made"
+      $PY $H pack-input --configs "$CONFIGS" --arms "$BA" --set d7 --items "$ITEMS" --answers $SETARGS --findings $SW/findings_$CALLTAG.jsonl --out-dir $SW/pack_input_$CALLTAG --full-sets "$FS" --chunks "$CHUNKS" ${PACKARMS:+--pack-arms $PACKARMS} || fail "the d7 pack input could not be made"
     fi
     [ -z "$VD7" ] || VERD="--verdicts $VD7"; [ -z "$PKD7" ] || PK="--pack-key $PKD7"; OUTM=$SW/measures_$CALLTAG.json
   else
     if [ -n "$H6DIR" ]; then
       $PY $H unblind --set h6 --dir "$H6DIR" --out $SW/findings_$CALLTAG.jsonl.enc --reader $FREADER || fail "the h6 findings could not be unblinded"
       FIND="--findings $SW/findings_$CALLTAG.jsonl.enc"
-      $PY $H pack-input --configs "$CONFIGS" --arms "$BA" --set h6 --items "$ITEMS" --answers $SETARGS --findings $SW/findings_$CALLTAG.jsonl.enc --out-dir $SW/pack_input_$CALLTAG --full-sets "$FS" --chunks "$CHUNKS" || fail "the h6 pack input could not be made"
+      $PY $H pack-input --configs "$CONFIGS" --arms "$BA" --set h6 --items "$ITEMS" --answers $SETARGS --findings $SW/findings_$CALLTAG.jsonl.enc --out-dir $SW/pack_input_$CALLTAG --full-sets "$FS" --chunks "$CHUNKS" ${PACKARMS:+--pack-arms $PACKARMS} || fail "the h6 pack input could not be made"
     fi
     [ -z "$VH6" ] || VERD="--verdicts $VH6"; [ -z "$PKH6" ] || PK="--pack-key $PKH6"; OUTM=$SW/measures_$CALLTAG.json.enc
   fi
@@ -352,6 +352,8 @@ for s in $(echo $SETS | tr ',' ' '); do
   MEAS="$MEAS $s=$OUTM"
 done
 $PY $RULE report --measures $MEAS --arms "$ALLARMS" --candidate $CAND --control $CTRL --out $W/report_body_$CALLTAG.md --json-out $W/result_$CALLTAG.json > $W/rule_out_$CALLTAG.txt || fail "the report could not be made"
+# the rule script prints one arm list for every set; a set that never had an arm (h6 has no R) leaves its row out of its table
+grep -Ev '^\| [^|]+ \| not run \|' $W/report_body_$CALLTAG.md > $W/report_body_$CALLTAG.md.tmp && mv $W/report_body_$CALLTAG.md.tmp $W/report_body_$CALLTAG.md
 ENTARMS=$($PY $H entries-arms --configs "$CONFIGS" --arms "$ALLARMS") || fail "the entries of the arms could not be read"
 DESC=
 case ",$ALLARMS," in *",$DREF,"*) if [ "$CAND" != "$DREF" ] && [ -n "$($PY $H entries-arms --configs "$CONFIGS" --arms "$CAND")" ]; then

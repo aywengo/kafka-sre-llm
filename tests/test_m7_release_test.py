@@ -2,6 +2,7 @@
 Offline: a stub ask, a stub judge, a stub server file; a test key in a temp dir; synthetic fixtures (a canary string stands for item text); no real hidden file, no server."""
 import copy
 import json
+import re
 import os
 import shutil
 import subprocess
@@ -1135,9 +1136,9 @@ class EntriesArm(unittest.TestCase):
         done = e.w / "logs/m7_release_test.done"
         calls = {
             "old": self.args("--phase", "after-reading", "--candidate", "R", "--control", "C", "--report", str(e.d / "r_old.md"), "--findings-d7", f"claude={e.d / 'f1.jsonl'}", arms="R,C"),
-            "re": self.args("--phase", "after-reading", "--reading-dir", "reading2", "--report", str(e.d / "r_re.md"), "--findings-d7", f"claude={e.d / 'f2.jsonl'}"),
+            "re": self.args("--phase", "after-reading", "--pack-arms", "RE,C", "--reading-dir", "reading2", "--report", str(e.d / "r_re.md"), "--findings-d7", f"claude={e.d / 'f2.jsonl'}"),
             "h6": self.args("--phase", "after-reading", "--h6-dir", str(h6 / "reading"), "--report", str(e.d / "r_h6.md"), sets="h6", arms="RE,C"),
-            "final": self.args("--phase", "after-reading", "--reading-dir", "reading2", "--h6-dir", str(h6 / "reading"), "--report", str(e.d / "r_final.md"), "--findings-d7", f"claude={e.d / 'f2.jsonl'}",
+            "final": self.args("--phase", "after-reading", "--pack-arms", "RE,C", "--reading-dir", "reading2", "--h6-dir", str(h6 / "reading"), "--report", str(e.d / "r_final.md"), "--findings-d7", f"claude={e.d / 'f2.jsonl'}",
                                sets="d7,h6", arms="RE,C"),
         }
         # MANIFEST.json is the folder's own log (every call checks it and may append a history line when a logged pin changed, e.g. the chunk file with the entries appearing); it is not a call's output
@@ -1174,7 +1175,21 @@ class EntriesArm(unittest.TestCase):
         self.assertIn("### Set d7", fin)
         self.assertIn("### Set h6 (hidden: totals only", fin)
         self.assertRegex(fin, r"\| RE \| 4 \|")
-        self.assertRegex(fin, r"\| R \| not run \|")                                                          # h6 has RE and C only
+        self.assertNotIn("not run", fin)                                                                       # h6 has RE and C only: no R row in its table
+        self.assertEqual(len(re.findall(r"^\| R \| ", fin, re.M)), 1)                                          # R only in D7's table
+        desc = (e.w / "descriptive_d7-h6_RE-C_reading2.md").read_text()
+        self.assertIn("Set d7", desc)
+        self.assertNotIn("Set h6", desc)
+        for call in ("d7_RE-R-C_reading2", "d7-h6_RE-C_reading2"):                                            # W44: no R answer reaches the pack input
+            pa = [json.loads(l) for l in (d7 / f"pack_input_{call}/answers.jsonl").read_text().splitlines()]
+            self.assertEqual({x["config"] for x in pa}, {"RE", "C"})
+            self.assertEqual(len(pa), 8)
+            fl = [json.loads(l) for l in (d7 / f"pack_input_{call}/flags.jsonl").read_text().splitlines()]
+            self.assertTrue(all(x["answer_id"].split("-")[1] in ("RE", "C") for x in fl))
+        pa_old = [json.loads(l) for l in (d7 / "pack_input_d7_R-C_reading/answers.jsonl").read_text().splitlines()]
+        self.assertEqual({x["config"] for x in pa_old}, {"R", "C"})                                           # the old reading keeps its arms
+        m2 = json.loads((d7 / "measures_d7_RE-R-C_reading2.json").read_text())
+        self.assertIn("R", m2["arms"])                                                                        # R's findings still feed RE - R
         self.assertIn("leave out the time to load the entries index", fin)                                      # the labels
         self.assertIn("an entry never serves a point", fin)
         self.assertIn("path (source file), not by its title line", fin)
