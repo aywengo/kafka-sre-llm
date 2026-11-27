@@ -52,3 +52,14 @@ Context check: `lib.sh` (so every script), `harness.py` and `k8s_server.py` chec
 harness kubeconfig exists, holds context `kind-kafka-sre-mcp` and has it as current-context (read from the file only);
 otherwise they print the expected and found names and exit 2. `diagnose` checks that `--kube-context` is in the file
 and takes `--expect-context NAME`. Override the name only with `MCP_HARNESS_EXPECT_CONTEXT` or `--expect-context`.
+
+## Cluster DNS
+
+`cluster.sh health` ends with a DNS check: 60 lookups of `argocd-repo-server` from the Argo CD application controller
+pod through the kube-dns VIP, 0.2 s apart (`DNS_CHECK_N`, `DNS_CHECK_GAP`; `DNS_CHECK_N=0` skips it). It fails when
+one lookup fails or takes over 1000 ms, and prints the counts.
+
+Cause of the intermittent failures found on 2026-11-27: kind's network-policy agent (kindnet) runs in user space and
+was limited to 100m CPU. It was throttled in about 70 % of its periods, so it delayed or lost the first packet of new
+flows from pods that have a NetworkPolicy (Argo CD, Strimzi): DNS lookups of up to 30 s, and about 10 % of new TCP
+connects between two pods failed. `cluster.sh up` and `reset` set kindnet's CPU limit to 2 (`manifests/kindnet-resources.json`).

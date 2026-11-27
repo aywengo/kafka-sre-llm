@@ -1113,5 +1113,45 @@ class ContextCheckTest(unittest.TestCase):
         self.assert_only_config_calls(log)
 
 
+class ClusterDnsCheckTest(unittest.TestCase):
+    """B12: the DNS check of `cluster.sh health` (dns_verdict in lib.sh) and the kindnet CPU limit it depends on."""
+
+    LIB = ROOT / "mcp_harness" / "lib.sh"
+
+    def verdict(self, *args):
+        env = dict(os.environ, HARNESS_CTX_CHECK="defer")
+        p = subprocess.run(["bash", "-c", f'source "{self.LIB}"; dns_verdict "$@"', "x", *args], env=env,
+                           capture_output=True, text=True)
+        return p.returncode, p.stdout.strip()
+
+    def test_clean_run_passes(self):
+        self.assertEqual(self.verdict("60", "0", "0", "17"),
+                         (0, "cluster DNS: 60 lookups, 0 failed, none over 1000 ms (max 17 ms)"))
+
+    def test_one_failure_fails_with_a_clear_message(self):
+        code, out = self.verdict("60", "1", "0", "5003")
+        self.assertEqual(code, 1)
+        self.assertIn("1 of 60 lookups failed", out)
+        self.assertIn("max 5003 ms", out)
+
+    def test_one_slow_lookup_fails(self):
+        code, out = self.verdict("60", "0", "2", "1400")
+        self.assertEqual(code, 1)
+        self.assertIn("2 took over 1000 ms", out)
+
+    def test_no_result_fails(self):
+        code, out = self.verdict()
+        self.assertEqual(code, 1)
+        self.assertIn("no result", out)
+
+    def test_health_runs_the_check_and_the_cpu_limit_is_applied_on_up_and_reset(self):
+        sh = (ROOT / "mcp_harness" / "cluster.sh").read_text()
+        self.assertIn("dns_verdict $(dns_lookups", sh)
+        self.assertEqual(sh.count("kindnet_resources"), 3)  # the definition, `up` and `reset`
+        patch = json.loads((ROOT / "mcp_harness" / "manifests" / "kindnet-resources.json").read_text())
+        res = patch["spec"]["template"]["spec"]["containers"][0]["resources"]
+        self.assertEqual(res["limits"]["cpu"], "2")
+
+
 if __name__ == "__main__":
     unittest.main()

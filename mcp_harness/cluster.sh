@@ -3,7 +3,7 @@
 #   cluster.sh up        create cluster kafka-sre-mcp from the images and manifests fetched once (fetch.sh)
 #   cluster.sh down      delete the cluster
 #   cluster.sh reset     restore the healthy state (between scenarios), then wait until healthy
-#   cluster.sh health    one line per check; exit 0 when all pass
+#   cluster.sh health    one line per check, the last is cluster DNS (60 lookups, none failed or over 1 s); exit 0 when all pass
 #   cluster.sh pulls     image pulls since `up` (node image list against the baseline, and Pulling events); exit 1 if any
 #   cluster.sh kubeconfig  (re)write the harness's own kubeconfig file from kind (work/mcp_harness/kubeconfig)
 # Needs no network after fetch.sh: images are loaded into the node, every pull policy is IfNotPresent.
@@ -44,6 +44,15 @@ replace_or_create() {  # replace whole objects (removes fields a fault added), c
   K replace -f "$1" >/dev/null 2>&1 || K apply -f "$1" >/dev/null
 }
 
+kindnet_resources() {  # idempotent: raise kindnet's CPU limit (B12; see lib.sh, Cluster DNS), then wait for its pod
+  local cur
+  cur=$(K -n kube-system get ds kindnet -o jsonpath='{.spec.template.spec.containers[0].resources.limits.cpu}' 2>/dev/null)
+  [ "$cur" = 2 ] && return 0
+  log "kindnet: CPU limit ${cur:-none} -> 2 (manifests/kindnet-resources.json)"
+  K -n kube-system patch ds kindnet --type strategic --patch-file "$HARNESS/manifests/kindnet-resources.json" >/dev/null || return 1
+  K -n kube-system rollout status ds/kindnet --timeout=180s >/dev/null
+}
+
 healthy() {
   local ok=0 v
   check() { if eval "$2" >/dev/null 2>&1; then echo "  ok   $1"; else echo "  FAIL $1"; ok=1; fi; }
@@ -64,6 +73,11 @@ healthy() {
   check "Argo CD app Healthy" "[ \"\$(app_field '{.status.health.status}')\" = Healthy ]"
   check "topics orders, payments, inventory Ready" "[ \"\$(K -n kafka get kafkatopics orders payments inventory -o jsonpath='{range .items[*]}{.status.conditions[?(@.type==\"Ready\")].status}{\"\\n\"}{end}' | grep -c True)\" = 3 ]"
   check "users app-consumer, app-payments Ready" "[ \"\$(K -n kafka get kafkausers app-consumer app-payments -o jsonpath='{range .items[*]}{.status.conditions[?(@.type==\"Ready\")].status}{\"\\n\"}{end}' | grep -c True)\" = 2 ]"
+  # cluster DNS: N lookups (default 60, 0.2 s apart); none may fail or take over 1000 ms. DNS_CHECK_N=0 skips it.
+  if [ "${DNS_CHECK_N:-60}" != 0 ]; then
+    if dns_verdict $(dns_lookups "${DNS_CHECK_N:-60}" "${DNS_CHECK_GAP:-0.2}" 2>/dev/null) > "$GEN/dns-check.txt"; then echo "  ok   $(cat "$GEN/dns-check.txt")"
+    else echo "  FAIL $(cat "$GEN/dns-check.txt")"; ok=1; fi
+  fi
   return $ok
 }
 
@@ -82,6 +96,7 @@ cmd_up() {
     [ -f "$tar" ] || docker save --platform linux/arm64 -o "$tar" "$i" || exit 1
     log "loading $i into the node"; kind load image-archive --name "$CLUSTER" "$tar" || exit 1
   done
+  kindnet_resources || exit 1
   K create namespace kafka --dry-run=client -o yaml | K apply -f - >/dev/null
   K create namespace argocd --dry-run=client -o yaml | K apply -f - >/dev/null
   log "Strimzi 1.3.1 operator"
@@ -107,6 +122,7 @@ cmd_up() {
 cmd_reset() {
   log "reset: restore the healthy state"
   K uncordon "$NODE" >/dev/null 2>&1
+  kindnet_resources
   K -n kafka delete kafkanodepools,kafkatopics,kafkausers,pvc,configmaps,secrets -l mcp-harness/fault=true --ignore-not-found --wait=false >/dev/null 2>&1
   for f in kafka.yaml clients.yaml; do replace_or_create "$HARNESS/manifests/$f"; done
   bash "$HARNESS/faults/quota.sh" revert producer_byte_rate >/dev/null 2>&1  # a quota set outside any KafkaUser

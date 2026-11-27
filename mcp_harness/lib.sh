@@ -123,3 +123,30 @@ deploy_ready() {  # deploy_ready NS NAME: rolled out (current generation), all r
   set -- $r
   [ "$#" = 6 ] && [ "$1" != 0 ] && [ "$1" = "$2" ] && [ "$1" = "$3" ] && [ "$1" = "$4" ] && [ "$5" = "$6" ]
 }
+
+# Cluster DNS (B12). The kind node's kindnet enforces NetworkPolicies in user space; at its default CPU limit (100m)
+# it is throttled and delays or loses the first packets of new flows from pods that have a NetworkPolicy (the Argo
+# CD pods, Strimzi's), which shows as DNS timeouts of up to 30 s and failed connects. cluster.sh raises the limit
+# (kindnet_resources) and `health` checks the result with dns_lookups / dns_verdict.
+# dns_lookups N GAP: from the Argo CD application controller pod (its own resolv.conf, the kube-dns VIP), N lookups of
+# argocd-repo-server with GAP seconds between them. Prints "N FAILED SLOW MAX_MS" (slow = over 1000 ms).
+dns_lookups() {
+  K -n argocd exec argocd-application-controller-0 -- sh -c '
+    n=$1; gap=$2; f=0; s=0; m=0; i=0
+    while [ "$i" -lt "$n" ]; do
+      t0=$(date +%s%N); getent hosts argocd-repo-server >/dev/null 2>&1; rc=$?; t1=$(date +%s%N)
+      ms=$(( (t1 - t0) / 1000000 ))
+      [ "$rc" -ne 0 ] && f=$((f + 1))
+      [ "$ms" -gt 1000 ] && s=$((s + 1))
+      [ "$ms" -gt "$m" ] && m=$ms
+      i=$((i + 1)); sleep "$gap"
+    done
+    echo "$n $f $s $m"' sh "$1" "$2"
+}
+# dns_verdict N FAILED SLOW MAX_MS: one line; exit 0 only when no lookup failed and none took over 1000 ms.
+dns_verdict() {
+  if [ "$#" -ne 4 ]; then echo "cluster DNS: no result (the lookups did not run in the Argo CD controller pod)"; return 1; fi
+  if [ "$2" = 0 ] && [ "$3" = 0 ]; then echo "cluster DNS: $1 lookups, 0 failed, none over 1000 ms (max $4 ms)"; return 0; fi
+  echo "cluster DNS: $2 of $1 lookups failed and $3 took over 1000 ms (max $4 ms); see mcp_harness/README.md, section Cluster DNS"
+  return 1
+}
