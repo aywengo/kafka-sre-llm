@@ -224,6 +224,7 @@ clause: 28 of 30 faults visible at 60, 150, 300 and 600 s; 2 lost by their verif
 off (Argo CD controller lookups failed 3 of 120 and stalled up to 28 s), to be fixed and checked by `cluster.sh health`, then
 `argocd-degraded-invalid-manifest` and the other Argo CD scenarios rechecked at 600 s; a scenario that still cannot hold is
 excluded for both models and listed before any answer (`runs/m7/reports/mcp_harness_build.md`, "Persistence check").
+**Amended 2026-11-27 before any answer (conductor, after B12, `runs/m7/reports/b12_t1_prep.md`):** harness head `ef24d3d` → `b7b1c8e` (main `a9c0cc0` merged at `68d4bb3`; the DNS fix: `cluster.sh` `up` and `reset` raise kindnet's CPU limit from 100m to 2, `mcp_harness/manifests/kindnet-resources.json`; `cluster.sh health` adds a 60-lookup DNS check). `scenarios.jsonl` (`4b958b20…`), the allow-list (`0aad0ebf…`) and `downloads.lock.json` (`e20798fd…`) are unchanged. DNS before the fix: 1 failure in 120 lookups, at most 16.8 s; after: 0 in two runs of 120, at most 17 ms. All 5 Argo CD scenarios held at 60, 150, 300 and 600 s; 0 scenarios excluded. **What "T1 on RE" (W44) means:** `diagnose` and the harness have no retrieval, lookup cards or entries, and the rule says no retrieval excerpts, so T1 runs RE's model (`gemma-4-31b-it-4bit`, the revision pinned for R and RE) with the T1 prompt `tools/1`, exactly as `diagnose` ships; entries in T1 would be a code and rule change (a new version). Put to the Owner through LLM PM at the start.
 
 - **Set.** The 30 scenarios, each once per model, in file order. A scenario whose fault does not verify in time is
   excluded for both models and listed. The scenarios were written by the harness builder and its fault checks were
@@ -368,15 +369,33 @@ fixes it asks for, the merge after the KB chain, D7's answers and the release-te
 | 2026-11-27 | W37 (restated) | The Owner (through LLM PM, 22:30, after the h6 bars: B1 not met, B2 to B4 met): "ignore bars. mention results in model-card, but release anyway". This restates W37 and changes nothing: no bar gates v4.0.0, and every result goes into the model card as met, not met or not measured, with its numbers and denominators. The conductor sends LLM PM the shortest honest path; the Owner decides which optional steps are dropped. |
 | 2026-11-27 | W10 | The Owner (through LLM PM, item 22): **publish the fact-entries index with the release**, as a dataset next to the index, with a NOTICE paragraph (the entries are model-written; the audit, 178 of 200 ok, 22 partial, 0 wrong, with the bar changed after the result to 80 %; the model licences: DeepSeek and GLM MIT, Gemma 4 Apache-2.0) and a dataset card stating the limits. Drafts now (B16); nothing is uploaded until the release go, and each upload is named (files and repository) before it. The Gemma prohibited-use policy stays open as a legal point, flagged in the draft. The runtime's stale wording about entries (`--kb-entries` help and warning, "up to 4") is not changed, and not with the MCP merge, until LLM PM brings the Owner's answer. |
 | 2026-11-27 | W46 | The Owner (through LLM PM, item 19, night), on the shortest-path list: (1) **D7 adjudication dropped.** The card says D7 B1, B2 and B4 "not adjudicated (not measured)"; D7 B3 measured, not met; h6 fully adjudicated. The combined final call (A1) runs now without D7 verdicts. The D7 pack (`runs/m7/adjudication/d7/`) stays as built, unused. (2) **T1 on RE kept**: Gemma first; Qwen's arm after the release (as W39). (3) **The MCP tools merge and the runtime's entries wording go into v4.0.0**, with a byte check that RE's measured prompts (the 60 D7 RE prompts and the golden tests) are unchanged, recorded openly as a post-measurement change that does not touch the measured path. `diagnose` ships experimental and off by default only if T1 shows no violation (W39), else it is left out. Since D7 is dropped, the four frozen pack-tool hashes no longer need to hold for D7; they are kept for the h6 record. This replaces W45's condition and W10's hold on the wording. (4) **The laptop run and the installer's clean-machine acceptance dropped.** The card says the laptop is not qualified (reference machine only; the Mac Studio reference, 46 of 60 all-pass, measured); by W41 installer A moves to v4.0.1 and the card reports the installer bar "not met" for v4.0.0; the installer branch is kept for v4.0.1. (5) **Gemma prohibited-use policy:** the card links the policy and says the project did not verify whether it binds. Nothing is uploaded, pushed or tagged without the Owner's go, each step named before it runs. |
+| 2026-11-27 | W47 | The Owner (through LLM PM, item 19, night), after the Architect's privacy note: for h6 without the exposed scenario, the public model card says only "conclusions unchanged on 59 scenarios". The exact counts without the item stay in the Owner's private review file `runs/m7/OWNER_PRIVATE_h6_without_item.md` (git-ignored, never uploaded), and in no public text, dataset card, release notes or published repository file: next to the all-60 totals they would reveal that scenario's outcomes by subtraction. The card branch that held them (local commit 492621d) is never pushed; the card goes to main as a fresh squashed commit. |
+| 2026-11-27 | W48 | The Owner (through LLM PM, item 19, night), on the three merge choices of B21 (`runs/m7/reports/b21_mcp_wording_merge.md`), all as recommended: (1) the `--lookup-cards` help and `LOOKUP_REASON` are corrected like the entries wording (measured only inside the release configuration RE), as a separate revertable commit (9bcaed4 on `v4-mcp-wording`); (2) no code change for the "UNMEASURED CONFIGURATION: generator is not the reference model" banner that RE's exact command still prints; the model card explains it; RE becomes the reference model in a later version; (3) if T1 shows a violation, only the `diagnose` command leaves v4.0.0 (`v4-diagnose-out`), and the tools code stays (the T1 harness imports it). Not objected to: the test-only change for the 21 release-test unit tests that fail on the configs.json pins after the merge (B24): the real pins are checked against the measured commit a9c0cc0, the chain mechanics use test copies of the configs, no assertion is weakened; configs.json and the four frozen tools stay unchanged. The byte check (B21, `scripts/m7_v4_bytecheck.py`): RE's 60 D7 prompts and request bodies identical between a9c0cc0's code and the merged code, 60/60; no `tools` key with the tools off; verify and the golden tests match. |
 
 ## Waiting for the Owner
 
-- The release go for v4.0.0 (W33, W37): when the release test's results are in the model card; the bars no longer gate (W37).
-- Publishing the fact entries: **decided (W10, yes)**; the drafts (B16) wait for the Owner's review, and each upload for the release go. Open in them: the Gemma prohibited-use policy (a legal point).
-- The runtime's stale wording about entries: **decided (W46)**, changed in v4.0.0 with the MCP merge, after the byte check.
-- The adjudications: h6 done (the Owner read all 120, W40; scored 2026-11-27 22:27). D7: **dropped (W46)**, B1, B2 and B4 not measured.
-- The M8 entry pilot's definition of "ok", its bar and its guards (W42): after the release.
-- The h6 look (2026-11-27): oMLX went down at about 15:17 (the console session ended at 15:16) with C at 28 of 60 answers; the chain stopped itself at 18:17:45. The Owner upgraded oMLX to 0.8.4 and gave the go to resume (option A). The version split is noted under ledger row 3 before the resume; the resume is the same look.
+- **The review (28 Nov, in the morning):**
+  - the v4.0.0 model card (B26 on `worktree-agent-a53c7348546bfb613`; it goes to main squashed, W47);
+  - the entries dataset drafts (`worktree-agent-aeb53213221994dae` 30a4266; package `out/kafka-sre-fact-entries-v4/`);
+  - the release notes draft.
+- **Then the release go, step by step** (W33, W37; each step named before it runs):
+  - (a) the private entries dataset and its upload;
+  - (b) the push to main and the `v4.0.0` tag;
+  - (c) the dataset made public and the release notes published.
+  The bars do not gate (W37).
+- **Release-test state:**
+  - the release test is DONE (A1, 2026-11-27);
+  - D7's adjudication was dropped (W46): B1, B2 and B4 are not measured;
+  - h6 was adjudicated in full (W40).
+- **T1 on Gemma:** DONE on 2026-11-28 at 00:32. There was 1 violation, which the allow-list blocked, so `diagnose` leaves v4.0.0 (W39, W48).
+  - After the release: Qwen's arm, and the diagnosis judge step under a rule written before it.
+- **After the release:**
+  - the M8 entry pilot's "ok", bar and guards (W42);
+  - the installer A (v4.0.1, W41/W46) with the laptop run;
+  - RE as the runtime's reference model (W48).
+- **The h6 look (2026-11-27):** oMLX went down at about 15:17, with C at 28 of 60 answers, and the chain stopped itself at 18:17:45.
+  - The Owner upgraded oMLX to 0.8.4 and gave the go to resume (option A).
+  - The version split is noted under ledger row 3 before the resume; the resume is the same look.
 
 ## Rules that are shared between the two sessions
 
