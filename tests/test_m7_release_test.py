@@ -245,6 +245,48 @@ class Refusals(unittest.TestCase):
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
         self.assertIn("UNLOAD gemma-4-31b-it-4bit", p.stdout)                    # only what the gate prints is unloaded
 
+    def test_get_status_merges_the_last_access_of_the_loaded_models_and_survives_a_failing_admin_call(self):
+        import types
+        from unittest import mock
+        a = types.SimpleNamespace(stub_file=None)
+        status = json.dumps({"active_requests": 0, "waiting_requests": 0, "loaded_models": ["m1", "m2"]})
+        admin = json.dumps({"models": [{"id": "m1", "loaded": True, "is_loading": False, "last_access": 1700000000.5},
+                                       {"id": "m2", "loaded": True, "is_loading": False, "last_access": None},
+                                       {"id": "m3", "loaded": False, "is_loading": False, "last_access": 1.0}]})
+        def fake(method, path, timeout=30):
+            self.assertEqual(method, "GET")
+            return 200, status if path == "/api/status" else admin
+        with mock.patch.object(T, "http", fake):
+            st = T.get_status(a)
+        self.assertEqual(st["model_last_access"], {"m1": 1700000000.5})            # numbers of loaded models only
+        self.assertNotIn("model_load_times", st)
+        def failing(method, path, timeout=30):
+            if path == "/api/status":
+                return 200, status
+            raise OSError("admin down")
+        with mock.patch.object(T, "http", failing):
+            st = T.get_status(a)
+        self.assertNotIn("model_last_access", st)                                   # left out, the status still read
+        self.assertEqual(st["loaded_models"], ["m1", "m2"])
+        def odd(method, path, timeout=30):
+            return 200, status if path == "/api/status" else "[1, 2]"
+        with mock.patch.object(T, "http", odd):
+            self.assertNotIn("model_last_access", T.get_status(a))
+
+    def test_a_dry_run_whose_server_reports_no_load_times_swaps_models_and_reaches_the_judge(self):
+        e = Env()
+        self.addCleanup(e.cleanup)
+        p = e.run(*e.args("--limit", "2", "--stub-no-load-times"))
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertTrue(list((e.w / "d7").glob("stage_judge_*.done")))
+        stub = json.loads((e.w / "stub_server.json").read_text())
+        self.assertTrue(stub.get("no_load_times"))
+        shown = json.loads(e.run("stub-status", "--file", str(e.w / "stub_server.json"), cmd="scripts/m7_kb2_rule.py").stdout)
+        self.assertNotIn("model_load_times", shown)
+        self.assertIn("model_last_access", shown)
+        self.assertNotIn("gemma-4-31b-it-4bit", stub["loaded_models"])             # R's model was unloaded at the swap (without a load time, by its last access)
+        self.assertNotIn("gemma-4-31b-it-4bit", stub["model_last_access"])
+
     def test_a_dry_run_never_uses_the_real_hidden_files_and_the_keys_resolver_is_stub_only(self):
         e = self.e
         p = e.run("check-inputs", "--set", "h6", "--items", str(ROOT / "eval/hidden/tier_b_h6_items_final.jsonl.enc"), "--rubrics", str(ROOT / "eval/hidden/tier_b_h6_rubrics_final.jsonl.enc"),

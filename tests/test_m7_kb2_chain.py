@@ -102,6 +102,42 @@ class ServerGate(unittest.TestCase):
         self.assertEqual((code, out), (2, ""))                                # an ISO time after the marker: refused
         self.assertIn("after this chain's marker", err)
 
+    def gate_access(self, access, load_times=None, offset=0.0):
+        """A marker of GLM8, loaded and ours by name; the server reports `access` seconds after the marker's time (None: no last access) and `load_times` (None: none)."""
+        with tempfile.TemporaryDirectory() as d:
+            mk = Path(d) / "m"
+            mk.write_text("")
+            st = {"active_requests": 0, "waiting_requests": 0, "loaded_models": [GLM8]}
+            if access is not None:
+                st["model_last_access"] = {GLM8: os.path.getmtime(mk) + access}
+            if load_times is not None:
+                st["model_load_times"] = {GLM8: os.path.getmtime(mk) + load_times}
+            (Path(d) / "s.json").write_text(json.dumps(st))
+            return run(["server-gate", "--status", str(Path(d) / "s.json"), "--need", DS, "--marker", f"{GLM8}={mk}"])
+
+    def test_no_load_time_but_a_last_access_not_later_than_the_marker_is_ours(self):
+        code, out, err = self.gate_access(-5)
+        self.assertEqual((code, out.strip()), (0, f"UNLOAD {GLM8}"))
+        self.assertIn("the server reports no load time; its last access", err)
+        self.assertIn("not later than our marker", err)
+        self.assertEqual(self.gate_access(0.5)[:2], (0, f"UNLOAD {GLM8}\n"))          # within the 1 s of slack
+
+    def test_no_load_time_and_a_last_access_after_the_marker_is_refused(self):
+        code, out, err = self.gate_access(60)
+        self.assertEqual((code, out), (2, ""))
+        self.assertIn("another client used it", err)
+
+    def test_neither_a_load_time_nor_a_last_access_is_refused(self):
+        code, out, err = self.gate_access(None)
+        self.assertEqual((code, out), (2, ""))
+        self.assertIn("cannot be checked", err)
+
+    def test_load_times_decide_where_they_exist_whatever_the_last_access_says(self):
+        self.assertEqual(self.gate_access(60, load_times=-10)[:2], (0, f"UNLOAD {GLM8}\n"))   # loaded before the marker: ours (the access is not consulted)
+        code, out, err = self.gate_access(-10, load_times=60)                                  # loaded after the marker: refused
+        self.assertEqual((code, out), (2, ""))
+        self.assertIn("after this chain's marker", err)
+
     def test_unreadable_status(self):
         with tempfile.TemporaryDirectory() as d:
             (Path(d) / "s.json").write_text("not json")
