@@ -385,6 +385,26 @@ sys.exit(rc)
 
 
 @NEEDS
+class LookupRow(unittest.TestCase):
+    def _row(self, lc):
+        out = json.dumps({"text": "an answer", "lookup_cards": lc})
+        done = subprocess.CompletedProcess([], 0, stdout=out + "\n", stderr="")
+        orig_run, orig_argv = T.subprocess.run, T.ask_argv
+        T.subprocess.run, T.ask_argv = (lambda *a, **k: done), (lambda *a, **k: ["x"])
+        try:
+            row, err = T.run_ask({}, "q", "py", False, {})
+        finally:
+            T.subprocess.run, T.ask_argv = orig_run, orig_argv
+        self.assertIsNone(err)
+        return row["lookup"]
+
+    def test_the_row_keeps_the_runtimes_recorded_catalogue_hash_under_catalogue_sha256(self):
+        lk = self._row({"cards_found": 3, "cards": 2, "chars": 10, "seconds": 0.5, "catalogue_recorded_sha256": "abc"})
+        self.assertEqual(lk["catalogue_sha256"], "abc")
+        self.assertEqual((lk["cards_found"], lk["cards"], lk["chars"]), (3, 2, 10))
+        self.assertEqual(self._row({"cards_found": 1, "catalogue_sha256": "old"})["catalogue_sha256"], "old")
+
+
 class Adjudication(unittest.TestCase):
     def test_h_counts_the_harm_the_sre_finds_in_unflagged_answers_and_in_a_full_read(self):
         d = Path(tempfile.mkdtemp())
