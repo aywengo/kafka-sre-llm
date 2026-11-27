@@ -6,6 +6,10 @@
             (id, pack, error) with a .manifest.json, so scripts/eval2.py --replay-packs can use them (K lists chunk ids and `kbe:` 
             entry ids; kb_entries.resolve_pack turns them into items). Also the depth controls: the frozen ranking's chunks to 10
             (top10) and r4g2's pack, for the covering-set count only. Resumable; a line per scenario; refuses an existing output.
+            Two split modes (the default writes all four): --frozen-only writes the frozen pack and the two depth controls without
+            loading the entries record; --entries-only writes the K pack later from the same stored terms and refuses unless the
+            stored frozen pack and its manifest (terms hash, items hash, file hash) match and the K pack's frozen prefix equals the
+            stored frozen pack row by row. The split run's frozen, top10 and r4g2 files are byte-identical to the all-at-once run's.
   bundles   the blind rating bundles: per scenario the union of both packs (which is the K pack), 1 to 3 decoy entries (written from
             the scenario's covering chunks, not retrieved) and about 10 % controls (recorded covering sets outside both packs),
             shuffled, with neutral labels and no arm, role or type marker; every must point of every scenario is to be rated
@@ -169,59 +173,103 @@ def pack_manifest(name, ids, path, extra):
             "created_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), **extra}
 
 
+def load_stored_frozen(out_dir, items, terms_sha, a):
+    """--entries-only: the frozen pack written earlier by --frozen-only (or by the all-at-once run), checked against this run."""
+    path = out_dir / "packs_frozen_d7.jsonl"
+    man_path = Path(str(path) + ".manifest.json")
+    if not path.is_file() or not man_path.is_file():
+        raise Refused("--entries-only needs the stored frozen pack and its manifest (run --frozen-only first)")
+    man = json.loads(man_path.read_text(encoding="utf-8"))
+    if man.get("terms_sha256") != terms_sha:
+        raise Refused(f"the stored frozen pack was made from other search terms (terms hash {man.get('terms_sha256')}, now {terms_sha})")
+    if man.get("items_sha256") != sha256_file(a.items):
+        raise Refused("the stored frozen pack was made for other items (items_sha256 differs)")
+    if bool(man.get("stand_in")) != bool(a.stand_in):
+        raise Refused("the stored frozen pack and this run differ in --stand-in")
+    if man.get("pack_file_sha256") != sha256_file(path):
+        raise Refused("the stored frozen pack file does not match its manifest (pack_file_sha256)")
+    stored = {}
+    for r in read_jsonl(path):
+        stored[r["id"]] = r["pack"]
+    if sorted(stored) != sorted(it["id"] for it in items):
+        raise Refused("the stored frozen pack's ids are not the items' ids")
+    return stored, sha256_file(path)
+
+
 def cmd_packs(a):
     from kafka_sre_rag import kb_entries, profiles, retrieval
+    if a.frozen_only and a.entries_only:
+        raise Refused("--frozen-only and --entries-only exclude each other")
+    mode = "frozen" if a.frozen_only else "entries" if a.entries_only else "all"
     items = read_jsonl(a.items)
     if not items:
         raise Refused(f"no items in {a.items}")
     terms, terms_sha = load_terms(a.terms, items, a.terms_sha256, sha256_file(a.items), allow_stub=a.stand_in)
     out_dir = Path(a.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    names = ("frozen", "entries", "top10", "r4g2")
+    names = {"all": ("frozen", "entries", "top10", "r4g2"), "frozen": ("frozen", "top10", "r4g2"), "entries": ("entries",)}[mode]
+    suffix = {"all": "", "frozen": ".frozen", "entries": ".entries"}[mode]   # the all-at-once run keeps its file names
     finals = {n: out_dir / f"packs_{n}_d7.jsonl" for n in names}
     for p in finals.values():
         if p.exists() or Path(str(p) + ".manifest.json").exists():
             raise Refused(f"{p.name} (or its manifest) exists; outputs go to new paths")
+    stored, stored_sha = (None, None)
+    if mode == "entries":
+        stored, stored_sha = load_stored_frozen(out_dir, items, terms_sha, a)
     stand = StandInReranker() if a.stand_in else None
     if stand is not None:
         retrieval.RT.reranker = lambda: stand
         retrieval._reranker_at = lambda max_length: stand
-    try:
-        kb = kb_entries.KbEntries.load(a.kb_record, index_path=a.kb_index, reranker=stand)
-    except kb_entries.KbEntriesError as e:
-        raise Refused(str(e))
+    kb = None
+    if mode != "frozen":                                 # --frozen-only never loads the entries record
+        try:
+            kb = kb_entries.KbEntries.load(a.kb_record, index_path=a.kb_index, reranker=stand)
+        except kb_entries.KbEntriesError as e:
+            raise Refused(str(e))
     ip = a.index_path
     RT, BP = retrieval.RT, retrieval.BP
     chunk_index = RT.index(str(ip or config.index_file()))[0]
     grid = profiles.grid_settings("r4g2")
-    work = out_dir / "packs_d7.rows.jsonl"
+    work = out_dir / f"packs_d7{suffix}.rows.jsonl"
     done = {r["id"] for r in read_jsonl(work)}
     todo = [it for it in items if it["id"] not in done]
-    print(f"[packs] {len(items)} scenarios, {len(done)} already done, {len(todo)} to do", flush=True)
+    print(f"[packs] mode {mode}: {len(items)} scenarios, {len(done)} already done, {len(todo)} to do", flush=True)
     for n, it in enumerate(todo, 1):
         t0 = time.monotonic()
         q, exp = full_question(it), terms[it["id"]]["search_terms"]
         frozen = retrieval.select(q, exp, index_path=ip)
         t1 = time.monotonic()
-        merged, info = kb.merge(frozen, q, exp)
+        f_ids = [c["id"] for c in frozen]
+        row = {"id": it["id"]}
+        info = None
+        if mode == "entries" and stored[it["id"]] != f_ids:
+            raise Refused(f"{it['id']}: the frozen pack of the stored terms differs from the stored frozen pack; nothing written for it")
+        if mode != "frozen":
+            merged, info = kb.merge(frozen, q, exp)
+            k_ids = [c["id"] for c in merged]
+            if k_ids[:len(f_ids)] != f_ids or len(set(k_ids)) != len(k_ids):
+                print(f"[packs] {n}/{len(todo)} id={it['id']} FAILED the entries pack does not start with the frozen pack", flush=True)
+                return 1
+            row.update({"entries": k_ids, "added": info["added"], "skipped": info["skipped"], "pack_chars": info["pack_chars"]})
         t2 = time.monotonic()
-        f_ids, k_ids = [c["id"] for c in frozen], [c["id"] for c in merged]
-        if k_ids[:len(f_ids)] != f_ids or len(set(k_ids)) != len(k_ids):
-            print(f"[packs] {n}/{len(todo)} id={it['id']} FAILED the entries pack does not start with the frozen pack", flush=True)
-            return 1
-        ranked = RT.rank(q, exp, index_path=str(ip or config.index_file()))
-        top10 = [chunk_index[i]["id"] for i in BP.select(ranked, chunk_index, *TOP10)]
-        r4 = [c["id"] for c in retrieval.select(q, exp, profile="r4", settings=grid, index_path=ip)]
-        append_jsonl(work, {"id": it["id"], "frozen": f_ids, "entries": k_ids, "top10": top10, "r4g2": r4,
-                            "added": info["added"], "skipped": info["skipped"], "pack_chars": info["pack_chars"],
-                            "seconds": {"frozen": round(t1 - t0, 3), "entries": round(t2 - t1, 3), "total": round(time.monotonic() - t0, 3)}})
-        print(f"[packs] {n}/{len(todo)} id={it['id']} frozen={len(f_ids)} entries_added={len(info['added'])} top10={len(top10)} "
-              f"r4g2={len(r4)} chars={info['pack_chars']} seconds={time.monotonic() - t0:.1f}", flush=True)
+        if mode != "entries":
+            ranked = RT.rank(q, exp, index_path=str(ip or config.index_file()))
+            top10 = [chunk_index[i]["id"] for i in BP.select(ranked, chunk_index, *TOP10)]
+            r4 = [c["id"] for c in retrieval.select(q, exp, profile="r4", settings=grid, index_path=ip)]
+            row.update({"frozen": f_ids, "top10": top10, "r4g2": r4})
+        row["seconds"] = {"frozen": round(t1 - t0, 3), "entries": round(t2 - t1, 3), "total": round(time.monotonic() - t0, 3)}
+        append_jsonl(work, row)
+        print(f"[packs] {n}/{len(todo)} id={it['id']} frozen={len(f_ids)}"
+              + (f" entries_added={len(info['added'])} chars={info['pack_chars']}" if info else "")
+              + (f" top10={len(row['top10'])} r4g2={len(row['r4g2'])}" if mode != "entries" else "")
+              + f" seconds={time.monotonic() - t0:.1f}", flush=True)
     rows = {r["id"]: r for r in read_jsonl(work)}
     ids = [it["id"] for it in items]
-    extra = {"items_sha256": sha256_file(a.items), "terms_sha256": terms_sha, "stand_in": bool(a.stand_in),
-             "kb_record_sha256": sha256_file(a.kb_record or kb_entries.RECORD),
-             "kb_index_sha256": kb.record["sha256"]}
+    extra = {"items_sha256": sha256_file(a.items), "terms_sha256": terms_sha, "stand_in": bool(a.stand_in)}
+    if mode != "frozen":
+        extra.update({"kb_record_sha256": sha256_file(a.kb_record or kb_entries.RECORD), "kb_index_sha256": kb.record["sha256"]})
+    if mode == "entries":
+        extra["frozen_pack_sha256"] = stored_sha
     for n_, p in finals.items():
         with open(p, "w", encoding="utf-8") as f:
             for i in ids:
@@ -229,11 +277,14 @@ def cmd_packs(a):
         Path(str(p) + ".manifest.json").write_text(json.dumps(pack_manifest(n_, ids, p, extra), indent=1, sort_keys=True) + "\n",
                                                     encoding="utf-8")
         print(f"[packs] wrote {p.name} sha256 {sha256_file(p)}", flush=True)
-    n_add = sorted(len(r["added"]) for r in rows.values())
-    marker = out_dir / "packs_d7.done"
-    marker.write_text(json.dumps({"scenarios": len(ids), "files": {p.name: sha256_file(p) for p in finals.values()}, "stand_in": bool(a.stand_in)},
-                                 indent=1, sort_keys=True) + "\n", encoding="utf-8")
-    print(f"[packs] done {len(ids)} scenarios; entries added per scenario: min {n_add[0]}, median {n_add[len(n_add) // 2]}, max {n_add[-1]}", flush=True)
+    marker = out_dir / f"packs_d7{suffix}.done"
+    marker.write_text(json.dumps({"scenarios": len(ids), "mode": mode, "files": {p.name: sha256_file(p) for p in finals.values()},
+                                  "stand_in": bool(a.stand_in)}, indent=1, sort_keys=True) + "\n", encoding="utf-8")
+    if mode == "frozen":
+        print(f"[packs] done {len(ids)} scenarios (frozen pack and the depth controls; the entries pack follows with --entries-only)", flush=True)
+    else:
+        n_add = sorted(len(r["added"]) for r in rows.values())
+        print(f"[packs] done {len(ids)} scenarios; entries added per scenario: min {n_add[0]}, median {n_add[len(n_add) // 2]}, max {n_add[-1]}", flush=True)
     return 0
 
 
@@ -609,6 +660,8 @@ def build_parser():
     p.add_argument("--index-path", default=None, help="a chunk index other than the frozen one (tests)")
     p.add_argument("--out-dir", default="work/m7/d7")
     p.add_argument("--stand-in", action="store_true", help="dry run: a hash stand-in for the reranker (not a measurement)")
+    p.add_argument("--frozen-only", action="store_true", help="write only the frozen pack and the depth controls (top10, r4g2); the entries record is not loaded")
+    p.add_argument("--entries-only", action="store_true", help="write only the K pack from the stored terms; refuses unless its frozen prefix equals the stored frozen pack row by row and the terms hash is the same")
     p = sub.add_parser("bundles")
     p.add_argument("--items", default=d7 + "items.jsonl")
     p.add_argument("--rubrics", default=d7 + "rubrics.jsonl")

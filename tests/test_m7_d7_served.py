@@ -279,6 +279,92 @@ class Packs(Base):
         self.assertEqual(rc, 2)
 
 
+class PacksSplit(Base):
+    """--frozen-only then --entries-only against the all-at-once run (arm A may run before the entries are frozen)."""
+
+    def all_at_once(self):
+        keep = self.out
+        self.out = self.tmp / "all"
+        self.make_packs()
+        got = {n: (self.out / f"packs_{n}_d7.jsonl").read_bytes() for n in ("frozen", "entries", "top10", "r4g2")}
+        self.out = keep
+        return got
+
+    def test_split_run_gives_the_same_files_as_the_all_at_once_run(self):
+        want = self.all_at_once()
+        with mock.patch.object(KE.KbEntries, "load", side_effect=AssertionError("the entries record was loaded")):
+            rc, out, err = run(self.packs_args() + ["--frozen-only"])
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(sorted(p.name for p in self.out.glob("packs_*_d7.jsonl")),
+                         ["packs_frozen_d7.jsonl", "packs_r4g2_d7.jsonl", "packs_top10_d7.jsonl"])
+        for n in ("frozen", "top10", "r4g2"):
+            self.assertEqual((self.out / f"packs_{n}_d7.jsonl").read_bytes(), want[n], n)
+            man = json.loads((self.out / f"packs_{n}_d7.jsonl.manifest.json").read_text())
+            self.assertRegex(man["created_at"], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
+            self.assertEqual((man["kind"], man["setting"], man["count"]), ("m7-d7-packs", n, 3))
+            self.assertNotIn("kb_record_sha256", man)
+        rc, out, err = run(self.packs_args() + ["--entries-only"])
+        self.assertEqual(rc, 0, err)
+        self.assertEqual((self.out / "packs_entries_d7.jsonl").read_bytes(), want["entries"])
+        man = json.loads((self.out / "packs_entries_d7.jsonl.manifest.json").read_text())
+        self.assertRegex(man["created_at"], r"^\d{4}")
+        self.assertEqual(man["frozen_pack_sha256"], S.sha256_file(self.out / "packs_frozen_d7.jsonl"))
+        self.assertIn("kb_record_sha256", man)
+        self.assertTrue((self.out / "packs_d7.frozen.done").is_file() and (self.out / "packs_d7.entries.done").is_file())
+        self.assertFalse((self.out / "packs_d7.done").exists())
+
+    def test_the_default_still_writes_all_four(self):
+        self.make_packs()
+        self.assertEqual(len(list(self.out.glob("packs_*_d7.jsonl"))), 4)
+        self.assertTrue((self.out / "packs_d7.done").is_file())
+
+    def test_entries_only_needs_the_stored_frozen_pack(self):
+        rc, _, err = run(self.packs_args() + ["--entries-only"])
+        self.assertEqual(rc, 2)
+        self.assertIn("run --frozen-only first", err)
+        self.assertEqual(list(self.out.glob("packs_*_d7.jsonl")), [])
+
+    def test_entries_only_refuses_other_terms(self):
+        self.assertEqual(run(self.packs_args() + ["--frozen-only"])[0], 0)
+        other = self.tmp / "terms2.jsonl"
+        rows = [json.loads(l) for l in self.P["search_terms.jsonl"].read_text().splitlines()]
+        rows[0]["raw_reply"] = rows[0].get("raw_reply", "") + " changed"        # a different file, the same expansion prompt
+        other.write_text("".join(json.dumps(r) + "\n" for r in rows))
+        rc, _, err = run(self.packs_args(terms=str(other)) + ["--entries-only"])
+        self.assertEqual(rc, 2)
+        self.assertIn("other search terms", err)
+        self.assertFalse((self.out / "packs_entries_d7.jsonl").exists())
+
+    def test_entries_only_refuses_a_frozen_pack_that_differs_row_by_row(self):
+        self.assertEqual(run(self.packs_args() + ["--frozen-only"])[0], 0)
+        fz = self.out / "packs_frozen_d7.jsonl"
+        rows = [json.loads(l) for l in fz.read_text().splitlines()]
+        rows[1]["pack"] = list(reversed(rows[1]["pack"])) if len(rows[1]["pack"]) > 1 else rows[1]["pack"] + ["c99"]
+        fz.write_text("".join(json.dumps(r) + "\n" for r in rows))
+        mp = Path(str(fz) + ".manifest.json")
+        man = json.loads(mp.read_text())
+        man["pack_file_sha256"] = S.sha256_file(fz)                              # the file is consistent; only the row is wrong
+        mp.write_text(json.dumps(man))
+        rc, _, err = run(self.packs_args() + ["--entries-only"])
+        self.assertEqual(rc, 2)
+        self.assertIn("differs from the stored frozen pack", err)
+        self.assertFalse((self.out / "packs_entries_d7.jsonl").exists())
+        fz.write_text(fz.read_text() + "\n")                                    # a file that no longer matches its manifest
+        rc, _, err = run(self.packs_args() + ["--entries-only"])
+        self.assertEqual(rc, 2)
+        self.assertIn("does not match its manifest", err)
+
+    def test_the_modes_exclude_each_other_and_never_overwrite(self):
+        rc, _, err = run(self.packs_args() + ["--frozen-only", "--entries-only"])
+        self.assertEqual(rc, 2)
+        self.assertEqual(run(self.packs_args() + ["--frozen-only"])[0], 0)
+        rc, _, err = run(self.packs_args() + ["--frozen-only"])
+        self.assertEqual((rc, "exists" in err), (2, True))
+        self.assertEqual(run(self.packs_args() + ["--entries-only"])[0], 0)
+        rc, _, err = run(self.packs_args() + ["--entries-only"])
+        self.assertEqual((rc, "exists" in err), (2, True))
+
+
 class Bundles(Base):
     def test_union_shuffled_unlabelled_with_decoys_and_controls(self):
         key = self.make_bundles()
