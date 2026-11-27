@@ -1,0 +1,28 @@
+{
+  "note": "Everything the MCP harness downloads, once, at install (mcp_harness/fetch.sh). After install a test run makes no network call. Images are pulled for linux/arm64 and loaded into the kind node; a digest is the registry (repo) digest docker reports for the pulled image.",
+  "fetched": "2026-11-26",
+  "manifests": [
+    {"name": "strimzi-cluster-operator", "version": "1.3.1",
+     "url": "https://github.com/strimzi/strimzi-kafka-operator/releases/download/1.3.1/strimzi-cluster-operator-1.3.1.yaml",
+     "path": "raw/mcp_harness/strimzi-cluster-operator-1.3.1.yaml",
+     "sha256": "557c1452cbf58f80714858b25203cb644de5b15edb1e9adf6bf7fcf8b22a1931", "bytes": 858437, "license": "Apache-2.0"},
+    {"name": "argo-cd-core-install", "version": "v3.6.1",
+     "url": "https://raw.githubusercontent.com/argoproj/argo-cd/v3.6.1/manifests/core-install.yaml",
+     "path": "raw/mcp_harness/argocd-v3.6.1-core-install.yaml",
+     "sha256": "0b38189d6e1fd76ef5c3db10355026c48a02020d82bf21a1a1b5ab16dffe4f3c", "bytes": 2079093, "license": "Apache-2.0"}
+  ],
+  "images": [
+    {"ref": "kindest/node:v1.32.2", "digest": "sha256:142f543559cc55d64e1ab9341df08e5ced84bd2e893736da8f51320f26f5950b",
+     "url": "https://hub.docker.com/r/kindest/node", "role": "kind node (Kubernetes 1.32.2, the default of kind v0.27.0); carries kindnet, CoreDNS and local-path-provisioner preloaded", "license": "Apache-2.0"},
+    {"ref": "quay.io/strimzi/operator:1.3.1", "digest": "sha256:55460ee268f7c7108badb50421fcb215cadd2182406c288c4a939744107a7926",
+     "url": "https://quay.io/repository/strimzi/operator", "role": "Strimzi cluster, topic and user operator", "license": "Apache-2.0"},
+    {"ref": "quay.io/strimzi/kafka:1.3.1-kafka-4.3.2", "digest": "sha256:bc23e15a057a5e26e19b10eaa5be4d727b2483a1fe63f9645dcbeca4116d1013",
+     "url": "https://quay.io/repository/strimzi/kafka", "role": "Kafka 4.3.2 brokers, and the producer and consumer clients (no separate client image)", "license": "Apache-2.0"},
+    {"ref": "quay.io/argoproj/argocd:v3.6.1", "digest": "sha256:296e3d74f449b2ce45265613fcb68c18ed7366488360c8ea32f5f2a93d2e5c54",
+     "url": "https://quay.io/repository/argoproj/argocd", "role": "Argo CD core (application controller, repo server, applicationset controller), and the in-cluster git daemon that serves the GitOps repository", "license": "Apache-2.0"},
+    {"ref": "public.ecr.aws/docker/library/redis:8.10.1-alpine", "digest": "sha256:ef216d85ec44f4fdf7c0e6df2d1757a4734ed32fbb278cabd3181b5a27353b79",
+     "url": "https://gallery.ecr.aws/docker/library/redis", "role": "Argo CD's cache, the image core-install.yaml v3.6.1 names", "license": "Redis 8.x: RSALv2 / SSPLv1 / AGPLv3 (tri-licence); run unmodified as Argo CD's cache on the local machine, not redistributed"}
+  ],
+  "pip": [],
+  "pip_note": "None. The MCP client and server are written on the standard library (JSON-RPC 2.0 over stdio, MCP protocol version 2025-06-18); the official MCP Python SDK was not installed, so the shared .venv that a running job uses was not touched."
+}

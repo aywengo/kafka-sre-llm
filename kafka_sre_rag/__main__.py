@@ -50,18 +50,25 @@ def mark_option(p):
 
 def lookup_option(p):
     p.add_argument("--lookup-cards", action="store_true",
-                   help="EXPERIMENTAL and UNMEASURED, off by default (M7 KA1): add reference cards to the prompt, one block "
+                   help="off by default (M7 KA1): add reference cards to the prompt, one block "
                         "after the excerpts: the exact facts of the pinned catalogues (type, default, valid values, "
                         "options, fields, errors) for the names in the question and in the search terms, with their pin. "
                         "No extra model call; the lookup takes milliseconds. Needs the catalogues (--catalogues DIR or "
-                        "work/m4/catalogues; python scripts/build_catalogues.py). Not available with --service-url or serve")
+                        "work/m4/catalogues; python scripts/build_catalogues.py). Measured in v4.0.0 only inside the release "
+                        "configuration RE (Gemma 4 31B 4-bit, --lookup-cards, --kb-entries; see the model card), where the cards' "
+                        "check Z3 passed on Gemma 4 31B (it failed on Qwen3.8-27B); every other combination is unmeasured. "
+                        "Not available with --service-url or serve")
 
 
 def kb_entries_option(p):
     p.add_argument("--kb-entries", action="store_true",
-                   help="EXPERIMENTAL and UNMEASURED, off by default (M7 I4): after the frozen excerpts add up to 4 fact entries "
-                        "(each a short statement with the quoted source text and its page) from the entries index; the pack stays "
-                        "within 10 items and 24,000 characters. No extra model call. Needs the record kafka_sre_rag/kb_entries.json "
+                   help="off by default (M7 I4): after the frozen excerpts add fact entries (each a short statement with the "
+                        "quoted source text and its page) from the entries index, in ranked order, whole or not at all, while the "
+                        "whole pack stays within 10 items and 24,000 characters (at most 4 after a full frozen six; 3 to 8 were "
+                        "added per answer in the release test). Measured in v4.0.0 only as part of the release configuration RE "
+                        "(Gemma 4 31B 4-bit, --lookup-cards, --kb-entries; see the model card); audited: 178 of 200 ok, 22 "
+                        "partial, 0 wrong, admitted under an 80 %% bar set after the audit; every other combination is unmeasured. "
+                        "No extra model call. Needs the record kafka_sre_rag/kb_entries.json "
                         "and the index it names (hash checked). Frozen profile only; not available with --service-url "
                         "(start serve with it instead)")
     p.add_argument("--kb-entries-record", metavar="FILE", default=None,

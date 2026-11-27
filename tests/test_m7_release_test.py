@@ -1,6 +1,7 @@
 """The M7 release test chain (scripts/m7_release_test.sh, scripts/m7_release_test.py): stub dry runs end to end, the h6 hygiene, the refusals, the fixes of the review.
 Offline: a stub ask, a stub judge, a stub server file; a test key in a temp dir; synthetic fixtures (a canary string stands for item text); no real hidden file, no server."""
 import copy
+import hashlib
 import json
 import re
 import os
@@ -21,6 +22,9 @@ import m7_release_test as T  # noqa: E402
 NEEDS = unittest.skipUnless(shutil.which("openssl") and shutil.which("sh"), "openssl or sh missing")
 CANARY = "zebra-canary-h6-text"
 CONFIGS = ROOT / "eval/m7/release_test/configs.json"
+# The tree on which the release test finished, before the post-measurement runtime change of W46 (the MCP merge and the entries wording). The real pins of configs.json are
+# checked against the files of this commit; the v4.0.0 runtime differs from it only in files that scripts/m7_v4_bytecheck.py covers (RE's prompts and request bodies: 60/60 equal).
+MEASURED_COMMIT = "a9c0cc0"
 PYBIN = str(ROOT / ".venv/bin/python") if (ROOT / ".venv/bin/python").exists() else sys.executable
 DS = "DeepSeek-V4.1-Flash-1017-oQ4e-mtp"
 BY = "the test"
@@ -28,6 +32,29 @@ BY = "the test"
 
 def jl(rows):
     return "".join(json.dumps(r) + "\n" for r in rows)
+
+
+def git_show(path, commit=MEASURED_COMMIT):
+    """The bytes of `path` at `commit`, or None when the repository has no such history (a git archive, a shallow copy)."""
+    try:
+        p = subprocess.run(["git", "show", f"{commit}:{path}"], cwd=ROOT, capture_output=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return p.stdout if p.returncode == 0 else None
+
+
+def working_tree_pins(cfgs):
+    """A copy of the configs whose pinned runtime files and lookup modules carry the hashes of the files in this working tree. Used only as the starting state of tests of the
+    chain's mechanics; the real configs.json is the measured record and is never changed."""
+    cfgs = copy.deepcopy(cfgs)
+    for arm in cfgs.values():
+        if not isinstance(arm, dict):
+            continue
+        for pins in (arm.get("runtime_files_sha256"), (arm.get("lookup_cards") or {}).get("module_sha256")):
+            for rel in list(pins or {}):
+                if (ROOT / rel).is_file():
+                    pins[rel] = T.sha256_file(ROOT / rel)
+    return cfgs
 
 
 def rule_sha(mode="full"):
@@ -58,7 +85,9 @@ class Env:
             self.h6 = [{k: v for k, v in r.items() if k not in ("tier", "kind", "family", "domain")} for r in self.h6]
         self._enc("h6_items.jsonl.enc", self.h6)
         self._enc("h6_rubrics.jsonl.enc", [dict(r, must=[dict(m, text=f"{CANARY} {m['text']}") for m in r["must"]]) for r in self.rub(self.h6)])
-        self.sha = T.sha256_file(CONFIGS)
+        self.cfg = self.d / "configs_tree.json"      # the real configs with this working tree's pins: the starting state of every test of the chain's mechanics
+        self.cfg.write_text(json.dumps(working_tree_pins(json.loads(CONFIGS.read_text()))))
+        self.sha = T.sha256_file(self.cfg)
         self.ledger("full")
         self.w = self.d / "w"
 
@@ -75,8 +104,7 @@ class Env:
              "--h6-items", str(self.d / "h6_items.jsonl.enc"), "--h6-rubrics", str(self.d / "h6_rubrics.jsonl.enc")]
         if ledger:
             a += ["--ledger", str(self.d / "ledger.md")]
-        if configs:
-            a += ["--configs", str(configs)]
+        a += ["--configs", str(configs or self.cfg)]
         return a + list(extra)
 
     def run(self, *args, extra_env=None, cmd="scripts/m7_release_test.sh"):
@@ -90,7 +118,7 @@ class Env:
         return [f for f in self.d.rglob("*") if f.is_file() and not f.name.endswith(".enc") and f.name not in ("key",)]
 
     def amended_configs(self, mutate, name="configs2.json"):
-        c = json.loads(CONFIGS.read_text())
+        c = json.loads(self.cfg.read_text())
         mutate(c)
         p = self.d / name
         p.write_text(json.dumps(c))
@@ -126,7 +154,7 @@ class Arms(unittest.TestCase):
     def test_the_runtime_files_of_configs_are_compared_before_an_arm(self):
         e = Env()
         self.addCleanup(e.cleanup)
-        p = e.run("runtime-check", "--arm", "R", cmd="scripts/m7_release_test.py")
+        p = e.run("runtime-check", "--arm", "R", "--configs", str(e.cfg), cmd="scripts/m7_release_test.py")
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
         def m(c):
             c["R"]["runtime_files_sha256"]["kafka_sre_rag/pipeline.py"] = "0" * 64
@@ -192,7 +220,7 @@ class Refusals(unittest.TestCase):
     def test_manifest_arms_can_be_added_before_the_bundles_stage_and_helper_changes_are_logged_not_refused(self):
         e = self.e
         wd = e.d / "mf"
-        base = ["manifest", "--work", str(wd), "--set", "d7", "--candidate", "R", "--control", "C", "--pin", str(e.d / "d7_items.jsonl"), "--log-pin", str(e.d / "helper.py")]
+        base = ["manifest", "--work", str(wd), "--set", "d7", "--candidate", "R", "--control", "C", "--pin", str(e.d / "d7_items.jsonl"), "--log-pin", str(e.d / "helper.py"), "--configs", str(e.cfg)]
         (e.d / "helper.py").write_text("v1")
         p = e.run(*base, "--arms", "R", cmd="scripts/m7_release_test.py")
         self.assertEqual(p.returncode, 0, p.stderr)
@@ -679,7 +707,7 @@ class Chain(unittest.TestCase):
     def test_real_d7_files_in_a_stub_run(self):
         e = Env()
         self.addCleanup(e.cleanup)
-        a = ["--dry-run", "--work", str(e.w), "--set", "d7", "--limit", "3", "--chunks", "work/v3/chunks_s1.jsonl"]
+        a = ["--dry-run", "--work", str(e.w), "--set", "d7", "--limit", "3", "--chunks", "work/v3/chunks_s1.jsonl", "--configs", str(e.cfg)]
         p = e.run(*a, extra_env={"M7_STUB_CHUNKS": str(ROOT / "work/v3/chunks_s1.jsonl")})
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
 
@@ -777,11 +805,27 @@ class EntriesArm(unittest.TestCase):
         with self.assertRaises(T.Refused):
             T.arm_info(bad, "RE")
 
+    @unittest.skipUnless(git_show("kafka_sre_rag/pipeline.py") is not None, f"the repository has no history with {MEASURED_COMMIT} (a git archive?): the measured files cannot be read")
+    def test_the_real_pins_of_r_c_and_re_hold_at_the_measured_commit(self):
+        cfgs = json.loads(CONFIGS.read_text())
+        checked = 0
+        for arm in ("R", "C", "RE"):
+            pins = dict(cfgs[arm].get("runtime_files_sha256") or {})
+            pins.update((cfgs[arm].get("lookup_cards") or {}).get("module_sha256") or {})
+            self.assertTrue(pins, arm)
+            for rel, h in sorted(pins.items()):
+                blob = git_show(rel)
+                self.assertIsNotNone(blob, f"{arm}: {rel} is not in {MEASURED_COMMIT}")
+                self.assertEqual(hashlib.sha256(blob).hexdigest(), h, f"{arm}: {rel} at {MEASURED_COMMIT} differs from the pin of configs.json")
+                checked += 1
+        self.assertGreater(checked, 30)
+
     @unittest.skipUnless((ROOT / "work/m7/kb/entries_index.jsonl").exists(), "the entries index is not in this tree (git-ignored)")
-    def test_the_real_re_pins_hold_in_this_tree(self):
-        p = self.e.run("runtime-check", "--arm", "RE", cmd="scripts/m7_release_test.py")
+    def test_the_real_re_entries_pins_hold_in_this_tree_with_the_runtime_file_pins_of_the_tree(self):
+        # the entries index and record are data files (git-ignored); their pins are the real ones. Only the runtime file pins are replaced by this tree's hashes.
+        p = self.e.run("runtime-check", "--arm", "RE", "--configs", str(self.e.cfg), cmd="scripts/m7_release_test.py")
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
-        p = self.e.run("arms", "--arms", "RE,R,C", cmd="scripts/m7_release_test.py")
+        p = self.e.run("arms", "--arms", "RE,R,C", "--configs", str(self.e.cfg), cmd="scripts/m7_release_test.py")
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
         self.assertIn("fact entries on", p.stdout)
         from kafka_sre_rag.kb_entries import KbEntries
@@ -992,7 +1036,7 @@ class EntriesArm(unittest.TestCase):
         self.assertEqual(man["rule_variants"][0]["rule_text_sha256"], RR.rule_text_sha256("RE", "C", "full", BY))
         self.assertIn("RE", man["late_arms"])
         self.assertTrue(any("added after the reading bundles" in h["event"] for h in man["history"]))
-        self.assertEqual(man["arms"]["R"]["config_sha256"], T.config_sha(T.load_configs(CONFIGS), "R"))
+        self.assertEqual(man["arms"]["R"]["config_sha256"], T.config_sha(T.load_configs(e.cfg), "R"))     # R's entry as the chain started it (the real one with this tree's pins)
         log = (d7 / "header_log.md").read_text()
         self.assertIn("arm RE added", log)
         self.assertIn("`RE`", log)

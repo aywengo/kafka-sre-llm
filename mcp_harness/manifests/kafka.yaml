@@ -1,0 +1,93 @@
+# The healthy Kafka cluster of the MCP harness: KRaft, one node pool of 3 dual-role nodes (controller + broker),
+# a plain listener (no authentication; ANONYMOUS is a super user, used by the producer and the tools) and a TLS
+# listener with mutual TLS (used by the consumer as KafkaUser app-consumer). Requests are kept small.
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaNodePool
+metadata:
+  name: broker
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  replicas: 3
+  roles: [controller, broker]
+  storage:
+    type: persistent-claim
+    size: 1Gi
+    deleteClaim: true
+  resources:
+    requests: {cpu: 100m, memory: 640Mi}
+    limits: {memory: 1Gi}
+  jvmOptions:
+    "-Xms": 256m
+    "-Xmx": 512m
+---
+apiVersion: kafka.strimzi.io/v1
+kind: Kafka
+metadata:
+  name: kafka
+  namespace: kafka
+spec:
+  kafka:
+    version: 4.3.2
+    listeners:
+      - name: plain
+        port: 9092
+        type: internal
+        tls: false
+      - name: tls
+        port: 9093
+        type: internal
+        tls: true
+        authentication:
+          type: tls
+    authorization:
+      type: simple
+      superUsers: [ANONYMOUS]
+    config:
+      offsets.topic.replication.factor: 3
+      transaction.state.log.replication.factor: 3
+      transaction.state.log.min.isr: 2
+      default.replication.factor: 3
+      min.insync.replicas: 2
+  entityOperator:
+    topicOperator:
+      resources:
+        requests: {cpu: 50m, memory: 256Mi}
+        limits: {memory: 512Mi}
+    userOperator:
+      resources:
+        requests: {cpu: 50m, memory: 256Mi}
+        limits: {memory: 512Mi}
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: orders
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  partitions: 3
+  replicas: 3
+  config:
+    min.insync.replicas: "2"
+    retention.ms: "3600000"
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaUser
+metadata:
+  name: app-consumer
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  authentication:
+    type: tls
+  authorization:
+    type: simple
+    acls:
+      - resource: {type: topic, name: orders, patternType: literal}
+        operations: [Read, Describe]
+      - resource: {type: group, name: orders-consumer, patternType: literal}
+        operations: [Read]

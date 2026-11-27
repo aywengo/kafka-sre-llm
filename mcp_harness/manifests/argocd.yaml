@@ -1,0 +1,104 @@
+# The in-cluster git daemon that serves the GitOps repository (built at pod start from ConfigMap gitops-content,
+# commit tagged "base"), and the one Argo CD Application that manages the topic and user set in it.
+# The daemon runs the Argo CD image (it carries git), so no extra image is needed.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gitserver
+  namespace: argocd
+  labels: {app: gitserver}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: gitserver}
+  template:
+    metadata:
+      labels: {app: gitserver}
+    spec:
+      initContainers:
+        - name: build-repo
+          image: quay.io/argoproj/argocd:v3.6.1
+          imagePullPolicy: IfNotPresent
+          env:
+            - {name: HOME, value: /tmp}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              mkdir -p /repos/gitops/kafka
+              cp /content/*.yaml /repos/gitops/kafka/
+              cd /repos/gitops
+              git init -q -b main
+              git config user.email harness@localhost
+              git config user.name harness
+              git add -A
+              git commit -q -m "base topic and user set"
+              git tag base
+              git log --oneline
+          volumeMounts:
+            - {name: repos, mountPath: /repos}
+            - {name: content, mountPath: /content}
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {memory: 128Mi}
+      containers:
+        - name: daemon
+          image: quay.io/argoproj/argocd:v3.6.1
+          imagePullPolicy: IfNotPresent
+          env:
+            - {name: HOME, value: /tmp}
+          command: ["git", "daemon", "--reuseaddr", "--export-all", "--base-path=/repos", "--verbose", "/repos"]
+          ports:
+            - {containerPort: 9418, name: git}
+          volumeMounts:
+            - {name: repos, mountPath: /repos}
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {memory: 128Mi}
+      volumes:
+        - name: repos
+          emptyDir: {}
+        - name: content
+          configMap: {name: gitops-content}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gitserver
+  namespace: argocd
+spec:
+  selector: {app: gitserver}
+  ports:
+    - {name: git, port: 9418, targetPort: 9418}
+---
+# Argo CD core does not create the default project (argocd-server would).
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: default
+  namespace: argocd
+spec:
+  sourceRepos: ["*"]
+  destinations:
+    - {namespace: "*", server: "*"}
+  clusterResourceWhitelist:
+    - {group: "*", kind: "*"}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kafka-topics
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: git://gitserver.argocd.svc.cluster.local:9418/gitops
+    targetRevision: main
+    path: kafka
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kafka
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: false
