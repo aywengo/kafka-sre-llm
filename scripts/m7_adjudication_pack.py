@@ -32,6 +32,9 @@ Input schemas (JSONL, one object per line)
                                                    scenario_id must be unique across the file)
   flags:     {answer_id, reader, kind ("harm"|"material_error"), quote, rationale, plausible_consequence,
               source_chunk_ids: [chunk id, ...]}
+  fact entries: a pack id `kbe:<entry id>` (arm RE) is never shown: no id, no entry title line ("Fact entry: ..."), so the panel does not tell the configuration (W34).  With
+             --entries-index (the entries index) the panel shows, as ordinary chunks under the rule below, the documentation chunks the entries quote (quotes[].chunk, then sources[].id),
+             after the pack's own chunks.  The key records every id the model received (key item "pack_ids").  An entry row of a chunk file "plus entries" is ignored.
   chunks:    the frozen chunk file named by runs/v3/INDEX_FROZEN.json (index_path, sha256 checked); each line
              {id, source, title, path, text, ...}.  The source pin comes from sources.yaml (ref) and the
              frozen file's source_commits.  The title line shown is the one the runtime builds
@@ -166,7 +169,7 @@ def load_chunks(needed, frozen_path, chunks_override):
         for line in f:
             if line.strip():
                 r = json.loads(line)
-                if r["id"] in needed:
+                if r["id"] in needed and not is_entry_id(r["id"]) and not r.get("entry"):     # an entry row of a chunk file "plus entries" is never a panel chunk
                     found[r["id"]] = r
     return found, frozen, cpath
 
@@ -176,6 +179,42 @@ def load_pins(sources_yaml):
     with open(sources_yaml, encoding="utf-8") as f:
         data = yaml.safe_load(f)
     return {s["name"]: str(s.get("ref", "")) for s in data.get("sources", [])}
+
+
+ENTRY_PREFIX = "kbe:"     # an entry in a stored pack (kafka_sre_rag/kb_entries.py PACK_PREFIX)
+
+
+def is_entry_id(i):
+    return str(i).startswith(ENTRY_PREFIX)
+
+
+def load_entry_chunks(path):
+    """{entry id: [documentation chunk ids it quotes]} from the entries index (JSONL; each entry has quotes [{chunk, text}] and sources [{id, ...}]): the quoted chunks first, in the order
+    of the quotes, then any other source of the entry. Only these ids reach a panel, as ordinary chunks; the entry itself (its id, its title line) never does."""
+    out = {}
+    for line in read_text(path).splitlines():
+        if not line.strip():
+            continue
+        e = json.loads(line)
+        ids = [q["chunk"] for q in e.get("quotes") or [] if q.get("chunk")] + [x["id"] for x in e.get("sources") or [] if x.get("id")]
+        out[e["id"]] = list(dict.fromkeys(ids))
+    return out
+
+
+def panel_ids(ids, entry_chunks):
+    """The ids a panel may show: the chunk ids of the pack in their order, then the chunks the pack's entries quote (the ids of entries are replaced, never shown). Without an entries index
+    an answer whose pack holds entries cannot be built (the entries would be silently dropped)."""
+    plain = [i for i in ids if not is_entry_id(i)]
+    ent = [i for i in ids if is_entry_id(i)]
+    if ent and entry_chunks is None:
+        raise InputError("answers: a pack holds fact entries; --entries-index is needed")
+    quoted = []
+    for i in ent:
+        eid = i[len(ENTRY_PREFIX):]
+        if eid not in entry_chunks:
+            raise InputError("answers: an entry of a pack is not in the entries index")
+        quoted += entry_chunks[eid]
+    return list(dict.fromkeys(plain + quoted))
 
 
 MAX_SOURCES = 3
@@ -272,11 +311,12 @@ def build(args):
     sealed_out = any(is_enc(x) for x in (args.answers, args.scenarios, args.flags))
     random.Random(args.shuffle_seed).shuffle(items)
 
+    entry_chunks = load_entry_chunks(args.entries_index) if getattr(args, "entries_index", None) else None
     needed = set()
     for it in items:
         a = by_id[it["answer_id"]]
         ids = [i for f in it["flags"] for i in f["source_chunk_ids"]] if it["kind"] == "flag" else a["pack_chunk_ids"]
-        it["chunk_ids"] = list(dict.fromkeys(ids))
+        it["chunk_ids"] = panel_ids(list(dict.fromkeys(ids)), entry_chunks)
         needed.update(it["chunk_ids"])
     chunks, frozen, cpath = load_chunks(needed, args.index_frozen, args.chunks)
     pins = load_pins(args.sources_yaml)
@@ -299,6 +339,7 @@ def build(args):
         pack_items.append(p)
         key_items[pid] = {"answer_id": it["answer_id"], "config": a["config"], "set": a["set"],
                           "scenario_id": a["scenario_id"], "kind": it["kind"],
+                          "pack_ids": list(a["pack_chunk_ids"]),      # the items the model received (chunk ids and `kbe:` entry ids); the key is never shown to the Owner while he reads
                           "readers": sorted({f["reader"] for f in it["flags"]})}
     denominators = {}
     for a in answers:
@@ -334,7 +375,8 @@ def build(args):
                 "sample_seed": args.sample_seed, "sample_size": args.sample_size, "pack_sha256": pack_sha,
                 "inputs": {k: {"name": os.path.basename(p), "sha256": sha256_file(p)} for k, p in [
                     ("answers", args.answers), ("scenarios", args.scenarios), ("flags", args.flags),
-                    ("chunks", cpath), ("index_frozen", args.index_frozen), ("sources_yaml", args.sources_yaml)]},
+                    ("chunks", cpath), ("index_frozen", args.index_frozen), ("sources_yaml", args.sources_yaml)]
+                           + ([("entries_index", args.entries_index)] if entry_chunks is not None else [])},
                 "script_sha256": sha256_file(os.path.abspath(__file__)),
                 "outputs": {"pack.html": sha256_file(html_path), key_name: sha256_file(os.path.join(args.out, key_name))},
                 "full_sets": sorted(full_sets),
@@ -689,6 +731,7 @@ def main(argv=None):
     b.add_argument("--sample-size", type=int, default=20)
     b.add_argument("--index-frozen", default=os.path.join(ROOT, "runs/v3/INDEX_FROZEN.json"))
     b.add_argument("--chunks", default=None, help="chunk file; default: the one INDEX_FROZEN.json names (sha256 checked)")
+    b.add_argument("--entries-index", default=None, help="the entries index (JSONL), needed when an answer's pack holds `kbe:` entries: the panel then shows the documentation chunks an entry quotes, never the entry")
     b.add_argument("--sources-yaml", default=os.path.join(ROOT, "sources.yaml"))
     b.add_argument("--sealed", action="store_true")
     b.add_argument("--configs", default=None, help="configs.json: the configuration names are its arms")

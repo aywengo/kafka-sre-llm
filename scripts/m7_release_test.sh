@@ -31,7 +31,9 @@
 #   Adding RE to a finished folder (R and C stay as they are): --arms RE,R,C --candidate RE --control C --add-arms-late --reading-dir reading2 --bundle-arms RE,R,C. The manifest records the arm and the candidate's rule
 #   text as logged late additions (--add-arms-late); the judge runs for RE only (its own stage, file and cache; the judge rows of R and C are not rewritten); the bundle stage makes a NEW reading folder
 #   (--reading-dir; a three-arm blind bundle, and the second family's export in it) and never writes the first one; `--phase after-reading --reading-dir NAME` unblinds a reading with its own key
-#   (files of a reading other than `reading` carry its name: findings_d7_NAME.jsonl, pack_input_NAME, measures_d7_NAME.json), and the report adds a descriptive paired line candidate - reference (RE - R, no bar).
+#   and the report adds a descriptive paired line candidate - reference (RE - R, no bar). Every after-reading call has its own files, named from its sets, arms and reading folder
+#   (CALLTAG, e.g. findings_d7_RE-R-C_reading2.jsonl, pack_input_CALLTAG, measures_CALLTAG.json in the set's folder; report_body_CALLTAG.md, result_CALLTAG.json, rule_out_CALLTAG.txt in the work folder; the report
+#   runs/m7/M7_RELEASE_TEST_CALLTAG.md unless --report names one, and a report of another call is never overwritten). Only the call with both sets d7 and h6 (the combined final report) writes the done line.
 #
 #   scripts/m7_release_test.sh --set d7,h6 --h6-mode full --h6-chosen-by "the Owner" > runs/m7/logs/m7_release_test.out 2>&1 &        (real; the conductor has written the ledger row)
 #   scripts/m7_release_test.sh --dry-run --work DIR [--set d7] [--arms R] [--limit N]            (stub model, stub judge, stub server; nothing is written outside DIR)
@@ -305,53 +307,86 @@ exit 0
 fi
 
 # ================================================================ after-reading
+# Every after-reading call has its own files, named from its sets, arms and reading folder (CALLTAG, e.g. d7_R-C_reading, d7_RE-R-C_reading2, h6_RE-C_reading, d7-h6_RE-C_reading2):
+# findings_CALLTAG, reads_CALLTAG, pack_input_CALLTAG, measures_CALLTAG in each set's folder, and report_body_CALLTAG.md, result_CALLTAG.json, rule_out_CALLTAG.txt, descriptive_CALLTAG.md in $W;
+# the report is REPORT (default runs/m7/M7_RELEASE_TEST_CALLTAG.md). A report that exists and carries another call's tag line is never overwritten (refused before anything is written).
+# A set's reading: d7 uses --reading-dir (key $W/d7/NAME/KEY.json, arms from its bundle_arms file); h6 uses its own sealed bundle (stage `bundle_NAME` when it exists, else the first one, `bundle`,
+# whose arms are in bundle_arms.txt), so one call `--set d7,h6 --arms RE,C --reading-dir reading2` reads D7's second reading (RE, R, C) and h6's only one (RE, C).
+# Marker: only the FINAL call (both sets d7 and h6 in the call: `overall` needs every set) writes M7_RELEASE_TEST_DONE (dry run: M7_RELEASE_TEST_DRY_RUN_DONE) to $L/$N.done. A partial call (one set)
+# writes no line there (a waiter for the end of the chain must not take it for the end); it prints "after-reading PARTIAL" and writes $L/${N}_after_reading_CALLTAG.partial.
+CALLTAG=$(echo $SETS | tr ',' '-')_$(echo $ARMS | tr ',' '-')_$RD
+TAGLINE="<!-- m7_release_test after-reading call $CALLTAG -->"
+if [ $RSET = no ]; then REPORT="${REPORT%.md}_$CALLTAG.md"; fi
+case ",$SETS," in *,d7,*) case ",$SETS," in *,h6,*) FINALCALL=yes;; *) FINALCALL=no;; esac;; *) FINALCALL=no;; esac
+if [ -f "$REPORT" ] && [ "$(head -n 1 "$REPORT")" != "$TAGLINE" ]; then refuse "$REPORT exists and is not the report of this call ($CALLTAG): give --report another file; nothing was overwritten"; fi
 MEAS=
 FS=$FULLSETS; [ $HAS_H6 = no ] || [ $H6MODE != full ] || FS="${FS:+$FS,}h6"
+ALLARMS=
 for s in $(echo $SETS | tr ',' ' '); do
   set_files $s
-  stage_done $BMARK || refuse "the before-reading phase is not done for $s (no bundle stage marker $BMARK in $SW)"
-  BA=$(cat $SW/$BAF)
-  RCH=$(chunks_for "$BA")
+  SBMARK=$BMARK; SBAF=$BAF
+  if [ $s = h6 ] && [ $RD != reading ] && ! stage_done $BMARK && stage_done bundle; then SBMARK=bundle; SBAF=bundle_arms.txt; fi
+  stage_done $SBMARK || refuse "the before-reading phase is not done for $s (no bundle stage marker $SBMARK in $SW)"
+  BA=$(cat $SW/$SBAF)
+  for x in $(echo $BA | tr ',' ' '); do case ",$ALLARMS," in *",$x,"*) ;; *) ALLARMS="${ALLARMS:+$ALLARMS,}$x";; esac; done
   SETARGS=; for arm in $(echo $BA | tr ',' ' '); do SETARGS="$SETARGS $arm=$SW/ans_${s}_$arm.jsonl$EXT"; done
   JF=$(ls $SW/judge_${s}.jsonl$EXT $SW/judge_${s}_add_*.jsonl$EXT 2>/dev/null | tr '\n' ' ')
   FIND=; VERD=; PK=
   if [ $s = d7 ]; then
     if [ -n "$FINDD7" ]; then
-      $PY $H unblind --set d7 --key $SW/$RD/KEY.json --rubrics "$RUBS" --answers $SETARGS --findings $FINDD7 --out $SW/findings_d7$SUF.jsonl --reads-out $SW/reads_d7$SUF.jsonl \
+      $PY $H unblind --set d7 --key $SW/$RD/KEY.json --rubrics "$RUBS" --answers $SETARGS --findings $FINDD7 --out $SW/findings_$CALLTAG.jsonl --reads-out $SW/reads_$CALLTAG.jsonl \
         $([ -z "$SCOPED7" ] || echo "--scope $SCOPED7") || fail "the d7 findings could not be unblinded (see above)"
-      FIND="--findings $SW/findings_d7$SUF.jsonl"
-      $PY $H pack-input --configs "$CONFIGS" --arms "$BA" --set d7 --items "$ITEMS" --answers $SETARGS --findings $SW/findings_d7$SUF.jsonl --out-dir $SW/pack_input$SUF --full-sets "$FS" --chunks "$RCH" || fail "the d7 pack input could not be made"
+      FIND="--findings $SW/findings_$CALLTAG.jsonl"
+      $PY $H pack-input --configs "$CONFIGS" --arms "$BA" --set d7 --items "$ITEMS" --answers $SETARGS --findings $SW/findings_$CALLTAG.jsonl --out-dir $SW/pack_input_$CALLTAG --full-sets "$FS" --chunks "$CHUNKS" || fail "the d7 pack input could not be made"
     fi
-    [ -z "$VD7" ] || VERD="--verdicts $VD7"; [ -z "$PKD7" ] || PK="--pack-key $PKD7"; OUTM=$SW/measures_d7$SUF.json
+    [ -z "$VD7" ] || VERD="--verdicts $VD7"; [ -z "$PKD7" ] || PK="--pack-key $PKD7"; OUTM=$SW/measures_$CALLTAG.json
   else
     if [ -n "$H6DIR" ]; then
-      $PY $H unblind --set h6 --dir "$H6DIR" --out $SW/findings_h6$SUF.jsonl.enc --reader $FREADER || fail "the h6 findings could not be unblinded"
-      FIND="--findings $SW/findings_h6$SUF.jsonl.enc"
-      $PY $H pack-input --configs "$CONFIGS" --arms "$BA" --set h6 --items "$ITEMS" --answers $SETARGS --findings $SW/findings_h6$SUF.jsonl.enc --out-dir $SW/pack_input$SUF --full-sets "$FS" --chunks "$RCH" || fail "the h6 pack input could not be made"
+      $PY $H unblind --set h6 --dir "$H6DIR" --out $SW/findings_$CALLTAG.jsonl.enc --reader $FREADER || fail "the h6 findings could not be unblinded"
+      FIND="--findings $SW/findings_$CALLTAG.jsonl.enc"
+      $PY $H pack-input --configs "$CONFIGS" --arms "$BA" --set h6 --items "$ITEMS" --answers $SETARGS --findings $SW/findings_$CALLTAG.jsonl.enc --out-dir $SW/pack_input_$CALLTAG --full-sets "$FS" --chunks "$CHUNKS" || fail "the h6 pack input could not be made"
     fi
-    [ -z "$VH6" ] || VERD="--verdicts $VH6"; [ -z "$PKH6" ] || PK="--pack-key $PKH6"; OUTM=$SW/measures_h6$SUF.json.enc
+    [ -z "$VH6" ] || VERD="--verdicts $VH6"; [ -z "$PKH6" ] || PK="--pack-key $PKH6"; OUTM=$SW/measures_$CALLTAG.json.enc
   fi
   $PY $H measures --set $s --arms "$BA" --items "$ITEMS" --rubrics "$RUBS" --answers $SETARGS --judge $JF $FIND --first-reader $FREADER $VERD $PK --out $OUTM || fail "the measures of $s could not be made"
   MEAS="$MEAS $s=$OUTM"
 done
-ALLARMS=$(echo $SETS | tr ',' ' ' | { read f rest; cat $W/$f/$BAF; })
-$PY $RULE report --measures $MEAS --arms "$ALLARMS" --candidate $CAND --control $CTRL --out $W/report_body$SUF.md --json-out $W/result$SUF.json > $W/rule_out$SUF.txt || fail "the report could not be made"
+$PY $RULE report --measures $MEAS --arms "$ALLARMS" --candidate $CAND --control $CTRL --out $W/report_body_$CALLTAG.md --json-out $W/result_$CALLTAG.json > $W/rule_out_$CALLTAG.txt || fail "the report could not be made"
+ENTARMS=$($PY $H entries-arms --configs "$CONFIGS" --arms "$ALLARMS") || fail "the entries of the arms could not be read"
 DESC=
 case ",$ALLARMS," in *",$DREF,"*) if [ "$CAND" != "$DREF" ] && [ -n "$($PY $H entries-arms --configs "$CONFIGS" --arms "$CAND")" ]; then
-  $PY $H descriptive --measures $MEAS --candidate $CAND --reference $DREF --out $W/descriptive$SUF.md || fail "the descriptive line could not be made"; DESC=$W/descriptive$SUF.md; fi;; esac
-FINAL=$(tail -n 1 $W/rule_out$SUF.txt)
+  $PY $H descriptive --measures $MEAS --candidate $CAND --reference $DREF --out $W/descriptive_$CALLTAG.md || fail "the descriptive line could not be made"; DESC=$W/descriptive_$CALLTAG.md; fi;; esac
+FINAL=$(tail -n 1 $W/rule_out_$CALLTAG.txt)
 {
+  echo "$TAGLINE"
   echo "# M7 release test: the release configuration against the current release$([ $DRY = yes ] && echo ' (DRY RUN: stub data)')"
+  echo
+  echo "After-reading call \`$CALLTAG\`: sets $SETS, arms $ALLARMS, candidate $CAND, control $CTRL$([ $FINALCALL = yes ] || echo '; PARTIAL (not both sets are in this call: a bar reads not measured while a set is missing, and no done marker is written)')."
   echo
   for s in $(echo $SETS | tr ',' ' '); do cat $W/$s/report_header.md; [ ! -f $W/$s/header_log.md ] || { echo; cat $W/$s/header_log.md; }; echo; done
   echo "## Result$([ $DRY = yes ] && echo ' (from stub data: not a measurement)')"
   echo
-  cat $W/report_body$SUF.md
+  cat $W/report_body_$CALLTAG.md
   echo
   [ -z "$DESC" ] || { cat $DESC; echo; }
+  if [ -n "$ENTARMS" ]; then
+    echo "### What to know when reading the arm(s) with fact entries ($ENTARMS)"
+    echo
+    echo "- **Seconds**: the seconds of an arm with entries leave out the time to load the entries index (once per \`ask\` call, \`kafka_sre_rag/__main__.py\` lines 531 to 534); they are the answer's own time and understate the cost of the entries."
+    echo "- **\"Essential points missed\"** counts only the points that chunks support (\`scripts/eval2_judge.py\` line 566): an entry never serves a point (D7 ledger, W43 rule 5), so an answer that uses an entry for a point can still count that point as missed."
+    echo "- **The judge** sees an entry by its path (source file), not by its title line with product and version; it can therefore not check an entry's scope or version."
+    echo "- **Blinding**: the readers' excerpts (reading2) show the entries, so a reader can tell which answers had entries. This limits the blinding between RE and the other arms; R and C stay mutually blind. The Owner's adjudication panel never shows an entry (only the documentation chunks an entry quotes, as ordinary chunks)."
+    echo
+  fi
   echo "### What this report does not show"
   echo
   echo "The readers' findings, the SRE's verdicts and the hidden items are not in this report: h6 shows totals only. Bars read \`not measured\` until the SRE's verdicts are complete. The adjudicator is the project's owner, not independent of the rubrics (W34)."
 } > $REPORT.tmp && mv $REPORT.tmp $REPORT
 echo "$FINAL"
-if [ $DRY = yes ]; then echo M7_RELEASE_TEST_DRY_RUN_DONE >> $L/$N.done; echo "dry run done: report from stub data in $REPORT"; else echo M7_RELEASE_TEST_DONE >> $L/$N.done; hb "$N: done; report $REPORT; $FINAL" yes; fi
+if [ $FINALCALL = yes ]; then
+  if [ $DRY = yes ]; then echo M7_RELEASE_TEST_DRY_RUN_DONE >> $L/$N.done; echo "dry run done: report from stub data in $REPORT"; else echo M7_RELEASE_TEST_DONE >> $L/$N.done; hb "$N: done; report $REPORT; $FINAL" yes; fi
+else
+  mkdir -p $L; echo "after-reading PARTIAL $CALLTAG: report $REPORT" > $L/${N}_after_reading_$CALLTAG.partial
+  echo "after-reading PARTIAL ($CALLTAG): report $REPORT; no done marker written (only the call with both sets d7 and h6 writes it)"
+  hb "$N: after-reading partial $CALLTAG; report $REPORT (not the end of the chain)"
+fi
