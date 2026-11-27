@@ -257,7 +257,9 @@ def _epoch(v):
 def cmd_server_gate(a):
     """Before a model stage (and at the chain's gate). Ours (W2, K4b): a loaded model with a marker this chain wrote when it
     loaded it, AND a server-reported load time (`model_load_times`: {model: epoch seconds or ISO time}) not later than the
-    marker's time. A marker whose load time the server does not report cannot be checked: refused (a leftover marker must never
+    marker's time. Where the server reports no load time (the real oMLX does not), its last access time (`model_last_access`, from
+    /admin/api/models) not later than the marker's time (+1 s) serves instead: the chain refreshes the marker after every job, so a later
+    access is another client's. A marker with neither cannot be checked: refused (a leftover marker must never
     make the chain unload another client's model; ported from scripts/m7_six_arm_rule.py, made strict by the review of f45dd13).
     Printed decisions:
     UNLOAD <id>    a model of ours that this stage does not use
@@ -277,6 +279,9 @@ def cmd_server_gate(a):
     times = st.get("model_load_times") or {}
     if not isinstance(times, dict):
         times = {}
+    access = st.get("model_last_access") or {}
+    if not isinstance(access, dict):
+        access = {}
     ours = set()
     for spec in a.marker or []:
         mid, _, path = spec.partition("=")
@@ -286,12 +291,24 @@ def cmd_server_gate(a):
         if not os.path.exists(path) or mid not in loaded:
             continue
         lt = _epoch(times.get(mid)) if mid in times else None
+        mt = os.path.getmtime(path)
         if lt is None:
-            print(f"REFUSED: the model {mid} is loaded and this chain has a marker for it ({path}), but the server reports no load time "
-                  f"for it, so the marker's age cannot be checked; it may be another client's copy; nothing was unloaded (the Owner decides)",
-                  file=sys.stderr)
-            return 2
-        if lt > os.path.getmtime(path) + 1:
+            # The real server reports no load time; its last access time is the next best evidence: a model last used by this chain
+            # has a last access not later than the marker (refreshed after every job). A later access is another client's.
+            la = _epoch(access.get(mid)) if mid in access else None
+            if la is None:
+                print(f"REFUSED: the model {mid} is loaded and this chain has a marker for it ({path}), but the server reports no load time "
+                      f"or last access for it, so the marker's age cannot be checked; it may be another client's copy; nothing was unloaded (the Owner decides)",
+                      file=sys.stderr)
+                return 2
+            if la > mt + 1:
+                print(f"REFUSED: the model {mid} was last used at {la:.0f}, after this chain's marker {path} was written: another client used "
+                      f"it; this chain never unloads a model it did not load; nothing was unloaded", file=sys.stderr)
+                return 2
+            print(f"the server reports no load time; its last access {la:.0f} is not later than our marker {path}; ours", file=sys.stderr)
+            ours.add(mid)
+            continue
+        if lt > mt + 1:
             print(f"REFUSED: the model {mid} was loaded at {lt:.0f}, after this chain's marker {path} was written: another client loaded "
                   f"it; this chain never unloads a model it did not load; nothing was unloaded", file=sys.stderr)
             return 2
@@ -337,10 +354,13 @@ def cmd_stub_status(a):
             return 0
         import time
         lm = [m for m in (a.loaded or "").split(",") if m]
-        st = {"active_requests": a.busy, "waiting_requests": 0, "loaded_models": lm, "model_load_times": {m: time.time() for m in lm}}
+        st = {"active_requests": a.busy, "waiting_requests": 0, "loaded_models": lm, "model_load_times": {m: time.time() for m in lm},
+              "model_last_access": {m: time.time() for m in lm}}
+        if a.no_load_times:
+            st["no_load_times"] = True
         _stub_save(p, st)
         return 0
-    print(json.dumps(st))
+    print(json.dumps({k: v for k, v in st.items() if k != "no_load_times" and not (st.get("no_load_times") and k == "model_load_times")}))
     if st.get("active_requests"):
         st["active_requests"] -= 1
         _stub_save(p, st)
@@ -354,6 +374,7 @@ def cmd_stub_load(a):
     if a.model not in st["loaded_models"]:
         st["loaded_models"].append(a.model)
         st.setdefault("model_load_times", {})[a.model] = time.time()
+    st.setdefault("model_last_access", {})[a.model] = time.time()      # every request the stub serves
     _stub_save(p, st)
     return 0
 
@@ -362,6 +383,7 @@ def cmd_stub_unload(a):
     p, st = _stub(a)
     st["loaded_models"] = [m for m in st["loaded_models"] if m != a.model]
     (st.get("model_load_times") or {}).pop(a.model, None)
+    (st.get("model_last_access") or {}).pop(a.model, None)
     _stub_save(p, st)
     print("202")
     return 0
@@ -698,6 +720,7 @@ def main(argv=None):
     p.add_argument("--init", action="store_true")
     p.add_argument("--loaded", default="")
     p.add_argument("--busy", type=int, default=0)
+    p.add_argument("--no-load-times", action="store_true", help="the stub reports last access times only, as the real server does")
     for name in ("stub-load", "stub-unload"):
         p = sub.add_parser(name)
         p.add_argument("--file", required=True)

@@ -29,7 +29,7 @@
 # Options: --dry-run, --work DIR, --report FILE, --arms R,C, --candidate R, --control C, --set d7,h6, --phase before-reading|after-reading, --configs FILE, --ledger FILE, --chunks FILE,
 #   --d7-items F --d7-rubrics F --h6-items F --h6-rubrics F, --h6-mode full|sample (default full) --h6-chosen-by TEXT, --second-fraction X (default 1), --h6-sessions N (default 6),
 #   --judge-model ID, --bundle-arms R,C, --retry-failed-packs, --full-sets d7,h6 (B4's re-read: the pack input asks for every answer of those sets), --findings-d7 READER=PATH ..., --scope-d7 ...,
-#   --h6-dir DIR, --first-reader NAME, --verdicts-d7 F --pack-key-d7 F --verdicts-h6 F.enc --pack-key-h6 F.enc, and for dry runs only: --limit N (the first N D7 items), --stub-loaded IDS.
+#   --h6-dir DIR, --first-reader NAME, --verdicts-d7 F --pack-key-d7 F --verdicts-h6 F.enc --pack-key-h6 F.enc, and for dry runs only: --limit N (the first N D7 items), --stub-loaded IDS, --stub-no-load-times (the stub server reports last access times only, as the real server does).
 # The server address and key come from OMLX_URL and OMLX_API_KEY or ~/.config/kafka-sre-llm/ (never passed on a command line). Markers: runs/m7/logs/m7_release_test.done or .failed.
 set -e
 PY=${PY:-.venv/bin/python}
@@ -47,7 +47,7 @@ while [ $# -gt 0 ]; do case $1 in
   --findings-d7) shift; while [ $# -gt 0 ] && case $1 in --*) false;; *) true;; esac; do FINDD7="$FINDD7 $1"; shift; done; continue;;
   --scope-d7) shift; SCOPED7="$*"; break;;
   --h6-dir) H6DIR=${2:?}; shift;; --verdicts-d7) VD7=${2:?}; shift;; --pack-key-d7) PKD7=${2:?}; shift;; --verdicts-h6) VH6=${2:?}; shift;; --pack-key-h6) PKH6=${2:?}; shift;;
-  --limit) LIMIT=${2:?}; shift;; --stub-loaded) STUBLOADED=${2:?}; shift;;
+  --limit) LIMIT=${2:?}; shift;; --stub-loaded) STUBLOADED=${2:?}; shift;; --stub-no-load-times) STUBNOLT=--no-load-times;;
   *) echo "usage: scripts/m7_release_test.sh [--dry-run] [--work DIR] [--arms R,C] [--set d7,h6] [--phase before-reading|after-reading] (see the header)" >&2; exit 2;; esac
   shift; done
 N=m7_release_test; L=runs/m7/logs; H=scripts/m7_release_test.py; RULE=scripts/m7_release_rule.py; KB2=scripts/m7_kb2_rule.py
@@ -57,6 +57,7 @@ case $H6MODE in full|sample) ;; *) refuse "--h6-mode is full or sample";; esac
 case $LIMIT in ''|*[!0-9]*) refuse "--limit is a whole number";; esac
 [ $DRY = yes ] || [ "$LIMIT" = 0 ] || refuse "--limit is for dry runs only"
 [ $DRY = yes ] || [ -z "$STUBLOADED" ] || refuse "--stub-loaded is for dry runs only"
+[ $DRY = yes ] || [ -z "$STUBNOLT" ] || refuse "--stub-no-load-times is for dry runs only"
 echo "$SETS" | tr ',' '\n' | while read s; do case $s in d7|h6) ;; *) echo "REFUSED: --set names d7 and h6 only" >&2; exit 2;; esac; done || exit 2
 case ",$SETS," in *,h6,*) HAS_H6=yes;; *) HAS_H6=no;; esac
 [ -f "$CONFIGS" ] || refuse "configs file $CONFIGS is missing"
@@ -148,12 +149,12 @@ done
 mkdir -p "$(dirname $REPORT)"
 # ---- the server helpers (real: the server; dry: a stub status file)
 if [ $DRY = yes ]; then
-  $PY $KB2 stub-status --file $STUBFILE --init --loaded "$STUBLOADED" > /dev/null
+  $PY $KB2 stub-status --file $STUBFILE --init --loaded "$STUBLOADED" $STUBNOLT > /dev/null
   SV="--stub-file $STUBFILE"
 else SV=""; fi
 mid_marker() { echo "$W/loaded_$(echo "$1" | tr -c 'A-Za-z0-9.\n-' '_')"; }
 marker_args() { o="--marker $DS=$(mid_marker $DS)"; for m in $MODELS; do o="$o --marker $m=$(mid_marker $m)"; done; echo $o; }
-apply_gate() { # the gate's decisions: only what it prints as UNLOAD (ours, by marker and by the server's load time) or W16 (the DeepSeek build of another client) is unloaded
+apply_gate() { # the gate's decisions: only what it prints as UNLOAD (ours, by marker and by the server's load time, or without one by its last access) or W16 (the DeepSeek build of another client) is unloaded
   for m in $(echo "$gout" | sed -n 's/^UNLOAD //p'); do
     $PY $H server unload --model $m $SV || fail "the unload of $m failed"; rm -f $(mid_marker $m); hb "$N: unloaded $m (ours, not needed by the next stage)"; done
   for m in $(echo "$gout" | sed -n 's/^W16 //p'); do

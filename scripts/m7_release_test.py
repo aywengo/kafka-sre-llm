@@ -525,9 +525,27 @@ def get_status(a):
         return json.loads(out)
     try:
         st, body = http("GET", "/api/status")
-        return json.loads(body)
+        status = json.loads(body)
     except Exception as e:  # noqa: BLE001
         raise Refused(f"the server status is unreadable ({type(e).__name__})") from None
+    try:      # /api/status has no load times; the admin list has each loaded model's last access (epoch seconds). Never fatal: without it the gate refuses a model it cannot date.
+        _, body = http("GET", "/admin/api/models")
+        access = last_access_of(json.loads(body))
+        if access is not None:
+            status["model_last_access"] = access
+    except Exception:  # noqa: BLE001
+        pass
+    return status
+
+
+def last_access_of(admin):
+    """{id: last_access} of the loaded models whose last_access is a number, from the /admin/api/models document; None when it has not the expected shape."""
+    models = admin.get("models") if isinstance(admin, dict) else None
+    if not isinstance(models, list):
+        return None
+    return {m["id"]: float(m["last_access"]) for m in models
+            if isinstance(m, dict) and m.get("loaded") and isinstance(m.get("id"), str)
+            and isinstance(m.get("last_access"), (int, float)) and not isinstance(m.get("last_access"), bool)}
 
 
 def cmd_server(a):
