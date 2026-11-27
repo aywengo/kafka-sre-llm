@@ -59,9 +59,13 @@ def lookup_option(p):
 
 def kb_entries_option(p):
     p.add_argument("--kb-entries", action="store_true",
-                   help="EXPERIMENTAL and UNMEASURED, off by default (M7 I4): after the frozen excerpts add up to 4 fact entries "
-                        "(each a short statement with the quoted source text and its page) from the entries index; the pack stays "
-                        "within 10 items and 24,000 characters. No extra model call. Needs the record kafka_sre_rag/kb_entries.json "
+                   help="off by default (M7 I4): after the frozen excerpts add fact entries (each a short statement with the "
+                        "quoted source text and its page) from the entries index, in ranked order, whole or not at all, while the "
+                        "whole pack stays within 10 items and 24,000 characters (at most 4 after a full frozen six; 3 to 8 were "
+                        "added per answer in the release test). Measured in v4.0.0 only as part of the release configuration RE "
+                        "(Gemma 4 31B 4-bit, --lookup-cards, --kb-entries; see the model card); audited: 178 of 200 ok, 22 "
+                        "partial, 0 wrong, admitted under an 80 %% bar set after the audit; every other combination is unmeasured. "
+                        "No extra model call. Needs the record kafka_sre_rag/kb_entries.json "
                         "and the index it names (hash checked). Frozen profile only; not available with --service-url "
                         "(start serve with it instead)")
     p.add_argument("--kb-entries-record", metavar="FILE", default=None,

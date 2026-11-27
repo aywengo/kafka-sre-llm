@@ -6,8 +6,10 @@ from . import config, profiles, prompts
 
 GROUNDED_MODES = tuple(prompts.GROUNDED)  # EXPERIMENTAL: grounded-g1, grounded-g2
 LOOKUP_REASON = "lookup cards (EXPERIMENTAL, unmeasured: reference cards of the question's names after the excerpts)"
-KB_ENTRIES_REASON = ("knowledge-base entries (EXPERIMENTAL, unmeasured: up to 4 fact entries follow the frozen excerpts; "
-                     "the entries layer has not passed its check)")
+KB_ENTRIES_REASON = ("knowledge-base entries (off by default; whole fact entries follow the frozen excerpts while the pack stays "
+                     "within 10 items and 24,000 characters; measured in v4.0.0 only inside the release configuration RE: "
+                     "Gemma 4 31B 4-bit, lookup cards, entries; audited 178 of 200 ok, 22 partial, 0 wrong, admitted under an "
+                     "80 % bar set after the audit; every other combination is unmeasured)")
 
 
 @dataclass
