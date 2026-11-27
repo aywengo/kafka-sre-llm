@@ -325,7 +325,13 @@ def run_ask(info, question, python, stub, env):
            "sources": d.get("sources"), "measured": d.get("measured"), "unmeasured_reasons": d.get("unmeasured_reasons")}
     if d.get("lookup_cards") is not None:
         lc = d["lookup_cards"]
-        row["lookup"] = {k: lc.get(k) for k in ("cards_found", "chars", "seconds", "catalogue_sha256") if isinstance(lc, dict)} if isinstance(lc, dict) else None
+        if isinstance(lc, dict):
+            # the runtime writes the hash as catalogue_recorded_sha256; the row key stays catalogue_sha256
+            row["lookup"] = {k: lc.get(k) for k in ("cards_found", "cards", "chars", "seconds")
+                             if k != "cards" or "cards" in lc}
+            row["lookup"]["catalogue_sha256"] = lc.get("catalogue_recorded_sha256") or lc.get("catalogue_sha256")
+        else:
+            row["lookup"] = None
     return row, None
 
 
