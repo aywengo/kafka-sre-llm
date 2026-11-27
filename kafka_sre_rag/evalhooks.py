@@ -10,6 +10,9 @@ GROUNDED_MODES = tuple(prompts.GROUNDED)  # EXPERIMENTAL: grounded-g1, grounded-
 
 def chunks_by_ids(ids, index_path=None):
     """Full chunk dicts for the given ids, in the given order. Raises KeyError for an id the index lacks."""
+    if any(str(i).startswith("kbe:") for i in ids):  # EXPERIMENTAL (M7 I4): entries of a stored K pack; chunk-only packs are as before
+        from . import kb_entries
+        return kb_entries.resolve_pack(ids, kb_entries.default_kb(), index_path)
     from . import retrieval
     path = str(index_path or config.index_file())
     by_id = {c["id"]: c for c in retrieval.RT.index(path)[0]}
@@ -34,14 +37,17 @@ def _timing_fields(lookup, info):
 
 
 def run_item(question, gen, cfg=None, *, k="k6", mode="default", rerank=True, max_tokens=None,
-             pack_ids=None, index_path=None, profile="frozen", thorough=None, thorough_checker=None, kb=None, lookup_kb=None):
+             pack_ids=None, index_path=None, profile="frozen", thorough=None, thorough_checker=None, kb=None, lookup_kb=None,
+             kb_entries=None):
     """One answer. pack_ids None: expansion + retrieval as pipeline.ask(). pack_ids given: no expansion, no
     retrieval; the model gets exactly those chunks in that order. Returns a dict with text, tokens, truncated,
     search_terms (None on replay), pack (chunk ids), seconds {search_terms, retrieval, answer, total}, messages.
     thorough: a verify_pass.Profile (EXPERIMENTAL answer profile; thorough_checker a service.AnswerChecker); the result
     then also has "thorough" (see verify_pass.draft_and_check) and seconds draft, thinking and check. None: as before.
     lookup_kb: a kb_lookup.KbLookup (EXPERIMENTAL, M7 KA1): the lookup cards of the question and the search terms (none
-    on a replayed pack: no search terms) follow the excerpts; the result then also has "lookup". None: as before."""
+    on a replayed pack: no search terms) follow the excerpts; the result then also has "lookup". None: as before.
+    kb_entries: a kb_entries.KbEntries (EXPERIMENTAL, M7 I4): up to 4 fact entries follow the frozen pack; the result then also has
+    "kb_entries" (the merge's record). Not with a stored pack (replay it with kb_entries.resolve_pack), a profile or closed book."""
     cfg = cfg or config.load()
     if thorough is not None and (mode == "closed" or thorough_checker is None):
         raise ValueError("the thorough answer profile needs excerpts and an answer checker")
@@ -49,6 +55,8 @@ def run_item(question, gen, cfg=None, *, k="k6", mode="default", rerank=True, ma
         raise ValueError("a stored pack (pack_ids) is replayed as it is; it is not made by a retrieval profile")
     if mode not in ("default", "strict", "closed") + GROUNDED_MODES:
         raise ValueError(f"mode must be 'default', 'strict', 'closed' or a grounded mode, got {mode!r}")
+    if kb_entries is not None and (pack_ids is not None or profile != "frozen" or mode == "closed"):
+        raise ValueError("the entries option needs a live frozen retrieval (no stored pack, candidate profile or closed book)")
     t0 = time.monotonic()
     if mode == "closed":
         # Closed book (configuration P0): no search-terms call, no retrieval, no pack. The model gets SYSTEM_PROMPT and
@@ -75,6 +83,9 @@ def run_item(question, gen, cfg=None, *, k="k6", mode="default", rerank=True, ma
         exp = None
         t1 = time.monotonic()
         chunks = chunks_by_ids(pack_ids, index_path)
+    kb_info = None
+    if kb_entries is not None:  # off: the pack stays exactly as the retrieval made it
+        chunks, kb_info = kb_entries.merge(chunks, question, exp, rerank=rerank)
     t2 = time.monotonic()
     cards_text, lookup = None, None
     if lookup_kb is not None:  # off: the prompt stays byte for byte as it was
@@ -88,6 +99,8 @@ def run_item(question, gen, cfg=None, *, k="k6", mode="default", rerank=True, ma
     if lookup is not None and thorough is None and _accepts_info(gen):  # a record only: the request is not changed
         info = {}
     extra = {} if lookup is None else {"lookup": lookup}
+    if kb_info is not None:
+        extra["kb_entries"] = kb_info
     if thorough is not None:  # EXPERIMENTAL: the draft (thinking as the profile says), then the checking pass
         from . import verify_pass
         th = verify_pass.draft_and_check(question, msgs, chunks, gen, max_tokens or cfg["answer"]["max_tokens"],

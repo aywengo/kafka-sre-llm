@@ -57,6 +57,17 @@ def lookup_option(p):
                         "work/m4/catalogues; python scripts/build_catalogues.py). Not available with --service-url or serve")
 
 
+def kb_entries_option(p):
+    p.add_argument("--kb-entries", action="store_true",
+                   help="EXPERIMENTAL and UNMEASURED, off by default (M7 I4): after the frozen excerpts add up to 4 fact entries "
+                        "(each a short statement with the quoted source text and its page) from the entries index; the pack stays "
+                        "within 10 items and 24,000 characters. No extra model call. Needs the record kafka_sre_rag/kb_entries.json "
+                        "and the index it names (hash checked). Frozen profile only; not available with --service-url "
+                        "(start serve with it instead)")
+    p.add_argument("--kb-entries-record", metavar="FILE", default=None,
+                   help="with --kb-entries: the entries record to use (default kafka_sre_rag/kb_entries.json)")
+
+
 def answer_profile_options(p):
     p.add_argument("--answer-profile", choices=["thorough"], default=None,
                    help="EXPERIMENTAL and UNMEASURED, off by default: thorough = the draft is written with thinking on, "
@@ -154,6 +165,7 @@ def build_parser():
     common(a)
     mark_option(a)
     lookup_option(a)
+    kb_entries_option(a)
     answer_profile_options(a)
     a.add_argument("--stream", action="store_true",
                    help="print the answer as it is generated (a <think> block is not shown); the sources follow")
@@ -165,9 +177,11 @@ def build_parser():
     common(c)
     mark_option(c)
     lookup_option(c)
+    kb_entries_option(c)
     answer_profile_options(c)
     sv = sub.add_parser("serve", help="long-running local service, OpenAI-compatible, loopback only")
     common(sv)
+    kb_entries_option(sv)
     answer_profile_options(sv)
     sv.add_argument("--host", default="127.0.0.1", help="bind address (default 127.0.0.1; loopback only)")
     sv.add_argument("--port", type=int, default=8765)
@@ -297,7 +311,8 @@ def serve(a, cfg, checker=None):
     gen = make_generator(a)
     svc = service.Service(gen, cfg, mode=a.mode, k=a.k, profile=a.profile, rerank=not (a.dry_run and a.no_rerank_in_dry_run),
                           max_tokens=a.max_tokens, verified=verified, check=a.check,
-                          catalogues=a.catalogues, checker=checker, revise=a.revise)
+                          catalogues=a.catalogues, checker=checker, revise=a.revise,
+                          **({"kb_entries": a.kb_entries_obj} if getattr(a, "kb_entries_obj", None) is not None else {}))
     print("loading the index, the BM25 structures and the reranker ...", file=sys.stderr, flush=True)
     secs = svc.warm_up()
     srv = service.make_server(svc, a.host, a.port, a.allow_non_local)
@@ -332,6 +347,8 @@ def run_one(question, gen, cfg, a, checker=None):
               max_tokens=a.max_tokens)
     if getattr(a, "lookup_cards", False):  # off: the call stays exactly as it was
         kw.update(lookup_cards=True, lookup_kb=a.lookup_kb)
+    if getattr(a, "kb_entries_obj", None) is not None:  # off: the call stays exactly as it was
+        kw["kb_entries"] = a.kb_entries_obj
     if thorough is not None:  # off: the call stays exactly as it was
         if thorough.verify and thorough.cards and getattr(a, "thorough_kb", None) is None:  # loaded once (chat)
             from .kb_lookup import KbLookup
@@ -375,6 +392,8 @@ def run_one(question, gen, cfg, a, checker=None):
             out["destructive_marks"] = n_marks
         if ans.lookup is not None:
             out["lookup_cards"] = ans.lookup
+        if ans.kb_entries is not None:
+            out["kb_entries"] = ans.kb_entries
         if ans.thorough is not None:
             from . import verify_pass
             # one name per text (review note): first_pass_text is the draft, as in the harness's rows; checked_text is
@@ -448,6 +467,12 @@ def main(argv=None):
     if a.cmd == "ask" and a.service_url and a.lookup_cards:
         print("error: --lookup-cards is not available with --service-url: the service has no lookup cards", file=sys.stderr)
         return 2
+    if a.cmd == "ask" and a.service_url and a.kb_entries:
+        print("error: --kb-entries is not available with --service-url: start the service with `serve --kb-entries`", file=sys.stderr)
+        return 2
+    if getattr(a, "kb_entries", False) and a.profile != "frozen":
+        print("error: --kb-entries composes with --profile frozen only (not measured with a candidate profile)", file=sys.stderr)
+        return 2
     if a.cmd == "ask" and a.service_url and a.mark_destructive:
         print("error: --mark-destructive is not available with --service-url", file=sys.stderr)
         return 2
@@ -500,6 +525,14 @@ def main(argv=None):
             ck = checker or a.thorough_checker or service.AnswerChecker(a.catalogues)
             a.lookup_kb = KbLookup(ck.cats, ck.directory, verify=True)
         except (service.CatalogueError, CatalogueHashError) as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 2
+    a.kb_entries_obj = None
+    if getattr(a, "kb_entries", False):  # EXPERIMENTAL: the entries index is loaded once, its hash checked against the record
+        try:
+            from .kb_entries import KbEntries, KbEntriesError
+            a.kb_entries_obj = KbEntries.load(a.kb_entries_record)
+        except KbEntriesError as e:
             print(f"error: {e}", file=sys.stderr)
             return 2
     cfg = config.load()
