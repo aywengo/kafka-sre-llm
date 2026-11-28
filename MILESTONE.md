@@ -12,7 +12,7 @@ Earlier tracking documents: `milestones/M6.md` (decisions S1 to S8, U1, U2; the 
 look's rule; the covering test), `milestones/M5.md` (P, Q) and `milestones/M4.md` (J to N).
 Their decisions stay in force where this file does not change them.
 
-Last updated: 2026-11-26 (D7 frozen).
+Last updated: 2026-11-28 (v4.0.0 released).
 
 ## What this milestone is for
 
@@ -373,31 +373,20 @@ fixes it asks for, the merge after the KB chain, D7's answers and the release-te
 | 2026-11-27 | W48 | The Owner (through LLM PM, item 19, night), on the three merge choices of B21 (`runs/m7/reports/b21_mcp_wording_merge.md`), all as recommended: (1) the `--lookup-cards` help and `LOOKUP_REASON` are corrected like the entries wording (measured only inside the release configuration RE), as a separate revertable commit (9bcaed4 on `v4-mcp-wording`); (2) no code change for the "UNMEASURED CONFIGURATION: generator is not the reference model" banner that RE's exact command still prints; the model card explains it; RE becomes the reference model in a later version; (3) if T1 shows a violation, only the `diagnose` command leaves v4.0.0 (`v4-diagnose-out`), and the tools code stays (the T1 harness imports it). Not objected to: the test-only change for the 21 release-test unit tests that fail on the configs.json pins after the merge (B24): the real pins are checked against the measured commit a9c0cc0, the chain mechanics use test copies of the configs, no assertion is weakened; configs.json and the four frozen tools stay unchanged. The byte check (B21, `scripts/m7_v4_bytecheck.py`): RE's 60 D7 prompts and request bodies identical between a9c0cc0's code and the merged code, 60/60; no `tools` key with the tools off; verify and the golden tests match. |
 | 2026-11-28 | W49 | The Owner (through LLM PM, item 19, morning), on the four release choices, all as recommended: (1) the v4.0.0 model card does not go to a new Hugging Face model repository: the repository's card and the release notes only; (2) no link from the index dataset's public card to the entries; (3) the entries dataset is uploaded once, with the final card first (no DRAFT marker, no review section), then checked against the MANIFEST; (4) the model card names the dataset and its revision, in the same commit that removes its draft banner. Then the **go for step (a) only**: create the private dataset repository, upload the 7 files of the rebuilt final package, check the remote files against the MANIFEST, and stop. Steps (b) (the push to main and the tag) and (c) (public, release notes) each need their own go. |
 | 2026-11-28 | conductor | **Step (a) done** (B30, `runs/m7/reports/b30_hf_upload_a.md`): the final package (7 files, 13,826,654 bytes; the builder's `--final` check clean) was uploaded once to the private dataset `aywengo/kafka-sre-fact-entries-v4`, at **revision 45e2a57bdb58889f80097542d1c8c940513d3215**. The remote check is ALL EQUAL (LFS sha256 or git blob id for every file, no extra file), and the repository is private. A process error came first: the conductor's mail to LLM PM quoted the planned commands inside a double-quoted shell string, so the shell created the empty private repository (revision 2ffe6d66) before the commands had been named, and tried an upload that failed because its folder did not exist yet. Nothing was uploaded then; it was reported to LLM PM at once. The model card names the dataset and the revision in the commit that removed its draft banner (W49 (4)). Steps (b) and (c) wait for their own go. |
+| 2026-11-28 | conductor | **Step (b) done** under the Owner's go (through LLM PM, item 19): after `git fetch`, origin/main was still a9c0cc0 and `release/v4.0.0` a fast-forward of it; `git push origin release/v4.0.0:main` (a9c0cc0..cfcc76f, no force); annotated tag `v4.0.0` (object a73b9da867f9257c481067b1eb42ff23f30b86a2) at commit cfcc76f3e34f2c84004e13c38c03bc8fcb040a7a, pushed; `git ls-remote` showed main at cfcc76f and `refs/tags/v4.0.0^{}` at cfcc76f. Every commit pushed was scanned beforehand (keys, tokens, home paths, host names, W47 values: none). |
+| 2026-11-28 | conductor | **Step (c) done: v4.0.0 is released** under the Owner's go (through LLM PM, item 19, "Go (c), both"): the dataset `aywengo/kafka-sre-fact-entries-v4` was made public with `HfApi().update_repo_settings(..., repo_type="dataset", private=False)` (go_steps' fallback, run first because the CLI help says `--public` is ignored for an existing repository); the unauthenticated API call returns 200, and the dataset is at revision 45e2a57bdb58889f80097542d1c8c940513d3215, unchanged since the upload. The GitHub release https://github.com/aywengo/kafka-sre-llm/releases/tag/v4.0.0 was created with `--verify-tag` from the reviewed notes without their DRAFT line (sha256 2469426c…); not a draft, not a pre-release, marked Latest (2026-11-28 07:36 UTC). |
+| 2026-11-28 | W50 | The Owner (through LLM PM, item 27): the go for this closing commit only (prepared locally, the push named beforehand, a fast-forward from cfcc76f with no force, scanned before the push). The local card branch `worktree-agent-a53c7348546bfb613` (which holds the W47 counts and is never pushed) and the local diagnose variant `v4-mcp-wording` are **kept** for now; nothing is deleted. The harness cluster `kafka-sre-mcp` is **kept** until Qwen's tool-calling arm of T1 runs. Qwen's arm, the diagnosis judge step, the installer for v4.0.1 and M8 start only when the Owner says. |
 
 ## Waiting for the Owner
 
-- **The review (28 Nov, in the morning):**
-  - the v4.0.0 model card (B26 on `worktree-agent-a53c7348546bfb613`; it goes to main squashed, W47);
-  - the entries dataset drafts (`worktree-agent-aeb53213221994dae` 30a4266; package `out/kafka-sre-fact-entries-v4/`);
-  - the release notes draft.
-- **Then the release go, step by step** (W33, W37; each step named before it runs):
-  - (a) the private entries dataset and its upload;
-  - (b) the push to main and the `v4.0.0` tag;
-  - (c) the dataset made public and the release notes published.
-  The bars do not gate (W37).
-- **Release-test state:**
-  - the release test is DONE (A1, 2026-11-27);
-  - D7's adjudication was dropped (W46): B1, B2 and B4 are not measured;
-  - h6 was adjudicated in full (W40).
-- **T1 on Gemma:** DONE on 2026-11-28 at 00:32. There was 1 violation, which the allow-list blocked, so `diagnose` leaves v4.0.0 (W39, W48).
-  - After the release: Qwen's arm, and the diagnosis judge step under a rule written before it.
-- **After the release:**
-  - the M8 entry pilot's "ok", bar and guards (W42);
-  - the installer A (v4.0.1, W41/W46) with the laptop run;
+- **v4.0.0 is released** (2026-11-28; steps (a), (b) and (c) done, rows above). Nothing more is pushed, uploaded or deleted without the Owner's go.
+- **After the release, each started only when the Owner says (W50):**
+  - Qwen's tool-calling arm of T1, and the diagnosis judge step under a rule written before it. The harness cluster `kafka-sre-mcp` is kept for it;
+  - the installer A for v4.0.1 (W41, W46) with the laptop run, on `worktree-agent-abbf488e4663d05b3`;
+  - M8: the entry pilot's "ok", bar and guards (W42), planned on `worktree-agent-aefad141c509e2b7d`;
   - RE as the runtime's reference model (W48).
-- **The h6 look (2026-11-27):** oMLX went down at about 15:17, with C at 28 of 60 answers, and the chain stopped itself at 18:17:45.
-  - The Owner upgraded oMLX to 0.8.4 and gave the go to resume (option A).
-  - The version split is noted under ledger row 3 before the resume; the resume is the same look.
+- **Kept local, never pushed:** the card branch `worktree-agent-a53c7348546bfb613` (W47) and `v4-mcp-wording`. Whether to delete them is the Owner's decision.
+- **The exit criteria** Z1 to Z5 above keep the state they had at the release; the model card (`model_cards/kafka-sre-v4.0.0.md`) reports every result, met and not met (W37). Closing M7 is the Owner's decision.
 
 ## Rules that are shared between the two sessions
 
@@ -430,3 +419,4 @@ M7 session before using the server.
   locally, then push both or one clean winner); the M7 session's proposal (Gemma 4 31B, its
   arms in the six-arm test, one winner by a rule fixed beforehand) waits for his answers.
   The Part 5 article and video (M5 and M6) are handed to the Owner's bot YouTybe.
+- 2026-11-28 08:26 to 08:37: v4.0.0 released, one go per step: (a) the entries dataset uploaded privately (revision 45e2a57b), (b) main and the tag `v4.0.0` at cfcc76f, (c) the dataset public and the GitHub release published.
