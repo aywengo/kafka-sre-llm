@@ -1,7 +1,5 @@
 NOTICE: attribution for the kafka-sre-fact-entries-v4 dataset
 
-DRAFT, for the Owner. Not published. Publication is planned with v4.0.0, after the Owner's go.
-
 This dataset holds entries_index.jsonl (7,028 fact entries) and kb_entries.json (the record of that file).
 
 THE ENTRIES ARE MODEL-WRITTEN. They were written from documentation chunks of the projects listed below by a locally

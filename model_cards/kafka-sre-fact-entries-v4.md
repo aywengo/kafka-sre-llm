@@ -15,16 +15,13 @@ tags:
 
 # Kafka SRE fact entries (v4)
 
-> **DRAFT, for the Owner. Not published.** Nothing in this folder has been uploaded. Publication is planned with v4.0.0,
-> after the Owner's go. The box "For the Owner's review" at the end lists what is still the Owner's to decide.
-
 `entries_index.jsonl` holds 7,028 short fact statements about Apache Kafka and Strimzi. **A language model wrote them
 from the documentation chunks of the kafka-sre-llm index. They are not documentation, they may be partial, and they are
 not a primary source.** Read the audit and the limits before relying on one.
 
 This dataset sits next to the documentation index
 [`aywengo/kafka-sre-docs-index-v3`](https://huggingface.co/datasets/aywengo/kafka-sre-docs-index-v3) and is meant to be used with the
-kafka-sre-llm runtime (release v4.0.0, planned).
+kafka-sre-llm runtime (release v4.0.0).
 
 ## What the entries are
 
@@ -151,8 +148,3 @@ raters (hosted Claude sessions) wrote ratings only; no entry text was written by
 ([licence text](https://ai.google.dev/gemma/docs/gemma_4_license)). The project did not verify whether the policy
 binds a user of Gemma 4 under Apache-2.0. Gemma wrote and checked no entry; the card names it as the model that uses them.
 <!-- source: runs/m7/reports/gemma4_licence.md -->
-
-## For the Owner's review (this draft)
-
-1. Whether the upload goes out under the account named in this card (`aywengo`), and the release go.
-2. The runtime's own wording about entries (`--kb-entries` help and warning) is decided (W46): it changes in v4.0.0 together with the MCP merge, after a byte check of the measured prompts of RE. This dataset does not change it.
