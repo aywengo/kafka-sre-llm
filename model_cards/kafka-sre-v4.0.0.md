@@ -6,12 +6,6 @@ tags: [kafka, kubernetes, strimzi, argo-cd, retrieval, rag, sre, experimental]
 language: [en]
 ---
 
-<!-- DRAFT for the Owner's review (task B18, 2026-11-27; W46, W47 and the Architect's review applied; task B26,
-2026-11-28: T1, the byte check, the banner and the reranker licence filled in, W48). Not pushed, not published. Every
-number cites its report in an HTML comment beside it. No placeholder is left; the Owner's go removes the banner below. -->
-
-> **DRAFT, for the Owner's review. Not published.**
-
 # kafka-sre-llm v4.0.0: the retrieval runtime on Gemma 4 31B
 
 > **Experimental. Not for unattended use.** Use answers to find sources; verify each operational recommendation against
@@ -359,8 +353,8 @@ What Z3 did not measure:
 ### What is known about the entries and harm
 
 <!-- Source: runs/m7/M7_RELEASE_TEST_h6.md (H); runs/m7/reports/b9_d7_rules34.md line 50 (harm-flag share, RE - R);
-the wording on the control follows model_cards/kafka-sre-fact-entries-v4.md ("Harm") on branch
-worktree-agent-aeb53213221994dae; MILESTONE.md W44 (R not adjudicated), W46 (1) (D7 adjudication dropped) -->
+the wording on the control follows model_cards/kafka-sre-fact-entries-v4.md ("Harm");
+MILESTONE.md W44 (R not adjudicated), W46 (1) (D7 adjudication dropped) -->
 
 - **On h6** the Owner judged 7 of 60 answers harmful for RE (Gemma with entries) and 7 of 60 for the Qwen control C,
   against a limit of 1 of 60. The control is a different model without entries, so this cannot isolate the effect of
@@ -452,7 +446,7 @@ manual steps in section 4.
 >   exit 2 and no answer.
 > - **The server step:** `install.sh check` passed (10 s), and one question through the launcher passed (exit 0, 90 s
 >   for the whole process).
-> - **Not checked:** an install from Hugging Face without a mirror (the entries are not published yet), the catalogue
+> - **Not checked:** an install from Hugging Face without a mirror (the entries dataset was not yet published at the time of the smoke), the catalogue
 >   hash on another machine, and a clean machine.
 
 ### Tool calling (T1): measured on Gemma 4 31B; `diagnose` is not in v4.0.0
@@ -644,7 +638,8 @@ from the record); runs/m7/reports/installer_plan.md (serve) -->
 2. **Get the assets.**
    - **The documentation index:** the dataset `aywengo/kafka-sre-docs-index-v3` at revision
      `131df0419f7410ac59935c2c16dbf7f2c5de1073`.
-   - **The fact entries:** planned for publication with the release as the dataset `aywengo/kafka-sre-fact-entries-v4`.
+   - **The fact entries:** the dataset `aywengo/kafka-sre-fact-entries-v4` at revision
+     `45e2a57bdb58889f80097542d1c8c940513d3215`.
      Whatever copy you use, the runtime refuses an entries file whose sha256 differs from the record
      (`9722a8f3b323bccc4c89e7c38929236e57a13507965548754e2eef28ac266938`).
    - **The catalogues** are built from their pinned sources (`scripts/build_catalogues.py`).
@@ -677,8 +672,8 @@ v4.0.1 preview:
 
 <!-- Source: LICENSE and README.md ("Licence"); runs/m7/reports/gemma4_licence.md; out/kafka-sre-docs-index-v3/README.md
 (sources table); catalogue_sources.yaml; runs/m7/reports/kb_licences.md (entries: local writer and checker, nothing
-leaves the machine, W14); model_cards/NOTICE.kafka-sre-27b-v2-retrieval-only and the entries card draft
-model_cards/kafka-sre-fact-entries-v4.md on branch worktree-agent-aeb53213221994dae (model licences). Reranker licence:
+leaves the machine, W14); model_cards/NOTICE.kafka-sre-27b-v2-retrieval-only and the entries card
+model_cards/kafka-sre-fact-entries-v4.md (model licences). Reranker licence:
 runs/m7/reports/reranker_licence.md (the model card at the pinned revision, front matter `license: "apache-2.0"`). -->
 
 **The project.** The code of kafka-sre-llm is under the **Apache License 2.0** (`LICENSE`). This release ships no model
@@ -724,8 +719,9 @@ documentation is provided without warranties, as set out in Section 5 of that li
 - the Argo CD CRDs `v3.6.1`;
 - the kafka-site configuration pages (`cd727c4d…`).
 
-**The fact entries** are planned for publication as their own dataset, with their own card and `NOTICE`, under the
-Apache License 2.0. They restate Apache Kafka 4.3.2 and Strimzi 1.3.1 documentation (Apache-2.0).
+**The fact entries** are released with v4.0.0 as their own dataset, `aywengo/kafka-sre-fact-entries-v4` (revision
+`45e2a57b`), with their own card and `NOTICE`, under the Apache License 2.0. They restate Apache Kafka 4.3.2 and
+Strimzi 1.3.1 documentation (Apache-2.0).
 - **Writing and checking.** Both were done locally, on the project's own machine, by open-weight models on a local
   server: the local builds named in the entries record and in `configs.json`. This is recorded in
   `runs/m7/reports/kb_licences.md`, before the run, and in `runs/m7/reports/m8_fact_entry_scope.md`, section 6
