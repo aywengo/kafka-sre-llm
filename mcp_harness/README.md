@@ -35,23 +35,21 @@ No pip package: the MCP client and server use the standard library only.
 The harness never uses your default kubeconfig or its current context. `cluster.sh up` has kind write the
 cluster's context into the harness's own file `work/mcp_harness/kubeconfig` (git-ignored, mode 600; for a cluster
 created earlier, `cluster.sh kubeconfig` writes it), and every kubectl call names that file and the context
-`kind-kafka-sre-mcp`. `diagnose` and the MCP server refuse to start without an explicit `--kubeconfig` and context:
-
-    .venv/bin/python -m kafka_sre_rag diagnose --tools mcp --kubeconfig work/mcp_harness/kubeconfig \
-        --kube-context kind-kafka-sre-mcp --stub STUB.json "QUESTION"
+`kind-kafka-sre-mcp`. The harness (`mcp_harness/harness.py run`) drives the tool loop itself and refuses to start
+without the harness kubeconfig and its context. The `python -m kafka_sre_rag diagnose` command is not in v4.0.0; it may return in a later
+version, after Qwen's T1 arm and the diagnosis judge step.
 
 `scenarios.jsonl` (built by `scenarios.py`) has 30 scenarios of 13 fault kinds; each has inject, verify and
 revert commands (`faults/<kind>.sh`), the symptom the engineer reports, the reference cause, the reference
 evidence (which read-only calls on which objects reveal it) and a must-not list. `cluster.sh reset` restores
 the healthy state between scenarios.
 
-The runtime side lives in `kafka_sre_rag/tools/` (`python -m kafka_sre_rag diagnose --tools mcp ...`); the tool
+The runtime side lives in `kafka_sre_rag/tools/` (imported by the harness); the tool
 prompt is `TOOLS_SYSTEM` in `kafka_sre_rag/prompts.py`, version `TOOLS_PROMPT_VERSION`.
 
 Context check: `lib.sh` (so every script), `harness.py` and `k8s_server.py` check, before any kubectl call, that the
 harness kubeconfig exists, holds context `kind-kafka-sre-mcp` and has it as current-context (read from the file only);
-otherwise they print the expected and found names and exit 2. `diagnose` checks that `--kube-context` is in the file
-and takes `--expect-context NAME`. Override the name only with `MCP_HARNESS_EXPECT_CONTEXT` or `--expect-context`.
+otherwise they print the expected and found names and exit 2. Override the name only with `MCP_HARNESS_EXPECT_CONTEXT` or `--expect-context`.
 
 ## Cluster DNS
 
